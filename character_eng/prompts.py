@@ -22,13 +22,14 @@ def _read(path: Path) -> str:
         return ""
 
 
-def load_prompt(character: str) -> str:
+def load_prompt(character: str, world_state=None) -> str:
     """Load and resolve a character's prompt template.
 
     Substitutes {{key}} macros in prompt.txt with:
       - global_rules -> prompts/global_rules.txt
       - character    -> prompts/characters/<name>/character.txt
       - scenario     -> prompts/characters/<name>/scenario.txt
+      - world        -> world_state.render() if provided
 
     Unknown macros are left intact for debugging via /trace.
     """
@@ -39,6 +40,7 @@ def load_prompt(character: str) -> str:
         "global_rules": _read(PROMPTS_DIR / "global_rules.txt"),
         "character": _read(char_dir / "character.txt"),
         "scenario": _read(char_dir / "scenario.txt"),
+        "world": world_state.render() if world_state else "",
     }
 
     def replace(m: re.Match) -> str:
