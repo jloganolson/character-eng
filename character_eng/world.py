@@ -104,6 +104,11 @@ def _read_lines(path: Path) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
+def _load_prompt_file(filename: str) -> str:
+    """Read a system prompt from prompts/ directory."""
+    return (PROMPTS_DIR / filename).read_text()
+
+
 def load_world_state(character: str) -> WorldState | None:
     char_dir = CHARACTERS_DIR / character
     static_path = char_dir / "world_static.txt"
@@ -141,22 +146,6 @@ def _make_client() -> OpenAI:
 
 # --- Director LLM call ---
 
-DIRECTOR_SYSTEM_PROMPT = """\
-You are a world-state director for an interactive fiction engine.
-
-Given the current world state and a description of a change, return a JSON object that updates the world state.
-
-Rules:
-- remove_facts: list of integer indices of dynamic facts to remove (because they are no longer true)
-- add_facts: list of new dynamic fact strings to add (short, present-tense)
-- events: list of past-tense event descriptions (what just happened)
-- Only reference valid indices from the numbered dynamic facts list
-- Keep facts concise — one clause each
-- Events should be vivid but brief
-
-You MUST return a JSON object with exactly these keys: "remove_facts", "add_facts", "events".
-"""
-
 
 def director_call(world: WorldState, change_description: str) -> WorldUpdate:
     """Ask the director LLM to produce a WorldUpdate from a change description."""
@@ -185,7 +174,7 @@ def director_call(world: WorldState, change_description: str) -> WorldUpdate:
     response = client.chat.completions.create(
         model=MODEL,
         messages=[
-            {"role": "system", "content": DIRECTOR_SYSTEM_PROMPT},
+            {"role": "system", "content": _load_prompt_file("director_system.txt")},
             {"role": "user", "content": user_message},
         ],
         temperature=0.2,
@@ -201,20 +190,6 @@ def director_call(world: WorldState, change_description: str) -> WorldUpdate:
 
 
 # --- Think LLM call ---
-
-THINK_SYSTEM_PROMPT = """\
-You are the inner monologue of a character in an interactive fiction.
-
-You have access to the character's system prompt, the current world state, and recent conversation history. Your job is to think about what the character would be feeling, noticing, or wanting to do right now.
-
-Return a JSON object with exactly these keys:
-- "thought": A 1-3 sentence inner monologue in first person, from the character's perspective.
-- "action": One of "no_change", "talk", or "emote".
-  - "no_change": The character has nothing to say or do right now.
-  - "talk": The character wants to say something unprompted.
-  - "emote": The character wants to perform a physical action or express an emotion.
-- "action_detail": If action is "talk", what the character wants to say (a brief directive, not the full dialogue). If action is "emote", what the character does. Empty string if action is "no_change".
-"""
 
 
 def think_call(
@@ -246,7 +221,7 @@ def think_call(
     response = client.chat.completions.create(
         model=MODEL,
         messages=[
-            {"role": "system", "content": THINK_SYSTEM_PROMPT},
+            {"role": "system", "content": _load_prompt_file("think_system.txt")},
             {"role": "user", "content": user_message},
         ],
         temperature=0.7,

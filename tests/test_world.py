@@ -1,10 +1,14 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+import character_eng.world as world_mod
 from character_eng.world import (
     ThinkResult,
     WorldState,
     WorldUpdate,
+    _load_prompt_file,
     director_call,
     format_narrator_message,
     load_world_state,
@@ -348,3 +352,104 @@ def test_think_call_empty_history(mock_make_client):
     assert result.thought == "Nobody is here yet."
     assert result.action == "no_change"
     mock_client.chat.completions.create.assert_called_once()
+
+
+# --- _load_prompt_file ---
+
+
+def test_load_prompt_file_reads_from_disk(tmp_path, monkeypatch):
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "test_prompt.txt").write_text("Hello from disk")
+    assert _load_prompt_file("test_prompt.txt") == "Hello from disk"
+
+
+def test_load_prompt_file_missing_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    with pytest.raises(FileNotFoundError):
+        _load_prompt_file("nonexistent.txt")
+
+
+# --- Prompt reload (file changes picked up between calls) ---
+
+
+@patch("character_eng.world._make_client")
+def test_director_call_reads_prompt_from_file(mock_make_client, tmp_path, monkeypatch):
+    """director_call reads director_system.txt from disk each call."""
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "director_system.txt").write_text("You are director v1.")
+
+    data = {"remove_facts": [], "add_facts": [], "events": ["thing"]}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    director_call(WorldState(), "test")
+
+    # Check the system message sent to the API
+    call_args = mock_client.chat.completions.create.call_args
+    messages = call_args[1]["messages"]
+    assert messages[0]["content"] == "You are director v1."
+
+
+@patch("character_eng.world._make_client")
+def test_director_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatch):
+    """Editing director_system.txt is picked up on the next call without restart."""
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+
+    data = {"remove_facts": [], "add_facts": [], "events": ["thing"]}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    # First call with v1
+    (tmp_path / "director_system.txt").write_text("Director prompt v1")
+    director_call(WorldState(), "test")
+    msgs_v1 = mock_client.chat.completions.create.call_args[1]["messages"]
+    assert msgs_v1[0]["content"] == "Director prompt v1"
+
+    # Edit the file
+    (tmp_path / "director_system.txt").write_text("Director prompt v2")
+    director_call(WorldState(), "test")
+    msgs_v2 = mock_client.chat.completions.create.call_args[1]["messages"]
+    assert msgs_v2[0]["content"] == "Director prompt v2"
+
+
+@patch("character_eng.world._make_client")
+def test_think_call_reads_prompt_from_file(mock_make_client, tmp_path, monkeypatch):
+    """think_call reads think_system.txt from disk each call."""
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "think_system.txt").write_text("You are think v1.")
+
+    data = {"thought": "hmm", "action": "no_change", "action_detail": ""}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    think_call("sys prompt", world=None, history=[])
+
+    call_args = mock_client.chat.completions.create.call_args
+    messages = call_args[1]["messages"]
+    assert messages[0]["content"] == "You are think v1."
+
+
+@patch("character_eng.world._make_client")
+def test_think_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatch):
+    """Editing think_system.txt is picked up on the next call without restart."""
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+
+    data = {"thought": "hmm", "action": "no_change", "action_detail": ""}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    # First call with v1
+    (tmp_path / "think_system.txt").write_text("Think prompt v1")
+    think_call("sys prompt", world=None, history=[])
+    msgs_v1 = mock_client.chat.completions.create.call_args[1]["messages"]
+    assert msgs_v1[0]["content"] == "Think prompt v1"
+
+    # Edit the file
+    (tmp_path / "think_system.txt").write_text("Think prompt v2")
+    think_call("sys prompt", world=None, history=[])
+    msgs_v2 = mock_client.chat.completions.create.call_args[1]["messages"]
+    assert msgs_v2[0]["content"] == "Think prompt v2"

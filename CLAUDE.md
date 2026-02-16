@@ -46,6 +46,12 @@ Optional world state files (line-per-fact format):
 
 `prompts/global_rules.txt` contains rules shared across all characters. Adding a new character requires no code changes — just create the directory with a `prompt.txt`.
 
+System prompts for the director and think systems are also file-based and live-editable:
+- `prompts/director_system.txt` — system prompt for the world-state director LLM
+- `prompts/think_system.txt` — system prompt for the character inner monologue LLM
+
+These are read from disk on every call, so edits take effect immediately (no `/reload` needed).
+
 ## Characters
 
 - **Greg** (`prompts/characters/greg/`) — Robot head on a desk. Orb gazing scenario with world state.
