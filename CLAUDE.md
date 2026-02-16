@@ -74,3 +74,8 @@ Three layers, from fast to slow:
 **`qa_chat`** (`uv run -m character_eng.qa_chat`) — End-to-end integration test hitting real LLM. Parses `test_plan.md` for test scenarios covering chat, world changes, think, and prompt injection. Run manually before releases or after changes to chat/world/think pipeline.
 
 `test_plan.md` is human-editable — add new sections to expand QA coverage without touching code.
+
+**After implementing a plan or making significant changes**, always run the full test suite before reporting done:
+1. `uv run pytest` — unit tests (must pass)
+2. `uv run -m character_eng.qa_chat` — end-to-end QA (must pass)
+3. `uv run -m character_eng.qa_world` — if world.py was touched (must pass)
