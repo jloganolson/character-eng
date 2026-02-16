@@ -1,14 +1,14 @@
 import json
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from character_eng.world import (
+    ThinkResult,
     WorldState,
     WorldUpdate,
     director_call,
     format_narrator_message,
     load_world_state,
+    think_call,
 )
 
 
@@ -183,26 +183,33 @@ def test_format_narrator_message_empty():
     assert msg == "[]"
 
 
+# --- Mock helper for OpenAI responses ---
+
+
+def _mock_openai_response(data: dict):
+    """Create a mock OpenAI completion response with the given JSON data."""
+    mock_message = MagicMock()
+    mock_message.content = json.dumps(data)
+    mock_choice = MagicMock()
+    mock_choice.message = mock_message
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    return mock_response
+
+
 # --- director_call (mocked) ---
 
 
-def _mock_director_response(data: dict):
-    """Create a mock genai response with the given JSON data."""
-    mock_response = MagicMock()
-    mock_response.text = json.dumps(data)
-    mock_client = MagicMock()
-    mock_client.models.generate_content.return_value = mock_response
-    return mock_client
-
-
-@patch("character_eng.world.genai.Client")
-def test_director_call_basic(mock_client_cls):
+@patch("character_eng.world._make_client")
+def test_director_call_basic(mock_make_client):
     data = {
         "remove_facts": [0],
         "add_facts": ["Orb is on floor"],
         "events": ["The orb rolled off the table"],
     }
-    mock_client_cls.return_value = _mock_director_response(data)
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
 
     ws = WorldState(
         static=["Greg is a robot head"],
@@ -214,18 +221,19 @@ def test_director_call_basic(mock_client_cls):
     assert update.add_facts == ["Orb is on floor"]
     assert update.events == ["The orb rolled off the table"]
 
-    # Verify the LLM was called
-    mock_client_cls.return_value.models.generate_content.assert_called_once()
+    mock_client.chat.completions.create.assert_called_once()
 
 
-@patch("character_eng.world.genai.Client")
-def test_director_call_no_removals(mock_client_cls):
+@patch("character_eng.world._make_client")
+def test_director_call_no_removals(mock_make_client):
     data = {
         "remove_facts": [],
         "add_facts": ["A cat entered the room"],
         "events": ["A cat wandered in"],
     }
-    mock_client_cls.return_value = _mock_director_response(data)
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
 
     ws = WorldState(dynamic=["Orb is on table"])
     update = director_call(ws, "a cat walks in")
@@ -235,17 +243,108 @@ def test_director_call_no_removals(mock_client_cls):
     assert update.events == ["A cat wandered in"]
 
 
-@patch("character_eng.world.genai.Client")
-def test_director_call_empty_state(mock_client_cls):
+@patch("character_eng.world._make_client")
+def test_director_call_empty_state(mock_make_client):
     data = {
         "remove_facts": [],
         "add_facts": ["Person is sitting at the desk"],
         "events": ["Someone sat down"],
     }
-    mock_client_cls.return_value = _mock_director_response(data)
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
 
     ws = WorldState()
     update = director_call(ws, "someone sits down")
 
     assert update.add_facts == ["Person is sitting at the desk"]
     assert update.events == ["Someone sat down"]
+
+
+# --- think_call (mocked) ---
+
+
+@patch("character_eng.world._make_client")
+def test_think_call_no_change(mock_make_client):
+    data = {
+        "thought": "I wonder what that orb is doing.",
+        "action": "no_change",
+        "action_detail": "",
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = think_call(
+        system_prompt="You are Greg.",
+        world=WorldState(static=["Greg is a robot head"]),
+        history=[{"role": "user", "content": "Hello"}],
+    )
+
+    assert result.thought == "I wonder what that orb is doing."
+    assert result.action == "no_change"
+    assert result.action_detail == ""
+
+
+@patch("character_eng.world._make_client")
+def test_think_call_talk(mock_make_client):
+    data = {
+        "thought": "I should mention the orb is glowing.",
+        "action": "talk",
+        "action_detail": "Comment on the orb's glow",
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = think_call(
+        system_prompt="You are Greg.",
+        world=WorldState(dynamic=["The orb is glowing"]),
+        history=[{"role": "user", "content": "What's up?"}],
+    )
+
+    assert result.action == "talk"
+    assert result.action_detail == "Comment on the orb's glow"
+
+
+@patch("character_eng.world._make_client")
+def test_think_call_emote(mock_make_client):
+    data = {
+        "thought": "That noise is alarming.",
+        "action": "emote",
+        "action_detail": "Greg's eyes widen with concern",
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = think_call(
+        system_prompt="You are Greg.",
+        world=None,
+        history=[],
+    )
+
+    assert result.action == "emote"
+    assert result.action_detail == "Greg's eyes widen with concern"
+
+
+@patch("character_eng.world._make_client")
+def test_think_call_empty_history(mock_make_client):
+    data = {
+        "thought": "Nobody is here yet.",
+        "action": "no_change",
+        "action_detail": "",
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = think_call(
+        system_prompt="You are Greg.",
+        world=WorldState(static=["Greg is a robot head"]),
+        history=[],
+    )
+
+    assert result.thought == "Nobody is here yet."
+    assert result.action == "no_change"
+    mock_client.chat.completions.create.assert_called_once()

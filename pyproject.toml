@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "google-genai>=1.63.0",
+    "openai>=1.86.0",
     "python-dotenv>=1.2.1",
     "rich>=14.3.2",
 ]

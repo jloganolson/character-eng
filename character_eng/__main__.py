@@ -10,6 +10,7 @@ from character_eng.world import (
     director_call,
     format_narrator_message,
     load_world_state,
+    think_call,
 )
 
 console = Console()
@@ -83,6 +84,9 @@ def chat_loop(character: str):
             elif cmd == "/help":
                 show_help()
                 continue
+            elif cmd == "/think":
+                handle_think(session, world, label)
+                continue
             elif cmd == "/world":
                 if world is None:
                     console.print("[dim]No world state for this character.[/dim]")
@@ -99,6 +103,36 @@ def chat_loop(character: str):
 
             # Send to LLM and stream response
             stream_response(session, label, user_input)
+
+
+def handle_think(session, world, label):
+    """Process a /think command — character inner monologue + optional action."""
+    console.print("[dim]Thinking...[/dim]")
+    try:
+        result = think_call(
+            system_prompt=session.system_prompt,
+            world=world,
+            history=session.get_history(),
+        )
+    except Exception as e:
+        console.print(f"[red]Think error: {e}[/red]")
+        return
+
+    # Display inner monologue
+    console.print(f"[dim italic]💭 {result.thought}[/dim italic]")
+
+    if result.action in ("talk", "emote"):
+        if result.action == "talk":
+            directive = f"[You want to say something unprompted. Directive: {result.action_detail}]"
+            nudge = "[The character speaks.]"
+        else:
+            directive = f"[You feel compelled to act. Directive: {result.action_detail}]"
+            nudge = "[The character acts.]"
+
+        session.inject_system(directive)
+        stream_response(session, label, nudge)
+    else:
+        console.print("[dim]No action taken.[/dim]\n")
 
 
 def handle_world_change(session, world, change_text, label):
@@ -128,10 +162,11 @@ def handle_world_change(session, world, change_text, label):
     # Apply the update
     world.apply_update(update)
 
-    # Inject narrator message and stream character reaction
+    # Inject narrator message as system role and trigger character reaction
     narrator_msg = format_narrator_message(update)
     console.print(f"[dim]{narrator_msg}[/dim]")
-    stream_response(session, label, narrator_msg)
+    session.inject_system(narrator_msg)
+    stream_response(session, label, "[React to what just happened.]")
 
 
 def stream_response(session, label, message):
@@ -167,6 +202,7 @@ def show_help():
         Panel(
             "/world          - Show current world state\n"
             "/world <text>   - Describe a change to the world\n"
+            "/think          - Character inner monologue + optional action\n"
             "/reload         - Reload prompt files, restart conversation\n"
             "/trace          - Show system prompt, model, token usage\n"
             "/back           - Return to character selection\n"
