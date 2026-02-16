@@ -59,3 +59,18 @@ Optional world state files (line-per-fact format):
 - `/trace` — Show system prompt, model, token usage
 - `/back` — Return to character selection
 - `/quit` — Exit program
+
+## Testing
+
+Three layers, from fast to slow:
+
+**Unit tests** (`uv run pytest`) — Fast, mocked, no API calls. Run on every push via git pre-push hook.
+- `tests/test_chat.py` — ChatSession: init, send (message history + streaming), inject_system, get_history, trace_info
+- `tests/test_prompts.py` — Template loading, macro substitution, list_characters
+- `tests/test_world.py` — WorldState (render/apply/show/load), format_narrator, director_call (3 scenarios), think_call (4 scenarios)
+
+**`qa_world`** (`uv run -m character_eng.qa_world`) — Integration test hitting real LLM. 4 cumulative director_call scenarios with strict validation (schema, index ranges, non-empty events). Run manually before releases or after changes to world.py.
+
+**`qa_chat`** (`uv run -m character_eng.qa_chat`) — End-to-end integration test hitting real LLM. Parses `test_plan.md` for test scenarios covering chat, world changes, think, and prompt injection. Run manually before releases or after changes to chat/world/think pipeline.
+
+`test_plan.md` is human-editable — add new sections to expand QA coverage without touching code.

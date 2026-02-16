@@ -3,13 +3,16 @@
 ## basic_chat
 send: Hey Greg, what's that orb?
 expect: non_empty
+expect: in_character
 send: Can I touch it?
 expect: non_empty
+expect: in_character
 
 ## world_change
 world: The orb begins to hum loudly
 expect: non_empty
 expect: world_updated
+expect: in_character
 
 ## think_no_prompt
 think

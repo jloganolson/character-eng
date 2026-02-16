@@ -21,6 +21,39 @@ def test_inject_system_appends_message(mock_openai_cls):
 
 
 @patch("character_eng.chat.OpenAI")
+def test_send_appends_messages_and_yields_chunks(mock_openai_cls):
+    session = ChatSession("You are Greg.")
+
+    # Build mock streaming response: two content chunks + one usage-only chunk
+    chunk1 = MagicMock()
+    chunk1.choices = [MagicMock()]
+    chunk1.choices[0].delta.content = "Hello "
+    chunk1.usage = None
+
+    chunk2 = MagicMock()
+    chunk2.choices = [MagicMock()]
+    chunk2.choices[0].delta.content = "world!"
+    chunk2.usage = None
+
+    chunk3 = MagicMock()
+    chunk3.choices = []
+    chunk3.usage = MagicMock(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+
+    mock_client = mock_openai_cls.return_value
+    mock_client.chat.completions.create.return_value = iter([chunk1, chunk2, chunk3])
+
+    chunks = list(session.send("Hi"))
+
+    assert chunks == ["Hello ", "world!"]
+
+    history = session.get_history()
+    assert len(history) == 3  # system + user + assistant
+    assert history[1] == {"role": "user", "content": "Hi"}
+    assert history[2] == {"role": "assistant", "content": "Hello world!"}
+    assert session._last_usage.total_tokens == 15
+
+
+@patch("character_eng.chat.OpenAI")
 def test_get_history_returns_copy(mock_openai_cls):
     session = ChatSession("You are Greg.")
     history = session.get_history()
