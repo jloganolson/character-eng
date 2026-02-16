@@ -2,18 +2,27 @@
 
 Runs 4 sequential scenarios against the real LLM, validating schema,
 index ranges, and non-empty events. Updates are applied cumulatively.
+Saves full JSON logs to logs/.
 
-Usage: uv run -m character_eng.qa_world
+Usage: uv run -m character_eng.qa_world [--model gemini|cerebras]
 """
 
+import argparse
+import json
 import sys
+from datetime import datetime
+from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
 
+from character_eng.models import DEFAULT_MODEL, MODELS
 from character_eng.world import WorldState, WorldUpdate, director_call
 
 console = Console()
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+LOGS_DIR = PROJECT_ROOT / "logs"
 
 SCENARIOS = [
     "The orb rolls off the table and onto the floor",
@@ -57,7 +66,13 @@ def validate_update(update: WorldUpdate, world: WorldState, scenario_idx: int) -
 
 
 def main():
-    console.print(Panel("[bold]World State Director — QA Integration Test[/bold]", border_style="green"))
+    parser = argparse.ArgumentParser(description="World state director QA integration test")
+    parser.add_argument("--model", default=DEFAULT_MODEL, choices=MODELS.keys(),
+                        help=f"Model to test with (default: {DEFAULT_MODEL})")
+    args = parser.parse_args()
+    model_config = MODELS[args.model]
+
+    console.print(Panel(f"[bold]World State Director — QA Integration Test ({model_config['name']})[/bold]", border_style="green"))
 
     world = WorldState(
         static=[
@@ -76,18 +91,35 @@ def main():
     console.print()
 
     all_passed = True
+    scenarios_log = []
 
     for i, scenario in enumerate(SCENARIOS):
         console.print(f"[bold cyan]Scenario {i + 1}:[/bold cyan] {scenario}")
 
+        scenario_entry = {
+            "scenario": scenario,
+            "world_before": {"static": list(world.static), "dynamic": list(world.dynamic), "events": list(world.events)},
+        }
+
         try:
-            update = director_call(world, scenario)
+            update = director_call(world, scenario, model_config)
         except Exception as e:
             console.print(f"  [red]FAIL — director_call raised: {e}[/red]")
             all_passed = False
+            scenario_entry["error"] = str(e)
+            scenario_entry["result"] = "FAIL"
+            scenarios_log.append(scenario_entry)
             continue
 
         errors = validate_update(update, world, i)
+
+        scenario_entry["update"] = {
+            "remove_facts": update.remove_facts,
+            "add_facts": update.add_facts,
+            "events": update.events,
+        }
+        scenario_entry["validation_errors"] = errors
+        scenario_entry["result"] = "PASS" if not errors else "FAIL"
 
         if errors:
             console.print(f"  [red]FAIL — {len(errors)} validation error(s):[/red]")
@@ -104,15 +136,36 @@ def main():
 
         # Apply cumulatively
         world.apply_update(update)
+        scenario_entry["world_after"] = {"static": list(world.static), "dynamic": list(world.dynamic), "events": list(world.events)}
+        scenarios_log.append(scenario_entry)
         console.print()
 
     console.print(world.show())
     console.print()
 
+    full_log = {
+        "test": "qa_world",
+        "model": args.model,
+        "model_name": model_config["name"],
+        "timestamp": datetime.now().isoformat(),
+        "all_passed": all_passed,
+        "scenarios": scenarios_log,
+    }
+
+    # Write JSON log
+    LOGS_DIR.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = LOGS_DIR / f"qa_world_{args.model}_{timestamp}.json"
+    log_path.write_text(json.dumps(full_log, indent=2))
+
     if all_passed:
         console.print("[bold green]All 4 scenarios passed.[/bold green]")
     else:
         console.print("[bold red]Some scenarios failed.[/bold red]")
+
+    console.print(f"[dim]Log: {log_path}[/dim]")
+
+    if not all_passed:
         sys.exit(1)
 
 

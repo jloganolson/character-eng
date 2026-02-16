@@ -1,10 +1,15 @@
+import json
+import os
 import sys
+from datetime import datetime
+from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
 from character_eng.chat import ChatSession
+from character_eng.models import DEFAULT_MODEL, MODELS
 from character_eng.prompts import list_characters, load_prompt
 from character_eng.world import (
     director_call,
@@ -14,6 +19,75 @@ from character_eng.world import (
 )
 
 console = Console()
+
+LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
+
+
+def save_chat_log(character: str, model_config: dict, log: list[dict]):
+    """Write chat log to logs/ as timestamped JSON."""
+    if not log:
+        return
+    LOGS_DIR.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_key = next((k for k, v in MODELS.items() if v is model_config), "unknown")
+    log_path = LOGS_DIR / f"chat_{character}_{model_key}_{timestamp}.json"
+    data = {
+        "type": "chat",
+        "character": character,
+        "model": model_key,
+        "model_name": model_config["name"],
+        "timestamp": datetime.now().isoformat(),
+        "entries": log,
+    }
+    log_path.write_text(json.dumps(data, indent=2))
+    console.print(f"[dim]Log: {log_path}[/dim]")
+
+
+def pick_model() -> dict | None:
+    """Show model menu, return chosen config or None to quit.
+
+    Only shows models whose API key env var is set. Auto-selects if only one.
+    """
+    available = [
+        (key, cfg) for key, cfg in MODELS.items()
+        if os.environ.get(cfg["api_key_env"])
+    ]
+    if not available:
+        console.print("[red]No API keys found. Set GEMINI_API_KEY or CEREBRAS_API_KEY in .env[/red]")
+        return None
+    if len(available) == 1:
+        key, cfg = available[0]
+        console.print(f"[dim]Using {cfg['name']} (only available model)[/dim]")
+        return cfg
+
+    console.print()
+    console.print("[bold]Available Models[/bold]")
+    for i, (key, cfg) in enumerate(available, 1):
+        default_tag = " [dim](default)[/dim]" if key == DEFAULT_MODEL else ""
+        console.print(f"  [cyan]{i}[/cyan]. {cfg['name']}{default_tag}")
+    console.print(f"  [cyan]q[/cyan]. Quit")
+    console.print()
+
+    while True:
+        try:
+            choice = console.input("[bold]Pick a model:[/bold] ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if choice.lower() == "q":
+            return None
+        if choice == "":
+            # Default selection
+            for key, cfg in available:
+                if key == DEFAULT_MODEL:
+                    return cfg
+            return available[0][1]
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(available):
+                return available[idx][1]
+        except ValueError:
+            pass
+        console.print("[red]Invalid choice, try again.[/red]")
 
 
 def pick_character() -> str | None:
@@ -47,16 +121,17 @@ def pick_character() -> str | None:
         console.print("[red]Invalid choice, try again.[/red]")
 
 
-def chat_loop(character: str):
+def chat_loop(character: str, model_config: dict):
     """Run the chat loop for a character. Returns on /back or Ctrl+C."""
     label = character.replace("_", " ").title()
+    log: list[dict] = []
 
     # Outer loop: handles /reload by restarting with fresh session
     while True:
         world = load_world_state(character)
         system_prompt = load_prompt(character, world_state=world)
-        session = ChatSession(system_prompt)
-        console.print(f"\n[bold green]Chatting with {label}[/bold green]  (type /help for commands)\n")
+        session = ChatSession(system_prompt, model_config)
+        console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]  (type /help for commands)\n")
 
         # Inner loop: conversation turns
         while True:
@@ -64,6 +139,7 @@ def chat_loop(character: str):
                 user_input = console.input("[bold blue]You:[/bold blue] ").strip()
             except (EOFError, KeyboardInterrupt):
                 console.print()
+                save_chat_log(character, model_config, log)
                 return
 
             if not user_input:
@@ -71,12 +147,15 @@ def chat_loop(character: str):
 
             cmd = user_input.lower()
             if cmd == "/quit":
+                save_chat_log(character, model_config, log)
                 console.print("Goodbye!")
                 sys.exit(0)
             elif cmd == "/back":
+                save_chat_log(character, model_config, log)
                 return
             elif cmd == "/reload":
                 console.print("[yellow]Reloading prompts...[/yellow]")
+                log.append({"type": "reload"})
                 break  # break inner loop, outer loop reloads
             elif cmd == "/trace":
                 show_trace(session)
@@ -85,7 +164,7 @@ def chat_loop(character: str):
                 show_help()
                 continue
             elif cmd == "/think":
-                handle_think(session, world, label)
+                handle_think(session, world, label, model_config, log)
                 continue
             elif cmd == "/world":
                 if world is None:
@@ -98,14 +177,15 @@ def chat_loop(character: str):
                     console.print("[dim]No world state for this character.[/dim]")
                     continue
                 change_text = user_input[7:]  # preserve original case
-                handle_world_change(session, world, change_text, label)
+                handle_world_change(session, world, change_text, label, model_config, log)
                 continue
 
             # Send to LLM and stream response
-            stream_response(session, label, user_input)
+            response = stream_response(session, label, user_input)
+            log.append({"type": "send", "input": user_input, "response": response})
 
 
-def handle_think(session, world, label):
+def handle_think(session, world, label, model_config, log):
     """Process a /think command — character inner monologue + optional action."""
     console.print("[dim]Thinking...[/dim]")
     try:
@@ -113,6 +193,7 @@ def handle_think(session, world, label):
             system_prompt=session.system_prompt,
             world=world,
             history=session.get_history(),
+            model_config=model_config,
         )
     except Exception as e:
         console.print(f"[red]Think error: {e}[/red]")
@@ -120,6 +201,13 @@ def handle_think(session, world, label):
 
     # Display inner monologue
     console.print(f"[dim italic]💭 {result.thought}[/dim italic]")
+
+    entry = {
+        "type": "think",
+        "thought": result.thought,
+        "action": result.action,
+        "action_detail": result.action_detail,
+    }
 
     if result.action in ("talk", "emote"):
         if result.action == "talk":
@@ -130,16 +218,19 @@ def handle_think(session, world, label):
             nudge = "[The character acts.]"
 
         session.inject_system(directive)
-        stream_response(session, label, nudge)
+        response = stream_response(session, label, nudge)
+        entry["response"] = response
     else:
         console.print("[dim]No action taken.[/dim]\n")
 
+    log.append(entry)
 
-def handle_world_change(session, world, change_text, label):
+
+def handle_world_change(session, world, change_text, label, model_config, log):
     """Process a /world <description> command."""
     console.print(f"[yellow]Director processing:[/yellow] {change_text}")
     try:
-        update = director_call(world, change_text)
+        update = director_call(world, change_text, model_config)
     except Exception as e:
         console.print(f"[red]Director error: {e}[/red]")
         return
@@ -166,16 +257,31 @@ def handle_world_change(session, world, change_text, label):
     narrator_msg = format_narrator_message(update)
     console.print(f"[dim]{narrator_msg}[/dim]")
     session.inject_system(narrator_msg)
-    stream_response(session, label, "[React to what just happened.]")
+    response = stream_response(session, label, "[React to what just happened.]")
+
+    log.append({
+        "type": "world",
+        "input": change_text,
+        "update": {
+            "remove_facts": update.remove_facts,
+            "add_facts": update.add_facts,
+            "events": update.events,
+        },
+        "narrator": narrator_msg,
+        "response": response,
+    })
 
 
-def stream_response(session, label, message):
-    """Send a message and stream the response."""
+def stream_response(session, label, message) -> str:
+    """Send a message and stream the response. Returns full response text."""
     npc_name = Text(f"{label}: ", style="bold magenta")
     console.print(npc_name, end="")
+    full_response = []
     for chunk in session.send(message):
+        full_response.append(chunk)
         console.print(chunk, end="", highlight=False)
     console.print("\n")
+    return "".join(full_response)
 
 
 def show_trace(session: ChatSession):
@@ -216,12 +322,16 @@ def show_help():
 
 def main():
     console.print(Panel("[bold]NPC Character Chat[/bold]", border_style="green"))
+    model_config = pick_model()
+    if model_config is None:
+        console.print("Goodbye!")
+        return
     while True:
         character = pick_character()
         if character is None:
             console.print("Goodbye!")
             break
-        chat_loop(character)
+        chat_loop(character, model_config)
 
 
 main()

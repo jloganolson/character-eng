@@ -15,8 +15,6 @@ load_dotenv()
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 CHARACTERS_DIR = PROMPTS_DIR / "characters"
 
-MODEL = "gemini-2.0-flash"
-BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 
 # --- Data classes ---
@@ -137,17 +135,17 @@ def format_narrator_message(update: WorldUpdate) -> str:
 # --- OpenAI client ---
 
 
-def _make_client() -> OpenAI:
+def _make_client(model_config: dict) -> OpenAI:
     return OpenAI(
-        api_key=os.environ["GEMINI_API_KEY"],
-        base_url=BASE_URL,
+        api_key=os.environ[model_config["api_key_env"]],
+        base_url=model_config["base_url"],
     )
 
 
 # --- Director LLM call ---
 
 
-def director_call(world: WorldState, change_description: str) -> WorldUpdate:
+def director_call(world: WorldState, change_description: str, model_config: dict) -> WorldUpdate:
     """Ask the director LLM to produce a WorldUpdate from a change description."""
     # Build the user message with numbered dynamic facts
     lines: list[str] = []
@@ -170,9 +168,9 @@ def director_call(world: WorldState, change_description: str) -> WorldUpdate:
 
     user_message = "\n".join(lines)
 
-    client = _make_client()
+    client = _make_client(model_config)
     response = client.chat.completions.create(
-        model=MODEL,
+        model=model_config["model"],
         messages=[
             {"role": "system", "content": _load_prompt_file("director_system.txt")},
             {"role": "user", "content": user_message},
@@ -196,6 +194,7 @@ def think_call(
     system_prompt: str,
     world: WorldState | None,
     history: list[dict],
+    model_config: dict,
     recent_n: int = 10,
 ) -> ThinkResult:
     """Ask the LLM to produce an inner monologue and optional action."""
@@ -217,9 +216,9 @@ def think_call(
 
     user_message = "\n".join(context_parts)
 
-    client = _make_client()
+    client = _make_client(model_config)
     response = client.chat.completions.create(
-        model=MODEL,
+        model=model_config["model"],
         messages=[
             {"role": "system", "content": _load_prompt_file("think_system.txt")},
             {"role": "user", "content": user_message},

@@ -15,6 +15,14 @@ from character_eng.world import (
     think_call,
 )
 
+TEST_CONFIG = {
+    "name": "Test Model",
+    "model": "test-model",
+    "base_url": "https://test.example.com/v1",
+    "api_key_env": "GEMINI_API_KEY",
+    "stream_usage": True,
+}
+
 
 # --- WorldState ---
 
@@ -122,8 +130,6 @@ def test_load_world_state_with_files(tmp_path, monkeypatch):
     (char_dir / "world_static.txt").write_text("Static fact one\nStatic fact two\n")
     (char_dir / "world_dynamic.txt").write_text("Dynamic fact\n\n  \n")
 
-    import character_eng.world as world_mod
-
     monkeypatch.setattr(world_mod, "CHARACTERS_DIR", tmp_path / "characters")
 
     ws = load_world_state("test_char")
@@ -137,8 +143,6 @@ def test_load_world_state_no_files(tmp_path, monkeypatch):
     char_dir = tmp_path / "characters" / "test_char"
     char_dir.mkdir(parents=True)
 
-    import character_eng.world as world_mod
-
     monkeypatch.setattr(world_mod, "CHARACTERS_DIR", tmp_path / "characters")
 
     ws = load_world_state("test_char")
@@ -149,8 +153,6 @@ def test_load_world_state_static_only(tmp_path, monkeypatch):
     char_dir = tmp_path / "characters" / "test_char"
     char_dir.mkdir(parents=True)
     (char_dir / "world_static.txt").write_text("Only static\n")
-
-    import character_eng.world as world_mod
 
     monkeypatch.setattr(world_mod, "CHARACTERS_DIR", tmp_path / "characters")
 
@@ -219,7 +221,7 @@ def test_director_call_basic(mock_make_client):
         static=["Greg is a robot head"],
         dynamic=["Orb is on table"],
     )
-    update = director_call(ws, "the orb rolls off the table")
+    update = director_call(ws, "the orb rolls off the table", TEST_CONFIG)
 
     assert update.remove_facts == [0]
     assert update.add_facts == ["Orb is on floor"]
@@ -240,7 +242,7 @@ def test_director_call_no_removals(mock_make_client):
     mock_make_client.return_value = mock_client
 
     ws = WorldState(dynamic=["Orb is on table"])
-    update = director_call(ws, "a cat walks in")
+    update = director_call(ws, "a cat walks in", TEST_CONFIG)
 
     assert update.remove_facts == []
     assert update.add_facts == ["A cat entered the room"]
@@ -259,7 +261,7 @@ def test_director_call_empty_state(mock_make_client):
     mock_make_client.return_value = mock_client
 
     ws = WorldState()
-    update = director_call(ws, "someone sits down")
+    update = director_call(ws, "someone sits down", TEST_CONFIG)
 
     assert update.add_facts == ["Person is sitting at the desk"]
     assert update.events == ["Someone sat down"]
@@ -283,6 +285,7 @@ def test_think_call_no_change(mock_make_client):
         system_prompt="You are Greg.",
         world=WorldState(static=["Greg is a robot head"]),
         history=[{"role": "user", "content": "Hello"}],
+        model_config=TEST_CONFIG,
     )
 
     assert result.thought == "I wonder what that orb is doing."
@@ -305,6 +308,7 @@ def test_think_call_talk(mock_make_client):
         system_prompt="You are Greg.",
         world=WorldState(dynamic=["The orb is glowing"]),
         history=[{"role": "user", "content": "What's up?"}],
+        model_config=TEST_CONFIG,
     )
 
     assert result.action == "talk"
@@ -326,6 +330,7 @@ def test_think_call_emote(mock_make_client):
         system_prompt="You are Greg.",
         world=None,
         history=[],
+        model_config=TEST_CONFIG,
     )
 
     assert result.action == "emote"
@@ -347,6 +352,7 @@ def test_think_call_empty_history(mock_make_client):
         system_prompt="You are Greg.",
         world=WorldState(static=["Greg is a robot head"]),
         history=[],
+        model_config=TEST_CONFIG,
     )
 
     assert result.thought == "Nobody is here yet."
@@ -383,7 +389,7 @@ def test_director_call_reads_prompt_from_file(mock_make_client, tmp_path, monkey
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    director_call(WorldState(), "test")
+    director_call(WorldState(), "test", TEST_CONFIG)
 
     # Check the system message sent to the API
     call_args = mock_client.chat.completions.create.call_args
@@ -403,13 +409,13 @@ def test_director_call_picks_up_file_changes(mock_make_client, tmp_path, monkeyp
 
     # First call with v1
     (tmp_path / "director_system.txt").write_text("Director prompt v1")
-    director_call(WorldState(), "test")
+    director_call(WorldState(), "test", TEST_CONFIG)
     msgs_v1 = mock_client.chat.completions.create.call_args[1]["messages"]
     assert msgs_v1[0]["content"] == "Director prompt v1"
 
     # Edit the file
     (tmp_path / "director_system.txt").write_text("Director prompt v2")
-    director_call(WorldState(), "test")
+    director_call(WorldState(), "test", TEST_CONFIG)
     msgs_v2 = mock_client.chat.completions.create.call_args[1]["messages"]
     assert msgs_v2[0]["content"] == "Director prompt v2"
 
@@ -425,7 +431,7 @@ def test_think_call_reads_prompt_from_file(mock_make_client, tmp_path, monkeypat
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    think_call("sys prompt", world=None, history=[])
+    think_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
 
     call_args = mock_client.chat.completions.create.call_args
     messages = call_args[1]["messages"]
@@ -444,12 +450,12 @@ def test_think_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatc
 
     # First call with v1
     (tmp_path / "think_system.txt").write_text("Think prompt v1")
-    think_call("sys prompt", world=None, history=[])
+    think_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
     msgs_v1 = mock_client.chat.completions.create.call_args[1]["messages"]
     assert msgs_v1[0]["content"] == "Think prompt v1"
 
     # Edit the file
     (tmp_path / "think_system.txt").write_text("Think prompt v2")
-    think_call("sys prompt", world=None, history=[])
+    think_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
     msgs_v2 = mock_client.chat.completions.create.call_args[1]["messages"]
     assert msgs_v2[0]["content"] == "Think prompt v2"

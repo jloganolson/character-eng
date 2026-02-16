@@ -2,10 +2,18 @@ from unittest.mock import MagicMock, patch
 
 from character_eng.chat import ChatSession
 
+TEST_CONFIG = {
+    "name": "Test Model",
+    "model": "test-model",
+    "base_url": "https://test.example.com/v1",
+    "api_key_env": "GEMINI_API_KEY",
+    "stream_usage": True,
+}
+
 
 @patch("character_eng.chat.OpenAI")
 def test_init_creates_system_message(mock_openai_cls):
-    session = ChatSession("You are Greg.")
+    session = ChatSession("You are Greg.", TEST_CONFIG)
     history = session.get_history()
     assert len(history) == 1
     assert history[0] == {"role": "system", "content": "You are Greg."}
@@ -13,7 +21,7 @@ def test_init_creates_system_message(mock_openai_cls):
 
 @patch("character_eng.chat.OpenAI")
 def test_inject_system_appends_message(mock_openai_cls):
-    session = ChatSession("You are Greg.")
+    session = ChatSession("You are Greg.", TEST_CONFIG)
     session.inject_system("Something happened.")
     history = session.get_history()
     assert len(history) == 2
@@ -22,7 +30,7 @@ def test_inject_system_appends_message(mock_openai_cls):
 
 @patch("character_eng.chat.OpenAI")
 def test_send_appends_messages_and_yields_chunks(mock_openai_cls):
-    session = ChatSession("You are Greg.")
+    session = ChatSession("You are Greg.", TEST_CONFIG)
 
     # Build mock streaming response: two content chunks + one usage-only chunk
     chunk1 = MagicMock()
@@ -54,8 +62,28 @@ def test_send_appends_messages_and_yields_chunks(mock_openai_cls):
 
 
 @patch("character_eng.chat.OpenAI")
+def test_send_without_stream_usage(mock_openai_cls):
+    """When stream_usage is False, stream_options should not be passed."""
+    config = {**TEST_CONFIG, "stream_usage": False}
+    session = ChatSession("You are Greg.", config)
+
+    chunk1 = MagicMock()
+    chunk1.choices = [MagicMock()]
+    chunk1.choices[0].delta.content = "Hi"
+    chunk1.usage = None
+
+    mock_client = mock_openai_cls.return_value
+    mock_client.chat.completions.create.return_value = iter([chunk1])
+
+    list(session.send("Hello"))
+
+    call_kwargs = mock_client.chat.completions.create.call_args[1]
+    assert "stream_options" not in call_kwargs
+
+
+@patch("character_eng.chat.OpenAI")
 def test_get_history_returns_copy(mock_openai_cls):
-    session = ChatSession("You are Greg.")
+    session = ChatSession("You are Greg.", TEST_CONFIG)
     history = session.get_history()
     history.append({"role": "user", "content": "extra"})
     assert len(session.get_history()) == 1  # original unchanged
@@ -63,9 +91,10 @@ def test_get_history_returns_copy(mock_openai_cls):
 
 @patch("character_eng.chat.OpenAI")
 def test_trace_info_without_usage(mock_openai_cls):
-    session = ChatSession("You are Greg.")
+    session = ChatSession("You are Greg.", TEST_CONFIG)
     info = session.trace_info()
-    assert info["model"] == "gemini-2.0-flash"
+    assert "test-model" in info["model"]
+    assert "Test Model" in info["model"]
     assert info["system_prompt"] == "You are Greg."
     assert info["history_length"] == 1
     assert "total_tokens" not in info
@@ -73,7 +102,7 @@ def test_trace_info_without_usage(mock_openai_cls):
 
 @patch("character_eng.chat.OpenAI")
 def test_trace_info_with_usage(mock_openai_cls):
-    session = ChatSession("You are Greg.")
+    session = ChatSession("You are Greg.", TEST_CONFIG)
     mock_usage = MagicMock()
     mock_usage.prompt_tokens = 100
     mock_usage.completion_tokens = 50

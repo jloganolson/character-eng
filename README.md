@@ -1,6 +1,6 @@
 # Character Engine
 
-Interactive NPC chat CLI powered by Gemini Flash. Characters have personalities, world state that evolves during conversation, and an inner monologue system that lets them act autonomously.
+Interactive NPC chat CLI with selectable LLM backend (Gemini Flash or Llama 70B via Cerebras). Characters have personalities, world state that evolves during conversation, and an inner monologue system that lets them act autonomously.
 
 ## Setup
 
@@ -10,11 +10,14 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 uv sync
 ```
 
-Add your Gemini API key to `.env`:
+Add API keys to `.env` (at least one required):
 
 ```
 GEMINI_API_KEY=your_key_here
+CEREBRAS_API_KEY=your_key_here
 ```
+
+If both keys are set, you'll choose a model at startup. If only one is set, it's auto-selected.
 
 ## Run
 
@@ -74,9 +77,15 @@ prompts/characters/my_npc/
 # Unit tests (mocked, fast)
 uv run pytest
 
-# Integration tests (hit real LLM)
-uv run -m character_eng.qa_world    # world state director
-uv run -m character_eng.qa_chat     # end-to-end chat, world, think
+# Integration tests (hit real LLM, default model: gemini)
+uv run -m character_eng.qa_world                  # world state director
+uv run -m character_eng.qa_chat                   # end-to-end chat, world, think
+uv run -m character_eng.qa_world --model cerebras # test with Cerebras
+uv run -m character_eng.qa_chat --model cerebras  # test with Cerebras
 ```
 
 `test_plan.md` defines the QA chat scenarios in a human-editable format — add new test sections without touching code.
+
+## Logs
+
+Every chat session and QA run saves a full JSON log to `logs/` (gitignored). The log path is printed when the session ends. Logs include complete untruncated responses — useful for reviewing conversation quality across models.

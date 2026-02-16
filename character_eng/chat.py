@@ -5,16 +5,14 @@ from openai import OpenAI
 
 load_dotenv()
 
-MODEL = "gemini-2.0-flash"
-BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-
 
 class ChatSession:
-    def __init__(self, system_prompt: str):
+    def __init__(self, system_prompt: str, model_config: dict):
         self.system_prompt = system_prompt
+        self._model_config = model_config
         self._client = OpenAI(
-            api_key=os.environ["GEMINI_API_KEY"],
-            base_url=BASE_URL,
+            api_key=os.environ[model_config["api_key_env"]],
+            base_url=model_config["base_url"],
         )
         self._messages: list[dict] = [
             {"role": "system", "content": system_prompt},
@@ -25,12 +23,15 @@ class ChatSession:
         """Send a message and yield streamed text chunks."""
         self._messages.append({"role": "user", "content": message})
 
-        stream = self._client.chat.completions.create(
-            model=MODEL,
+        kwargs = dict(
+            model=self._model_config["model"],
             messages=self._messages,
             stream=True,
-            stream_options={"include_usage": True},
         )
+        if self._model_config["stream_usage"]:
+            kwargs["stream_options"] = {"include_usage": True}
+
+        stream = self._client.chat.completions.create(**kwargs)
 
         full_response = []
         for chunk in stream:
@@ -54,7 +55,7 @@ class ChatSession:
     def trace_info(self) -> dict:
         """Return diagnostic info about the session."""
         info = {
-            "model": MODEL,
+            "model": f"{self._model_config['model']} ({self._model_config['name']})",
             "system_prompt": self.system_prompt,
             "history_length": len(self._messages),
         }
