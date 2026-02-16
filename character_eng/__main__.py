@@ -91,11 +91,18 @@ def pick_model() -> dict | None:
 
 
 def pick_character() -> str | None:
-    """Show character menu, return chosen name or None to quit."""
+    """Show character menu, return chosen name or None to quit.
+
+    Auto-selects if only one character exists.
+    """
     characters = list_characters()
     if not characters:
         console.print("[red]No characters found in prompts/characters/[/red]")
         return None
+    if len(characters) == 1:
+        label = characters[0].replace("_", " ").title()
+        console.print(f"[dim]Using {label} (only available character)[/dim]")
+        return characters[0]
 
     console.print()
     console.print("[bold]Available Characters[/bold]")
