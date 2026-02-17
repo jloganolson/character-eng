@@ -31,6 +31,20 @@ MODELS = {
         "api_key_env": "GROQ_API_KEY",
         "stream_usage": False,
     },
+    "gemini-3-flash": {
+        "name": "Gemini 3.0 Flash (Google)",
+        "model": "gemini-3-flash-preview",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "api_key_env": "GEMINI_API_KEY",
+        "stream_usage": False,
+    },
+    "gemini-2.5-flash": {
+        "name": "Gemini 2.5 Flash (Google)",
+        "model": "gemini-2.5-flash",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "api_key_env": "GEMINI_API_KEY",
+        "stream_usage": False,
+    },
     # Local models — need vLLM server running (see serve.py)
     "lfm-2.6b": {
         "name": "LFM-2 2.6B (Local)",

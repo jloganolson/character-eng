@@ -16,10 +16,10 @@ uv run -m character_eng
 uv run pytest
 
 # Run world director integration test (hits real LLM)
-uv run -m character_eng.qa_world [--model cerebras-llama|groq-llama|groq-gpt]
+uv run -m character_eng.qa_world [--model cerebras-llama|groq-llama|groq-gpt|gemini-3-flash|gemini-2.5-flash]
 
 # Run chat QA integration test (hits real LLM)
-uv run -m character_eng.qa_chat [--model cerebras-llama|groq-llama|groq-gpt]
+uv run -m character_eng.qa_chat [--model cerebras-llama|groq-llama|groq-gpt|gemini-3-flash|gemini-2.5-flash]
 
 # Start local vLLM server (interactive model picker)
 uv run python -m character_eng.serve
@@ -45,9 +45,9 @@ uv add <package>
 
 ## Architecture
 
-Interactive NPC character chat CLI with selectable LLM backend (Cerebras, Groq, or local vLLM models). All use OpenAI-compatible endpoints. Seven modules:
+Interactive NPC character chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). All use OpenAI-compatible endpoints. Seven modules:
 
-- **`character_eng/models.py`** — Model config registry. `MODELS` dict maps keys (`cerebras-llama`, `cerebras-gpt`, `groq-llama`, `groq-gpt`, `lfm-2.6b`, `lfm-1.2b`) to config dicts with `name`, `model`, `base_url`, `api_key_env`, `stream_usage`. Local models also have `local: True` and `path`. `DEFAULT_MODEL` is `cerebras-llama`.
+- **`character_eng/models.py`** — Model config registry. `MODELS` dict maps keys (`cerebras-llama`, `cerebras-gpt`, `groq-llama`, `groq-gpt`, `gemini-3-flash`, `gemini-2.5-flash`, `lfm-2.6b`, `lfm-1.2b`) to config dicts with `name`, `model`, `base_url`, `api_key_env`, `stream_usage`. Local models also have `local: True` and `path`. `DEFAULT_MODEL` is `cerebras-llama`.
 - **`character_eng/__main__.py`** — TUI entry point. Model selection at startup (`pick_model()`), then character selection. Two nested loops: outer loop loads prompts, world state, and creates a chat session (breaks on `/reload`), inner loop handles user input and dispatches commands (`/reload`, `/trace`, `/back`, `/quit`, `/world`, `/think`). Uses `rich` for colored output and streaming display. Manages integrated vLLM lifecycle: detects unavailable local models, offers to start vLLM via `s` menu option with live output streaming and health polling, auto-cleans up the vLLM process on exit via `atexit` and `finally`.
 - **`character_eng/chat.py`** — `ChatSession` wraps OpenAI client, configured via `model_config` dict (base URL, API key, model name). Manual message history with `system`/`user`/`assistant` roles. `inject_system()` appends system-role messages mid-conversation. `get_history()` returns message list for `/think` context. Streams responses via generator. `stream_options` only sent when `model_config["stream_usage"]` is True (Cerebras doesn't support it).
 - **`character_eng/prompts.py`** — Filesystem-based template engine. Scans `prompts/characters/` for subdirs containing `prompt.txt`. Resolves `{{key}}` macros via regex substitution (`global_rules`, `character`, `scenario`, `world`). Unknown macros left intact for debugging.
@@ -82,6 +82,8 @@ Model is chosen once at startup. All systems (chat, director, think) use the sam
 - **GPT-OSS 120B** (`cerebras-gpt`) — `gpt-oss-120b` via Cerebras. Does not support `stream_options`. Requires `CEREBRAS_API_KEY`.
 - **Llama 3.3 70B** (`groq-llama`) — `llama-3.3-70b-versatile` via Groq. Does not support `stream_options`. Requires `GROQ_API_KEY`.
 - **GPT-OSS 120B** (`groq-gpt`) — `openai/gpt-oss-120b` via Groq. Does not support `stream_options`. Requires `GROQ_API_KEY`.
+- **Gemini 3.0 Flash** (`gemini-3-flash`) — `gemini-3-flash-preview` via Google. Does not support `stream_options`. Requires `GEMINI_API_KEY`.
+- **Gemini 2.5 Flash** (`gemini-2.5-flash`) — `gemini-2.5-flash` via Google. Does not support `stream_options`. Requires `GEMINI_API_KEY`.
 - **LFM-2 2.6B** (`lfm-2.6b`) — Local via vLLM. Requires running `serve.py` first.
 - **LFM-2.5 1.2B** (`lfm-1.2b`) — Local via vLLM. Requires running `serve.py` first.
 

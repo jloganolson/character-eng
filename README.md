@@ -1,6 +1,6 @@
 # Character Engine
 
-Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, or local vLLM models). Characters have personalities, world state that evolves during conversation, and an inner monologue system that lets them act autonomously.
+Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Characters have personalities, world state that evolves during conversation, and an inner monologue system that lets them act autonomously.
 
 ## Setup
 
@@ -15,6 +15,7 @@ Add API keys to `.env` (at least one required):
 ```
 CEREBRAS_API_KEY=your_key_here
 GROQ_API_KEY=your_key_here
+GEMINI_API_KEY=your_key_here
 ```
 
 If multiple keys are set, you'll choose a model at startup. If only one is set, it's auto-selected.
