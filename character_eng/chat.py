@@ -10,8 +10,9 @@ class ChatSession:
     def __init__(self, system_prompt: str, model_config: dict):
         self.system_prompt = system_prompt
         self._model_config = model_config
+        api_key = model_config.get("api_key") or os.environ[model_config["api_key_env"]]
         self._client = OpenAI(
-            api_key=os.environ[model_config["api_key_env"]],
+            api_key=api_key,
             base_url=model_config["base_url"],
         )
         self._messages: list[dict] = [

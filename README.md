@@ -1,6 +1,6 @@
 # Character Engine
 
-Interactive NPC chat CLI with selectable LLM backend (Gemini Flash or Llama 70B via Cerebras). Characters have personalities, world state that evolves during conversation, and an inner monologue system that lets them act autonomously.
+Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, or local vLLM models). Characters have personalities, world state that evolves during conversation, and an inner monologue system that lets them act autonomously.
 
 ## Setup
 
@@ -13,11 +13,11 @@ uv sync
 Add API keys to `.env` (at least one required):
 
 ```
-GEMINI_API_KEY=your_key_here
 CEREBRAS_API_KEY=your_key_here
+GROQ_API_KEY=your_key_here
 ```
 
-If both keys are set, you'll choose a model at startup. If only one is set, it's auto-selected.
+If multiple keys are set, you'll choose a model at startup. If only one is set, it's auto-selected.
 
 ## Run
 
@@ -71,17 +71,36 @@ prompts/characters/my_npc/
   scenario.txt
 ```
 
+## Local models
+
+Local models run via vLLM on your GPU. Use `serve.py` to start the server:
+
+```bash
+# Start vLLM server (interactive model picker)
+uv run python -m character_eng.serve
+
+# Start a specific model directly
+uv run python -m character_eng.serve lfm-2.6b
+
+# Kill the server
+lsof -ti:8000 | xargs kill -9
+```
+
+Available local models: LFM-2 2.6B (`lfm-2.6b`), LFM-2.5 1.2B (`lfm-1.2b`). The server auto-kills any existing process on port 8000 before starting.
+
+Local models appear in the model menu automatically when the vLLM server is running.
+
 ## Testing
 
 ```bash
 # Unit tests (mocked, fast)
 uv run pytest
 
-# Integration tests (hit real LLM, default model: gemini)
-uv run -m character_eng.qa_world                  # world state director
-uv run -m character_eng.qa_chat                   # end-to-end chat, world, think
-uv run -m character_eng.qa_world --model cerebras # test with Cerebras
-uv run -m character_eng.qa_chat --model cerebras  # test with Cerebras
+# Integration tests (hit real LLM, default model: cerebras-llama)
+uv run -m character_eng.qa_world                       # world state director
+uv run -m character_eng.qa_chat                        # end-to-end chat, world, think
+uv run -m character_eng.qa_world --model groq-llama    # test with Groq Llama
+uv run -m character_eng.qa_chat --model groq-llama     # test with Groq Llama
 ```
 
 `test_plan.md` defines the QA chat scenarios in a human-editable format — add new test sections without touching code.

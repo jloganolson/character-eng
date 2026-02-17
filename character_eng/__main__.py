@@ -46,17 +46,32 @@ def save_chat_log(character: str, model_config: dict, log: list[dict]):
     console.print(f"[dim]Log: {log_path}[/dim]")
 
 
+def _is_local_server_up(base_url: str) -> bool:
+    """Quick check if local vLLM server is responding."""
+    try:
+        import urllib.request
+        health_url = base_url.replace("/v1", "/health")
+        urllib.request.urlopen(health_url, timeout=1)
+        return True
+    except Exception:
+        return False
+
+
 def pick_model() -> dict | None:
     """Show model menu, return chosen config or None to quit.
 
-    Only shows models whose API key env var is set. Auto-selects if only one.
+    Cloud models need their API key env set. Local models need the vLLM server up.
+    Auto-selects if only one is available.
     """
-    available = [
-        (key, cfg) for key, cfg in MODELS.items()
-        if os.environ.get(cfg["api_key_env"])
-    ]
+    available = []
+    for key, cfg in MODELS.items():
+        if cfg.get("local"):
+            if _is_local_server_up(cfg["base_url"]):
+                available.append((key, cfg))
+        elif os.environ.get(cfg.get("api_key_env", "")):
+            available.append((key, cfg))
     if not available:
-        console.print("[red]No API keys found. Set GEMINI_API_KEY or CEREBRAS_API_KEY in .env[/red]")
+        console.print("[red]No models available. Set an API key in .env or start a local vLLM server.[/red]")
         return None
     if len(available) == 1:
         key, cfg = available[0]

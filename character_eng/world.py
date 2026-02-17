@@ -201,8 +201,9 @@ def format_narrator_message(update: WorldUpdate) -> str:
 
 
 def _make_client(model_config: dict) -> OpenAI:
+    api_key = model_config.get("api_key") or os.environ[model_config["api_key_env"]]
     return OpenAI(
-        api_key=os.environ[model_config["api_key_env"]],
+        api_key=api_key,
         base_url=model_config["base_url"],
     )
 
