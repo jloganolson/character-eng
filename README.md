@@ -73,7 +73,11 @@ prompts/characters/my_npc/
 
 ## Local models
 
-Local models run via vLLM on your GPU. Use `serve.py` to start the server:
+Local models run via vLLM on your GPU. You can start vLLM two ways:
+
+**From the app** (recommended) — when local models are configured but vLLM isn't running, the model menu shows a hint and an `s` option to start a local model. Pick a model, and vLLM launches with live output streaming. Once healthy, the model is auto-selected. The vLLM process is cleaned up automatically when you quit the app.
+
+**Standalone** — use `serve.py` directly:
 
 ```bash
 # Start vLLM server (interactive model picker)
@@ -87,8 +91,6 @@ lsof -ti:8000 | xargs kill -9
 ```
 
 Available local models: LFM-2 2.6B (`lfm-2.6b`), LFM-2.5 1.2B (`lfm-1.2b`). The server auto-kills any existing process on port 8000 before starting.
-
-Local models appear in the model menu automatically when the vLLM server is running.
 
 ## Testing
 

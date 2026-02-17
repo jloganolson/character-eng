@@ -113,3 +113,25 @@ def test_trace_info_with_usage(mock_openai_cls):
     assert info["prompt_tokens"] == 100
     assert info["response_tokens"] == 50
     assert info["total_tokens"] == 150
+
+
+LOCAL_CONFIG = {
+    "name": "LFM-2 2.6B (Local)",
+    "model": "lfm-2.6b",
+    "base_url": "http://localhost:8000/v1",
+    "api_key": "local",
+    "stream_usage": False,
+    "local": True,
+    "path": "/tmp/fake-model",
+}
+
+
+@patch("character_eng.chat.OpenAI")
+def test_init_with_direct_api_key(mock_openai_cls):
+    """Local model configs use api_key directly instead of api_key_env."""
+    session = ChatSession("You are Greg.", LOCAL_CONFIG)
+    mock_openai_cls.assert_called_once_with(
+        api_key="local",
+        base_url="http://localhost:8000/v1",
+    )
+    assert session.get_history()[0] == {"role": "system", "content": "You are Greg."}

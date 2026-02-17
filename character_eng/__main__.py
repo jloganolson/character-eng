@@ -1,6 +1,11 @@
+import atexit
 import json
 import os
+import subprocess
 import sys
+import threading
+import time
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +16,7 @@ from rich.text import Text
 from character_eng.chat import ChatSession
 from character_eng.models import DEFAULT_MODEL, MODELS
 from character_eng.prompts import list_characters, load_prompt
+from character_eng.serve import build_vllm_cmd, get_local_models, kill_port
 from character_eng.world import (
     Goals,
     GoalUpdate,
@@ -22,6 +28,8 @@ from character_eng.world import (
 )
 
 console = Console()
+
+_vllm_process: subprocess.Popen | None = None
 
 LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 
@@ -46,10 +54,129 @@ def save_chat_log(character: str, model_config: dict, log: list[dict]):
     console.print(f"[dim]Log: {log_path}[/dim]")
 
 
+def _stop_vllm():
+    """Terminate the managed vLLM process if running."""
+    global _vllm_process
+    if _vllm_process is not None and _vllm_process.poll() is None:
+        console.print("[dim]Stopping vLLM server...[/dim]")
+        _vllm_process.terminate()
+        try:
+            _vllm_process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            _vllm_process.kill()
+            _vllm_process.wait()
+    _vllm_process = None
+
+
+atexit.register(_stop_vllm)
+
+
+def _start_local_model() -> dict | None:
+    """Show local model sub-menu, start vLLM, return model config or None."""
+    global _vllm_process
+    local_models = get_local_models()
+    if not local_models:
+        return None
+
+    # Sub-menu for local model selection
+    console.print()
+    console.print("[bold]Local Models[/bold]")
+    for i, (key, cfg) in enumerate(local_models, 1):
+        console.print(f"  [cyan]{i}[/cyan]. {cfg['name']}")
+    console.print(f"  [cyan]b[/cyan]. Back")
+    console.print()
+
+    while True:
+        try:
+            choice = console.input("[bold]Pick a local model:[/bold] ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if choice.lower() == "b":
+            return None
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(local_models):
+                break
+        except ValueError:
+            pass
+        console.print("[red]Invalid choice, try again.[/red]")
+
+    key, cfg = local_models[idx]
+    path = cfg.get("path", "")
+    if not os.path.exists(path):
+        console.print(f"[red]Model path not found: {path}[/red]")
+        return None
+
+    # Kill existing port, build command, launch
+    kill_port("8000")
+    cmd = build_vllm_cmd(key, cfg)
+    console.print(f"[dim]Starting: {' '.join(cmd)}[/dim]\n")
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except FileNotFoundError:
+        console.print("[red]vllm command not found. Is vLLM installed?[/red]")
+        return None
+
+    _vllm_process = proc
+
+    # Stream vLLM output in a background thread
+    output_lines: list[str] = []
+    def _stream_output():
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            output_lines.append(line)
+            console.print(f"[dim]{line}[/dim]")
+
+    thread = threading.Thread(target=_stream_output, daemon=True)
+    thread.start()
+
+    # Poll /health every 2s, with 120s timeout
+    health_url = cfg["base_url"].replace("/v1", "/health")
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        # Check if process died
+        if proc.poll() is not None:
+            thread.join(timeout=2)
+            console.print("[red]vLLM failed to start.[/red]")
+            tail = output_lines[-10:] if output_lines else ["(no output)"]
+            for line in tail:
+                console.print(f"[dim]  {line}[/dim]")
+            _vllm_process = None
+            return None
+
+        # Check health
+        try:
+            urllib.request.urlopen(health_url, timeout=2)
+            console.print(f"[green]✓ vLLM ready[/green]")
+            return cfg
+        except Exception:
+            pass
+
+        time.sleep(2)
+
+    # Timeout
+    console.print("[red]vLLM not ready after 120s.[/red]")
+    tail = output_lines[-10:] if output_lines else ["(no output)"]
+    for line in tail:
+        console.print(f"[dim]  {line}[/dim]")
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    _vllm_process = None
+    return None
+
+
 def _is_local_server_up(base_url: str) -> bool:
     """Quick check if local vLLM server is responding."""
     try:
-        import urllib.request
         health_url = base_url.replace("/v1", "/health")
         urllib.request.urlopen(health_url, timeout=1)
         return True
@@ -61,7 +188,7 @@ def pick_model() -> dict | None:
     """Show model menu, return chosen config or None to quit.
 
     Cloud models need their API key env set. Local models need the vLLM server up.
-    Auto-selects if only one is available.
+    Auto-selects if only one is available. Offers to start vLLM for unavailable local models.
     """
     available = []
     for key, cfg in MODELS.items():
@@ -70,19 +197,35 @@ def pick_model() -> dict | None:
                 available.append((key, cfg))
         elif os.environ.get(cfg.get("api_key_env", "")):
             available.append((key, cfg))
-    if not available:
+
+    # Detect unavailable local models
+    local_all = get_local_models()
+    local_available_keys = {k for k, _ in available if MODELS[k].get("local")}
+    unavailable_local = [(k, c) for k, c in local_all if k not in local_available_keys]
+    has_start_option = len(unavailable_local) > 0
+
+    if not available and not has_start_option:
         console.print("[red]No models available. Set an API key in .env or start a local vLLM server.[/red]")
         return None
-    if len(available) == 1:
+
+    if len(available) == 1 and not has_start_option:
         key, cfg = available[0]
         console.print(f"[dim]Using {cfg['name']} (only available model)[/dim]")
         return cfg
+
+    # Show hint about unavailable local models
+    if has_start_option:
+        n = len(unavailable_local)
+        noun = "model" if n == 1 else "models"
+        console.print(f"[dim]{n} local {noun} configured but vLLM not running[/dim]")
 
     console.print()
     console.print("[bold]Available Models[/bold]")
     for i, (key, cfg) in enumerate(available, 1):
         default_tag = " [dim](default)[/dim]" if key == DEFAULT_MODEL else ""
         console.print(f"  [cyan]{i}[/cyan]. {cfg['name']}{default_tag}")
+    if has_start_option:
+        console.print(f"  [cyan]s[/cyan]. Start local model")
     console.print(f"  [cyan]q[/cyan]. Quit")
     console.print()
 
@@ -93,12 +236,20 @@ def pick_model() -> dict | None:
             return None
         if choice.lower() == "q":
             return None
+        if choice.lower() == "s" and has_start_option:
+            result = _start_local_model()
+            if result is not None:
+                return result
+            # Fall back to menu on failure — re-display
+            return pick_model()
         if choice == "":
             # Default selection
             for key, cfg in available:
                 if key == DEFAULT_MODEL:
                     return cfg
-            return available[0][1]
+            if available:
+                return available[0][1]
+            continue
         try:
             idx = int(choice) - 1
             if 0 <= idx < len(available):
@@ -422,16 +573,19 @@ def show_help():
 
 def main():
     console.print(Panel("[bold]NPC Character Chat[/bold]", border_style="green"))
-    model_config = pick_model()
-    if model_config is None:
-        console.print("Goodbye!")
-        return
-    while True:
-        character = pick_character()
-        if character is None:
+    try:
+        model_config = pick_model()
+        if model_config is None:
             console.print("Goodbye!")
-            break
-        chat_loop(character, model_config)
+            return
+        while True:
+            character = pick_character()
+            if character is None:
+                console.print("Goodbye!")
+                break
+            chat_loop(character, model_config)
+    finally:
+        _stop_vllm()
 
 
 if __name__ == "__main__":

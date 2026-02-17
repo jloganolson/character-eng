@@ -55,6 +55,17 @@ def kill_port(port: str):
         pass  # lsof not available, skip
 
 
+def build_vllm_cmd(key: str, cfg: dict, port: str = PORT) -> list[str]:
+    """Build the vllm serve command list for a local model."""
+    return [
+        "vllm", "serve", cfg["path"],
+        "--served-model-name", key,
+        "--port", port,
+        "--trust-remote-code",
+        "--gpu-memory-utilization", "0.85",
+    ]
+
+
 def main():
     local_models = get_local_models()
     if not local_models:
@@ -82,13 +93,7 @@ def main():
 
     kill_port(PORT)
 
-    cmd = [
-        "vllm", "serve", path,
-        "--served-model-name", key,
-        "--port", PORT,
-        "--trust-remote-code",
-        "--gpu-memory-utilization", "0.85",
-    ]
+    cmd = build_vllm_cmd(key, cfg)
     print(f"\nStarting: {' '.join(cmd)}\n")
     os.execvp("vllm", cmd)
 
