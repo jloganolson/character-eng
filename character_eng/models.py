@@ -17,6 +17,13 @@ MODELS = {
         "api_key_env": "GROQ_API_KEY",
         "stream_usage": False,
     },
+    "cerebras-gpt": {
+        "name": "GPT-OSS 120B (Cerebras)",
+        "model": "gpt-oss-120b",
+        "base_url": "https://api.cerebras.ai/v1",
+        "api_key_env": "CEREBRAS_API_KEY",
+        "stream_usage": False,
+    },
     "groq-gpt": {
         "name": "GPT-OSS 120B (Groq)",
         "model": "openai/gpt-oss-120b",

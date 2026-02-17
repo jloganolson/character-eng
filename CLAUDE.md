@@ -27,6 +27,12 @@ uv run python -m character_eng.serve
 # Start a specific local model
 uv run python -m character_eng.serve lfm-2.6b
 
+# Run model speed benchmark (all available models, 3 runs each)
+uv run -m character_eng.benchmark
+
+# Benchmark a specific model with custom run count
+uv run -m character_eng.benchmark --model cerebras-llama --runs 5
+
 # Kill local vLLM server
 lsof -ti:8000 | xargs kill -9
 
@@ -39,13 +45,14 @@ uv add <package>
 
 ## Architecture
 
-Interactive NPC character chat CLI with selectable LLM backend (Cerebras, Groq, or local vLLM models). All use OpenAI-compatible endpoints. Six modules:
+Interactive NPC character chat CLI with selectable LLM backend (Cerebras, Groq, or local vLLM models). All use OpenAI-compatible endpoints. Seven modules:
 
-- **`character_eng/models.py`** — Model config registry. `MODELS` dict maps keys (`cerebras-llama`, `groq-llama`, `groq-gpt`, `lfm-2.6b`, `lfm-1.2b`) to config dicts with `name`, `model`, `base_url`, `api_key_env`, `stream_usage`. Local models also have `local: True` and `path`. `DEFAULT_MODEL` is `cerebras-llama`.
+- **`character_eng/models.py`** — Model config registry. `MODELS` dict maps keys (`cerebras-llama`, `cerebras-gpt`, `groq-llama`, `groq-gpt`, `lfm-2.6b`, `lfm-1.2b`) to config dicts with `name`, `model`, `base_url`, `api_key_env`, `stream_usage`. Local models also have `local: True` and `path`. `DEFAULT_MODEL` is `cerebras-llama`.
 - **`character_eng/__main__.py`** — TUI entry point. Model selection at startup (`pick_model()`), then character selection. Two nested loops: outer loop loads prompts, world state, and creates a chat session (breaks on `/reload`), inner loop handles user input and dispatches commands (`/reload`, `/trace`, `/back`, `/quit`, `/world`, `/think`). Uses `rich` for colored output and streaming display. Manages integrated vLLM lifecycle: detects unavailable local models, offers to start vLLM via `s` menu option with live output streaming and health polling, auto-cleans up the vLLM process on exit via `atexit` and `finally`.
 - **`character_eng/chat.py`** — `ChatSession` wraps OpenAI client, configured via `model_config` dict (base URL, API key, model name). Manual message history with `system`/`user`/`assistant` roles. `inject_system()` appends system-role messages mid-conversation. `get_history()` returns message list for `/think` context. Streams responses via generator. `stream_options` only sent when `model_config["stream_usage"]` is True (Cerebras doesn't support it).
 - **`character_eng/prompts.py`** — Filesystem-based template engine. Scans `prompts/characters/` for subdirs containing `prompt.txt`. Resolves `{{key}}` macros via regex substitution (`global_rules`, `character`, `scenario`, `world`). Unknown macros left intact for debugging.
 - **`character_eng/world.py`** — World state system. `WorldState` dataclass tracks static facts, mutable dynamic facts, and an event log. `director_call` sends a one-shot LLM call with JSON output to produce a `WorldUpdate` (remove/add facts, events). `think_call` produces a `ThinkResult` (inner monologue + optional action). Both accept `model_config`. `format_narrator_message` turns updates into `[bracketed stage directions]` injected as system-role messages.
+- **`character_eng/benchmark.py`** — Model speed benchmark. Runnable via `uv run -m character_eng.benchmark [--model KEY] [--runs N]`. Benchmarks three scenarios matching real usage: streaming chat (TTFT + total time), structured JSON director call, and structured JSON think call. Uses Greg's full prompts and world state for realistic payloads. Prints per-run details and a rich summary table, saves JSON logs to `logs/`.
 - **`character_eng/serve.py`** — vLLM server launcher for local models. Scans `MODELS` for entries with `local: True`, kills any existing process on port 8000, then exec's into `vllm serve`. Accepts optional model key as CLI arg or shows interactive picker. Exports `build_vllm_cmd(key, cfg, port)`, `get_local_models()`, and `kill_port(port)` for reuse by `__main__.py`.
 
 ## Prompt system
@@ -72,6 +79,7 @@ These are read from disk on every call, so edits take effect immediately (no `/r
 Model is chosen once at startup. All systems (chat, director, think) use the same model. Available models:
 
 - **Llama 3.1 8B** (`cerebras-llama`) — `llama3.1-8b` via Cerebras. Fast inference. Does not support `stream_options`. Requires `CEREBRAS_API_KEY`.
+- **GPT-OSS 120B** (`cerebras-gpt`) — `gpt-oss-120b` via Cerebras. Does not support `stream_options`. Requires `CEREBRAS_API_KEY`.
 - **Llama 3.3 70B** (`groq-llama`) — `llama-3.3-70b-versatile` via Groq. Does not support `stream_options`. Requires `GROQ_API_KEY`.
 - **GPT-OSS 120B** (`groq-gpt`) — `openai/gpt-oss-120b` via Groq. Does not support `stream_options`. Requires `GROQ_API_KEY`.
 - **LFM-2 2.6B** (`lfm-2.6b`) — Local via vLLM. Requires running `serve.py` first.
@@ -97,6 +105,7 @@ Cloud models need their API key set in `.env`. Local models can be started direc
 
 All sessions save full JSON logs to `logs/` (gitignored). Log path is printed on session end.
 
+- **Benchmarks**: `logs/benchmark_{timestamp}.json` — per-run timing (TTFT, total ms) and full response text for each scenario
 - **Chat sessions**: `logs/chat_{character}_{model}_{timestamp}.json` — every send, world change, and think with full untruncated responses
 - **QA chat**: `logs/qa_chat_{model}_{timestamp}.json` — same detail plus expect results
 - **QA world**: `logs/qa_world_{model}_{timestamp}.json` — world state before/after each scenario plus director updates

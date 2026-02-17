@@ -107,6 +107,20 @@ uv run -m character_eng.qa_chat --model groq-llama     # test with Groq Llama
 
 `test_plan.md` defines the QA chat scenarios in a human-editable format — add new test sections without touching code.
 
+## Benchmarking
+
+Measure real-world latency across all available models for the three LLM call patterns: streaming chat, structured JSON director calls, and structured JSON think calls.
+
+```bash
+# Benchmark all available models (3 runs per scenario)
+uv run -m character_eng.benchmark
+
+# Benchmark a specific model with more runs
+uv run -m character_eng.benchmark --model cerebras-llama --runs 5
+```
+
+Prints per-run details (TTFT, total time, response text) and a summary table with averages and standard deviations. Full results are saved to `logs/benchmark_*.json`.
+
 ## Logs
 
 Every chat session and QA run saves a full JSON log to `logs/` (gitignored). The log path is printed when the session ends. Logs include complete untruncated responses — useful for reviewing conversation quality across models.
