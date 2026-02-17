@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 import urllib.request
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from character_eng.world import (
     condition_check_call,
     eval_call,
     format_pending_narrator,
+    load_beat_guide,
     load_goals,
     load_world_state,
     plan_call,
@@ -108,19 +110,20 @@ def _check_reconcile(world, log):
     })
 
 
-def save_chat_log(character: str, model_config: dict, log: list[dict]):
+def save_chat_log(character: str, model_config: dict, log: list[dict], session_id: str = ""):
     """Write chat log to logs/ as timestamped JSON."""
     if not log:
         return
     LOGS_DIR.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     model_key = next((k for k, v in MODELS.items() if v is model_config), "unknown")
-    log_path = LOGS_DIR / f"chat_{character}_{model_key}_{timestamp}.json"
+    log_path = LOGS_DIR / f"chat_{character}_{model_key}_{session_id}_{timestamp}.json"
     data = {
         "type": "chat",
         "character": character,
         "model": model_key,
         "model_name": model_config["name"],
+        "session_id": session_id,
         "timestamp": datetime.now().isoformat(),
         "entries": log,
     }
@@ -387,6 +390,7 @@ def get_plan_model_config():
 def chat_loop(character: str, model_config: dict):
     """Run the chat loop for a character. Returns on /back or Ctrl+C."""
     label = character.replace("_", " ").title()
+    session_id = uuid.uuid4().hex[:8]
     log: list[dict] = []
     plan_model_config = get_plan_model_config()
 
@@ -411,15 +415,15 @@ def chat_loop(character: str, model_config: dict):
 
         had_user_input = False
 
-        console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]  (type /help for commands)\n")
+        console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]  [dim]{session_id}[/dim]  (type /help for commands)\n")
 
         # Inner loop: conversation turns
         while True:
             try:
-                user_input = console.input("[bold blue]You:[/bold blue] ").strip()
+                user_input = console.input(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: ").strip()
             except (EOFError, KeyboardInterrupt):
                 console.print()
-                save_chat_log(character, model_config, log)
+                save_chat_log(character, model_config, log, session_id)
                 return
 
             if not user_input:
@@ -431,11 +435,11 @@ def chat_loop(character: str, model_config: dict):
 
             cmd = user_input.lower()
             if cmd == "/quit":
-                save_chat_log(character, model_config, log)
+                save_chat_log(character, model_config, log, session_id)
                 console.print("Goodbye!")
                 sys.exit(0)
             elif cmd == "/back":
-                save_chat_log(character, model_config, log)
+                save_chat_log(character, model_config, log, session_id)
                 return
             elif cmd == "/reload":
                 console.print("[yellow]Reloading prompts...[/yellow]")
@@ -502,9 +506,8 @@ def chat_loop(character: str, model_config: dict):
                     apply_plan(script, plan_result)
 
             if script.current_beat is not None:
-                # Normal path: paste pre-rendered beat as response, then eval
-                session.inject_system(f"[The user says: {user_input}]")
-                response = deliver_beat(session, script.current_beat, label)
+                # Normal path: LLM-guided beat delivery — reacts to user while serving intent
+                response = stream_guided_beat(session, script.current_beat, label, user_input)
                 entry = {"type": "send", "input": user_input, "response": response}
 
                 eval_result = run_eval(session, world, goals, script, model_config)
@@ -623,6 +626,41 @@ def deliver_beat(session, beat, label):
     console.print()
     session.add_assistant(beat.line)
     return beat.line
+
+
+def stream_guided_beat(session, beat, label, user_input) -> str:
+    """Use the beat's intent to guide an LLM response that reacts to user input.
+
+    Injects beat guidance as a system message, then streams a real LLM response.
+    The LLM sees the intent and example line, but generates its own dialogue that
+    acknowledges what the user said. Returns the full response text.
+    """
+    # Display beat metadata (gaze/expression) before delivery
+    if beat.gaze or beat.expression:
+        parts = []
+        if beat.gaze:
+            parts.append(f"gaze:{beat.gaze}")
+        if beat.expression:
+            parts.append(f"emote:{beat.expression}")
+        console.print(f"[dim]  {', '.join(parts)}[/dim]")
+
+    # Inject beat guidance so the LLM knows the intent
+    guidance = load_beat_guide(beat.intent, beat.line)
+    session.inject_system(guidance)
+
+    # Stream a real LLM response guided by the beat intent
+    response = stream_response(session, label, user_input)
+
+    # Inject beat gaze/expression metadata after response
+    meta_parts = []
+    if beat.gaze:
+        meta_parts.append(f"[gaze:{beat.gaze}]")
+    if beat.expression:
+        meta_parts.append(f"[emote:{beat.expression}]")
+    if meta_parts:
+        session.inject_system(" ".join(meta_parts))
+
+    return response
 
 
 def apply_plan(script, plan_result):
