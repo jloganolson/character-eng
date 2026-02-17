@@ -12,8 +12,11 @@ from character_eng.chat import ChatSession
 from character_eng.models import DEFAULT_MODEL, MODELS
 from character_eng.prompts import list_characters, load_prompt
 from character_eng.world import (
+    Goals,
+    GoalUpdate,
     director_call,
     format_narrator_message,
+    load_goals,
     load_world_state,
     think_call,
 )
@@ -136,7 +139,8 @@ def chat_loop(character: str, model_config: dict):
     # Outer loop: handles /reload by restarting with fresh session
     while True:
         world = load_world_state(character)
-        system_prompt = load_prompt(character, world_state=world)
+        goals = load_goals(character)
+        system_prompt = load_prompt(character, world_state=world, goals=goals)
         session = ChatSession(system_prompt, model_config)
         console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]  (type /help for commands)\n")
 
@@ -171,7 +175,13 @@ def chat_loop(character: str, model_config: dict):
                 show_help()
                 continue
             elif cmd == "/think":
-                handle_think(session, world, label, model_config, log)
+                handle_think(session, world, goals, label, model_config, log)
+                continue
+            elif cmd == "/goals":
+                if goals is None:
+                    console.print("[dim]No goals for this character.[/dim]")
+                else:
+                    console.print(goals.show())
                 continue
             elif cmd == "/world":
                 if world is None:
@@ -184,56 +194,112 @@ def chat_loop(character: str, model_config: dict):
                     console.print("[dim]No world state for this character.[/dim]")
                     continue
                 change_text = user_input[7:]  # preserve original case
-                handle_world_change(session, world, change_text, label, model_config, log)
+                handle_world_change(session, world, goals, change_text, label, model_config, log)
                 continue
+
+            # Think before responding
+            think_result = run_think(session, world, goals, model_config)
+            if think_result:
+                display_think(think_result, goals)
+                inject_think(session, think_result)
 
             # Send to LLM and stream response
             response = stream_response(session, label, user_input)
-            log.append({"type": "send", "input": user_input, "response": response})
+            entry = {"type": "send", "input": user_input, "response": response}
+            if think_result:
+                entry["think"] = think_to_dict(think_result)
+            log.append(entry)
 
 
-def handle_think(session, world, label, model_config, log):
-    """Process a /think command — character inner monologue + optional action."""
+def run_think(session, world, goals, model_config):
+    """Run think_call, return ThinkResult or None on error."""
     console.print("[dim]Thinking...[/dim]")
     try:
-        result = think_call(
+        return think_call(
             system_prompt=session.system_prompt,
             world=world,
             history=session.get_history(),
             model_config=model_config,
+            goals=goals,
         )
     except Exception as e:
         console.print(f"[red]Think error: {e}[/red]")
-        return
+        return None
 
-    # Display inner monologue
-    console.print(f"[dim italic]💭 {result.thought}[/dim italic]")
 
-    entry = {
-        "type": "think",
+def display_think(result, goals=None):
+    """Display all think fields — nothing hidden."""
+    console.print(f"[dim]  thought:    {result.thought}[/dim]")
+    console.print(f"[dim]  gaze:       {result.gaze}[/dim]")
+    console.print(f"[dim]  expression: {result.expression}[/dim]")
+    console.print(f"[dim]  action:     {result.action}[/dim]")
+    if result.action_detail:
+        console.print(f"[dim]  detail:     {result.action_detail}[/dim]")
+    if result.goal_updates and goals:
+        gu = result.goal_updates
+        if gu.remove_goals:
+            for idx in gu.remove_goals:
+                if 0 <= idx < len(goals.dynamic):
+                    console.print(f"[dim]  goal removed: {goals.dynamic[idx]}[/dim]")
+        if gu.add_goals:
+            for g in gu.add_goals:
+                console.print(f"[dim]  goal added:   {g}[/dim]")
+        goals.apply_update(gu)
+
+
+def think_to_dict(result):
+    """Convert ThinkResult to dict for logging."""
+    d = {
         "thought": result.thought,
+        "gaze": result.gaze,
+        "expression": result.expression,
         "action": result.action,
         "action_detail": result.action_detail,
     }
+    if result.goal_updates:
+        d["goal_updates"] = {
+            "remove_goals": result.goal_updates.remove_goals,
+            "add_goals": result.goal_updates.add_goals,
+        }
+    return d
 
-    if result.action in ("talk", "emote"):
-        if result.action == "talk":
-            directive = f"[You want to say something unprompted. Directive: {result.action_detail}]"
-            nudge = "[The character speaks.]"
-        else:
-            directive = f"[You feel compelled to act. Directive: {result.action_detail}]"
-            nudge = "[The character acts.]"
 
+def inject_think(session, result):
+    """Inject think result into session history so future thinks can build on it."""
+    parts = [f"[Inner thought: {result.thought}]"]
+    if result.gaze:
+        parts.append(f"[gaze:{result.gaze}]")
+    if result.expression:
+        parts.append(f"[emote:{result.expression}]")
+    session.inject_system(" ".join(parts))
+
+
+def handle_think(session, world, goals, label, model_config, log):
+    """Process a /think command — character inner monologue + optional action."""
+    result = run_think(session, world, goals, model_config)
+    if not result:
+        return
+
+    display_think(result, goals)
+    inject_think(session, result)
+
+    entry = {"type": "think", **think_to_dict(result)}
+
+    if result.action == "talk":
+        directive = f"[You want to say something unprompted. Directive: {result.action_detail}]"
+        nudge = "[The character speaks.]"
         session.inject_system(directive)
         response = stream_response(session, label, nudge)
         entry["response"] = response
+    elif result.action == "emote":
+        console.print()
     else:
         console.print("[dim]No action taken.[/dim]\n")
 
     log.append(entry)
 
 
-def handle_world_change(session, world, change_text, label, model_config, log):
+def handle_world_change(session, world, goals, change_text, label, model_config, log):
     """Process a /world <description> command."""
     console.print(f"[yellow]Director processing:[/yellow] {change_text}")
     try:
@@ -260,13 +326,21 @@ def handle_world_change(session, world, change_text, label, model_config, log):
     # Apply the update
     world.apply_update(update)
 
-    # Inject narrator message as system role and trigger character reaction
+    # Inject narrator message as system role
     narrator_msg = format_narrator_message(update)
     console.print(f"[dim]{narrator_msg}[/dim]")
     session.inject_system(narrator_msg)
+
+    # Think before reacting
+    think_result = run_think(session, world, goals, model_config)
+    if think_result:
+        display_think(think_result, goals)
+        inject_think(session, think_result)
+
+    # Character reacts
     response = stream_response(session, label, "[React to what just happened.]")
 
-    log.append({
+    entry = {
         "type": "world",
         "input": change_text,
         "update": {
@@ -276,7 +350,10 @@ def handle_world_change(session, world, change_text, label, model_config, log):
         },
         "narrator": narrator_msg,
         "response": response,
-    })
+    }
+    if think_result:
+        entry["think"] = think_to_dict(think_result)
+    log.append(entry)
 
 
 def stream_response(session, label, message) -> str:
@@ -316,6 +393,7 @@ def show_help():
             "/world          - Show current world state\n"
             "/world <text>   - Describe a change to the world\n"
             "/think          - Character inner monologue + optional action\n"
+            "/goals          - Show character goals\n"
             "/reload         - Reload prompt files, restart conversation\n"
             "/trace          - Show system prompt, model, token usage\n"
             "/back           - Return to character selection\n"
@@ -341,4 +419,5 @@ def main():
         chat_loop(character, model_config)
 
 
-main()
+if __name__ == "__main__":
+    main()

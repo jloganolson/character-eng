@@ -1,18 +1,18 @@
 MODELS = {
-    "gemini": {
-        "name": "Gemini Flash",
-        "model": "gemini-2.0-flash",
-        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "api_key_env": "GEMINI_API_KEY",
-        "stream_usage": True,
-    },
-    "cerebras": {
-        "name": "Llama 70B (Cerebras)",
-        "model": "llama-3.3-70b",
+    "cerebras-llama": {
+        "name": "Llama 3.1 8B (Cerebras)",
+        "model": "llama3.1-8b",
         "base_url": "https://api.cerebras.ai/v1",
         "api_key_env": "CEREBRAS_API_KEY",
         "stream_usage": False,
     },
+    # "cerebras-gpt": {
+    #     "name": "GPT-OSS 120B (Cerebras)",
+    #     "model": "gpt-oss-120b",
+    #     "base_url": "https://api.cerebras.ai/v1",
+    #     "api_key_env": "CEREBRAS_API_KEY",
+    #     "stream_usage": False,
+    # },
 }
 
-DEFAULT_MODEL = "gemini"
+DEFAULT_MODEL = "cerebras-llama"

@@ -5,12 +5,15 @@ import pytest
 
 import character_eng.world as world_mod
 from character_eng.world import (
+    GoalUpdate,
+    Goals,
     ThinkResult,
     WorldState,
     WorldUpdate,
     _load_prompt_file,
     director_call,
     format_narrator_message,
+    load_goals,
     load_world_state,
     think_call,
 )
@@ -162,6 +165,85 @@ def test_load_world_state_static_only(tmp_path, monkeypatch):
     assert ws.dynamic == []
 
 
+# --- Goals ---
+
+
+def test_goals_render_full():
+    g = Goals(
+        static=["Understand the orb"],
+        dynamic=["Figure out if orb is magical", "Notice something new"],
+    )
+    text = g.render()
+    assert "Core drives (permanent):" in text
+    assert "- Understand the orb" in text
+    assert "Current goals:" in text
+    assert "0. Figure out if orb is magical" in text
+    assert "1. Notice something new" in text
+
+
+def test_goals_render_empty():
+    g = Goals()
+    assert g.render() == ""
+
+
+def test_goals_render_static_only():
+    g = Goals(static=["Core drive one"])
+    text = g.render()
+    assert "Core drives (permanent):" in text
+    assert "Current goals:" not in text
+
+
+def test_goals_apply_update_add():
+    g = Goals(dynamic=["Goal A"])
+    g.apply_update(GoalUpdate(add_goals=["Goal B"]))
+    assert g.dynamic == ["Goal A", "Goal B"]
+
+
+def test_goals_apply_update_remove():
+    g = Goals(dynamic=["Goal A", "Goal B", "Goal C"])
+    g.apply_update(GoalUpdate(remove_goals=[1]))
+    assert g.dynamic == ["Goal A", "Goal C"]
+
+
+def test_goals_apply_update_invalid_index():
+    g = Goals(dynamic=["Goal A"])
+    g.apply_update(GoalUpdate(remove_goals=[5]))
+    assert g.dynamic == ["Goal A"]
+
+
+def test_goals_show_returns_panel():
+    g = Goals(static=["Drive"])
+    panel = g.show()
+    assert panel.title == "Character Goals"
+
+
+# --- load_goals ---
+
+
+def test_load_goals_with_files(tmp_path, monkeypatch):
+    char_dir = tmp_path / "characters" / "test_char"
+    char_dir.mkdir(parents=True)
+    (char_dir / "goals_static.txt").write_text("Drive one\nDrive two\n")
+    (char_dir / "goals_dynamic.txt").write_text("Goal A\n\n  \n")
+
+    monkeypatch.setattr(world_mod, "CHARACTERS_DIR", tmp_path / "characters")
+
+    g = load_goals("test_char")
+    assert g is not None
+    assert g.static == ["Drive one", "Drive two"]
+    assert g.dynamic == ["Goal A"]
+
+
+def test_load_goals_no_files(tmp_path, monkeypatch):
+    char_dir = tmp_path / "characters" / "test_char"
+    char_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(world_mod, "CHARACTERS_DIR", tmp_path / "characters")
+
+    g = load_goals("test_char")
+    assert g is None
+
+
 # --- format_narrator_message ---
 
 
@@ -276,6 +358,9 @@ def test_think_call_no_change(mock_make_client):
         "thought": "I wonder what that orb is doing.",
         "action": "no_change",
         "action_detail": "",
+        "gaze": "orb",
+        "expression": "curious",
+        "goal_updates": None,
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
@@ -291,6 +376,9 @@ def test_think_call_no_change(mock_make_client):
     assert result.thought == "I wonder what that orb is doing."
     assert result.action == "no_change"
     assert result.action_detail == ""
+    assert result.gaze == "orb"
+    assert result.expression == "curious"
+    assert result.goal_updates is None
 
 
 @patch("character_eng.world._make_client")
@@ -299,6 +387,9 @@ def test_think_call_talk(mock_make_client):
         "thought": "I should mention the orb is glowing.",
         "action": "talk",
         "action_detail": "Comment on the orb's glow",
+        "gaze": "orb",
+        "expression": "excited",
+        "goal_updates": None,
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
@@ -320,7 +411,10 @@ def test_think_call_emote(mock_make_client):
     data = {
         "thought": "That noise is alarming.",
         "action": "emote",
-        "action_detail": "Greg's eyes widen with concern",
+        "action_detail": "Eyes widen",
+        "gaze": "door",
+        "expression": "surprised",
+        "goal_updates": None,
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
@@ -334,7 +428,9 @@ def test_think_call_emote(mock_make_client):
     )
 
     assert result.action == "emote"
-    assert result.action_detail == "Greg's eyes widen with concern"
+    assert result.action_detail == "Eyes widen"
+    assert result.gaze == "door"
+    assert result.expression == "surprised"
 
 
 @patch("character_eng.world._make_client")
@@ -343,6 +439,9 @@ def test_think_call_empty_history(mock_make_client):
         "thought": "Nobody is here yet.",
         "action": "no_change",
         "action_detail": "",
+        "gaze": "orb",
+        "expression": "neutral",
+        "goal_updates": None,
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
@@ -358,6 +457,102 @@ def test_think_call_empty_history(mock_make_client):
     assert result.thought == "Nobody is here yet."
     assert result.action == "no_change"
     mock_client.chat.completions.create.assert_called_once()
+
+
+@patch("character_eng.world._make_client")
+def test_think_call_with_goals(mock_make_client):
+    """Goals are included in the user message sent to the LLM."""
+    data = {
+        "thought": "I should focus on the orb.",
+        "action": "no_change",
+        "action_detail": "",
+        "gaze": "orb",
+        "expression": "focused",
+        "goal_updates": None,
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    goals = Goals(
+        static=["Understand the orb"],
+        dynamic=["Figure out if orb is magical"],
+    )
+    think_call(
+        system_prompt="You are Greg.",
+        world=WorldState(static=["Greg is a robot head"]),
+        history=[],
+        model_config=TEST_CONFIG,
+        goals=goals,
+    )
+
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "CHARACTER GOALS" in user_msg
+    assert "Understand the orb" in user_msg
+    assert "Figure out if orb is magical" in user_msg
+
+
+@patch("character_eng.world._make_client")
+def test_think_call_with_goal_updates(mock_make_client):
+    """goal_updates in LLM response are parsed into GoalUpdate."""
+    data = {
+        "thought": "I've figured out the orb is just glass.",
+        "action": "no_change",
+        "action_detail": "",
+        "gaze": "orb",
+        "expression": "amused",
+        "goal_updates": {
+            "remove_goals": [0],
+            "add_goals": ["Find a new mystery to investigate"],
+        },
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    goals = Goals(
+        static=["Understand the orb"],
+        dynamic=["Figure out if orb is magical"],
+    )
+    result = think_call(
+        system_prompt="You are Greg.",
+        world=None,
+        history=[],
+        model_config=TEST_CONFIG,
+        goals=goals,
+    )
+
+    assert result.goal_updates is not None
+    assert result.goal_updates.remove_goals == [0]
+    assert result.goal_updates.add_goals == ["Find a new mystery to investigate"]
+
+
+@patch("character_eng.world._make_client")
+def test_think_call_without_goals(mock_make_client):
+    """When no goals are passed, CHARACTER GOALS section is absent."""
+    data = {
+        "thought": "Just thinking.",
+        "action": "no_change",
+        "action_detail": "",
+        "gaze": "orb",
+        "expression": "neutral",
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    think_call(
+        system_prompt="You are Greg.",
+        world=None,
+        history=[],
+        model_config=TEST_CONFIG,
+        goals=None,
+    )
+
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "CHARACTER GOALS" not in user_msg
 
 
 # --- _load_prompt_file ---
@@ -426,7 +621,7 @@ def test_think_call_reads_prompt_from_file(mock_make_client, tmp_path, monkeypat
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     (tmp_path / "think_system.txt").write_text("You are think v1.")
 
-    data = {"thought": "hmm", "action": "no_change", "action_detail": ""}
+    data = {"thought": "hmm", "action": "no_change", "action_detail": "", "gaze": "orb", "expression": "neutral"}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
@@ -443,7 +638,7 @@ def test_think_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatc
     """Editing think_system.txt is picked up on the next call without restart."""
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
 
-    data = {"thought": "hmm", "action": "no_change", "action_detail": ""}
+    data = {"thought": "hmm", "action": "no_change", "action_detail": "", "gaze": "orb", "expression": "neutral"}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client

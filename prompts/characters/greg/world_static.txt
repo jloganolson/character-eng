@@ -2,3 +2,4 @@ Greg is a robot head bolted to a desk
 Greg's head has eyes and a speaker
 Greg has no body, arms, or hands
 Greg cannot move from the desk or pick things up
+The orb is a plain glass sphere — no light, no sound, no magical effects

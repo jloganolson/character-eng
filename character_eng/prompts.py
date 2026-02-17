@@ -22,7 +22,7 @@ def _read(path: Path) -> str:
         return ""
 
 
-def load_prompt(character: str, world_state=None) -> str:
+def load_prompt(character: str, world_state=None, goals=None) -> str:
     """Load and resolve a character's prompt template.
 
     Substitutes {{key}} macros in prompt.txt with:
@@ -30,6 +30,7 @@ def load_prompt(character: str, world_state=None) -> str:
       - character    -> prompts/characters/<name>/character.txt
       - scenario     -> prompts/characters/<name>/scenario.txt
       - world        -> world_state.render() if provided
+      - goals        -> goals.render() if provided
 
     Unknown macros are left intact for debugging via /trace.
     """
@@ -41,6 +42,7 @@ def load_prompt(character: str, world_state=None) -> str:
         "character": _read(char_dir / "character.txt"),
         "scenario": _read(char_dir / "scenario.txt"),
         "world": world_state.render() if world_state else "",
+        "goals": goals.render() if goals else "",
     }
 
     def replace(m: re.Match) -> str:

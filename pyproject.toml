@@ -10,6 +10,16 @@ dependencies = [
     "rich>=14.3.2",
 ]
 
+[project.scripts]
+chat = "character_eng.__main__:main"
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
