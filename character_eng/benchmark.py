@@ -18,11 +18,12 @@ from rich.table import Table
 from character_eng.models import MODELS
 from character_eng.prompts import load_prompt
 from character_eng.world import (
+    Script,
     _make_client,
     director_call,
+    eval_call,
     load_goals,
     load_world_state,
-    think_call,
 )
 
 load_dotenv()
@@ -121,8 +122,8 @@ def bench_director(model_config: dict) -> dict:
     }
 
 
-def bench_think(model_config: dict) -> dict:
-    """Benchmark structured JSON think call. Returns timing dict."""
+def bench_eval(model_config: dict) -> dict:
+    """Benchmark structured JSON eval call. Returns timing dict."""
     world = load_world_state(CHARACTER)
     goals = load_goals(CHARACTER)
     system_prompt = load_prompt(CHARACTER, world_state=world, goals=goals)
@@ -134,25 +135,25 @@ def bench_think(model_config: dict) -> dict:
     ]
 
     t_start = time.perf_counter()
-    result = think_call(
+    result = eval_call(
         system_prompt=system_prompt,
         world=world,
         history=history,
         model_config=model_config,
         goals=goals,
+        script=Script(),
     )
     t_total = time.perf_counter() - t_start
 
     result_dict = {
         "thought": result.thought,
-        "action": result.action,
-        "action_detail": result.action_detail,
         "gaze": result.gaze,
         "expression": result.expression,
+        "script_status": result.script_status,
     }
 
     return {
-        "scenario": "think",
+        "scenario": "eval",
         "ttft_ms": round(t_total * 1000, 1),
         "total_ms": round(t_total * 1000, 1),
         "response": json.dumps(result_dict, indent=2),
@@ -162,7 +163,7 @@ def bench_think(model_config: dict) -> dict:
 SCENARIOS = [
     ("chat", bench_chat),
     ("director", bench_director),
-    ("think", bench_think),
+    ("eval", bench_eval),
 ]
 
 
@@ -396,7 +397,7 @@ def main():
         models = available
 
     console.print(f"[bold]Benchmarking {len(models)} model(s), {args.runs} runs per scenario[/bold]")
-    console.print(f"[dim]Character: {CHARACTER}, Scenarios: chat (streaming), director (JSON), think (JSON)[/dim]")
+    console.print(f"[dim]Character: {CHARACTER}, Scenarios: chat (streaming), director (JSON), eval (JSON)[/dim]")
 
     results = run_benchmark(models, args.runs)
     print_summary(results)

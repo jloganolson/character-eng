@@ -1,6 +1,6 @@
 # Character Engine
 
-Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Characters have personalities, world state that evolves during conversation, and an inner monologue system that lets them act autonomously.
+Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Characters have personalities, world state that evolves during conversation, and a two-speed script system — a fast eval (every turn) tracks progress through premeditated dialogue beats, while a slow planner (Gemini Flash 3) generates multi-beat conversation scripts.
 
 ## Setup
 
@@ -18,7 +18,7 @@ GROQ_API_KEY=your_key_here
 GEMINI_API_KEY=your_key_here
 ```
 
-If multiple keys are set, you'll choose a model at startup. If only one is set, it's auto-selected.
+If multiple keys are set, you'll choose a model at startup. If only one is set, it's auto-selected. The planner requires `GEMINI_API_KEY` — if not set, the script system runs in eval-only mode.
 
 ## Run
 
@@ -26,18 +26,27 @@ If multiple keys are set, you'll choose a model at startup. If only one is set, 
 uv run -m character_eng
 ```
 
-Pick a character from the menu, then chat. In-session commands:
+Pick a character from the menu, then chat. The character evaluates each turn, tracks a script of dialogue beats, and adapts naturally. In-session commands:
 
 | Command | What it does |
 |---------|-------------|
 | `/world` | Show current world state |
 | `/world <text>` | Describe a change — a director LLM updates the world, the character reacts |
-| `/think` | Trigger the character's inner monologue — they may speak, emote, or both |
-| `/goals` | Show character goals (long-term + short-term) |
+| `/think` | Trigger character eval — may deliver a beat, bootstrap a script, or trigger replanning |
+| `/plan` | Show current script (beat list with current beat highlighted) |
+| `/goals` | Show character goals (long-term) |
 | `/reload` | Reload all prompt files from disk (for live editing) |
 | `/trace` | Show system prompt, model, and token usage |
 | `/back` | Return to character select |
 | `/quit` | Exit |
+
+## How the script system works
+
+Each conversation turn follows one of two paths:
+
+**Bootstrap** (no current beat): The eval generates an initial beat and plan request. The beat is injected as a directive, chat streams, then the planner fills the full script.
+
+**Normal** (beat exists): The current beat is injected as a directive before chat. After the response, the eval decides: `advance` (move to next beat), `hold` (stay on current beat), or `off_book` (conversation diverged, trigger replanning).
 
 ## Editing prompts
 
@@ -46,7 +55,7 @@ Characters live in `prompts/characters/<name>/` with these files:
 | File | Purpose |
 |------|---------|
 | `prompt.txt` | Main template — uses `{{global_rules}}`, `{{character}}`, `{{scenario}}`, `{{world}}` macros |
-| `character.txt` | Personality, voice, and goals (optional `Long-term goal:` / `Short-term goal:` lines) |
+| `character.txt` | Personality, voice, and goals (optional `Long-term goal:` line) |
 | `scenario.txt` | Situation and context |
 | `world_static.txt` | Permanent facts (one per line, optional) |
 | `world_dynamic.txt` | Initial mutable state (one per line, optional) |
@@ -58,9 +67,10 @@ System-level prompts are also editable files in `prompts/`:
 | File | Purpose |
 |------|---------|
 | `director_system.txt` | System prompt for the world-state director LLM |
-| `think_system.txt` | System prompt for the character inner monologue LLM |
+| `eval_system.txt` | System prompt for the character eval LLM (script tracking + inner monologue) |
+| `plan_system.txt` | System prompt for the conversation planner LLM (beat generation) |
 
-**Live editing works** — edit any character prompt file in your editor, then type `/reload` in the chat to pick up changes without restarting. The conversation resets but you keep your place in the character menu. Director and think system prompts are re-read on every call, so edits take effect immediately without `/reload`.
+**Live editing works** — edit any character prompt file in your editor, then type `/reload` in the chat to pick up changes without restarting. The conversation resets but you keep your place in the character menu. Director, eval, and plan system prompts are re-read on every call, so edits take effect immediately without `/reload`.
 
 ### Adding a new character
 
@@ -102,7 +112,7 @@ uv run pytest
 
 # Integration tests (hit real LLM, default model: cerebras-llama)
 uv run -m character_eng.qa_world                       # world state director
-uv run -m character_eng.qa_chat                        # end-to-end chat, world, think
+uv run -m character_eng.qa_chat                        # end-to-end chat, world, eval
 uv run -m character_eng.qa_world --model groq-llama    # test with Groq Llama
 uv run -m character_eng.qa_chat --model groq-llama     # test with Groq Llama
 ```
@@ -111,7 +121,7 @@ uv run -m character_eng.qa_chat --model groq-llama     # test with Groq Llama
 
 ## Benchmarking
 
-Measure real-world latency across all available models for the three LLM call patterns: streaming chat, structured JSON director calls, and structured JSON think calls.
+Measure real-world latency across all available models for the three LLM call patterns: streaming chat, structured JSON director calls, and structured JSON eval calls.
 
 ```bash
 # Benchmark all available models (3 runs per scenario)

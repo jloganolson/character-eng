@@ -14,16 +14,21 @@ from rich.panel import Panel
 from rich.text import Text
 
 from character_eng.chat import ChatSession
-from character_eng.models import DEFAULT_MODEL, MODELS
+from character_eng.models import DEFAULT_MODEL, MODELS, PLAN_MODEL
 from character_eng.prompts import list_characters, load_prompt
 from character_eng.serve import build_vllm_cmd, get_local_models, kill_port
 from character_eng.world import (
+    Beat,
+    EvalResult,
     Goals,
+    PlanResult,
+    Script,
     director_call,
+    eval_call,
     format_narrator_message,
     load_goals,
     load_world_state,
-    think_call,
+    plan_call,
 )
 
 console = Console()
@@ -298,10 +303,28 @@ def pick_character() -> str | None:
         console.print("[red]Invalid choice, try again.[/red]")
 
 
+def get_plan_model_config():
+    """Look up the plan model config, return None if API key not set."""
+    cfg = MODELS.get(PLAN_MODEL)
+    if cfg is None:
+        return None
+    api_key_env = cfg.get("api_key_env", "")
+    if api_key_env and not os.environ.get(api_key_env):
+        return None
+    return cfg
+
+
 def chat_loop(character: str, model_config: dict):
     """Run the chat loop for a character. Returns on /back or Ctrl+C."""
     label = character.replace("_", " ").title()
     log: list[dict] = []
+    plan_model_config = get_plan_model_config()
+
+    if plan_model_config:
+        plan_label = MODELS[PLAN_MODEL]["name"]
+        console.print(f"[dim]Planner: {plan_label}[/dim]")
+    else:
+        console.print(f"[dim]Planner: unavailable (no {MODELS.get(PLAN_MODEL, {}).get('api_key_env', 'API key')} set)[/dim]")
 
     # Outer loop: handles /reload by restarting with fresh session
     while True:
@@ -309,6 +332,13 @@ def chat_loop(character: str, model_config: dict):
         goals = load_goals(character)
         system_prompt = load_prompt(character, world_state=world)
         session = ChatSession(system_prompt, model_config)
+        script = Script()
+
+        # Generate initial script at boot
+        plan_result = run_plan(session, world, goals, "", plan_model_config)
+        if plan_result and plan_result.beats:
+            apply_plan(script, plan_result)
+
         console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]  (type /help for commands)\n")
 
         # Inner loop: conversation turns
@@ -342,7 +372,10 @@ def chat_loop(character: str, model_config: dict):
                 show_help()
                 continue
             elif cmd == "/think":
-                handle_think(session, world, goals, label, model_config, log)
+                handle_think(session, world, goals, script, label, model_config, plan_model_config, log)
+                continue
+            elif cmd == "/plan":
+                console.print(script.show())
                 continue
             elif cmd == "/goals":
                 if goals is None:
@@ -361,68 +394,124 @@ def chat_loop(character: str, model_config: dict):
                     console.print("[dim]No world state for this character.[/dim]")
                     continue
                 change_text = user_input[7:]  # preserve original case
-                handle_world_change(session, world, goals, change_text, label, model_config, log)
+                handle_world_change(session, world, goals, script, change_text, label, model_config, plan_model_config, log)
                 continue
 
-            # Think before responding
-            think_result = run_think(session, world, goals, model_config)
-            if think_result:
-                display_think(think_result, goals)
-                inject_think(session, think_result)
+            # --- Turn flow ---
 
-            # Send to LLM and stream response
-            response = stream_response(session, label, user_input)
-            entry = {"type": "send", "input": user_input, "response": response}
-            if think_result:
-                entry["think"] = think_to_dict(think_result)
-            log.append(entry)
+            # Bootstrap: if no script, call planner to generate one
+            if script.is_empty():
+                plan_result = run_plan(session, world, goals, "", plan_model_config)
+                if plan_result and plan_result.beats:
+                    apply_plan(script, plan_result)
+
+            if script.current_beat is not None:
+                # Normal path: inject beat, chat, then eval
+                inject_beat(session, script.current_beat)
+
+                response = stream_response(session, label, user_input)
+                entry = {"type": "send", "input": user_input, "response": response}
+
+                eval_result = run_eval(session, world, goals, script, model_config)
+                if eval_result:
+                    display_eval(eval_result)
+                    inject_eval(session, eval_result)
+                    entry["eval"] = eval_to_dict(eval_result)
+
+                    if eval_result.script_status == "advance":
+                        script.advance()
+                        if script.current_beat:
+                            console.print(f"[magenta]  next beat:  [{script.current_beat.intent}][/magenta]")
+                        else:
+                            console.print("[dim]  script complete, replanning...[/dim]")
+                            plan_result = run_plan(session, world, goals, "", plan_model_config)
+                            if plan_result and plan_result.beats:
+                                apply_plan(script, plan_result)
+                    elif eval_result.script_status == "off_book" and eval_result.plan_request:
+                        plan_result = run_plan(session, world, goals, eval_result.plan_request, plan_model_config)
+                        if plan_result and plan_result.beats:
+                            apply_plan(script, plan_result)
+
+                log.append(entry)
+            else:
+                # No script available (planner unavailable/failed) — just chat + eval
+                response = stream_response(session, label, user_input)
+                entry = {"type": "send", "input": user_input, "response": response}
+
+                eval_result = run_eval(session, world, goals, script, model_config)
+                if eval_result:
+                    display_eval(eval_result)
+                    inject_eval(session, eval_result)
+                    entry["eval"] = eval_to_dict(eval_result)
+
+                log.append(entry)
 
 
-def run_think(session, world, goals, model_config):
-    """Run think_call, return ThinkResult or None on error."""
-    console.print("[dim]Thinking...[/dim]")
+def run_eval(session, world, goals, script, model_config):
+    """Run eval_call, return EvalResult or None on error."""
+    console.print("[dim]Evaluating...[/dim]")
     try:
-        return think_call(
+        return eval_call(
             system_prompt=session.system_prompt,
             world=world,
             history=session.get_history(),
             model_config=model_config,
             goals=goals,
+            script=script,
         )
     except Exception as e:
-        console.print(f"[red]Think error: {e}[/red]")
+        console.print(f"[red]Eval error: {e}[/red]")
         return None
 
 
-def display_think(result, goals=None):
-    """Display all think fields — nothing hidden."""
+def run_plan(session, world, goals, plan_request, plan_model_config):
+    """Run plan_call, return PlanResult or None on error."""
+    if plan_model_config is None:
+        console.print("[dim]Planner unavailable, skipping.[/dim]")
+        return None
+    console.print("[dim]Planning...[/dim]")
+    try:
+        return plan_call(
+            system_prompt=session.system_prompt,
+            world=world,
+            history=session.get_history(),
+            goals=goals,
+            plan_request=plan_request,
+            plan_model_config=plan_model_config,
+        )
+    except Exception as e:
+        console.print(f"[red]Plan error: {e}[/red]")
+        return None
+
+
+def display_eval(result):
+    """Display all eval fields."""
     console.print(f"[dim]  thought:    {result.thought}[/dim]")
     console.print(f"[dim]  gaze:       {result.gaze}[/dim]")
     console.print(f"[dim]  expression: {result.expression}[/dim]")
-    console.print(f"[dim]  action:     {result.action}[/dim]")
-    if result.action_detail:
-        console.print(f"[dim]  detail:     {result.action_detail}[/dim]")
-    if result.new_short_term_goal and goals:
-        console.print(f"[dim]  goal:       {goals.short_term} → {result.new_short_term_goal}[/dim]")
-        goals.apply_update(result.new_short_term_goal)
+    console.print(f"[dim]  status:     {result.script_status}[/dim]")
+    if result.plan_request:
+        console.print(f"[dim]  plan_req:   {result.plan_request}[/dim]")
 
 
-def think_to_dict(result):
-    """Convert ThinkResult to dict for logging."""
+def eval_to_dict(result):
+    """Convert EvalResult to dict for logging."""
     d = {
         "thought": result.thought,
         "gaze": result.gaze,
         "expression": result.expression,
-        "action": result.action,
-        "action_detail": result.action_detail,
+        "script_status": result.script_status,
     }
-    if result.new_short_term_goal:
-        d["new_short_term_goal"] = result.new_short_term_goal
+    if result.bootstrap_line:
+        d["bootstrap_line"] = result.bootstrap_line
+        d["bootstrap_intent"] = result.bootstrap_intent
+    if result.plan_request:
+        d["plan_request"] = result.plan_request
     return d
 
 
-def inject_think(session, result):
-    """Inject think result into session history so future thinks can build on it."""
+def inject_eval(session, result):
+    """Inject eval result into session history so future evals can build on it."""
     parts = [f"[Inner thought: {result.thought}]"]
     if result.gaze:
         parts.append(f"[gaze:{result.gaze}]")
@@ -431,32 +520,62 @@ def inject_think(session, result):
     session.inject_system(" ".join(parts))
 
 
-def handle_think(session, world, goals, label, model_config, log):
-    """Process a /think command — character inner monologue + optional action."""
-    result = run_think(session, world, goals, model_config)
+def inject_beat(session, beat):
+    """Inject beat directive before chat."""
+    directive = f'[Your current objective: {beat.intent}. You want to say: "{beat.line}". Adapt naturally.]'
+    session.inject_system(directive)
+
+
+def apply_plan(script, plan_result):
+    """Replace script beats, display summary."""
+    script.replace(plan_result.beats)
+    console.print(f"[magenta]Script loaded ({len(plan_result.beats)} beats):[/magenta]")
+    for i, beat in enumerate(plan_result.beats):
+        marker = "→" if i == 0 else " "
+        console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"[/magenta]")
+
+
+def handle_think(session, world, goals, script, label, model_config, plan_model_config, log):
+    """Process a /think command — eval + optional beat delivery + optional planner."""
+    result = run_eval(session, world, goals, script, model_config)
     if not result:
         return
 
-    display_think(result, goals)
-    inject_think(session, result)
+    display_eval(result)
+    inject_eval(session, result)
 
-    entry = {"type": "think", **think_to_dict(result)}
+    entry = {"type": "eval", **eval_to_dict(result)}
 
-    if result.action in ("talk", "talk_and_emote"):
-        directive = f"[You want to say something unprompted. Directive: {result.action_detail}]"
-        nudge = "[The character speaks.]"
-        session.inject_system(directive)
-        response = stream_response(session, label, nudge)
+    if script.current_beat and result.script_status == "advance":
+        # Advance and deliver next beat
+        script.advance()
+        if script.current_beat:
+            console.print(f"[magenta]  next beat:  [{script.current_beat.intent}][/magenta]")
+            inject_beat(session, script.current_beat)
+            response = stream_response(session, label, "[The character speaks.]")
+            entry["response"] = response
+        else:
+            console.print("[dim]  script complete, replanning...[/dim]")
+            plan_result = run_plan(session, world, goals, "", plan_model_config)
+            if plan_result and plan_result.beats:
+                apply_plan(script, plan_result)
+    elif script.current_beat and result.script_status == "hold":
+        # Deliver current beat
+        inject_beat(session, script.current_beat)
+        response = stream_response(session, label, "[The character speaks.]")
         entry["response"] = response
-    elif result.action == "emote":
-        console.print()
+    elif result.script_status == "off_book" and result.plan_request:
+        # Replan
+        plan_result = run_plan(session, world, goals, result.plan_request, plan_model_config)
+        if plan_result and plan_result.beats:
+            apply_plan(script, plan_result)
     else:
         console.print("[dim]No action taken.[/dim]\n")
 
     log.append(entry)
 
 
-def handle_world_change(session, world, goals, change_text, label, model_config, log):
+def handle_world_change(session, world, goals, script, change_text, label, model_config, plan_model_config, log):
     """Process a /world <description> command."""
     console.print(f"[yellow]Director processing:[/yellow] {change_text}")
     try:
@@ -488,11 +607,15 @@ def handle_world_change(session, world, goals, change_text, label, model_config,
     console.print(f"[dim]{narrator_msg}[/dim]")
     session.inject_system(narrator_msg)
 
-    # Think before reacting
-    think_result = run_think(session, world, goals, model_config)
-    if think_result:
-        display_think(think_result, goals)
-        inject_think(session, think_result)
+    # Eval before reacting
+    eval_result = run_eval(session, world, goals, script, model_config)
+    if eval_result:
+        display_eval(eval_result)
+        inject_eval(session, eval_result)
+
+    # Inject beat if available
+    if script.current_beat:
+        inject_beat(session, script.current_beat)
 
     # Character reacts
     response = stream_response(session, label, "[React to what just happened.]")
@@ -508,8 +631,13 @@ def handle_world_change(session, world, goals, change_text, label, model_config,
         "narrator": narrator_msg,
         "response": response,
     }
-    if think_result:
-        entry["think"] = think_to_dict(think_result)
+    if eval_result:
+        entry["eval"] = eval_to_dict(eval_result)
+        # Check if world change triggers replan
+        if eval_result.script_status == "off_book" and eval_result.plan_request:
+            plan_result = run_plan(session, world, goals, eval_result.plan_request, plan_model_config)
+            if plan_result and plan_result.beats:
+                apply_plan(script, plan_result)
     log.append(entry)
 
 
@@ -549,7 +677,8 @@ def show_help():
         Panel(
             "/world          - Show current world state\n"
             "/world <text>   - Describe a change to the world\n"
-            "/think          - Character inner monologue + optional action\n"
+            "/think          - Character eval + optional beat delivery\n"
+            "/plan           - Show current script (beat list)\n"
             "/goals          - Show character goals\n"
             "/reload         - Reload prompt files, restart conversation\n"
             "/trace          - Show system prompt, model, token usage\n"

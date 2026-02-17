@@ -19,12 +19,13 @@ from character_eng.chat import ChatSession
 from character_eng.models import DEFAULT_MODEL, MODELS
 from character_eng.prompts import load_prompt
 from character_eng.world import (
+    EvalResult,
+    Script,
     WorldState,
     director_call,
+    eval_call,
     format_narrator_message,
     load_world_state,
-    think_call,
-    ThinkResult,
 )
 
 console = Console()
@@ -75,7 +76,7 @@ def run_section(name: str, commands: list[tuple[str, str]], model_config: dict) 
     session = ChatSession(system_prompt, model_config)
 
     last_response = ""
-    last_think: ThinkResult | None = None
+    last_eval: EvalResult | None = None
     world_changed = False
 
     for cmd, arg in commands:
@@ -119,45 +120,42 @@ def run_section(name: str, commands: list[tuple[str, str]], model_config: dict) 
                 last_response = ""
 
         elif cmd == "think":
-            console.print("  [magenta]think[/magenta]")
+            console.print("  [magenta]eval[/magenta]")
             try:
-                result = think_call(
+                result = eval_call(
                     system_prompt=session.system_prompt,
                     world=world,
                     history=session.get_history(),
                     model_config=model_config,
+                    script=Script(),
                 )
-                last_think = result
+                last_eval = result
                 console.print(f"  [dim]💭 {result.thought}[/dim]")
-                console.print(f"  [dim]action={result.action} detail={result.action_detail!r}[/dim]")
+                console.print(f"  [dim]status={result.script_status}[/dim]")
 
-                think_entry = {
-                    "type": "think",
+                eval_entry = {
+                    "type": "eval",
                     "thought": result.thought,
-                    "action": result.action,
-                    "action_detail": result.action_detail,
+                    "script_status": result.script_status,
+                    "gaze": result.gaze,
+                    "expression": result.expression,
                 }
 
-                if result.action in ("talk", "emote"):
-                    if result.action == "talk":
-                        directive = f"[You want to say something unprompted. Directive: {result.action_detail}]"
-                        nudge = "[The character speaks.]"
-                    else:
-                        directive = f"[You feel compelled to act. Directive: {result.action_detail}]"
-                        nudge = "[The character acts.]"
+                if result.script_status == "bootstrap" and result.bootstrap_line:
+                    directive = f'[Your current objective: {result.bootstrap_intent}. You want to say: "{result.bootstrap_line}". Adapt naturally.]'
                     session.inject_system(directive)
                     chunks = []
-                    for chunk in session.send(nudge):
+                    for chunk in session.send("[The character speaks.]"):
                         chunks.append(chunk)
                     last_response = "".join(chunks)
                     console.print(f"  [dim]→ {last_response[:120]}{'...' if len(last_response) > 120 else ''}[/dim]")
-                    think_entry["response"] = last_response
+                    eval_entry["response"] = last_response
 
-                log.append(think_entry)
+                log.append(eval_entry)
             except Exception as e:
-                failures.append(f"think command failed: {e}")
-                log.append({"type": "think", "error": str(e)})
-                last_think = None
+                failures.append(f"eval command failed: {e}")
+                log.append({"type": "eval", "error": str(e)})
+                last_eval = None
 
         elif cmd == "expect":
             check = arg.strip()
@@ -176,14 +174,14 @@ def run_section(name: str, commands: list[tuple[str, str]], model_config: dict) 
                     failures.append("expected world to be updated, but no changes detected")
                     passed = False
             elif check == "valid_thought":
-                if last_think is None:
-                    failures.append("expected valid thought, but no think result")
+                if last_eval is None:
+                    failures.append("expected valid thought, but no eval result")
                     passed = False
-                elif not last_think.thought.strip():
-                    failures.append("think result has empty thought")
+                elif not last_eval.thought.strip():
+                    failures.append("eval result has empty thought")
                     passed = False
-                elif last_think.action not in ("no_change", "talk", "emote"):
-                    failures.append(f"invalid action type: {last_think.action!r}")
+                elif last_eval.script_status not in ("advance", "hold", "off_book", "bootstrap"):
+                    failures.append(f"invalid script_status: {last_eval.script_status!r}")
                     passed = False
             elif check == "in_character":
                 lower_resp = last_response.lower()

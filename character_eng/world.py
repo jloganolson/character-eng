@@ -29,13 +29,60 @@ class WorldUpdate:
 
 
 @dataclass
-class ThinkResult:
+class Beat:
+    line: str  # pre-rendered dialogue line
+    intent: str  # what this beat is trying to accomplish
+
+
+@dataclass
+class Script:
+    beats: list[Beat] = field(default_factory=list)
+    _index: int = field(default=0, repr=False)
+
+    @property
+    def current_beat(self) -> Beat | None:
+        if 0 <= self._index < len(self.beats):
+            return self.beats[self._index]
+        return None
+
+    def advance(self) -> None:
+        self._index += 1
+
+    def replace(self, beats: list[Beat]) -> None:
+        self.beats = beats
+        self._index = 0
+
+    def is_empty(self) -> bool:
+        return len(self.beats) == 0
+
+    def render(self) -> str:
+        if not self.beats:
+            return ""
+        lines: list[str] = []
+        for i, beat in enumerate(self.beats):
+            marker = "→" if i == self._index else " "
+            lines.append(f"{marker} {i}. [{beat.intent}] \"{beat.line}\"")
+        return "\n".join(lines)
+
+    def show(self) -> Panel:
+        body = self.render() if self.beats else "[dim]No script loaded.[/dim]"
+        return Panel(body, title="Script", border_style="magenta")
+
+
+@dataclass
+class EvalResult:
     thought: str
-    action: str  # "no_change" | "talk" | "emote" | "talk_and_emote"
-    action_detail: str
-    gaze: str  # what the character is looking at
-    expression: str  # facial expression from fixed vocab
-    new_short_term_goal: str | None = None
+    gaze: str
+    expression: str
+    script_status: str  # "advance" | "hold" | "off_book" | "bootstrap"
+    bootstrap_line: str = ""
+    bootstrap_intent: str = ""
+    plan_request: str = ""
+
+
+@dataclass
+class PlanResult:
+    beats: list[Beat] = field(default_factory=list)
 
 
 @dataclass
@@ -97,26 +144,17 @@ class WorldState:
 @dataclass
 class Goals:
     long_term: str = ""
-    short_term: str = ""
 
     def render(self) -> str:
-        lines: list[str] = []
         if self.long_term:
-            lines.append(f"Long-term goal: {self.long_term}")
-        if self.short_term:
-            lines.append(f"Short-term goal: {self.short_term}")
-        return "\n".join(lines)
-
-    def apply_update(self, new_short_term: str) -> None:
-        self.short_term = new_short_term
+            return f"Long-term goal: {self.long_term}"
+        return ""
 
     def show(self) -> Panel:
-        lines: list[str] = []
         if self.long_term:
-            lines.append(f"[bold]Long-term goal:[/bold] {self.long_term}")
-        if self.short_term:
-            lines.append(f"[bold]Short-term goal:[/bold] {self.short_term}")
-        body = "\n".join(lines) if lines else "[dim]No goals loaded.[/dim]"
+            body = f"[bold]Long-term goal:[/bold] {self.long_term}"
+        else:
+            body = "[dim]No goals loaded.[/dim]"
         return Panel(body, title="Character Goals", border_style="cyan")
 
 
@@ -152,7 +190,7 @@ def load_world_state(character: str) -> WorldState | None:
 
 
 def load_goals(character: str) -> Goals | None:
-    """Parse Long-term goal / Short-term goal lines from character.txt."""
+    """Parse Long-term goal line from character.txt."""
     char_dir = CHARACTERS_DIR / character
     char_path = char_dir / "character.txt"
     try:
@@ -161,19 +199,16 @@ def load_goals(character: str) -> Goals | None:
         return None
 
     long_term = ""
-    short_term = ""
     for line in text.splitlines():
         stripped = line.strip()
         low = stripped.lower()
         if low.startswith("long-term goal:"):
             long_term = stripped.split(":", 1)[1].strip()
-        elif low.startswith("short-term goal:"):
-            short_term = stripped.split(":", 1)[1].strip()
 
-    if not long_term and not short_term:
+    if not long_term:
         return None
 
-    return Goals(long_term=long_term, short_term=short_term)
+    return Goals(long_term=long_term)
 
 
 # --- Narrator formatting ---
@@ -249,18 +284,85 @@ def _strip_tag(value: str, tag: str) -> str:
     return m.group(1) if m else value
 
 
-# --- Think LLM call ---
+# --- Eval LLM call ---
 
 
-def think_call(
+def eval_call(
     system_prompt: str,
     world: WorldState | None,
     history: list[dict],
     model_config: dict,
     goals: Goals | None = None,
+    script: Script | None = None,
     recent_n: int = 10,
-) -> ThinkResult:
-    """Ask the LLM to produce an inner monologue and optional action."""
+) -> EvalResult:
+    """Ask the LLM to evaluate the character's state and script progress."""
+    context_parts: list[str] = []
+
+    context_parts.append("=== CHARACTER SYSTEM PROMPT ===")
+    context_parts.append(system_prompt)
+
+    if world:
+        context_parts.append("\n=== WORLD STATE ===")
+        context_parts.append(world.render())
+
+    if goals:
+        context_parts.append("\n=== CHARACTER GOALS ===")
+        context_parts.append(goals.render())
+
+    if script and not script.is_empty():
+        context_parts.append("\n=== CURRENT SCRIPT ===")
+        context_parts.append(script.render())
+
+    recent = history[-recent_n:] if len(history) > recent_n else history
+    if recent:
+        context_parts.append("\n=== RECENT CONVERSATION ===")
+        for msg in recent:
+            role = msg["role"].upper()
+            context_parts.append(f"{role}: {msg['content']}")
+
+    user_message = "\n".join(context_parts)
+
+    client = _make_client(model_config)
+    response = client.chat.completions.create(
+        model=model_config["model"],
+        messages=[
+            {"role": "system", "content": _load_prompt_file("eval_system.txt")},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=0.7,
+        response_format={"type": "json_object"},
+    )
+
+    data = json.loads(response.choices[0].message.content)
+
+    return EvalResult(
+        thought=data.get("thought", ""),
+        gaze=_strip_tag(data.get("gaze", ""), "gaze"),
+        expression=_strip_tag(data.get("expression", "neutral"), "emote"),
+        script_status=data.get("script_status", "hold"),
+        bootstrap_line=data.get("bootstrap_line", ""),
+        bootstrap_intent=data.get("bootstrap_intent", ""),
+        plan_request=data.get("plan_request", ""),
+    )
+
+
+# --- Plan LLM call ---
+
+
+def plan_call(
+    system_prompt: str,
+    world: WorldState | None,
+    history: list[dict],
+    goals: Goals | None = None,
+    plan_request: str = "",
+    plan_model_config: dict | None = None,
+    recent_n: int = 10,
+) -> PlanResult:
+    """Ask the planner LLM to generate a multi-beat script."""
+    if plan_model_config is None:
+        return PlanResult()
+
     context_parts: list[str] = []
 
     context_parts.append("=== CHARACTER SYSTEM PROMPT ===")
@@ -281,13 +383,17 @@ def think_call(
             role = msg["role"].upper()
             context_parts.append(f"{role}: {msg['content']}")
 
+    if plan_request:
+        context_parts.append(f"\n=== PLAN REQUEST ===")
+        context_parts.append(plan_request)
+
     user_message = "\n".join(context_parts)
 
-    client = _make_client(model_config)
+    client = _make_client(plan_model_config)
     response = client.chat.completions.create(
-        model=model_config["model"],
+        model=plan_model_config["model"],
         messages=[
-            {"role": "system", "content": _load_prompt_file("think_system.txt")},
+            {"role": "system", "content": _load_prompt_file("plan_system.txt")},
             {"role": "user", "content": user_message},
         ],
         temperature=0.7,
@@ -296,15 +402,9 @@ def think_call(
 
     data = json.loads(response.choices[0].message.content)
 
-    new_goal = data.get("new_short_term_goal")
-    if isinstance(new_goal, str) and not new_goal.strip():
-        new_goal = None
+    beats = []
+    for b in data.get("beats", []):
+        if isinstance(b, dict) and "line" in b and "intent" in b:
+            beats.append(Beat(line=b["line"], intent=b["intent"]))
 
-    return ThinkResult(
-        thought=data.get("thought", ""),
-        action=data.get("action", "no_change"),
-        action_detail=data.get("action_detail", ""),
-        gaze=_strip_tag(data.get("gaze", ""), "gaze"),
-        expression=_strip_tag(data.get("expression", "neutral"), "emote"),
-        new_short_term_goal=new_goal,
-    )
+    return PlanResult(beats=beats)

@@ -74,3 +74,4 @@ MODELS = {
 }
 
 DEFAULT_MODEL = "cerebras-llama"
+PLAN_MODEL = "gemini-3-flash"

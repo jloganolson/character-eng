@@ -5,16 +5,20 @@ import pytest
 
 import character_eng.world as world_mod
 from character_eng.world import (
+    Beat,
+    EvalResult,
     Goals,
-    ThinkResult,
+    PlanResult,
+    Script,
     WorldState,
     WorldUpdate,
     _load_prompt_file,
     director_call,
+    eval_call,
     format_narrator_message,
     load_goals,
     load_world_state,
-    think_call,
+    plan_call,
 )
 
 TEST_CONFIG = {
@@ -23,6 +27,14 @@ TEST_CONFIG = {
     "base_url": "https://test.example.com/v1",
     "api_key_env": "GEMINI_API_KEY",
     "stream_usage": True,
+}
+
+PLAN_CONFIG = {
+    "name": "Plan Model",
+    "model": "plan-model",
+    "base_url": "https://plan.example.com/v1",
+    "api_key_env": "GEMINI_API_KEY",
+    "stream_usage": False,
 }
 
 
@@ -164,33 +176,115 @@ def test_load_world_state_static_only(tmp_path, monkeypatch):
     assert ws.dynamic == []
 
 
+# --- Beat ---
+
+
+def test_beat_construction():
+    b = Beat(line="Hey, what's that orb?", intent="Ask about the orb")
+    assert b.line == "Hey, what's that orb?"
+    assert b.intent == "Ask about the orb"
+
+
+# --- Script ---
+
+
+def test_script_current_beat():
+    s = Script(beats=[Beat("Line 1", "Intent 1"), Beat("Line 2", "Intent 2")])
+    assert s.current_beat == Beat("Line 1", "Intent 1")
+
+
+def test_script_advance():
+    s = Script(beats=[Beat("Line 1", "Intent 1"), Beat("Line 2", "Intent 2")])
+    s.advance()
+    assert s.current_beat == Beat("Line 2", "Intent 2")
+
+
+def test_script_advance_to_empty():
+    s = Script(beats=[Beat("Line 1", "Intent 1")])
+    s.advance()
+    assert s.current_beat is None
+
+
+def test_script_replace():
+    s = Script(beats=[Beat("Old", "Old intent")])
+    s.advance()  # move past beat 0
+    s.replace([Beat("New 1", "New intent 1"), Beat("New 2", "New intent 2")])
+    assert s.current_beat == Beat("New 1", "New intent 1")
+    assert len(s.beats) == 2
+
+
+def test_script_is_empty():
+    assert Script().is_empty()
+    assert not Script(beats=[Beat("Line", "Intent")]).is_empty()
+
+
+def test_script_render():
+    s = Script(beats=[Beat("Line 1", "Intent 1"), Beat("Line 2", "Intent 2")])
+    text = s.render()
+    assert '→ 0. [Intent 1] "Line 1"' in text
+    assert '  1. [Intent 2] "Line 2"' in text
+
+
+def test_script_render_empty():
+    assert Script().render() == ""
+
+
+def test_script_show_returns_panel():
+    s = Script(beats=[Beat("Line", "Intent")])
+    panel = s.show()
+    assert panel.title == "Script"
+
+
+def test_script_show_empty():
+    panel = Script().show()
+    assert panel.title == "Script"
+
+
+# --- EvalResult ---
+
+
+def test_eval_result_construction():
+    r = EvalResult(
+        thought="Hmm, interesting.",
+        gaze="orb",
+        expression="curious",
+        script_status="hold",
+    )
+    assert r.thought == "Hmm, interesting."
+    assert r.script_status == "hold"
+    assert r.bootstrap_line == ""
+    assert r.bootstrap_intent == ""
+    assert r.plan_request == ""
+
+
+def test_eval_result_bootstrap_fields():
+    r = EvalResult(
+        thought="Let me start.",
+        gaze="visitor",
+        expression="curious",
+        script_status="bootstrap",
+        bootstrap_line="Hey there! What brings you here?",
+        bootstrap_intent="Greet the visitor",
+        plan_request="Plan a conversation about the orb",
+    )
+    assert r.script_status == "bootstrap"
+    assert r.bootstrap_line == "Hey there! What brings you here?"
+    assert r.bootstrap_intent == "Greet the visitor"
+    assert r.plan_request == "Plan a conversation about the orb"
+
+
 # --- Goals ---
 
 
 def test_goals_render_full():
-    g = Goals(long_term="Experience the universe", short_term="Figure out the orb")
+    g = Goals(long_term="Experience the universe")
     text = g.render()
     assert "Long-term goal: Experience the universe" in text
-    assert "Short-term goal: Figure out the orb" in text
 
 
 def test_goals_render_empty():
     g = Goals()
     assert g.render() == ""
-
-
-def test_goals_render_long_term_only():
-    g = Goals(long_term="Experience the universe")
-    text = g.render()
-    assert "Long-term goal: Experience the universe" in text
-    assert "Short-term goal" not in text
-
-
-def test_goals_apply_update():
-    g = Goals(long_term="Experience the universe", short_term="Old goal")
-    g.apply_update("New goal")
-    assert g.short_term == "New goal"
-    assert g.long_term == "Experience the universe"
 
 
 def test_goals_show_returns_panel():
@@ -214,7 +308,6 @@ def test_load_goals_from_character_txt(tmp_path, monkeypatch):
     g = load_goals("test_char")
     assert g is not None
     assert g.long_term == "Experience the universe"
-    assert g.short_term == "Figure out the orb"
 
 
 def test_load_goals_no_goals_in_character_txt(tmp_path, monkeypatch):
@@ -343,135 +436,156 @@ def test_director_call_empty_state(mock_make_client):
     assert update.events == ["Someone sat down"]
 
 
-# --- think_call (mocked) ---
+# --- eval_call (mocked) ---
 
 
 @patch("character_eng.world._make_client")
-def test_think_call_no_change(mock_make_client):
+def test_eval_call_hold(mock_make_client):
     data = {
-        "thought": "I wonder what that orb is doing.",
-        "action": "no_change",
-        "action_detail": "",
-        "gaze": "orb",
+        "thought": "I should wait for them to respond.",
+        "gaze": "visitor",
         "expression": "curious",
-        "new_short_term_goal": None,
+        "script_status": "hold",
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    result = think_call(
+    result = eval_call(
         system_prompt="You are Greg.",
         world=WorldState(static=["Greg is a robot head"]),
         history=[{"role": "user", "content": "Hello"}],
         model_config=TEST_CONFIG,
     )
 
-    assert result.thought == "I wonder what that orb is doing."
-    assert result.action == "no_change"
-    assert result.action_detail == ""
-    assert result.gaze == "orb"
+    assert result.thought == "I should wait for them to respond."
+    assert result.script_status == "hold"
+    assert result.gaze == "visitor"
     assert result.expression == "curious"
-    assert result.new_short_term_goal is None
 
 
 @patch("character_eng.world._make_client")
-def test_think_call_talk(mock_make_client):
+def test_eval_call_advance(mock_make_client):
     data = {
-        "thought": "I should mention the orb is glowing.",
-        "action": "talk",
-        "action_detail": "Comment on the orb's glow",
+        "thought": "Good, they engaged with my question.",
         "gaze": "orb",
         "expression": "excited",
-        "new_short_term_goal": None,
+        "script_status": "advance",
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    result = think_call(
+    script = Script(beats=[Beat("What's that orb?", "Ask about orb"), Beat("Can I touch it?", "Request to touch")])
+    result = eval_call(
         system_prompt="You are Greg.",
-        world=WorldState(dynamic=["The orb is glowing"]),
-        history=[{"role": "user", "content": "What's up?"}],
+        world=None,
+        history=[],
         model_config=TEST_CONFIG,
+        script=script,
     )
 
-    assert result.action == "talk"
-    assert result.action_detail == "Comment on the orb's glow"
+    assert result.script_status == "advance"
 
 
 @patch("character_eng.world._make_client")
-def test_think_call_emote(mock_make_client):
+def test_eval_call_bootstrap(mock_make_client):
     data = {
-        "thought": "That noise is alarming.",
-        "action": "emote",
-        "action_detail": "Eyes widen",
-        "gaze": "door",
-        "expression": "surprised",
-        "new_short_term_goal": None,
+        "thought": "Someone new is here. I should say hello.",
+        "gaze": "visitor",
+        "expression": "curious",
+        "script_status": "bootstrap",
+        "bootstrap_line": "Hey there! What brings you to my desk?",
+        "bootstrap_intent": "Greet the visitor",
+        "plan_request": "Plan a conversation exploring what the visitor wants",
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    result = think_call(
+    result = eval_call(
+        system_prompt="You are Greg.",
+        world=WorldState(static=["Greg is a robot head"]),
+        history=[{"role": "user", "content": "Hello"}],
+        model_config=TEST_CONFIG,
+        script=Script(),
+    )
+
+    assert result.script_status == "bootstrap"
+    assert result.bootstrap_line == "Hey there! What brings you to my desk?"
+    assert result.bootstrap_intent == "Greet the visitor"
+    assert result.plan_request != ""
+
+
+@patch("character_eng.world._make_client")
+def test_eval_call_off_book(mock_make_client):
+    data = {
+        "thought": "This conversation went somewhere unexpected.",
+        "gaze": "floor",
+        "expression": "confused",
+        "script_status": "off_book",
+        "plan_request": "Replan around the new topic of the visitor's pet",
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = eval_call(
         system_prompt="You are Greg.",
         world=None,
         history=[],
         model_config=TEST_CONFIG,
     )
 
-    assert result.action == "emote"
-    assert result.action_detail == "Eyes widen"
-    assert result.gaze == "door"
-    assert result.expression == "surprised"
+    assert result.script_status == "off_book"
+    assert "pet" in result.plan_request
 
 
 @patch("character_eng.world._make_client")
-def test_think_call_empty_history(mock_make_client):
+def test_eval_call_script_in_context(mock_make_client):
+    """Script is included in the user message when provided."""
     data = {
-        "thought": "Nobody is here yet.",
-        "action": "no_change",
-        "action_detail": "",
+        "thought": "Following script.",
         "gaze": "orb",
         "expression": "neutral",
-        "new_short_term_goal": None,
+        "script_status": "hold",
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    result = think_call(
+    script = Script(beats=[Beat("Hello!", "Greet")])
+    eval_call(
         system_prompt="You are Greg.",
-        world=WorldState(static=["Greg is a robot head"]),
+        world=None,
         history=[],
         model_config=TEST_CONFIG,
+        script=script,
     )
 
-    assert result.thought == "Nobody is here yet."
-    assert result.action == "no_change"
-    mock_client.chat.completions.create.assert_called_once()
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "CURRENT SCRIPT" in user_msg
+    assert "Hello!" in user_msg
 
 
 @patch("character_eng.world._make_client")
-def test_think_call_with_goals(mock_make_client):
-    """Goals are included in the user message sent to the LLM."""
+def test_eval_call_goals_in_context(mock_make_client):
+    """Goals are included in the user message when provided."""
     data = {
-        "thought": "I should focus on the orb.",
-        "action": "no_change",
-        "action_detail": "",
+        "thought": "Goal-driven.",
         "gaze": "orb",
         "expression": "focused",
-        "new_short_term_goal": None,
+        "script_status": "hold",
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    goals = Goals(long_term="Experience the universe", short_term="Figure out the orb")
-    think_call(
+    goals = Goals(long_term="Experience the universe")
+    eval_call(
         system_prompt="You are Greg.",
-        world=WorldState(static=["Greg is a robot head"]),
+        world=None,
         history=[],
         model_config=TEST_CONFIG,
         goals=goals,
@@ -481,86 +595,122 @@ def test_think_call_with_goals(mock_make_client):
     user_msg = call_args[1]["messages"][1]["content"]
     assert "CHARACTER GOALS" in user_msg
     assert "Experience the universe" in user_msg
-    assert "Figure out the orb" in user_msg
 
 
 @patch("character_eng.world._make_client")
-def test_think_call_with_goal_update(mock_make_client):
-    """new_short_term_goal in LLM response is parsed."""
+def test_eval_call_reads_eval_system_txt(mock_make_client, tmp_path, monkeypatch):
+    """eval_call reads eval_system.txt from disk each call."""
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "eval_system.txt").write_text("You are eval v1.")
+
+    data = {"thought": "hmm", "gaze": "orb", "expression": "neutral", "script_status": "hold"}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    eval_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
+
+    call_args = mock_client.chat.completions.create.call_args
+    messages = call_args[1]["messages"]
+    assert messages[0]["content"] == "You are eval v1."
+
+
+# --- plan_call (mocked) ---
+
+
+@patch("character_eng.world._make_client")
+def test_plan_call_basic_beats(mock_make_client):
     data = {
-        "thought": "I've figured out the orb is just glass.",
-        "action": "no_change",
-        "action_detail": "",
-        "gaze": "orb",
-        "expression": "amused",
-        "new_short_term_goal": "Find a new mystery to investigate",
+        "beats": [
+            {"line": "Hey, what's that orb?", "intent": "Ask about orb"},
+            {"line": "Can I touch it?", "intent": "Request interaction"},
+        ]
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    goals = Goals(long_term="Experience the universe", short_term="Figure out the orb")
-    result = think_call(
+    result = plan_call(
         system_prompt="You are Greg.",
-        world=None,
+        world=WorldState(static=["Greg is a robot head"]),
         history=[],
-        model_config=TEST_CONFIG,
-        goals=goals,
+        goals=Goals(long_term="Experience the universe"),
+        plan_request="Plan about the orb",
+        plan_model_config=PLAN_CONFIG,
     )
 
-    assert result.new_short_term_goal == "Find a new mystery to investigate"
+    assert len(result.beats) == 2
+    assert result.beats[0].line == "Hey, what's that orb?"
+    assert result.beats[1].intent == "Request interaction"
 
 
 @patch("character_eng.world._make_client")
-def test_think_call_empty_goal_treated_as_none(mock_make_client):
-    """Empty string new_short_term_goal is treated as None."""
-    data = {
-        "thought": "Just thinking.",
-        "action": "no_change",
-        "action_detail": "",
-        "gaze": "orb",
-        "expression": "neutral",
-        "new_short_term_goal": "",
-    }
+def test_plan_call_empty_beats(mock_make_client):
+    data = {"beats": []}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    result = think_call(
+    result = plan_call(
         system_prompt="You are Greg.",
         world=None,
         history=[],
-        model_config=TEST_CONFIG,
+        plan_model_config=PLAN_CONFIG,
     )
 
-    assert result.new_short_term_goal is None
+    assert len(result.beats) == 0
+
+
+def test_plan_call_no_model_config():
+    """plan_call returns empty PlanResult when no plan model config is provided."""
+    result = plan_call(
+        system_prompt="You are Greg.",
+        world=None,
+        history=[],
+        plan_model_config=None,
+    )
+
+    assert len(result.beats) == 0
 
 
 @patch("character_eng.world._make_client")
-def test_think_call_without_goals(mock_make_client):
-    """When no goals are passed, CHARACTER GOALS section is absent."""
-    data = {
-        "thought": "Just thinking.",
-        "action": "no_change",
-        "action_detail": "",
-        "gaze": "orb",
-        "expression": "neutral",
-    }
+def test_plan_call_plan_request_in_context(mock_make_client):
+    """plan_request is included in the user message."""
+    data = {"beats": [{"line": "Hi", "intent": "Greet"}]}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    think_call(
+    plan_call(
         system_prompt="You are Greg.",
         world=None,
         history=[],
-        model_config=TEST_CONFIG,
-        goals=None,
+        plan_request="Focus on the mysterious orb",
+        plan_model_config=PLAN_CONFIG,
     )
 
     call_args = mock_client.chat.completions.create.call_args
     user_msg = call_args[1]["messages"][1]["content"]
-    assert "CHARACTER GOALS" not in user_msg
+    assert "PLAN REQUEST" in user_msg
+    assert "mysterious orb" in user_msg
+
+
+@patch("character_eng.world._make_client")
+def test_plan_call_reads_plan_system_txt(mock_make_client, tmp_path, monkeypatch):
+    """plan_call reads plan_system.txt from disk each call."""
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "plan_system.txt").write_text("You are planner v1.")
+
+    data = {"beats": [{"line": "Hi", "intent": "Greet"}]}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    plan_call("sys prompt", world=None, history=[], plan_model_config=PLAN_CONFIG)
+
+    call_args = mock_client.chat.completions.create.call_args
+    messages = call_args[1]["messages"]
+    assert messages[0]["content"] == "You are planner v1."
 
 
 # --- _load_prompt_file ---
@@ -624,41 +774,23 @@ def test_director_call_picks_up_file_changes(mock_make_client, tmp_path, monkeyp
 
 
 @patch("character_eng.world._make_client")
-def test_think_call_reads_prompt_from_file(mock_make_client, tmp_path, monkeypatch):
-    """think_call reads think_system.txt from disk each call."""
-    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
-    (tmp_path / "think_system.txt").write_text("You are think v1.")
-
-    data = {"thought": "hmm", "action": "no_change", "action_detail": "", "gaze": "orb", "expression": "neutral"}
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
-    mock_make_client.return_value = mock_client
-
-    think_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
-
-    call_args = mock_client.chat.completions.create.call_args
-    messages = call_args[1]["messages"]
-    assert messages[0]["content"] == "You are think v1."
-
-
-@patch("character_eng.world._make_client")
-def test_think_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatch):
-    """Editing think_system.txt is picked up on the next call without restart."""
+def test_eval_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatch):
+    """Editing eval_system.txt is picked up on the next call without restart."""
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
 
-    data = {"thought": "hmm", "action": "no_change", "action_detail": "", "gaze": "orb", "expression": "neutral"}
+    data = {"thought": "hmm", "gaze": "orb", "expression": "neutral", "script_status": "hold"}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
     # First call with v1
-    (tmp_path / "think_system.txt").write_text("Think prompt v1")
-    think_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
+    (tmp_path / "eval_system.txt").write_text("Eval prompt v1")
+    eval_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
     msgs_v1 = mock_client.chat.completions.create.call_args[1]["messages"]
-    assert msgs_v1[0]["content"] == "Think prompt v1"
+    assert msgs_v1[0]["content"] == "Eval prompt v1"
 
     # Edit the file
-    (tmp_path / "think_system.txt").write_text("Think prompt v2")
-    think_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
+    (tmp_path / "eval_system.txt").write_text("Eval prompt v2")
+    eval_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
     msgs_v2 = mock_client.chat.completions.create.call_args[1]["messages"]
-    assert msgs_v2[0]["content"] == "Think prompt v2"
+    assert msgs_v2[0]["content"] == "Eval prompt v2"
