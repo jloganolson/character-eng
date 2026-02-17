@@ -45,6 +45,8 @@ def get_available_models() -> list[tuple[str, dict]]:
     """Return (key, config) pairs for models that are currently usable."""
     available = []
     for key, cfg in MODELS.items():
+        if cfg.get("hidden"):
+            continue
         if cfg.get("local"):
             if _is_local_server_up(cfg["base_url"]):
                 available.append((key, cfg))

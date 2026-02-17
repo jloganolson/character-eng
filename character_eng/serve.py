@@ -17,7 +17,7 @@ PORT = "8000"
 
 
 def get_local_models() -> list[tuple[str, dict]]:
-    return [(k, cfg) for k, cfg in MODELS.items() if cfg.get("local")]
+    return [(k, cfg) for k, cfg in MODELS.items() if cfg.get("local") and not cfg.get("hidden")]
 
 
 def pick_local_model(local_models: list[tuple[str, dict]]) -> tuple[str, dict] | None:
