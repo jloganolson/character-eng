@@ -32,6 +32,8 @@ class WorldUpdate:
 class Beat:
     line: str  # pre-rendered dialogue line
     intent: str  # what this beat is trying to accomplish
+    gaze: str = ""  # where the character looks (e.g. "orb", "visitor")
+    expression: str = ""  # facial expression (e.g. "curious", "excited")
 
 
 @dataclass
@@ -61,7 +63,15 @@ class Script:
         lines: list[str] = []
         for i, beat in enumerate(self.beats):
             marker = "→" if i == self._index else " "
-            lines.append(f"{marker} {i}. [{beat.intent}] \"{beat.line}\"")
+            extras = ""
+            if beat.gaze or beat.expression:
+                parts = []
+                if beat.gaze:
+                    parts.append(beat.gaze)
+                if beat.expression:
+                    parts.append(beat.expression)
+                extras = f" ({', '.join(parts)})"
+            lines.append(f"{marker} {i}. [{beat.intent}] \"{beat.line}\"{extras}")
         return "\n".join(lines)
 
     def show(self) -> Panel:
@@ -405,6 +415,11 @@ def plan_call(
     beats = []
     for b in data.get("beats", []):
         if isinstance(b, dict) and "line" in b and "intent" in b:
-            beats.append(Beat(line=b["line"], intent=b["intent"]))
+            beats.append(Beat(
+                line=b["line"],
+                intent=b["intent"],
+                gaze=b.get("gaze", ""),
+                expression=b.get("expression", ""),
+            ))
 
     return PlanResult(beats=beats)

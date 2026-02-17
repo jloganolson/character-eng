@@ -183,6 +183,16 @@ def test_beat_construction():
     b = Beat(line="Hey, what's that orb?", intent="Ask about the orb")
     assert b.line == "Hey, what's that orb?"
     assert b.intent == "Ask about the orb"
+    assert b.gaze == ""
+    assert b.expression == ""
+
+
+def test_beat_with_gaze_expression():
+    b = Beat(line="Hey, what's that orb?", intent="Ask about the orb", gaze="orb", expression="curious")
+    assert b.line == "Hey, what's that orb?"
+    assert b.intent == "Ask about the orb"
+    assert b.gaze == "orb"
+    assert b.expression == "curious"
 
 
 # --- Script ---
@@ -223,6 +233,22 @@ def test_script_render():
     text = s.render()
     assert '→ 0. [Intent 1] "Line 1"' in text
     assert '  1. [Intent 2] "Line 2"' in text
+
+
+def test_script_render_with_gaze_expression():
+    s = Script(beats=[
+        Beat("Line 1", "Intent 1", gaze="orb", expression="curious"),
+        Beat("Line 2", "Intent 2", gaze="visitor"),
+        Beat("Line 3", "Intent 3", expression="excited"),
+        Beat("Line 4", "Intent 4"),
+    ])
+    text = s.render()
+    assert '→ 0. [Intent 1] "Line 1" (orb, curious)' in text
+    assert '  1. [Intent 2] "Line 2" (visitor)' in text
+    assert '  2. [Intent 3] "Line 3" (excited)' in text
+    assert '  3. [Intent 4] "Line 4"' in text
+    # No trailing parens on beat 4
+    assert '"Line 4" (' not in text
 
 
 def test_script_render_empty():
@@ -622,8 +648,8 @@ def test_eval_call_reads_eval_system_txt(mock_make_client, tmp_path, monkeypatch
 def test_plan_call_basic_beats(mock_make_client):
     data = {
         "beats": [
-            {"line": "Hey, what's that orb?", "intent": "Ask about orb"},
-            {"line": "Can I touch it?", "intent": "Request interaction"},
+            {"line": "Hey, what's that orb?", "intent": "Ask about orb", "gaze": "orb", "expression": "curious"},
+            {"line": "Can I touch it?", "intent": "Request interaction", "gaze": "visitor", "expression": "excited"},
         ]
     }
     mock_client = MagicMock()
@@ -641,7 +667,35 @@ def test_plan_call_basic_beats(mock_make_client):
 
     assert len(result.beats) == 2
     assert result.beats[0].line == "Hey, what's that orb?"
+    assert result.beats[0].gaze == "orb"
+    assert result.beats[0].expression == "curious"
     assert result.beats[1].intent == "Request interaction"
+    assert result.beats[1].gaze == "visitor"
+    assert result.beats[1].expression == "excited"
+
+
+@patch("character_eng.world._make_client")
+def test_plan_call_beats_without_gaze_expression(mock_make_client):
+    """Beats without gaze/expression default to empty strings."""
+    data = {
+        "beats": [
+            {"line": "Hey there!", "intent": "Greet"},
+        ]
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = plan_call(
+        system_prompt="You are Greg.",
+        world=None,
+        history=[],
+        plan_model_config=PLAN_CONFIG,
+    )
+
+    assert len(result.beats) == 1
+    assert result.beats[0].gaze == ""
+    assert result.beats[0].expression == ""
 
 
 @patch("character_eng.world._make_client")

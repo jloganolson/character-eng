@@ -20,6 +20,15 @@ def test_init_creates_system_message(mock_openai_cls):
 
 
 @patch("character_eng.chat.OpenAI")
+def test_add_assistant_appends_message(mock_openai_cls):
+    session = ChatSession("You are Greg.", TEST_CONFIG)
+    session.add_assistant("Hey, what's up?")
+    history = session.get_history()
+    assert len(history) == 2
+    assert history[1] == {"role": "assistant", "content": "Hey, what's up?"}
+
+
+@patch("character_eng.chat.OpenAI")
 def test_inject_system_appends_message(mock_openai_cls):
     session = ChatSession("You are Greg.", TEST_CONFIG)
     session.inject_system("Something happened.")

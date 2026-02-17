@@ -45,6 +45,10 @@ class ChatSession:
 
         self._messages.append({"role": "assistant", "content": "".join(full_response)})
 
+    def add_assistant(self, content: str):
+        """Add an assistant message to history without making an LLM call."""
+        self._messages.append({"role": "assistant", "content": content})
+
     def inject_system(self, content: str):
         """Append a system message to the conversation history."""
         self._messages.append({"role": "system", "content": content})

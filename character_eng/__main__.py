@@ -406,10 +406,9 @@ def chat_loop(character: str, model_config: dict):
                     apply_plan(script, plan_result)
 
             if script.current_beat is not None:
-                # Normal path: inject beat, chat, then eval
-                inject_beat(session, script.current_beat)
-
-                response = stream_response(session, label, user_input)
+                # Normal path: paste pre-rendered beat as response, then eval
+                session.inject_system(f"[The user says: {user_input}]")
+                response = deliver_beat(session, script.current_beat, label)
                 entry = {"type": "send", "input": user_input, "response": response}
 
                 eval_result = run_eval(session, world, goals, script, model_config)
@@ -434,7 +433,7 @@ def chat_loop(character: str, model_config: dict):
 
                 log.append(entry)
             else:
-                # No script available (planner unavailable/failed) — just chat + eval
+                # No script available (planner unavailable/failed) — LLM generates response
                 response = stream_response(session, label, user_input)
                 entry = {"type": "send", "input": user_input, "response": response}
 
@@ -520,10 +519,14 @@ def inject_eval(session, result):
     session.inject_system(" ".join(parts))
 
 
-def inject_beat(session, beat):
-    """Inject beat directive before chat."""
-    directive = f'[Your current objective: {beat.intent}. You want to say: "{beat.line}". Adapt naturally.]'
-    session.inject_system(directive)
+def deliver_beat(session, beat, label):
+    """Deliver a pre-rendered beat as the character's response. Returns the beat line."""
+    npc_name = Text(f"{label}: ", style="bold magenta")
+    console.print(npc_name, end="")
+    console.print(beat.line)
+    console.print()
+    session.add_assistant(beat.line)
+    return beat.line
 
 
 def apply_plan(script, plan_result):
@@ -532,7 +535,15 @@ def apply_plan(script, plan_result):
     console.print(f"[magenta]Script loaded ({len(plan_result.beats)} beats):[/magenta]")
     for i, beat in enumerate(plan_result.beats):
         marker = "→" if i == 0 else " "
-        console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"[/magenta]")
+        extras = ""
+        if beat.gaze or beat.expression:
+            parts = []
+            if beat.gaze:
+                parts.append(beat.gaze)
+            if beat.expression:
+                parts.append(beat.expression)
+            extras = f" ({', '.join(parts)})"
+        console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"{extras}[/magenta]")
 
 
 def handle_think(session, world, goals, script, label, model_config, plan_model_config, log):
@@ -551,8 +562,7 @@ def handle_think(session, world, goals, script, label, model_config, plan_model_
         script.advance()
         if script.current_beat:
             console.print(f"[magenta]  next beat:  [{script.current_beat.intent}][/magenta]")
-            inject_beat(session, script.current_beat)
-            response = stream_response(session, label, "[The character speaks.]")
+            response = deliver_beat(session, script.current_beat, label)
             entry["response"] = response
         else:
             console.print("[dim]  script complete, replanning...[/dim]")
@@ -561,8 +571,7 @@ def handle_think(session, world, goals, script, label, model_config, plan_model_
                 apply_plan(script, plan_result)
     elif script.current_beat and result.script_status == "hold":
         # Deliver current beat
-        inject_beat(session, script.current_beat)
-        response = stream_response(session, label, "[The character speaks.]")
+        response = deliver_beat(session, script.current_beat, label)
         entry["response"] = response
     elif result.script_status == "off_book" and result.plan_request:
         # Replan
@@ -613,11 +622,7 @@ def handle_world_change(session, world, goals, script, change_text, label, model
         display_eval(eval_result)
         inject_eval(session, eval_result)
 
-    # Inject beat if available
-    if script.current_beat:
-        inject_beat(session, script.current_beat)
-
-    # Character reacts
+    # Character reacts (LLM generates dynamic reaction to world change)
     response = stream_response(session, label, "[React to what just happened.]")
 
     entry = {

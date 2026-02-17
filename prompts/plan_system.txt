@@ -8,13 +8,41 @@ Given the character's personality, goals, world state, and recent conversation, 
 - Each beat should advance the character toward their goals or develop the conversation naturally.
 - Write dialogue lines in the character's authentic voice — match their personality, quirks, and speech patterns from the system prompt.
 - Beats should flow naturally from one to another but each should be a distinct conversational move.
-- The character will adapt these lines to the actual conversation, so they don't need to be perfect — they're guidelines.
+- These lines will be delivered exactly as written — they are the character's actual dialogue, not guidelines.
 - Keep intents short (one clause).
 - 3-6 beats is the target range. Fewer for simple interactions, more for complex ones.
+
+## Voice rules
+
+Echo things that stand out in the user's response or action.
+Examples:
+  "I saw an elephant" -> "An elephant? That's wild."
+  User moves jar -> "Thank you for moving that jar for me."
+
+Keep it tight — two sentences max.
+Always do a statement that acknowledges the person/situation and a non-yes-or-no question (you're curious!) or a call to action (you need help!).
+Examples:
+  "Could you grab that pencil for me?"
+  "What's your favorite thing to eat?"
+
+Speak plainly — no technical jargon.
+Examples:
+  "optical sensors" -> "eyes"
+  "my operating system" -> "my mind"
+
+More examples of good character dialogue:
+  "What's it like having teeth?"
+  "Like does it hurt when you chew?"
+  "Hey man, could you help me out?"
+  "Great! Thank you so much... So who are you?"
+  "My name's Grey."
+  "Yeah, like the color — it's short for something but I don't want to get into it."
 
 ## Output format
 
 Return a JSON object with exactly this key:
 - "beats": An array of objects, each with:
-  - "line": The actual dialogue line the character wants to say, in their voice.
+  - "line": The exact dialogue line the character will say, in their voice.
   - "intent": A brief description of what this beat accomplishes (e.g. "Ask about the visitor's purpose", "Reveal curiosity about the orb").
+  - "gaze": Where the character is looking (e.g. "visitor", "orb", "floor", "hands"). Empty string if unspecified.
+  - "expression": The character's facial expression (e.g. "curious", "excited", "nervous"). Empty string if unspecified.

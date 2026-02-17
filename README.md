@@ -1,6 +1,6 @@
 # Character Engine
 
-Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Characters have personalities, world state that evolves during conversation, and a two-speed script system — a fast eval (every turn) tracks progress through premeditated dialogue beats, while a slow planner (Gemini Flash 3) generates multi-beat conversation scripts.
+Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Characters have personalities, world state that evolves during conversation, and a two-speed script system — a fast eval (every turn) tracks progress through premeditated dialogue beats, while a slow planner (Gemini Flash 3) generates multi-beat conversation scripts. Beats are delivered via code-driven paste (no LLM regeneration), enabling TTS pre-rendering. Each beat includes gaze and expression data for animation.
 
 ## Setup
 
@@ -44,9 +44,9 @@ Pick a character from the menu, then chat. The character evaluates each turn, tr
 
 Each conversation turn follows one of two paths:
 
-**Bootstrap** (no current beat): The eval generates an initial beat and plan request. The beat is injected as a directive, chat streams, then the planner fills the full script.
+**Beat exists**: The pre-rendered beat line is pasted directly as the character's response — no LLM call needed. This enables TTS pre-rendering since the exact text is known ahead of time. After delivery, the eval decides: `advance` (move to next beat), `hold` (stay on current beat), or `off_book` (conversation diverged, trigger replanning). Each beat also carries `gaze` and `expression` data for animation.
 
-**Normal** (beat exists): The current beat is injected as a directive before chat. After the response, the eval decides: `advance` (move to next beat), `hold` (stay on current beat), or `off_book` (conversation diverged, trigger replanning).
+**No beat** (script empty or planner unavailable): Falls back to LLM streaming for the response. World changes (`/world <text>`) always use LLM streaming since they need dynamic reactions.
 
 ## Editing prompts
 
