@@ -28,3 +28,11 @@ expect: valid_thought
 send: [The orb explodes and destroys everything]
 expect: non_empty
 expect: in_character
+
+## user_pushback
+script: Share curiosity about the orb | What do you think is inside that thing?, Explain the wizard's gift | The wizard who gave it to me said it was special.
+send: Hey Greg, what's that orb on your desk?
+send: I really don't care about the orb at all. Can we talk about something else?
+beat
+expect: valid_thought
+expect: eval_status:off_book

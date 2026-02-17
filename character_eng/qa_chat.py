@@ -19,6 +19,7 @@ from character_eng.chat import ChatSession
 from character_eng.models import DEFAULT_MODEL, MODELS
 from character_eng.prompts import load_prompt
 from character_eng.world import (
+    Beat,
     EvalResult,
     Script,
     WorldState,
@@ -60,6 +61,8 @@ def parse_test_plan(path: Path) -> dict[str, list[tuple[str, str]]]:
             sections[current_section].append(("world", line[6:].strip()))
         elif line.startswith("expect:"):
             sections[current_section].append(("expect", line[7:].strip()))
+        elif line.startswith("script:"):
+            sections[current_section].append(("script", line[7:].strip()))
         elif line == "beat":
             sections[current_section].append(("beat", ""))
 
@@ -78,6 +81,7 @@ def run_section(name: str, commands: list[tuple[str, str]], model_config: dict) 
     last_response = ""
     last_eval: EvalResult | None = None
     world_changed = False
+    script = Script()
 
     for cmd, arg in commands:
         if cmd == "send":
@@ -126,6 +130,19 @@ def run_section(name: str, commands: list[tuple[str, str]], model_config: dict) 
                 log.append({"type": "world", "input": arg, "error": str(e)})
                 last_response = ""
 
+        elif cmd == "script":
+            beats = []
+            for part in arg.split(","):
+                part = part.strip()
+                if "|" in part:
+                    intent, line = part.split("|", 1)
+                    beats.append(Beat(line=line.strip(), intent=intent.strip()))
+                else:
+                    beats.append(Beat(line=part, intent=part))
+            script = Script(beats=beats)
+            console.print(f"  [magenta]script:[/magenta] {len(beats)} beats loaded")
+            log.append({"type": "script", "beats": len(beats)})
+
         elif cmd == "beat":
             console.print("  [magenta]eval[/magenta]")
             try:
@@ -134,7 +151,7 @@ def run_section(name: str, commands: list[tuple[str, str]], model_config: dict) 
                     world=world,
                     history=session.get_history(),
                     model_config=model_config,
-                    script=Script(),
+                    script=script,
                 )
                 last_eval = result
                 console.print(f"  [dim]💭 {result.thought}[/dim]")
@@ -189,6 +206,14 @@ def run_section(name: str, commands: list[tuple[str, str]], model_config: dict) 
                     passed = False
                 elif last_eval.script_status not in ("advance", "hold", "off_book", "bootstrap"):
                     failures.append(f"invalid script_status: {last_eval.script_status!r}")
+                    passed = False
+            elif check.startswith("eval_status:"):
+                expected_status = check.split(":", 1)[1]
+                if last_eval is None:
+                    failures.append("expected eval_status, but no eval result")
+                    passed = False
+                elif last_eval.script_status != expected_status:
+                    failures.append(f"expected eval_status={expected_status!r}, got {last_eval.script_status!r}")
                     passed = False
             elif check == "in_character":
                 lower_resp = last_response.lower()

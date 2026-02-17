@@ -1,6 +1,6 @@
 # Character Engine
 
-Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Characters have personalities, world state that evolves during conversation, and a two-speed script system — a fast eval (every turn) tracks progress through premeditated dialogue beats, while a slow planner (Gemini Flash 3) generates multi-beat conversation scripts. Beats are delivered via code-driven paste (no LLM regeneration), enabling TTS pre-rendering. Each beat includes gaze and expression data for animation.
+Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Characters have personalities, world state that evolves during conversation, and a two-speed script system — a fast eval (every turn) tracks progress through premeditated dialogue beats, while a slow planner (Gemini Flash 3) generates multi-beat conversation scripts. During conversation, beats use LLM-guided delivery: the beat's intent guides the LLM to respond naturally to the user while serving the beat's purpose (no verbatim pasting). The `/beat` command (autonomous time-passing) still uses verbatim delivery for TTS pre-rendering. Each beat includes gaze and expression data for animation.
 
 World state uses a two-speed update system: the fast path immediately stores changes as pending and lets the character react (no LLM call needed), while the slow path reconciles pending changes into structured state mutations in the background using stable fact IDs (`f1`, `f2`, ...) — eliminating index-shift bugs that plagued small models.
 
@@ -46,7 +46,9 @@ Pick a character from the menu, then chat. The character evaluates each turn, tr
 
 Each conversation turn follows one of two paths:
 
-**Beat exists**: The pre-rendered beat line is pasted directly as the character's response — no LLM call needed. This enables TTS pre-rendering since the exact text is known ahead of time. Beats can have conditions (natural language preconditions) — if a condition isn't met, the character shows an in-character idle line instead of delivering the beat. After delivery, the eval decides: `advance` (move to next beat), `hold` (stay on current beat), or `off_book` (conversation diverged, trigger replanning). Each beat also carries `gaze` and `expression` data for animation.
+**Beat exists (conversation turn)**: The beat's intent and example line are injected as guidance, then the LLM generates a response that reacts to the user's input while serving the beat's purpose. This means the character acknowledges what the user said instead of barreling through a script. After delivery, the eval decides: `advance` (move to next beat), `hold` (stay on current beat), or `off_book` (conversation diverged, trigger replanning). The eval also detects user pushback — if the user explicitly rejects or redirects away from the current topic, the eval goes `off_book` to follow the user's interest rather than forcing the script. Each beat also carries `gaze` and `expression` data for animation.
+
+**Beat exists (`/beat` command)**: The pre-rendered beat line is pasted verbatim — no LLM call needed. This is for autonomous time-passing and enables TTS pre-rendering. Beats can have conditions (natural language preconditions) — if a condition isn't met, the character shows an in-character idle line instead.
 
 **No beat** (script empty or planner unavailable): Falls back to LLM streaming for the response.
 
@@ -80,6 +82,7 @@ System-level prompts are also editable files in `prompts/`:
 | `eval_system.txt` | System prompt for the character eval LLM (script tracking + inner monologue) |
 | `condition_system.txt` | System prompt for the condition checker LLM (gates beat delivery) |
 | `plan_system.txt` | System prompt for the conversation planner LLM (beat generation with conditions) |
+| `beat_guide.txt` | Template for beat guidance injected before LLM-guided delivery (`{intent}` and `{line}` placeholders) |
 
 **Live editing works** — edit any character prompt file in your editor, then type `/reload` in the chat to pick up changes without restarting. The conversation resets but you keep your place in the character menu. Reconciler, eval, and plan system prompts are re-read on every call, so edits take effect immediately without `/reload`.
 
@@ -128,7 +131,7 @@ uv run -m character_eng.qa_world --model groq-llama    # test with Groq Llama
 uv run -m character_eng.qa_chat --model groq-llama     # test with Groq Llama
 ```
 
-`test_plan.md` defines the QA chat scenarios in a human-editable format — add new test sections without touching code.
+`test_plan.md` defines the QA chat scenarios in a human-editable format — add new test sections without touching code. Supports `send:`, `world:`, `script:` (load beats for eval tracking), `beat` (run eval), and `expect:` commands including `eval_status:<status>` to assert eval outcomes.
 
 ## Benchmarking
 
