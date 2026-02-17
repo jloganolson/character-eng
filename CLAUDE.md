@@ -51,7 +51,7 @@ Interactive NPC character chat CLI with selectable LLM backend (Cerebras, Groq, 
 - **`character_eng/__main__.py`** — TUI entry point. Model selection at startup (`pick_model()`), then character selection. Two nested loops: outer loop loads prompts, world state, and creates a chat session (breaks on `/reload`), inner loop handles user input and dispatches commands (`/reload`, `/trace`, `/back`, `/quit`, `/world`, `/think`). Uses `rich` for colored output and streaming display. Manages integrated vLLM lifecycle: detects unavailable local models, offers to start vLLM via `s` menu option with live output streaming and health polling, auto-cleans up the vLLM process on exit via `atexit` and `finally`.
 - **`character_eng/chat.py`** — `ChatSession` wraps OpenAI client, configured via `model_config` dict (base URL, API key, model name). Manual message history with `system`/`user`/`assistant` roles. `inject_system()` appends system-role messages mid-conversation. `get_history()` returns message list for `/think` context. Streams responses via generator. `stream_options` only sent when `model_config["stream_usage"]` is True (Cerebras doesn't support it).
 - **`character_eng/prompts.py`** — Filesystem-based template engine. Scans `prompts/characters/` for subdirs containing `prompt.txt`. Resolves `{{key}}` macros via regex substitution (`global_rules`, `character`, `scenario`, `world`). Unknown macros left intact for debugging.
-- **`character_eng/world.py`** — World state system. `WorldState` dataclass tracks static facts, mutable dynamic facts, and an event log. `director_call` sends a one-shot LLM call with JSON output to produce a `WorldUpdate` (remove/add facts, events). `think_call` produces a `ThinkResult` (inner monologue + optional action). Both accept `model_config`. `format_narrator_message` turns updates into `[bracketed stage directions]` injected as system-role messages.
+- **`character_eng/world.py`** — World state system. `WorldState` dataclass tracks static facts, mutable dynamic facts, and an event log. `Goals` dataclass holds a permanent `long_term` goal and a mutable `short_term` goal (parsed from `character.txt`). `director_call` sends a one-shot LLM call with JSON output to produce a `WorldUpdate` (remove/add facts, events). `think_call` produces a `ThinkResult` (inner monologue + optional action + optional `new_short_term_goal`). Actions can be `no_change`, `talk`, `emote`, or `talk_and_emote`. Both accept `model_config`. `format_narrator_message` turns updates into `[bracketed stage directions]` injected as system-role messages.
 - **`character_eng/benchmark.py`** — Model speed benchmark. Runnable via `uv run -m character_eng.benchmark [--model KEY] [--runs N]`. Benchmarks three scenarios matching real usage: streaming chat (TTFT + total time), structured JSON director call, and structured JSON think call. Uses Greg's full prompts and world state for realistic payloads. Prints per-run details and a rich summary table, saves JSON logs to `logs/`.
 - **`character_eng/serve.py`** — vLLM server launcher for local models. Scans `MODELS` for entries with `local: True`, kills any existing process on port 8000, then exec's into `vllm serve`. Accepts optional model key as CLI arg or shows interactive picker. Exports `build_vllm_cmd(key, cfg, port)`, `get_local_models()`, and `kill_port(port)` for reuse by `__main__.py`.
 
@@ -59,7 +59,7 @@ Interactive NPC character chat CLI with selectable LLM backend (Cerebras, Groq, 
 
 Characters are defined as directories under `prompts/characters/{snake_case_name}/` with these files:
 - `prompt.txt` — template with `{{global_rules}}`, `{{character}}`, `{{scenario}}`, `{{world}}` macros
-- `character.txt` — personality and voice
+- `character.txt` — personality, voice, and optional goals (`Long-term goal:` / `Short-term goal:` lines)
 - `scenario.txt` — situation and context
 
 Optional world state files (line-per-fact format):
@@ -91,13 +91,14 @@ Cloud models need their API key set in `.env`. Local models can be started direc
 
 ## Characters
 
-- **Greg** (`prompts/characters/greg/`) — Robot head on a desk. Orb gazing scenario with world state.
+- **Greg** (`prompts/characters/greg/`) — Robot head on a desk. Orb gazing scenario with world state. Long-term goal: experience the universe. Short-term goal: figure out the orb.
 
 ## In-chat commands
 
 - `/world` — Show current world state (static facts, dynamic facts, event log)
 - `/world <text>` — Describe a change; director LLM updates state, narrator message injected as system role, character reacts
-- `/think` — Character inner monologue + optional autonomous action (talk/emote)
+- `/think` — Character inner monologue + optional autonomous action (talk, emote, or both)
+- `/goals` — Show character goals (long-term + short-term)
 - `/reload` — Reload prompt files, restart conversation
 - `/trace` — Show system prompt, model, token usage
 - `/back` — Return to character selection
@@ -120,7 +121,7 @@ Three layers, from fast to slow:
 - `tests/test_chat.py` — ChatSession: init, send (message history + streaming), inject_system, get_history, trace_info, local model api_key config
 - `tests/test_prompts.py` — Template loading, macro substitution, list_characters
 - `tests/test_serve.py` — get_local_models, build_vllm_cmd, kill_port (missing lsof)
-- `tests/test_world.py` — WorldState (render/apply/show/load), format_narrator, director_call (3 scenarios), think_call (4 scenarios)
+- `tests/test_world.py` — WorldState (render/apply/show/load), Goals (render/apply/load from character.txt), format_narrator, director_call (3 scenarios), think_call (7 scenarios incl. goals and goal updates)
 
 **`qa_world`** (`uv run -m character_eng.qa_world [--model cerebras-llama|groq-llama|groq-gpt]`) — Integration test hitting real LLM. 4 cumulative director_call scenarios with strict validation (schema, index ranges, non-empty events). Run manually before releases or after changes to world.py.
 

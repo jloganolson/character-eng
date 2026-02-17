@@ -68,6 +68,7 @@ MODELS = {
         "api_key": "local",
         "stream_usage": False,
         "local": True,
+        "hidden": True,
         "path": f"{MODELS_DIR}/LFM-2.5-1.2B",
     },
 }

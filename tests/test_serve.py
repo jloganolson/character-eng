@@ -4,18 +4,11 @@ from character_eng.serve import build_vllm_cmd, get_local_models, kill_port
 
 
 def test_get_local_models():
-    """get_local_models returns only entries with local: True."""
+    """get_local_models returns only non-hidden local entries."""
     models = get_local_models()
-    assert len(models) > 0
     for key, cfg in models:
         assert cfg.get("local") is True
-
-
-def test_get_local_models_keys():
-    """Returned keys match known local model keys."""
-    keys = [k for k, _ in get_local_models()]
-    for k in keys:
-        assert "lfm" in k  # all current local models are LFM variants
+        assert not cfg.get("hidden")
 
 
 def test_build_vllm_cmd():

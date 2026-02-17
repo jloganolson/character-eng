@@ -32,7 +32,8 @@ Pick a character from the menu, then chat. In-session commands:
 |---------|-------------|
 | `/world` | Show current world state |
 | `/world <text>` | Describe a change — a director LLM updates the world, the character reacts |
-| `/think` | Trigger the character's inner monologue — they may speak or act on their own |
+| `/think` | Trigger the character's inner monologue — they may speak, emote, or both |
+| `/goals` | Show character goals (long-term + short-term) |
 | `/reload` | Reload all prompt files from disk (for live editing) |
 | `/trace` | Show system prompt, model, and token usage |
 | `/back` | Return to character select |
@@ -45,7 +46,7 @@ Characters live in `prompts/characters/<name>/` with these files:
 | File | Purpose |
 |------|---------|
 | `prompt.txt` | Main template — uses `{{global_rules}}`, `{{character}}`, `{{scenario}}`, `{{world}}` macros |
-| `character.txt` | Personality and voice |
+| `character.txt` | Personality, voice, and goals (optional `Long-term goal:` / `Short-term goal:` lines) |
 | `scenario.txt` | Situation and context |
 | `world_static.txt` | Permanent facts (one per line, optional) |
 | `world_dynamic.txt` | Initial mutable state (one per line, optional) |

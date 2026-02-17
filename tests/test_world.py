@@ -5,7 +5,6 @@ import pytest
 
 import character_eng.world as world_mod
 from character_eng.world import (
-    GoalUpdate,
     Goals,
     ThinkResult,
     WorldState,
@@ -169,16 +168,10 @@ def test_load_world_state_static_only(tmp_path, monkeypatch):
 
 
 def test_goals_render_full():
-    g = Goals(
-        static=["Understand the orb"],
-        dynamic=["Figure out if orb is magical", "Notice something new"],
-    )
+    g = Goals(long_term="Experience the universe", short_term="Figure out the orb")
     text = g.render()
-    assert "Core drives (permanent):" in text
-    assert "- Understand the orb" in text
-    assert "Current goals:" in text
-    assert "0. Figure out if orb is magical" in text
-    assert "1. Notice something new" in text
+    assert "Long-term goal: Experience the universe" in text
+    assert "Short-term goal: Figure out the orb" in text
 
 
 def test_goals_render_empty():
@@ -186,33 +179,22 @@ def test_goals_render_empty():
     assert g.render() == ""
 
 
-def test_goals_render_static_only():
-    g = Goals(static=["Core drive one"])
+def test_goals_render_long_term_only():
+    g = Goals(long_term="Experience the universe")
     text = g.render()
-    assert "Core drives (permanent):" in text
-    assert "Current goals:" not in text
+    assert "Long-term goal: Experience the universe" in text
+    assert "Short-term goal" not in text
 
 
-def test_goals_apply_update_add():
-    g = Goals(dynamic=["Goal A"])
-    g.apply_update(GoalUpdate(add_goals=["Goal B"]))
-    assert g.dynamic == ["Goal A", "Goal B"]
-
-
-def test_goals_apply_update_remove():
-    g = Goals(dynamic=["Goal A", "Goal B", "Goal C"])
-    g.apply_update(GoalUpdate(remove_goals=[1]))
-    assert g.dynamic == ["Goal A", "Goal C"]
-
-
-def test_goals_apply_update_invalid_index():
-    g = Goals(dynamic=["Goal A"])
-    g.apply_update(GoalUpdate(remove_goals=[5]))
-    assert g.dynamic == ["Goal A"]
+def test_goals_apply_update():
+    g = Goals(long_term="Experience the universe", short_term="Old goal")
+    g.apply_update("New goal")
+    assert g.short_term == "New goal"
+    assert g.long_term == "Experience the universe"
 
 
 def test_goals_show_returns_panel():
-    g = Goals(static=["Drive"])
+    g = Goals(long_term="Drive")
     panel = g.show()
     assert panel.title == "Character Goals"
 
@@ -220,21 +202,33 @@ def test_goals_show_returns_panel():
 # --- load_goals ---
 
 
-def test_load_goals_with_files(tmp_path, monkeypatch):
+def test_load_goals_from_character_txt(tmp_path, monkeypatch):
     char_dir = tmp_path / "characters" / "test_char"
     char_dir.mkdir(parents=True)
-    (char_dir / "goals_static.txt").write_text("Drive one\nDrive two\n")
-    (char_dir / "goals_dynamic.txt").write_text("Goal A\n\n  \n")
+    (char_dir / "character.txt").write_text(
+        "You are Test.\n\nLong-term goal: Experience the universe\nShort-term goal: Figure out the orb\n"
+    )
 
     monkeypatch.setattr(world_mod, "CHARACTERS_DIR", tmp_path / "characters")
 
     g = load_goals("test_char")
     assert g is not None
-    assert g.static == ["Drive one", "Drive two"]
-    assert g.dynamic == ["Goal A"]
+    assert g.long_term == "Experience the universe"
+    assert g.short_term == "Figure out the orb"
 
 
-def test_load_goals_no_files(tmp_path, monkeypatch):
+def test_load_goals_no_goals_in_character_txt(tmp_path, monkeypatch):
+    char_dir = tmp_path / "characters" / "test_char"
+    char_dir.mkdir(parents=True)
+    (char_dir / "character.txt").write_text("You are Test. No goals here.\n")
+
+    monkeypatch.setattr(world_mod, "CHARACTERS_DIR", tmp_path / "characters")
+
+    g = load_goals("test_char")
+    assert g is None
+
+
+def test_load_goals_no_character_txt(tmp_path, monkeypatch):
     char_dir = tmp_path / "characters" / "test_char"
     char_dir.mkdir(parents=True)
 
@@ -360,7 +354,7 @@ def test_think_call_no_change(mock_make_client):
         "action_detail": "",
         "gaze": "orb",
         "expression": "curious",
-        "goal_updates": None,
+        "new_short_term_goal": None,
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
@@ -378,7 +372,7 @@ def test_think_call_no_change(mock_make_client):
     assert result.action_detail == ""
     assert result.gaze == "orb"
     assert result.expression == "curious"
-    assert result.goal_updates is None
+    assert result.new_short_term_goal is None
 
 
 @patch("character_eng.world._make_client")
@@ -389,7 +383,7 @@ def test_think_call_talk(mock_make_client):
         "action_detail": "Comment on the orb's glow",
         "gaze": "orb",
         "expression": "excited",
-        "goal_updates": None,
+        "new_short_term_goal": None,
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
@@ -414,7 +408,7 @@ def test_think_call_emote(mock_make_client):
         "action_detail": "Eyes widen",
         "gaze": "door",
         "expression": "surprised",
-        "goal_updates": None,
+        "new_short_term_goal": None,
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
@@ -441,7 +435,7 @@ def test_think_call_empty_history(mock_make_client):
         "action_detail": "",
         "gaze": "orb",
         "expression": "neutral",
-        "goal_updates": None,
+        "new_short_term_goal": None,
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
@@ -468,16 +462,13 @@ def test_think_call_with_goals(mock_make_client):
         "action_detail": "",
         "gaze": "orb",
         "expression": "focused",
-        "goal_updates": None,
+        "new_short_term_goal": None,
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    goals = Goals(
-        static=["Understand the orb"],
-        dynamic=["Figure out if orb is magical"],
-    )
+    goals = Goals(long_term="Experience the universe", short_term="Figure out the orb")
     think_call(
         system_prompt="You are Greg.",
         world=WorldState(static=["Greg is a robot head"]),
@@ -489,32 +480,26 @@ def test_think_call_with_goals(mock_make_client):
     call_args = mock_client.chat.completions.create.call_args
     user_msg = call_args[1]["messages"][1]["content"]
     assert "CHARACTER GOALS" in user_msg
-    assert "Understand the orb" in user_msg
-    assert "Figure out if orb is magical" in user_msg
+    assert "Experience the universe" in user_msg
+    assert "Figure out the orb" in user_msg
 
 
 @patch("character_eng.world._make_client")
-def test_think_call_with_goal_updates(mock_make_client):
-    """goal_updates in LLM response are parsed into GoalUpdate."""
+def test_think_call_with_goal_update(mock_make_client):
+    """new_short_term_goal in LLM response is parsed."""
     data = {
         "thought": "I've figured out the orb is just glass.",
         "action": "no_change",
         "action_detail": "",
         "gaze": "orb",
         "expression": "amused",
-        "goal_updates": {
-            "remove_goals": [0],
-            "add_goals": ["Find a new mystery to investigate"],
-        },
+        "new_short_term_goal": "Find a new mystery to investigate",
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    goals = Goals(
-        static=["Understand the orb"],
-        dynamic=["Figure out if orb is magical"],
-    )
+    goals = Goals(long_term="Experience the universe", short_term="Figure out the orb")
     result = think_call(
         system_prompt="You are Greg.",
         world=None,
@@ -523,9 +508,32 @@ def test_think_call_with_goal_updates(mock_make_client):
         goals=goals,
     )
 
-    assert result.goal_updates is not None
-    assert result.goal_updates.remove_goals == [0]
-    assert result.goal_updates.add_goals == ["Find a new mystery to investigate"]
+    assert result.new_short_term_goal == "Find a new mystery to investigate"
+
+
+@patch("character_eng.world._make_client")
+def test_think_call_empty_goal_treated_as_none(mock_make_client):
+    """Empty string new_short_term_goal is treated as None."""
+    data = {
+        "thought": "Just thinking.",
+        "action": "no_change",
+        "action_detail": "",
+        "gaze": "orb",
+        "expression": "neutral",
+        "new_short_term_goal": "",
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = think_call(
+        system_prompt="You are Greg.",
+        world=None,
+        history=[],
+        model_config=TEST_CONFIG,
+    )
+
+    assert result.new_short_term_goal is None
 
 
 @patch("character_eng.world._make_client")

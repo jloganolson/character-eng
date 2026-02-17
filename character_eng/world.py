@@ -29,19 +29,13 @@ class WorldUpdate:
 
 
 @dataclass
-class GoalUpdate:
-    remove_goals: list[int] = field(default_factory=list)
-    add_goals: list[str] = field(default_factory=list)
-
-
-@dataclass
 class ThinkResult:
     thought: str
-    action: str  # "no_change" | "talk" | "emote"
+    action: str  # "no_change" | "talk" | "emote" | "talk_and_emote"
     action_detail: str
     gaze: str  # what the character is looking at
     expression: str  # facial expression from fixed vocab
-    goal_updates: GoalUpdate | None = None
+    new_short_term_goal: str | None = None
 
 
 @dataclass
@@ -102,41 +96,26 @@ class WorldState:
 
 @dataclass
 class Goals:
-    static: list[str] = field(default_factory=list)
-    dynamic: list[str] = field(default_factory=list)
+    long_term: str = ""
+    short_term: str = ""
 
     def render(self) -> str:
         lines: list[str] = []
-        if self.static:
-            lines.append("Core drives (permanent):")
-            for drive in self.static:
-                lines.append(f"- {drive}")
-        if self.dynamic:
-            if lines:
-                lines.append("")
-            lines.append("Current goals:")
-            for i, goal in enumerate(self.dynamic):
-                lines.append(f"  {i}. {goal}")
+        if self.long_term:
+            lines.append(f"Long-term goal: {self.long_term}")
+        if self.short_term:
+            lines.append(f"Short-term goal: {self.short_term}")
         return "\n".join(lines)
 
-    def apply_update(self, update: GoalUpdate) -> None:
-        for idx in sorted(update.remove_goals, reverse=True):
-            if 0 <= idx < len(self.dynamic):
-                del self.dynamic[idx]
-        self.dynamic.extend(update.add_goals)
+    def apply_update(self, new_short_term: str) -> None:
+        self.short_term = new_short_term
 
     def show(self) -> Panel:
         lines: list[str] = []
-        if self.static:
-            lines.append("[bold]Core drives:[/bold]")
-            for drive in self.static:
-                lines.append(f"  - {drive}")
-        if self.dynamic:
-            if lines:
-                lines.append("")
-            lines.append("[bold]Current goals:[/bold]")
-            for i, goal in enumerate(self.dynamic):
-                lines.append(f"  [dim]{i}.[/dim] {goal}")
+        if self.long_term:
+            lines.append(f"[bold]Long-term goal:[/bold] {self.long_term}")
+        if self.short_term:
+            lines.append(f"[bold]Short-term goal:[/bold] {self.short_term}")
         body = "\n".join(lines) if lines else "[dim]No goals loaded.[/dim]"
         return Panel(body, title="Character Goals", border_style="cyan")
 
@@ -173,17 +152,28 @@ def load_world_state(character: str) -> WorldState | None:
 
 
 def load_goals(character: str) -> Goals | None:
+    """Parse Long-term goal / Short-term goal lines from character.txt."""
     char_dir = CHARACTERS_DIR / character
-    static_path = char_dir / "goals_static.txt"
-    dynamic_path = char_dir / "goals_dynamic.txt"
-
-    if not static_path.exists() and not dynamic_path.exists():
+    char_path = char_dir / "character.txt"
+    try:
+        text = char_path.read_text()
+    except FileNotFoundError:
         return None
 
-    return Goals(
-        static=_read_lines(static_path),
-        dynamic=_read_lines(dynamic_path),
-    )
+    long_term = ""
+    short_term = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        low = stripped.lower()
+        if low.startswith("long-term goal:"):
+            long_term = stripped.split(":", 1)[1].strip()
+        elif low.startswith("short-term goal:"):
+            short_term = stripped.split(":", 1)[1].strip()
+
+    if not long_term and not short_term:
+        return None
+
+    return Goals(long_term=long_term, short_term=short_term)
 
 
 # --- Narrator formatting ---
@@ -306,13 +296,9 @@ def think_call(
 
     data = json.loads(response.choices[0].message.content)
 
-    goal_updates = None
-    if data.get("goal_updates"):
-        gu = data["goal_updates"]
-        goal_updates = GoalUpdate(
-            remove_goals=gu.get("remove_goals", []),
-            add_goals=gu.get("add_goals", []),
-        )
+    new_goal = data.get("new_short_term_goal")
+    if isinstance(new_goal, str) and not new_goal.strip():
+        new_goal = None
 
     return ThinkResult(
         thought=data.get("thought", ""),
@@ -320,5 +306,5 @@ def think_call(
         action_detail=data.get("action_detail", ""),
         gaze=_strip_tag(data.get("gaze", ""), "gaze"),
         expression=_strip_tag(data.get("expression", "neutral"), "emote"),
-        goal_updates=goal_updates,
+        new_short_term_goal=new_goal,
     )

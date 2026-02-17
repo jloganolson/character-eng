@@ -1,6 +1,6 @@
 import character_eng.prompts as prompts_mod
 from character_eng.prompts import list_characters, load_prompt
-from character_eng.world import Goals, WorldState
+from character_eng.world import WorldState
 
 
 def _setup_char(tmp_path, name, prompt_txt, **extra_files):
@@ -84,39 +84,23 @@ def test_unknown_macro_left_intact(tmp_path, monkeypatch):
     assert "{{unknown_thing}}" in result
 
 
-def test_load_prompt_with_goals(tmp_path, monkeypatch):
+def test_load_prompt_goals_in_character_txt(tmp_path, monkeypatch):
+    """Goals defined in character.txt are included via {{character}} macro."""
     prompts_dir, char_dir = _setup_char(
         tmp_path,
         "test_char",
-        "Goals: {{goals}}\nChar: {{character}}",
-        **{"character.txt": "I am test character"},
-    )
-
-    monkeypatch.setattr(prompts_mod, "PROMPTS_DIR", prompts_dir)
-    monkeypatch.setattr(prompts_mod, "CHARACTERS_DIR", prompts_dir / "characters")
-
-    goals = Goals(static=["Understand the orb"], dynamic=["Find something new"])
-    result = load_prompt("test_char", goals=goals)
-
-    assert "Understand the orb" in result
-    assert "Find something new" in result
-    assert "I am test character" in result
-
-
-def test_load_prompt_without_goals(tmp_path, monkeypatch):
-    prompts_dir, char_dir = _setup_char(
-        tmp_path,
-        "test_char",
-        "Goals: {{goals}}\nChar: {{character}}",
-        **{"character.txt": "I am test"},
+        "Char: {{character}}",
+        **{"character.txt": "I am test character\n\nLong-term goal: Experience the universe\nShort-term goal: Figure out the orb"},
     )
 
     monkeypatch.setattr(prompts_mod, "PROMPTS_DIR", prompts_dir)
     monkeypatch.setattr(prompts_mod, "CHARACTERS_DIR", prompts_dir / "characters")
 
     result = load_prompt("test_char")
-    assert "Goals: \n" in result
-    assert "I am test" in result
+
+    assert "Experience the universe" in result
+    assert "Figure out the orb" in result
+    assert "I am test character" in result
 
 
 def test_list_characters(tmp_path, monkeypatch):

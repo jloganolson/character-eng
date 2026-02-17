@@ -19,7 +19,6 @@ from character_eng.prompts import list_characters, load_prompt
 from character_eng.serve import build_vllm_cmd, get_local_models, kill_port
 from character_eng.world import (
     Goals,
-    GoalUpdate,
     director_call,
     format_narrator_message,
     load_goals,
@@ -308,7 +307,7 @@ def chat_loop(character: str, model_config: dict):
     while True:
         world = load_world_state(character)
         goals = load_goals(character)
-        system_prompt = load_prompt(character, world_state=world, goals=goals)
+        system_prompt = load_prompt(character, world_state=world)
         session = ChatSession(system_prompt, model_config)
         console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]  (type /help for commands)\n")
 
@@ -403,16 +402,9 @@ def display_think(result, goals=None):
     console.print(f"[dim]  action:     {result.action}[/dim]")
     if result.action_detail:
         console.print(f"[dim]  detail:     {result.action_detail}[/dim]")
-    if result.goal_updates and goals:
-        gu = result.goal_updates
-        if gu.remove_goals:
-            for idx in gu.remove_goals:
-                if 0 <= idx < len(goals.dynamic):
-                    console.print(f"[dim]  goal removed: {goals.dynamic[idx]}[/dim]")
-        if gu.add_goals:
-            for g in gu.add_goals:
-                console.print(f"[dim]  goal added:   {g}[/dim]")
-        goals.apply_update(gu)
+    if result.new_short_term_goal and goals:
+        console.print(f"[dim]  goal:       {goals.short_term} → {result.new_short_term_goal}[/dim]")
+        goals.apply_update(result.new_short_term_goal)
 
 
 def think_to_dict(result):
@@ -424,11 +416,8 @@ def think_to_dict(result):
         "action": result.action,
         "action_detail": result.action_detail,
     }
-    if result.goal_updates:
-        d["goal_updates"] = {
-            "remove_goals": result.goal_updates.remove_goals,
-            "add_goals": result.goal_updates.add_goals,
-        }
+    if result.new_short_term_goal:
+        d["new_short_term_goal"] = result.new_short_term_goal
     return d
 
 
@@ -453,7 +442,7 @@ def handle_think(session, world, goals, label, model_config, log):
 
     entry = {"type": "think", **think_to_dict(result)}
 
-    if result.action == "talk":
+    if result.action in ("talk", "talk_and_emote"):
         directive = f"[You want to say something unprompted. Directive: {result.action_detail}]"
         nudge = "[The character speaks.]"
         session.inject_system(directive)
