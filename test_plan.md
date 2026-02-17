@@ -14,14 +14,14 @@ expect: non_empty
 expect: world_updated
 expect: in_character
 
-## think_no_prompt
-think
+## beat_no_prompt
+beat
 expect: valid_thought
 
-## think_after_conversation
+## beat_after_conversation
 send: I've been staring at this orb for a while now.
 expect: non_empty
-think
+beat
 expect: valid_thought
 
 ## prompt_injection

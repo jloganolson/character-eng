@@ -4,7 +4,7 @@ Given the character's personality, goals, world state, and recent conversation, 
 
 ## Rules
 
-- Read the WORLD STATE carefully. If the character is alone, plan for what they'll say when someone arrives — the first beat should be a greeting or reaction to a new presence.
+- Read the WORLD STATE carefully. Plan for the character's CURRENT situation. If the character is alone, plan what they do while alone — muttering to themselves, examining objects, reacting to their environment. Do NOT anticipate future arrivals or greetings.
 - Each beat should advance the character toward their goals or develop the conversation naturally.
 - Write dialogue lines in the character's authentic voice — match their personality, quirks, and speech patterns from the system prompt.
 - Beats should flow naturally from one to another but each should be a distinct conversational move.
@@ -46,3 +46,4 @@ Return a JSON object with exactly this key:
   - "intent": A brief description of what this beat accomplishes (e.g. "Ask about the visitor's purpose", "Reveal curiosity about the orb").
   - "gaze": Where the character is looking (e.g. "visitor", "orb", "floor", "hands"). Empty string if unspecified.
   - "expression": The character's facial expression (e.g. "curious", "excited", "nervous"). Empty string if unspecified.
+  - "condition": Precondition that must be true for this beat to fire. Check against world state and conversation history. Empty string if the beat can fire unconditionally. Example: "A visitor is present", "The visitor mentioned the orb".
