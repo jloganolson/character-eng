@@ -23,7 +23,7 @@ CHARACTERS_DIR = PROMPTS_DIR / "characters"
 
 @dataclass
 class WorldUpdate:
-    remove_facts: list[int] = field(default_factory=list)
+    remove_facts: list[str] = field(default_factory=list)
     add_facts: list[str] = field(default_factory=list)
     events: list[str] = field(default_factory=list)
 
@@ -34,6 +34,15 @@ class Beat:
     intent: str  # what this beat is trying to accomplish
     gaze: str = ""  # where the character looks (e.g. "orb", "visitor")
     expression: str = ""  # facial expression (e.g. "curious", "excited")
+    condition: str = ""  # natural language precondition (empty = auto-deliver)
+
+
+@dataclass
+class ConditionResult:
+    met: bool
+    idle: str = ""  # in-character idle line when not met
+    gaze: str = ""
+    expression: str = ""
 
 
 @dataclass
@@ -71,7 +80,8 @@ class Script:
                 if beat.expression:
                     parts.append(beat.expression)
                 extras = f" ({', '.join(parts)})"
-            lines.append(f"{marker} {i}. [{beat.intent}] \"{beat.line}\"{extras}")
+            cond = f" IF: {beat.condition}" if beat.condition else ""
+            lines.append(f"{marker} {i}. [{beat.intent}] \"{beat.line}\"{extras}{cond}")
         return "\n".join(lines)
 
     def show(self) -> Panel:
@@ -98,8 +108,34 @@ class PlanResult:
 @dataclass
 class WorldState:
     static: list[str] = field(default_factory=list)
-    dynamic: list[str] = field(default_factory=list)
+    dynamic: dict[str, str] = field(default_factory=dict)
     events: list[str] = field(default_factory=list)
+    pending: list[str] = field(default_factory=list)
+    _next_id: int = field(default=1, repr=False)
+
+    def add_fact(self, text: str) -> str:
+        """Assign next sequential ID, add fact, return the ID."""
+        fid = f"f{self._next_id}"
+        self._next_id += 1
+        self.dynamic[fid] = text
+        return fid
+
+    def add_pending(self, text: str) -> None:
+        """Append an unreconciled change description."""
+        self.pending.append(text)
+
+    def clear_pending(self) -> list[str]:
+        """Pop and return all pending changes."""
+        result = list(self.pending)
+        self.pending.clear()
+        return result
+
+    def render_for_reconcile(self) -> str:
+        """Show ID-tagged facts for reconciler context."""
+        lines: list[str] = []
+        for fid, text in self.dynamic.items():
+            lines.append(f"{fid}. {text}")
+        return "\n".join(lines)
 
     def render(self) -> str:
         lines: list[str] = []
@@ -111,8 +147,14 @@ class WorldState:
             if lines:
                 lines.append("")
             lines.append("Current state:")
-            for fact in self.dynamic:
-                lines.append(f"- {fact}")
+            for text in self.dynamic.values():
+                lines.append(f"- {text}")
+        if self.pending:
+            if lines:
+                lines.append("")
+            lines.append("Pending changes:")
+            for change in self.pending:
+                lines.append(f"- {change}")
         if self.events:
             if lines:
                 lines.append("")
@@ -122,11 +164,10 @@ class WorldState:
         return "\n".join(lines)
 
     def apply_update(self, update: WorldUpdate) -> None:
-        # Remove facts by index (highest first so indices stay valid)
-        for idx in sorted(update.remove_facts, reverse=True):
-            if 0 <= idx < len(self.dynamic):
-                del self.dynamic[idx]
-        self.dynamic.extend(update.add_facts)
+        for fid in update.remove_facts:
+            self.dynamic.pop(fid, None)
+        for text in update.add_facts:
+            self.add_fact(text)
         self.events.extend(update.events)
 
     def show(self) -> Panel:
@@ -139,8 +180,14 @@ class WorldState:
             if lines:
                 lines.append("")
             lines.append("[bold]Current state:[/bold]")
-            for i, fact in enumerate(self.dynamic):
-                lines.append(f"  [dim]{i}.[/dim] {fact}")
+            for fid, text in self.dynamic.items():
+                lines.append(f"  [dim]{fid}.[/dim] {text}")
+        if self.pending:
+            if lines:
+                lines.append("")
+            lines.append("[bold yellow]Pending changes:[/bold yellow]")
+            for change in self.pending:
+                lines.append(f"  [yellow]- {change}[/yellow]")
         if self.events:
             if lines:
                 lines.append("")
@@ -193,10 +240,10 @@ def load_world_state(character: str) -> WorldState | None:
     if not static_path.exists() and not dynamic_path.exists():
         return None
 
-    return WorldState(
-        static=_read_lines(static_path),
-        dynamic=_read_lines(dynamic_path),
-    )
+    ws = WorldState(static=_read_lines(static_path))
+    for line in _read_lines(dynamic_path):
+        ws.add_fact(line)
+    return ws
 
 
 def load_goals(character: str) -> Goals | None:
@@ -232,6 +279,11 @@ def format_narrator_message(update: WorldUpdate) -> str:
     return "[" + " ".join(parts) + "]"
 
 
+def format_pending_narrator(change_text: str) -> str:
+    """Bracket wrapper for fast-path narrator injection."""
+    return f"[{change_text}]"
+
+
 # --- OpenAI client ---
 
 
@@ -243,12 +295,11 @@ def _make_client(model_config: dict) -> OpenAI:
     )
 
 
-# --- Director LLM call ---
+# --- Reconcile LLM call ---
 
 
-def director_call(world: WorldState, change_description: str, model_config: dict) -> WorldUpdate:
-    """Ask the director LLM to produce a WorldUpdate from a change description."""
-    # Build the user message with numbered dynamic facts
+def reconcile_call(world: WorldState, pending_changes: list[str], model_config: dict) -> WorldUpdate:
+    """Ask the reconciler LLM to produce a WorldUpdate from pending change descriptions."""
     lines: list[str] = []
     if world.static:
         lines.append("Permanent facts (cannot be changed):")
@@ -257,15 +308,16 @@ def director_call(world: WorldState, change_description: str, model_config: dict
         lines.append("")
     if world.dynamic:
         lines.append("Current dynamic facts:")
-        for i, fact in enumerate(world.dynamic):
-            lines.append(f"  {i}. {fact}")
+        lines.append(world.render_for_reconcile())
         lines.append("")
     if world.events:
         lines.append("Recent events:")
         for event in world.events:
             lines.append(f"- {event}")
         lines.append("")
-    lines.append(f"Change: {change_description}")
+    lines.append("Pending changes to reconcile:")
+    for change in pending_changes:
+        lines.append(f"- {change}")
 
     user_message = "\n".join(lines)
 
@@ -273,7 +325,7 @@ def director_call(world: WorldState, change_description: str, model_config: dict
     response = client.chat.completions.create(
         model=model_config["model"],
         messages=[
-            {"role": "system", "content": _load_prompt_file("director_system.txt")},
+            {"role": "system", "content": _load_prompt_file("reconcile_system.txt")},
             {"role": "user", "content": user_message},
         ],
         temperature=0.2,
@@ -357,6 +409,60 @@ def eval_call(
     )
 
 
+# --- Condition check LLM call ---
+
+
+def condition_check_call(
+    condition: str,
+    system_prompt: str,
+    world: WorldState | None,
+    history: list[dict],
+    model_config: dict,
+    recent_n: int = 10,
+) -> ConditionResult:
+    """Check if a beat's condition is met given world state and conversation."""
+    context_parts: list[str] = []
+
+    context_parts.append("=== CHARACTER SYSTEM PROMPT ===")
+    context_parts.append(system_prompt)
+
+    if world:
+        context_parts.append("\n=== WORLD STATE ===")
+        context_parts.append(world.render())
+
+    recent = history[-recent_n:] if len(history) > recent_n else history
+    if recent:
+        context_parts.append("\n=== RECENT CONVERSATION ===")
+        for msg in recent:
+            role = msg["role"].upper()
+            context_parts.append(f"{role}: {msg['content']}")
+
+    context_parts.append(f"\n=== CONDITION TO CHECK ===")
+    context_parts.append(condition)
+
+    user_message = "\n".join(context_parts)
+
+    client = _make_client(model_config)
+    response = client.chat.completions.create(
+        model=model_config["model"],
+        messages=[
+            {"role": "system", "content": _load_prompt_file("condition_system.txt")},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=0.3,
+        response_format={"type": "json_object"},
+    )
+
+    data = json.loads(response.choices[0].message.content)
+
+    return ConditionResult(
+        met=bool(data.get("met", False)),
+        idle=data.get("idle", ""),
+        gaze=_strip_tag(data.get("gaze", ""), "gaze"),
+        expression=_strip_tag(data.get("expression", "neutral"), "emote"),
+    )
+
+
 # --- Plan LLM call ---
 
 
@@ -420,6 +526,7 @@ def plan_call(
                 intent=b["intent"],
                 gaze=b.get("gaze", ""),
                 expression=b.get("expression", ""),
+                condition=b.get("condition", ""),
             ))
 
     return PlanResult(beats=beats)

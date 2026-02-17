@@ -2,6 +2,8 @@
 
 Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Characters have personalities, world state that evolves during conversation, and a two-speed script system — a fast eval (every turn) tracks progress through premeditated dialogue beats, while a slow planner (Gemini Flash 3) generates multi-beat conversation scripts. Beats are delivered via code-driven paste (no LLM regeneration), enabling TTS pre-rendering. Each beat includes gaze and expression data for animation.
 
+World state uses a two-speed update system: the fast path immediately stores changes as pending and lets the character react (no LLM call needed), while the slow path reconciles pending changes into structured state mutations in the background using stable fact IDs (`f1`, `f2`, ...) — eliminating index-shift bugs that plagued small models.
+
 ## Setup
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
@@ -18,7 +20,7 @@ GROQ_API_KEY=your_key_here
 GEMINI_API_KEY=your_key_here
 ```
 
-If multiple keys are set, you'll choose a model at startup. If only one is set, it's auto-selected. The planner requires `GEMINI_API_KEY` — if not set, the script system runs in eval-only mode.
+If multiple keys are set, you'll choose a model at startup. If only one is set, it's auto-selected. The planner and reconciler require `GEMINI_API_KEY` — if not set, the script system runs in eval-only mode and the reconciler falls back to the chat model.
 
 ## Run
 
@@ -30,9 +32,9 @@ Pick a character from the menu, then chat. The character evaluates each turn, tr
 
 | Command | What it does |
 |---------|-------------|
-| `/world` | Show current world state |
-| `/world <text>` | Describe a change — a director LLM updates the world, the character reacts |
-| `/think` | Trigger character eval — may deliver a beat, bootstrap a script, or trigger replanning |
+| `/world` | Show current world state (facts with stable IDs, pending changes, events) |
+| `/world <text>` | Describe a change — character reacts immediately, reconciler updates state in background |
+| `/beat` | Deliver next scripted beat (time passes) — checks conditions, shows idle line if not met |
 | `/plan` | Show current script (beat list with current beat highlighted) |
 | `/goals` | Show character goals (long-term) |
 | `/reload` | Reload all prompt files from disk (for live editing) |
@@ -44,9 +46,17 @@ Pick a character from the menu, then chat. The character evaluates each turn, tr
 
 Each conversation turn follows one of two paths:
 
-**Beat exists**: The pre-rendered beat line is pasted directly as the character's response — no LLM call needed. This enables TTS pre-rendering since the exact text is known ahead of time. After delivery, the eval decides: `advance` (move to next beat), `hold` (stay on current beat), or `off_book` (conversation diverged, trigger replanning). Each beat also carries `gaze` and `expression` data for animation.
+**Beat exists**: The pre-rendered beat line is pasted directly as the character's response — no LLM call needed. This enables TTS pre-rendering since the exact text is known ahead of time. Beats can have conditions (natural language preconditions) — if a condition isn't met, the character shows an in-character idle line instead of delivering the beat. After delivery, the eval decides: `advance` (move to next beat), `hold` (stay on current beat), or `off_book` (conversation diverged, trigger replanning). Each beat also carries `gaze` and `expression` data for animation.
 
-**No beat** (script empty or planner unavailable): Falls back to LLM streaming for the response. World changes (`/world <text>`) always use LLM streaming since they need dynamic reactions.
+**No beat** (script empty or planner unavailable): Falls back to LLM streaming for the response.
+
+## How world updates work
+
+World changes (`/world <text>`) use a two-speed system:
+
+**Fast path** (immediate, no LLM): The change is stored as pending, a narrator message is injected into the conversation, and the character reacts via LLM streaming. This happens instantly.
+
+**Slow path** (background thread): A reconciler LLM (using `PLAN_MODEL` if available, otherwise the chat model) processes all pending changes against ID-tagged dynamic facts, producing structured mutations (add/remove facts by stable ID, events). Results are applied at the start of the next turn with a "Reconciled" diff panel. Multiple `/world` commands before reconciliation accumulate — the next reconcile batch processes all.
 
 ## Editing prompts
 
@@ -58,7 +68,7 @@ Characters live in `prompts/characters/<name>/` with these files:
 | `character.txt` | Personality, voice, and goals (optional `Long-term goal:` line) |
 | `scenario.txt` | Situation and context |
 | `world_static.txt` | Permanent facts (one per line, optional) |
-| `world_dynamic.txt` | Initial mutable state (one per line, optional) |
+| `world_dynamic.txt` | Initial mutable state (one per line, loaded with stable IDs `f1`, `f2`, ...) |
 
 `prompts/global_rules.txt` contains rules shared across all characters.
 
@@ -66,11 +76,12 @@ System-level prompts are also editable files in `prompts/`:
 
 | File | Purpose |
 |------|---------|
-| `director_system.txt` | System prompt for the world-state director LLM |
+| `reconcile_system.txt` | System prompt for the world-state reconciler LLM (processes pending changes using stable fact IDs) |
 | `eval_system.txt` | System prompt for the character eval LLM (script tracking + inner monologue) |
-| `plan_system.txt` | System prompt for the conversation planner LLM (beat generation) |
+| `condition_system.txt` | System prompt for the condition checker LLM (gates beat delivery) |
+| `plan_system.txt` | System prompt for the conversation planner LLM (beat generation with conditions) |
 
-**Live editing works** — edit any character prompt file in your editor, then type `/reload` in the chat to pick up changes without restarting. The conversation resets but you keep your place in the character menu. Director, eval, and plan system prompts are re-read on every call, so edits take effect immediately without `/reload`.
+**Live editing works** — edit any character prompt file in your editor, then type `/reload` in the chat to pick up changes without restarting. The conversation resets but you keep your place in the character menu. Reconciler, eval, and plan system prompts are re-read on every call, so edits take effect immediately without `/reload`.
 
 ### Adding a new character
 
@@ -111,7 +122,7 @@ Available local models: LFM-2 2.6B (`lfm-2.6b`), LFM-2.5 1.2B (`lfm-1.2b`). The 
 uv run pytest
 
 # Integration tests (hit real LLM, default model: cerebras-llama)
-uv run -m character_eng.qa_world                       # world state director
+uv run -m character_eng.qa_world                       # world state reconciler
 uv run -m character_eng.qa_chat                        # end-to-end chat, world, eval
 uv run -m character_eng.qa_world --model groq-llama    # test with Groq Llama
 uv run -m character_eng.qa_chat --model groq-llama     # test with Groq Llama
@@ -121,7 +132,7 @@ uv run -m character_eng.qa_chat --model groq-llama     # test with Groq Llama
 
 ## Benchmarking
 
-Measure real-world latency across all available models for the three LLM call patterns: streaming chat, structured JSON director calls, and structured JSON eval calls.
+Measure real-world latency across all available models for the three LLM call patterns: streaming chat, structured JSON reconcile calls, and structured JSON eval calls.
 
 ```bash
 # Benchmark all available models (3 runs per scenario)

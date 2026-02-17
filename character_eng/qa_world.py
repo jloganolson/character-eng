@@ -1,7 +1,7 @@
-"""Integration test for the world state director.
+"""Integration test for the world state reconciler.
 
 Runs 4 sequential scenarios against the real LLM, validating schema,
-index ranges, and non-empty events. Updates are applied cumulatively.
+fact IDs, and non-empty events. Updates are applied cumulatively.
 Saves full JSON logs to logs/.
 
 Usage: uv run -m character_eng.qa_world [--model gemini|cerebras]
@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from character_eng.models import DEFAULT_MODEL, MODELS
-from character_eng.world import WorldState, WorldUpdate, director_call
+from character_eng.world import WorldState, WorldUpdate, reconcile_call
 
 console = Console()
 
@@ -43,12 +43,12 @@ def validate_update(update: WorldUpdate, world: WorldState, scenario_idx: int) -
     if not isinstance(update.events, list):
         errors.append(f"events is not a list: {type(update.events)}")
 
-    # Check index ranges
-    for idx in update.remove_facts:
-        if not isinstance(idx, int):
-            errors.append(f"remove_facts contains non-int: {idx}")
-        elif idx < 0 or idx >= len(world.dynamic):
-            errors.append(f"remove_facts index {idx} out of range (0-{len(world.dynamic) - 1})")
+    # Check fact IDs are valid strings referencing existing dynamic facts
+    for fid in update.remove_facts:
+        if not isinstance(fid, str):
+            errors.append(f"remove_facts contains non-string: {fid}")
+        elif fid not in world.dynamic:
+            errors.append(f"remove_facts ID {fid!r} not found in dynamic facts (valid: {list(world.dynamic.keys())})")
 
     # Events should not be empty
     if not update.events:
@@ -66,26 +66,27 @@ def validate_update(update: WorldUpdate, world: WorldState, scenario_idx: int) -
 
 
 def main():
-    parser = argparse.ArgumentParser(description="World state director QA integration test")
+    parser = argparse.ArgumentParser(description="World state reconciler QA integration test")
     parser.add_argument("--model", default=DEFAULT_MODEL, choices=MODELS.keys(),
                         help=f"Model to test with (default: {DEFAULT_MODEL})")
     args = parser.parse_args()
     model_config = MODELS[args.model]
 
-    console.print(Panel(f"[bold]World State Director — QA Integration Test ({model_config['name']})[/bold]", border_style="green"))
+    console.print(Panel(f"[bold]World State Reconciler — QA Integration Test ({model_config['name']})[/bold]", border_style="green"))
 
     world = WorldState(
         static=[
             "Greg is a robot head bolted to a desk",
             "Greg has no body, arms, or hands",
         ],
-        dynamic=[
-            "A mysterious orb sits on the desk in front of Greg",
-            "The orb swirls with faint light",
-            "A person is standing across the desk from Greg",
-            "The room is quiet",
-        ],
     )
+    for fact in [
+        "A mysterious orb sits on the desk in front of Greg",
+        "The orb swirls with faint light",
+        "A person is standing across the desk from Greg",
+        "The room is quiet",
+    ]:
+        world.add_fact(fact)
 
     console.print(world.show())
     console.print()
@@ -98,13 +99,13 @@ def main():
 
         scenario_entry = {
             "scenario": scenario,
-            "world_before": {"static": list(world.static), "dynamic": list(world.dynamic), "events": list(world.events)},
+            "world_before": {"static": list(world.static), "dynamic": dict(world.dynamic), "events": list(world.events)},
         }
 
         try:
-            update = director_call(world, scenario, model_config)
+            update = reconcile_call(world, [scenario], model_config)
         except Exception as e:
-            console.print(f"  [red]FAIL — director_call raised: {e}[/red]")
+            console.print(f"  [red]FAIL — reconcile_call raised: {e}[/red]")
             all_passed = False
             scenario_entry["error"] = str(e)
             scenario_entry["result"] = "FAIL"
@@ -136,7 +137,7 @@ def main():
 
         # Apply cumulatively
         world.apply_update(update)
-        scenario_entry["world_after"] = {"static": list(world.static), "dynamic": list(world.dynamic), "events": list(world.events)}
+        scenario_entry["world_after"] = {"static": list(world.static), "dynamic": dict(world.dynamic), "events": list(world.events)}
         scenarios_log.append(scenario_entry)
         console.print()
 

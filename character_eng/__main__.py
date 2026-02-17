@@ -19,16 +19,19 @@ from character_eng.prompts import list_characters, load_prompt
 from character_eng.serve import build_vllm_cmd, get_local_models, kill_port
 from character_eng.world import (
     Beat,
+    ConditionResult,
     EvalResult,
     Goals,
     PlanResult,
     Script,
-    director_call,
+    WorldUpdate,
+    condition_check_call,
     eval_call,
-    format_narrator_message,
+    format_pending_narrator,
     load_goals,
     load_world_state,
     plan_call,
+    reconcile_call,
 )
 
 console = Console()
@@ -36,6 +39,73 @@ console = Console()
 _vllm_process: subprocess.Popen | None = None
 
 LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
+
+# --- Background reconciliation threading ---
+_reconcile_lock = threading.Lock()
+_reconcile_result: WorldUpdate | None = None
+_reconcile_thread: threading.Thread | None = None
+
+
+def _run_reconcile(world: "WorldState", pending: list[str], model_config: dict):
+    """Background thread target. Calls reconcile_call, stores result under lock."""
+    global _reconcile_result
+    try:
+        result = reconcile_call(world, pending, model_config)
+        with _reconcile_lock:
+            _reconcile_result = result
+    except Exception as e:
+        console.print(f"[red]Background reconcile error: {e}[/red]")
+
+
+def _start_reconcile(world, model_config, plan_model_config):
+    """Drain pending changes and spawn background reconcile thread."""
+    global _reconcile_thread
+    pending = world.clear_pending()
+    if not pending:
+        return
+    # Use plan model if available, fall back to chat model
+    cfg = plan_model_config if plan_model_config else model_config
+    _reconcile_thread = threading.Thread(
+        target=_run_reconcile, args=(world, pending, cfg), daemon=True
+    )
+    _reconcile_thread.start()
+
+
+def _check_reconcile(world, log):
+    """Check if background reconcile result is ready. If so, apply and display."""
+    global _reconcile_result, _reconcile_thread
+    with _reconcile_lock:
+        result = _reconcile_result
+        _reconcile_result = None
+
+    if result is None:
+        return
+
+    _reconcile_thread = None
+
+    # Show diff panel
+    diff_lines = []
+    if result.remove_facts:
+        for fid in result.remove_facts:
+            text = world.dynamic.get(fid, fid)
+            diff_lines.append(f"  [red]- {fid}. {text}[/red]")
+    if result.add_facts:
+        for fact in result.add_facts:
+            diff_lines.append(f"  [green]+ {fact}[/green]")
+    if result.events:
+        for event in result.events:
+            diff_lines.append(f"  [cyan]~ {event}[/cyan]")
+    if diff_lines:
+        console.print(Panel("\n".join(diff_lines), title="Reconciled", border_style="yellow"))
+
+    world.apply_update(result)
+
+    log.append({
+        "type": "reconcile",
+        "remove_facts": result.remove_facts,
+        "add_facts": result.add_facts,
+        "events": result.events,
+    })
 
 
 def save_chat_log(character: str, model_config: dict, log: list[dict]):
@@ -339,6 +409,8 @@ def chat_loop(character: str, model_config: dict):
         if plan_result and plan_result.beats:
             apply_plan(script, plan_result)
 
+        had_user_input = False
+
         console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]  (type /help for commands)\n")
 
         # Inner loop: conversation turns
@@ -352,6 +424,10 @@ def chat_loop(character: str, model_config: dict):
 
             if not user_input:
                 continue
+
+            # Check for background reconcile results before command dispatch
+            if world is not None:
+                _check_reconcile(world, log)
 
             cmd = user_input.lower()
             if cmd == "/quit":
@@ -371,8 +447,8 @@ def chat_loop(character: str, model_config: dict):
             elif cmd == "/help":
                 show_help()
                 continue
-            elif cmd == "/think":
-                handle_think(session, world, goals, script, label, model_config, plan_model_config, log)
+            elif cmd == "/beat":
+                handle_beat(session, world, goals, script, label, model_config, plan_model_config, log)
                 continue
             elif cmd == "/plan":
                 console.print(script.show())
@@ -398,6 +474,26 @@ def chat_loop(character: str, model_config: dict):
                 continue
 
             # --- Turn flow ---
+
+            # First user input: natural LLM response, eval, then replan for visitor-aware script
+            if not had_user_input:
+                had_user_input = True
+                response = stream_response(session, label, user_input)
+                entry = {"type": "send", "input": user_input, "response": response}
+
+                eval_result = run_eval(session, world, goals, script, model_config)
+                if eval_result:
+                    display_eval(eval_result)
+                    inject_eval(session, eval_result)
+                    entry["eval"] = eval_to_dict(eval_result)
+
+                log.append(entry)
+
+                # Replan now that we have visitor context
+                plan_result = run_plan(session, world, goals, "", plan_model_config)
+                if plan_result and plan_result.beats:
+                    apply_plan(script, plan_result)
+                continue
 
             # Bootstrap: if no script, call planner to generate one
             if script.is_empty():
@@ -546,73 +642,101 @@ def apply_plan(script, plan_result):
         console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"{extras}[/magenta]")
 
 
-def handle_think(session, world, goals, script, label, model_config, plan_model_config, log):
-    """Process a /think command — eval + optional beat delivery + optional planner."""
-    result = run_eval(session, world, goals, script, model_config)
-    if not result:
-        return
+def handle_beat(session, world, goals, script, label, model_config, plan_model_config, log):
+    """Process a /beat command — condition-gated beat delivery (time passes)."""
+    entry = {"type": "beat"}
 
-    display_eval(result)
-    inject_eval(session, result)
-
-    entry = {"type": "eval", **eval_to_dict(result)}
-
-    if script.current_beat and result.script_status == "advance":
-        # Advance and deliver next beat
-        script.advance()
-        if script.current_beat:
-            console.print(f"[magenta]  next beat:  [{script.current_beat.intent}][/magenta]")
-            response = deliver_beat(session, script.current_beat, label)
-            entry["response"] = response
-        else:
-            console.print("[dim]  script complete, replanning...[/dim]")
-            plan_result = run_plan(session, world, goals, "", plan_model_config)
-            if plan_result and plan_result.beats:
-                apply_plan(script, plan_result)
-    elif script.current_beat and result.script_status == "hold":
-        # Deliver current beat
-        response = deliver_beat(session, script.current_beat, label)
-        entry["response"] = response
-    elif result.script_status == "off_book" and result.plan_request:
-        # Replan
-        plan_result = run_plan(session, world, goals, result.plan_request, plan_model_config)
+    # 1. If no current beat, replan
+    if script.current_beat is None:
+        plan_result = run_plan(session, world, goals, "", plan_model_config)
         if plan_result and plan_result.beats:
             apply_plan(script, plan_result)
+        if script.current_beat is None:
+            console.print("[dim]No beats available.[/dim]\n")
+            log.append(entry)
+            return
+
+    beat = script.current_beat
+
+    # 2. If beat has a condition, check it
+    if beat.condition:
+        console.print(f"[dim]Checking condition: {beat.condition}[/dim]")
+        try:
+            cond_result = condition_check_call(
+                condition=beat.condition,
+                system_prompt=session.system_prompt,
+                world=world,
+                history=session.get_history(),
+                model_config=model_config,
+            )
+        except Exception as e:
+            console.print(f"[red]Condition check error: {e}[/red]")
+            log.append(entry)
+            return
+
+        entry["condition"] = beat.condition
+        entry["condition_met"] = cond_result.met
+
+        if not cond_result.met:
+            # Display idle line as character response
+            if cond_result.idle:
+                npc_name = f"{label}: "
+                console.print(f"[bold magenta]{npc_name}[/bold magenta]{cond_result.idle}")
+                console.print()
+                session.add_assistant(cond_result.idle)
+                entry["idle"] = cond_result.idle
+            if cond_result.gaze:
+                console.print(f"[dim]  gaze:       {cond_result.gaze}[/dim]")
+                entry["gaze"] = cond_result.gaze
+            if cond_result.expression:
+                console.print(f"[dim]  expression: {cond_result.expression}[/dim]")
+                entry["expression"] = cond_result.expression
+            log.append(entry)
+            return
+
+    # 3. Display beat gaze/expression
+    if beat.gaze or beat.expression:
+        parts = []
+        if beat.gaze:
+            parts.append(f"gaze:{beat.gaze}")
+        if beat.expression:
+            parts.append(f"emote:{beat.expression}")
+        console.print(f"[dim]  {', '.join(parts)}[/dim]")
+
+    # 4. Deliver the beat
+    response = deliver_beat(session, beat, label)
+    entry["response"] = response
+
+    # 5. Inject beat metadata
+    meta_parts = []
+    if beat.gaze:
+        meta_parts.append(f"[gaze:{beat.gaze}]")
+    if beat.expression:
+        meta_parts.append(f"[emote:{beat.expression}]")
+    if meta_parts:
+        session.inject_system(" ".join(meta_parts))
+
+    # 6. Advance
+    script.advance()
+    if script.current_beat:
+        console.print(f"[magenta]  next beat:  [{script.current_beat.intent}][/magenta]")
     else:
-        console.print("[dim]No action taken.[/dim]\n")
+        # 7. Script exhausted, replan
+        console.print("[dim]  script complete, replanning...[/dim]")
+        plan_result = run_plan(session, world, goals, "", plan_model_config)
+        if plan_result and plan_result.beats:
+            apply_plan(script, plan_result)
 
     log.append(entry)
 
 
 def handle_world_change(session, world, goals, script, change_text, label, model_config, plan_model_config, log):
-    """Process a /world <description> command."""
-    console.print(f"[yellow]Director processing:[/yellow] {change_text}")
-    try:
-        update = director_call(world, change_text, model_config)
-    except Exception as e:
-        console.print(f"[red]Director error: {e}[/red]")
-        return
+    """Process a /world <description> command. Fast path: immediate reaction, background reconcile."""
+    # Store as pending
+    world.add_pending(change_text)
 
-    # Show what changed
-    diff_lines = []
-    if update.remove_facts:
-        for idx in update.remove_facts:
-            if 0 <= idx < len(world.dynamic):
-                diff_lines.append(f"  [red]- {world.dynamic[idx]}[/red]")
-    if update.add_facts:
-        for fact in update.add_facts:
-            diff_lines.append(f"  [green]+ {fact}[/green]")
-    if update.events:
-        for event in update.events:
-            diff_lines.append(f"  [cyan]~ {event}[/cyan]")
-    if diff_lines:
-        console.print(Panel("\n".join(diff_lines), title="World Update", border_style="yellow"))
-
-    # Apply the update
-    world.apply_update(update)
-
-    # Inject narrator message as system role
-    narrator_msg = format_narrator_message(update)
+    # Inject narrator message for fast path
+    narrator_msg = format_pending_narrator(change_text)
     console.print(f"[dim]{narrator_msg}[/dim]")
     session.inject_system(narrator_msg)
 
@@ -628,11 +752,6 @@ def handle_world_change(session, world, goals, script, change_text, label, model
     entry = {
         "type": "world",
         "input": change_text,
-        "update": {
-            "remove_facts": update.remove_facts,
-            "add_facts": update.add_facts,
-            "events": update.events,
-        },
         "narrator": narrator_msg,
         "response": response,
     }
@@ -644,6 +763,9 @@ def handle_world_change(session, world, goals, script, change_text, label, model
             if plan_result and plan_result.beats:
                 apply_plan(script, plan_result)
     log.append(entry)
+
+    # Start background reconciliation
+    _start_reconcile(world, model_config, plan_model_config)
 
 
 def stream_response(session, label, message) -> str:
@@ -682,7 +804,7 @@ def show_help():
         Panel(
             "/world          - Show current world state\n"
             "/world <text>   - Describe a change to the world\n"
-            "/think          - Character eval + optional beat delivery\n"
+            "/beat           - Deliver next scripted beat (time passes)\n"
             "/plan           - Show current script (beat list)\n"
             "/goals          - Show character goals\n"
             "/reload         - Reload prompt files, restart conversation\n"

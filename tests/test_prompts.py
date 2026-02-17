@@ -26,7 +26,8 @@ def test_load_prompt_with_world_state(tmp_path, monkeypatch):
     monkeypatch.setattr(prompts_mod, "PROMPTS_DIR", prompts_dir)
     monkeypatch.setattr(prompts_mod, "CHARACTERS_DIR", prompts_dir / "characters")
 
-    ws = WorldState(static=["Sky is blue"], dynamic=["Sun is out"])
+    ws = WorldState(static=["Sky is blue"])
+    ws.add_fact("Sun is out")
     result = load_prompt("test_char", world_state=ws)
 
     assert "Be nice" in result

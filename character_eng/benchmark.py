@@ -1,4 +1,4 @@
-"""Model speed benchmark for chat, director, and think call patterns."""
+"""Model speed benchmark for chat, reconcile, and eval call patterns."""
 
 from __future__ import annotations
 
@@ -20,10 +20,10 @@ from character_eng.prompts import load_prompt
 from character_eng.world import (
     Script,
     _make_client,
-    director_call,
     eval_call,
     load_goals,
     load_world_state,
+    reconcile_call,
 )
 
 load_dotenv()
@@ -98,14 +98,14 @@ def bench_chat(model_config: dict) -> dict:
     }
 
 
-def bench_director(model_config: dict) -> dict:
-    """Benchmark structured JSON director call. Returns timing dict."""
+def bench_reconcile(model_config: dict) -> dict:
+    """Benchmark structured JSON reconcile call. Returns timing dict."""
     world = load_world_state(CHARACTER)
     if world is None:
-        return {"scenario": "director", "ttft_ms": None, "total_ms": 0, "response": "no world state"}
+        return {"scenario": "reconcile", "ttft_ms": None, "total_ms": 0, "response": "no world state"}
 
     t_start = time.perf_counter()
-    update = director_call(world, "The orb begins to glow faintly", model_config)
+    update = reconcile_call(world, ["The orb begins to glow faintly"], model_config)
     t_total = time.perf_counter() - t_start
 
     result = {
@@ -115,7 +115,7 @@ def bench_director(model_config: dict) -> dict:
     }
 
     return {
-        "scenario": "director",
+        "scenario": "reconcile",
         "ttft_ms": round(t_total * 1000, 1),
         "total_ms": round(t_total * 1000, 1),
         "response": json.dumps(result, indent=2),
@@ -162,7 +162,7 @@ def bench_eval(model_config: dict) -> dict:
 
 SCENARIOS = [
     ("chat", bench_chat),
-    ("director", bench_director),
+    ("reconcile", bench_reconcile),
     ("eval", bench_eval),
 ]
 
@@ -397,7 +397,7 @@ def main():
         models = available
 
     console.print(f"[bold]Benchmarking {len(models)} model(s), {args.runs} runs per scenario[/bold]")
-    console.print(f"[dim]Character: {CHARACTER}, Scenarios: chat (streaming), director (JSON), eval (JSON)[/dim]")
+    console.print(f"[dim]Character: {CHARACTER}, Scenarios: chat (streaming), reconcile (JSON), eval (JSON)[/dim]")
 
     results = run_benchmark(models, args.runs)
     print_summary(results)

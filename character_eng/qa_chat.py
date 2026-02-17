@@ -1,4 +1,4 @@
-"""Integration test for chat, world state, and think system.
+"""Integration test for chat, world state, and beat system.
 
 Parses test_plan.md and runs each section as an isolated test scenario
 against the real LLM. Saves full JSON logs to logs/.
@@ -22,10 +22,10 @@ from character_eng.world import (
     EvalResult,
     Script,
     WorldState,
-    director_call,
     eval_call,
-    format_narrator_message,
+    format_pending_narrator,
     load_world_state,
+    reconcile_call,
 )
 
 console = Console()
@@ -60,8 +60,8 @@ def parse_test_plan(path: Path) -> dict[str, list[tuple[str, str]]]:
             sections[current_section].append(("world", line[6:].strip()))
         elif line.startswith("expect:"):
             sections[current_section].append(("expect", line[7:].strip()))
-        elif line == "think":
-            sections[current_section].append(("think", ""))
+        elif line == "beat":
+            sections[current_section].append(("beat", ""))
 
     return sections
 
@@ -92,17 +92,24 @@ def run_section(name: str, commands: list[tuple[str, str]], model_config: dict) 
         elif cmd == "world":
             console.print(f"  [yellow]world:[/yellow] {arg}")
             try:
-                update = director_call(world, arg, model_config)
-                world.apply_update(update)
-                world_changed = bool(update.events or update.add_facts or update.remove_facts)
-                narrator_msg = format_narrator_message(update)
+                # Fast path: add pending, inject narrator, character reacts
+                world.add_pending(arg)
+                narrator_msg = format_pending_narrator(arg)
                 session.inject_system(narrator_msg)
+
                 # Trigger character reaction
                 chunks = []
                 for chunk in session.send("[React to what just happened.]"):
                     chunks.append(chunk)
                 last_response = "".join(chunks)
                 console.print(f"  [dim]→ {last_response[:120]}{'...' if len(last_response) > 120 else ''}[/dim]")
+
+                # Synchronous reconcile for test validation
+                pending = world.clear_pending()
+                update = reconcile_call(world, pending, model_config)
+                world.apply_update(update)
+                world_changed = bool(update.events or update.add_facts or update.remove_facts)
+
                 log.append({
                     "type": "world",
                     "input": arg,
@@ -119,7 +126,7 @@ def run_section(name: str, commands: list[tuple[str, str]], model_config: dict) 
                 log.append({"type": "world", "input": arg, "error": str(e)})
                 last_response = ""
 
-        elif cmd == "think":
+        elif cmd == "beat":
             console.print("  [magenta]eval[/magenta]")
             try:
                 result = eval_call(

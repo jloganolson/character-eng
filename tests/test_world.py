@@ -6,6 +6,7 @@ import pytest
 import character_eng.world as world_mod
 from character_eng.world import (
     Beat,
+    ConditionResult,
     EvalResult,
     Goals,
     PlanResult,
@@ -13,12 +14,14 @@ from character_eng.world import (
     WorldState,
     WorldUpdate,
     _load_prompt_file,
-    director_call,
+    condition_check_call,
     eval_call,
     format_narrator_message,
+    format_pending_narrator,
     load_goals,
     load_world_state,
     plan_call,
+    reconcile_call,
 )
 
 TEST_CONFIG = {
@@ -38,13 +41,24 @@ PLAN_CONFIG = {
 }
 
 
+# --- Helper ---
+
+
+def _ws_with_dynamic(*facts, **kwargs) -> WorldState:
+    """Create a WorldState and add_fact for each string."""
+    ws = WorldState(**kwargs)
+    for fact in facts:
+        ws.add_fact(fact)
+    return ws
+
+
 # --- WorldState ---
 
 
 def test_render_full():
-    ws = WorldState(
+    ws = _ws_with_dynamic(
+        "Orb is on table", "Room is dark",
         static=["Greg is a robot head"],
-        dynamic=["Orb is on table", "Room is dark"],
         events=["The orb began to glow"],
     )
     text = ws.render()
@@ -70,34 +84,98 @@ def test_render_static_only():
 
 
 def test_render_dynamic_only():
-    ws = WorldState(dynamic=["Fact one"])
+    ws = _ws_with_dynamic("Fact one")
     text = ws.render()
     assert "Current state:" in text
     assert "Permanent facts:" not in text
+
+
+def test_render_with_pending():
+    ws = _ws_with_dynamic("Orb on table")
+    ws.add_pending("The orb falls off the table")
+    text = ws.render()
+    assert "Pending changes:" in text
+    assert "- The orb falls off the table" in text
+
+
+# --- add_fact ---
+
+
+def test_add_fact_returns_id():
+    ws = WorldState()
+    fid1 = ws.add_fact("First fact")
+    fid2 = ws.add_fact("Second fact")
+    assert fid1 == "f1"
+    assert fid2 == "f2"
+    assert ws.dynamic == {"f1": "First fact", "f2": "Second fact"}
+
+
+def test_add_fact_ids_not_reused_after_removal():
+    ws = WorldState()
+    ws.add_fact("A")
+    ws.add_fact("B")
+    ws.dynamic.pop("f1")
+    fid3 = ws.add_fact("C")
+    assert fid3 == "f3"
+    assert "f1" not in ws.dynamic
+
+
+# --- add_pending / clear_pending ---
+
+
+def test_add_pending_and_clear():
+    ws = WorldState()
+    ws.add_pending("Change 1")
+    ws.add_pending("Change 2")
+    assert ws.pending == ["Change 1", "Change 2"]
+    result = ws.clear_pending()
+    assert result == ["Change 1", "Change 2"]
+    assert ws.pending == []
+
+
+def test_clear_pending_empty():
+    ws = WorldState()
+    result = ws.clear_pending()
+    assert result == []
+
+
+# --- render_for_reconcile ---
+
+
+def test_render_for_reconcile():
+    ws = _ws_with_dynamic("Orb on table", "Room is dark")
+    text = ws.render_for_reconcile()
+    assert "f1. Orb on table" in text
+    assert "f2. Room is dark" in text
+
+
+def test_render_for_reconcile_empty():
+    ws = WorldState()
+    assert ws.render_for_reconcile() == ""
 
 
 # --- apply_update ---
 
 
 def test_apply_update_add_facts():
-    ws = WorldState(dynamic=["A", "B"])
+    ws = _ws_with_dynamic("A", "B")
     update = WorldUpdate(add_facts=["C"])
     ws.apply_update(update)
-    assert ws.dynamic == ["A", "B", "C"]
+    assert list(ws.dynamic.values()) == ["A", "B", "C"]
 
 
 def test_apply_update_remove_facts():
-    ws = WorldState(dynamic=["A", "B", "C"])
-    update = WorldUpdate(remove_facts=[1])
+    ws = _ws_with_dynamic("A", "B", "C")
+    update = WorldUpdate(remove_facts=["f2"])
     ws.apply_update(update)
-    assert ws.dynamic == ["A", "C"]
+    assert list(ws.dynamic.values()) == ["A", "C"]
 
 
 def test_apply_update_remove_multiple():
-    ws = WorldState(dynamic=["A", "B", "C", "D"])
-    update = WorldUpdate(remove_facts=[0, 2])
+    ws = _ws_with_dynamic("A", "B", "C", "D")
+    update = WorldUpdate(remove_facts=["f1", "f3"])
     ws.apply_update(update)
-    assert ws.dynamic == ["B", "D"]
+    assert list(ws.dynamic.values()) == ["B", "D"]
 
 
 def test_apply_update_events():
@@ -108,22 +186,22 @@ def test_apply_update_events():
 
 
 def test_apply_update_combined():
-    ws = WorldState(dynamic=["Orb on table", "Room is dark"])
+    ws = _ws_with_dynamic("Orb on table", "Room is dark")
     update = WorldUpdate(
-        remove_facts=[0],
+        remove_facts=["f1"],
         add_facts=["Orb is on floor"],
         events=["The orb rolled off the table"],
     )
     ws.apply_update(update)
-    assert ws.dynamic == ["Room is dark", "Orb is on floor"]
+    assert list(ws.dynamic.values()) == ["Room is dark", "Orb is on floor"]
     assert ws.events == ["The orb rolled off the table"]
 
 
-def test_apply_update_invalid_index_ignored():
-    ws = WorldState(dynamic=["A"])
-    update = WorldUpdate(remove_facts=[5])
+def test_apply_update_invalid_id_ignored():
+    ws = _ws_with_dynamic("A")
+    update = WorldUpdate(remove_facts=["f99"])
     ws.apply_update(update)
-    assert ws.dynamic == ["A"]
+    assert list(ws.dynamic.values()) == ["A"]
 
 
 # --- show ---
@@ -149,7 +227,7 @@ def test_load_world_state_with_files(tmp_path, monkeypatch):
     ws = load_world_state("test_char")
     assert ws is not None
     assert ws.static == ["Static fact one", "Static fact two"]
-    assert ws.dynamic == ["Dynamic fact"]
+    assert list(ws.dynamic.values()) == ["Dynamic fact"]
     assert ws.events == []
 
 
@@ -173,7 +251,7 @@ def test_load_world_state_static_only(tmp_path, monkeypatch):
     ws = load_world_state("test_char")
     assert ws is not None
     assert ws.static == ["Only static"]
-    assert ws.dynamic == []
+    assert ws.dynamic == {}
 
 
 # --- Beat ---
@@ -193,6 +271,37 @@ def test_beat_with_gaze_expression():
     assert b.intent == "Ask about the orb"
     assert b.gaze == "orb"
     assert b.expression == "curious"
+
+
+def test_beat_with_condition():
+    b = Beat(line="Thanks for the salt!", intent="React to salt", condition="The visitor handed over the salt")
+    assert b.condition == "The visitor handed over the salt"
+    assert b.gaze == ""
+    assert b.expression == ""
+
+
+def test_beat_condition_default_empty():
+    b = Beat(line="Hey", intent="Greet")
+    assert b.condition == ""
+
+
+# --- ConditionResult ---
+
+
+def test_condition_result_met():
+    r = ConditionResult(met=True)
+    assert r.met is True
+    assert r.idle == ""
+    assert r.gaze == ""
+    assert r.expression == ""
+
+
+def test_condition_result_not_met():
+    r = ConditionResult(met=False, idle="*fidgets with a wire*", gaze="hands", expression="restless")
+    assert r.met is False
+    assert r.idle == "*fidgets with a wire*"
+    assert r.gaze == "hands"
+    assert r.expression == "restless"
 
 
 # --- Script ---
@@ -249,6 +358,16 @@ def test_script_render_with_gaze_expression():
     assert '  3. [Intent 4] "Line 4"' in text
     # No trailing parens on beat 4
     assert '"Line 4" (' not in text
+
+
+def test_script_render_with_condition():
+    s = Script(beats=[
+        Beat("Hey", "Greet", condition="A visitor is present"),
+        Beat("What's that?", "Ask about orb"),
+    ])
+    text = s.render()
+    assert 'IF: A visitor is present' in text
+    assert 'IF:' not in text.split('\n')[1]  # second beat has no condition
 
 
 def test_script_render_empty():
@@ -384,6 +503,19 @@ def test_format_narrator_message_empty():
     assert msg == "[]"
 
 
+# --- format_pending_narrator ---
+
+
+def test_format_pending_narrator():
+    msg = format_pending_narrator("The orb falls off the table")
+    assert msg == "[The orb falls off the table]"
+
+
+def test_format_pending_narrator_empty():
+    msg = format_pending_narrator("")
+    assert msg == "[]"
+
+
 # --- Mock helper for OpenAI responses ---
 
 
@@ -398,13 +530,13 @@ def _mock_openai_response(data: dict):
     return mock_response
 
 
-# --- director_call (mocked) ---
+# --- reconcile_call (mocked) ---
 
 
 @patch("character_eng.world._make_client")
-def test_director_call_basic(mock_make_client):
+def test_reconcile_call_basic(mock_make_client):
     data = {
-        "remove_facts": [0],
+        "remove_facts": ["f1"],
         "add_facts": ["Orb is on floor"],
         "events": ["The orb rolled off the table"],
     }
@@ -412,13 +544,10 @@ def test_director_call_basic(mock_make_client):
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    ws = WorldState(
-        static=["Greg is a robot head"],
-        dynamic=["Orb is on table"],
-    )
-    update = director_call(ws, "the orb rolls off the table", TEST_CONFIG)
+    ws = _ws_with_dynamic("Orb is on table", static=["Greg is a robot head"])
+    update = reconcile_call(ws, ["the orb rolls off the table"], TEST_CONFIG)
 
-    assert update.remove_facts == [0]
+    assert update.remove_facts == ["f1"]
     assert update.add_facts == ["Orb is on floor"]
     assert update.events == ["The orb rolled off the table"]
 
@@ -426,7 +555,7 @@ def test_director_call_basic(mock_make_client):
 
 
 @patch("character_eng.world._make_client")
-def test_director_call_no_removals(mock_make_client):
+def test_reconcile_call_no_removals(mock_make_client):
     data = {
         "remove_facts": [],
         "add_facts": ["A cat entered the room"],
@@ -436,8 +565,8 @@ def test_director_call_no_removals(mock_make_client):
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    ws = WorldState(dynamic=["Orb is on table"])
-    update = director_call(ws, "a cat walks in", TEST_CONFIG)
+    ws = _ws_with_dynamic("Orb is on table")
+    update = reconcile_call(ws, ["a cat walks in"], TEST_CONFIG)
 
     assert update.remove_facts == []
     assert update.add_facts == ["A cat entered the room"]
@@ -445,7 +574,7 @@ def test_director_call_no_removals(mock_make_client):
 
 
 @patch("character_eng.world._make_client")
-def test_director_call_empty_state(mock_make_client):
+def test_reconcile_call_empty_state(mock_make_client):
     data = {
         "remove_facts": [],
         "add_facts": ["Person is sitting at the desk"],
@@ -456,10 +585,69 @@ def test_director_call_empty_state(mock_make_client):
     mock_make_client.return_value = mock_client
 
     ws = WorldState()
-    update = director_call(ws, "someone sits down", TEST_CONFIG)
+    update = reconcile_call(ws, ["someone sits down"], TEST_CONFIG)
 
     assert update.add_facts == ["Person is sitting at the desk"]
     assert update.events == ["Someone sat down"]
+
+
+@patch("character_eng.world._make_client")
+def test_reconcile_call_multiple_pending(mock_make_client):
+    data = {
+        "remove_facts": ["f1"],
+        "add_facts": ["Orb on floor", "Orb is glowing"],
+        "events": ["The orb fell and started glowing"],
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    ws = _ws_with_dynamic("Orb is on table")
+    update = reconcile_call(ws, ["the orb falls", "the orb starts glowing"], TEST_CONFIG)
+
+    assert update.remove_facts == ["f1"]
+    assert len(update.add_facts) == 2
+
+    # Check that both pending changes appear in the user message
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "the orb falls" in user_msg
+    assert "the orb starts glowing" in user_msg
+
+
+@patch("character_eng.world._make_client")
+def test_reconcile_call_reads_reconcile_system_txt(mock_make_client, tmp_path, monkeypatch):
+    """reconcile_call reads reconcile_system.txt from disk each call."""
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "reconcile_system.txt").write_text("You are reconciler v1.")
+
+    data = {"remove_facts": [], "add_facts": [], "events": ["thing"]}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    reconcile_call(WorldState(), ["test"], TEST_CONFIG)
+
+    call_args = mock_client.chat.completions.create.call_args
+    messages = call_args[1]["messages"]
+    assert messages[0]["content"] == "You are reconciler v1."
+
+
+@patch("character_eng.world._make_client")
+def test_reconcile_call_ids_in_context(mock_make_client):
+    """ID-tagged facts appear in the user message."""
+    data = {"remove_facts": [], "add_facts": [], "events": ["thing"]}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    ws = _ws_with_dynamic("Orb on table", "Room is dark")
+    reconcile_call(ws, ["test change"], TEST_CONFIG)
+
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "f1. Orb on table" in user_msg
+    assert "f2. Room is dark" in user_msg
 
 
 # --- eval_call (mocked) ---
@@ -641,6 +829,89 @@ def test_eval_call_reads_eval_system_txt(mock_make_client, tmp_path, monkeypatch
     assert messages[0]["content"] == "You are eval v1."
 
 
+# --- condition_check_call (mocked) ---
+
+
+@patch("character_eng.world._make_client")
+def test_condition_check_call_met(mock_make_client):
+    data = {"met": True, "idle": "", "gaze": "", "expression": ""}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = condition_check_call(
+        condition="A visitor is present",
+        system_prompt="You are Greg.",
+        world=_ws_with_dynamic("A visitor is standing nearby", static=["Greg is a robot head"]),
+        history=[{"role": "user", "content": "Hello"}],
+        model_config=TEST_CONFIG,
+    )
+
+    assert result.met is True
+    assert result.idle == ""
+
+
+@patch("character_eng.world._make_client")
+def test_condition_check_call_not_met(mock_make_client):
+    data = {"met": False, "idle": "*stares at the ceiling*", "gaze": "ceiling", "expression": "bored"}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = condition_check_call(
+        condition="A visitor is present",
+        system_prompt="You are Greg.",
+        world=WorldState(static=["Greg is a robot head"]),
+        history=[],
+        model_config=TEST_CONFIG,
+    )
+
+    assert result.met is False
+    assert result.idle == "*stares at the ceiling*"
+    assert result.gaze == "ceiling"
+    assert result.expression == "bored"
+
+
+@patch("character_eng.world._make_client")
+def test_condition_check_call_condition_in_context(mock_make_client):
+    """Condition string is included in the user message."""
+    data = {"met": True, "idle": "", "gaze": "", "expression": ""}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    condition_check_call(
+        condition="The visitor mentioned the orb",
+        system_prompt="You are Greg.",
+        world=None,
+        history=[],
+        model_config=TEST_CONFIG,
+    )
+
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "CONDITION TO CHECK" in user_msg
+    assert "The visitor mentioned the orb" in user_msg
+
+
+@patch("character_eng.world._make_client")
+def test_condition_check_call_reads_condition_system_txt(mock_make_client, tmp_path, monkeypatch):
+    """condition_check_call reads condition_system.txt from disk."""
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "condition_system.txt").write_text("You are condition checker v1.")
+
+    data = {"met": True, "idle": "", "gaze": "", "expression": ""}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    condition_check_call("test condition", "sys prompt", world=None, history=[], model_config=TEST_CONFIG)
+
+    call_args = mock_client.chat.completions.create.call_args
+    messages = call_args[1]["messages"]
+    assert messages[0]["content"] == "You are condition checker v1."
+
+
 # --- plan_call (mocked) ---
 
 
@@ -696,6 +967,31 @@ def test_plan_call_beats_without_gaze_expression(mock_make_client):
     assert len(result.beats) == 1
     assert result.beats[0].gaze == ""
     assert result.beats[0].expression == ""
+
+
+@patch("character_eng.world._make_client")
+def test_plan_call_beats_with_condition(mock_make_client):
+    """Beats with condition field are parsed correctly."""
+    data = {
+        "beats": [
+            {"line": "Hey!", "intent": "Greet", "gaze": "visitor", "expression": "excited", "condition": "A visitor is present"},
+            {"line": "What's that?", "intent": "Ask about orb", "condition": ""},
+        ]
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = plan_call(
+        system_prompt="You are Greg.",
+        world=None,
+        history=[],
+        plan_model_config=PLAN_CONFIG,
+    )
+
+    assert len(result.beats) == 2
+    assert result.beats[0].condition == "A visitor is present"
+    assert result.beats[1].condition == ""
 
 
 @patch("character_eng.world._make_client")
@@ -786,27 +1082,27 @@ def test_load_prompt_file_missing_raises(tmp_path, monkeypatch):
 
 
 @patch("character_eng.world._make_client")
-def test_director_call_reads_prompt_from_file(mock_make_client, tmp_path, monkeypatch):
-    """director_call reads director_system.txt from disk each call."""
+def test_reconcile_call_reads_prompt_from_file(mock_make_client, tmp_path, monkeypatch):
+    """reconcile_call reads reconcile_system.txt from disk each call."""
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
-    (tmp_path / "director_system.txt").write_text("You are director v1.")
+    (tmp_path / "reconcile_system.txt").write_text("You are reconciler v1.")
 
     data = {"remove_facts": [], "add_facts": [], "events": ["thing"]}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    director_call(WorldState(), "test", TEST_CONFIG)
+    reconcile_call(WorldState(), ["test"], TEST_CONFIG)
 
     # Check the system message sent to the API
     call_args = mock_client.chat.completions.create.call_args
     messages = call_args[1]["messages"]
-    assert messages[0]["content"] == "You are director v1."
+    assert messages[0]["content"] == "You are reconciler v1."
 
 
 @patch("character_eng.world._make_client")
-def test_director_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatch):
-    """Editing director_system.txt is picked up on the next call without restart."""
+def test_reconcile_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatch):
+    """Editing reconcile_system.txt is picked up on the next call without restart."""
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
 
     data = {"remove_facts": [], "add_facts": [], "events": ["thing"]}
@@ -815,16 +1111,16 @@ def test_director_call_picks_up_file_changes(mock_make_client, tmp_path, monkeyp
     mock_make_client.return_value = mock_client
 
     # First call with v1
-    (tmp_path / "director_system.txt").write_text("Director prompt v1")
-    director_call(WorldState(), "test", TEST_CONFIG)
+    (tmp_path / "reconcile_system.txt").write_text("Reconcile prompt v1")
+    reconcile_call(WorldState(), ["test"], TEST_CONFIG)
     msgs_v1 = mock_client.chat.completions.create.call_args[1]["messages"]
-    assert msgs_v1[0]["content"] == "Director prompt v1"
+    assert msgs_v1[0]["content"] == "Reconcile prompt v1"
 
     # Edit the file
-    (tmp_path / "director_system.txt").write_text("Director prompt v2")
-    director_call(WorldState(), "test", TEST_CONFIG)
+    (tmp_path / "reconcile_system.txt").write_text("Reconcile prompt v2")
+    reconcile_call(WorldState(), ["test"], TEST_CONFIG)
     msgs_v2 = mock_client.chat.completions.create.call_args[1]["messages"]
-    assert msgs_v2[0]["content"] == "Director prompt v2"
+    assert msgs_v2[0]["content"] == "Reconcile prompt v2"
 
 
 @patch("character_eng.world._make_client")
