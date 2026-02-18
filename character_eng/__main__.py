@@ -15,7 +15,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from character_eng.chat import ChatSession
-from character_eng.models import DEFAULT_MODEL, MODELS, PLAN_MODEL
+from character_eng.models import DEFAULT_MODEL, MODELS, PLAN_MODEL, THINK_MODEL
 from character_eng.prompts import list_characters, load_prompt
 from character_eng.serve import build_vllm_cmd, get_local_models, kill_port
 from character_eng.world import (
@@ -46,6 +46,27 @@ LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 _reconcile_lock = threading.Lock()
 _reconcile_result: WorldUpdate | None = None
 _reconcile_thread: threading.Thread | None = None
+
+# --- Background eval threading ---
+_eval_lock = threading.Lock()
+_eval_result: EvalResult | None = None
+_eval_thread: threading.Thread | None = None
+_eval_version: int = 0
+
+# --- Background plan threading ---
+_plan_lock = threading.Lock()
+_plan_result: PlanResult | None = None
+_plan_thread: threading.Thread | None = None
+_plan_version: int = 0
+
+# --- Context version counter (main thread only) ---
+_context_version: int = 0
+
+
+def _bump_version():
+    """Increment context version. Called on user messages, /world changes, /beat delivery."""
+    global _context_version
+    _context_version += 1
 
 
 def _run_reconcile(world: "WorldState", pending: list[str], model_config: dict):
@@ -108,6 +129,131 @@ def _check_reconcile(world, log):
         "add_facts": result.add_facts,
         "events": result.events,
     })
+
+
+# --- Background eval functions ---
+
+def _run_eval(system_prompt, world, history, model_config, goals, script):
+    """Background thread target for eval."""
+    global _eval_result
+    try:
+        result = eval_call(
+            system_prompt=system_prompt,
+            world=world,
+            history=history,
+            model_config=model_config,
+            goals=goals,
+            script=script,
+        )
+        with _eval_lock:
+            _eval_result = result
+    except Exception as e:
+        console.print(f"[red]Background eval error: {e}[/red]")
+
+
+def _start_eval(session, world, goals, script, model_config):
+    """Kick off background eval. Skips if one is already in flight."""
+    global _eval_thread, _eval_version
+    if _eval_thread is not None and _eval_thread.is_alive():
+        return
+    _eval_version = _context_version
+    _eval_thread = threading.Thread(
+        target=_run_eval,
+        args=(session.system_prompt, world, session.get_history(), model_config, goals, script),
+        daemon=True,
+    )
+    _eval_thread.start()
+
+
+def _check_eval(session, script, log):
+    """Check if background eval is ready. Apply if not stale.
+    Returns (needs_plan, plan_request) tuple."""
+    global _eval_result, _eval_thread
+    with _eval_lock:
+        result = _eval_result
+        _eval_result = None
+
+    if result is None:
+        return (False, "")
+
+    _eval_thread = None
+
+    if _eval_version != _context_version:
+        console.print("[dim](eval result discarded — stale)[/dim]")
+        return (False, "")
+
+    display_eval(result)
+    inject_eval(session, result)
+    log.append({"type": "eval", **eval_to_dict(result)})
+
+    if result.script_status == "advance":
+        script.advance()
+        if script.current_beat:
+            console.print(f"[magenta]  next beat:  [{script.current_beat.intent}][/magenta]")
+            return (False, "")
+        else:
+            console.print("[dim]  script complete, replanning...[/dim]")
+            return (True, "")
+    elif result.script_status == "off_book" and result.plan_request:
+        return (True, result.plan_request)
+
+    return (False, "")
+
+
+# --- Background plan functions ---
+
+def _run_plan_bg(system_prompt, world, history, goals, plan_request, plan_model_config):
+    """Background thread target for plan."""
+    global _plan_result
+    try:
+        result = plan_call(
+            system_prompt=system_prompt,
+            world=world,
+            history=history,
+            goals=goals,
+            plan_request=plan_request,
+            plan_model_config=plan_model_config,
+        )
+        with _plan_lock:
+            _plan_result = result
+    except Exception as e:
+        console.print(f"[red]Background plan error: {e}[/red]")
+
+
+def _start_plan(session, world, goals, plan_request, plan_model_config):
+    """Kick off background plan. Skips if planner unavailable or one already in flight."""
+    global _plan_thread, _plan_version
+    if plan_model_config is None:
+        return
+    if _plan_thread is not None and _plan_thread.is_alive():
+        return
+    _plan_version = _context_version
+    _plan_thread = threading.Thread(
+        target=_run_plan_bg,
+        args=(session.system_prompt, world, session.get_history(), goals, plan_request, plan_model_config),
+        daemon=True,
+    )
+    _plan_thread.start()
+
+
+def _check_plan(script):
+    """Check if background plan is ready. Apply if not stale."""
+    global _plan_result, _plan_thread
+    with _plan_lock:
+        result = _plan_result
+        _plan_result = None
+
+    if result is None:
+        return
+
+    _plan_thread = None
+
+    if _plan_version != _context_version:
+        console.print("[dim](plan result discarded — stale)[/dim]")
+        return
+
+    if result.beats:
+        apply_plan(script, result)
 
 
 def save_chat_log(character: str, model_config: dict, log: list[dict], session_id: str = ""):
@@ -387,18 +533,39 @@ def get_plan_model_config():
     return cfg
 
 
+def get_think_model_config():
+    """Look up the think model config, return None if API key not set."""
+    cfg = MODELS.get(THINK_MODEL)
+    if cfg is None:
+        return None
+    api_key_env = cfg.get("api_key_env", "")
+    if api_key_env and not os.environ.get(api_key_env):
+        return None
+    return cfg
+
+
 def chat_loop(character: str, model_config: dict):
     """Run the chat loop for a character. Returns on /back or Ctrl+C."""
     label = character.replace("_", " ").title()
     session_id = uuid.uuid4().hex[:8]
     log: list[dict] = []
     plan_model_config = get_plan_model_config()
+    think_model_config = get_think_model_config()
+
+    # Resolve eval model: prefer think model, fall back to chat model
+    eval_model_config = think_model_config if think_model_config else model_config
 
     if plan_model_config:
         plan_label = MODELS[PLAN_MODEL]["name"]
         console.print(f"[dim]Planner: {plan_label}[/dim]")
     else:
         console.print(f"[dim]Planner: unavailable (no {MODELS.get(PLAN_MODEL, {}).get('api_key_env', 'API key')} set)[/dim]")
+
+    if think_model_config:
+        think_label = MODELS[THINK_MODEL]["name"]
+        console.print(f"[dim]Think: {think_label}[/dim]")
+    else:
+        console.print(f"[dim]Think: using chat model[/dim]")
 
     # Outer loop: handles /reload by restarting with fresh session
     while True:
@@ -408,7 +575,7 @@ def chat_loop(character: str, model_config: dict):
         session = ChatSession(system_prompt, model_config)
         script = Script()
 
-        # Generate initial script at boot
+        # Generate initial script at boot (synchronous)
         plan_result = run_plan(session, world, goals, "", plan_model_config)
         if plan_result and plan_result.beats:
             apply_plan(script, plan_result)
@@ -429,10 +596,17 @@ def chat_loop(character: str, model_config: dict):
             if not user_input:
                 continue
 
-            # Check for background reconcile results before command dispatch
+            # --- Turn start: check background results ---
             if world is not None:
                 _check_reconcile(world, log)
 
+            needs_plan, plan_request = _check_eval(session, script, log)
+            if needs_plan:
+                _start_plan(session, world, goals, plan_request, plan_model_config)
+
+            _check_plan(script)
+
+            # --- Command dispatch ---
             cmd = user_input.lower()
             if cmd == "/quit":
                 save_chat_log(character, model_config, log, session_id)
@@ -452,7 +626,7 @@ def chat_loop(character: str, model_config: dict):
                 show_help()
                 continue
             elif cmd == "/beat":
-                handle_beat(session, world, goals, script, label, model_config, plan_model_config, log)
+                handle_beat(session, world, goals, script, label, model_config, plan_model_config, eval_model_config, log)
                 continue
             elif cmd == "/plan":
                 console.print(script.show())
@@ -474,79 +648,45 @@ def chat_loop(character: str, model_config: dict):
                     console.print("[dim]No world state for this character.[/dim]")
                     continue
                 change_text = user_input[7:]  # preserve original case
-                handle_world_change(session, world, goals, script, change_text, label, model_config, plan_model_config, log)
+                handle_world_change(session, world, goals, script, change_text, label, model_config, plan_model_config, eval_model_config, log)
+                continue
+            elif user_input.startswith("/"):
+                console.print(f"[red]Unknown command: {user_input.split()[0]}[/red]")
+                console.print("[dim]Type /help to see available commands[/dim]")
                 continue
 
             # --- Turn flow ---
 
-            # First user input: natural LLM response, eval, then replan for visitor-aware script
+            # First user input: natural LLM response, then background eval + replan
             if not had_user_input:
                 had_user_input = True
                 response = stream_response(session, label, user_input)
-                entry = {"type": "send", "input": user_input, "response": response}
-
-                eval_result = run_eval(session, world, goals, script, model_config)
-                if eval_result:
-                    display_eval(eval_result)
-                    inject_eval(session, eval_result)
-                    entry["eval"] = eval_to_dict(eval_result)
-
-                log.append(entry)
-
-                # Replan now that we have visitor context
-                plan_result = run_plan(session, world, goals, "", plan_model_config)
-                if plan_result and plan_result.beats:
-                    apply_plan(script, plan_result)
+                log.append({"type": "send", "input": user_input, "response": response})
+                _bump_version()
+                _start_eval(session, world, goals, script, eval_model_config)
+                _start_plan(session, world, goals, "", plan_model_config)
                 continue
 
-            # Bootstrap: if no script, call planner to generate one
+            # Bootstrap: if no script, start background plan and fall through to unguided
             if script.is_empty():
-                plan_result = run_plan(session, world, goals, "", plan_model_config)
-                if plan_result and plan_result.beats:
-                    apply_plan(script, plan_result)
+                _start_plan(session, world, goals, "", plan_model_config)
 
             if script.current_beat is not None:
                 # Normal path: LLM-guided beat delivery — reacts to user while serving intent
                 response = stream_guided_beat(session, script.current_beat, label, user_input)
-                entry = {"type": "send", "input": user_input, "response": response}
-
-                eval_result = run_eval(session, world, goals, script, model_config)
-                if eval_result:
-                    display_eval(eval_result)
-                    inject_eval(session, eval_result)
-                    entry["eval"] = eval_to_dict(eval_result)
-
-                    if eval_result.script_status == "advance":
-                        script.advance()
-                        if script.current_beat:
-                            console.print(f"[magenta]  next beat:  [{script.current_beat.intent}][/magenta]")
-                        else:
-                            console.print("[dim]  script complete, replanning...[/dim]")
-                            plan_result = run_plan(session, world, goals, "", plan_model_config)
-                            if plan_result and plan_result.beats:
-                                apply_plan(script, plan_result)
-                    elif eval_result.script_status == "off_book" and eval_result.plan_request:
-                        plan_result = run_plan(session, world, goals, eval_result.plan_request, plan_model_config)
-                        if plan_result and plan_result.beats:
-                            apply_plan(script, plan_result)
-
-                log.append(entry)
+                log.append({"type": "send", "input": user_input, "response": response})
+                _bump_version()
+                _start_eval(session, world, goals, script, eval_model_config)
             else:
                 # No script available (planner unavailable/failed) — LLM generates response
                 response = stream_response(session, label, user_input)
-                entry = {"type": "send", "input": user_input, "response": response}
-
-                eval_result = run_eval(session, world, goals, script, model_config)
-                if eval_result:
-                    display_eval(eval_result)
-                    inject_eval(session, eval_result)
-                    entry["eval"] = eval_to_dict(eval_result)
-
-                log.append(entry)
+                log.append({"type": "send", "input": user_input, "response": response})
+                _bump_version()
+                _start_eval(session, world, goals, script, eval_model_config)
 
 
 def run_eval(session, world, goals, script, model_config):
-    """Run eval_call, return EvalResult or None on error."""
+    """Run eval_call synchronously, return EvalResult or None on error."""
     console.print("[dim]Evaluating...[/dim]")
     try:
         return eval_call(
@@ -563,7 +703,7 @@ def run_eval(session, world, goals, script, model_config):
 
 
 def run_plan(session, world, goals, plan_request, plan_model_config):
-    """Run plan_call, return PlanResult or None on error."""
+    """Run plan_call synchronously, return PlanResult or None on error."""
     if plan_model_config is None:
         console.print("[dim]Planner unavailable, skipping.[/dim]")
         return None
@@ -680,11 +820,11 @@ def apply_plan(script, plan_result):
         console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"{extras}[/magenta]")
 
 
-def handle_beat(session, world, goals, script, label, model_config, plan_model_config, log):
+def handle_beat(session, world, goals, script, label, model_config, plan_model_config, eval_model_config, log):
     """Process a /beat command — condition-gated beat delivery (time passes)."""
     entry = {"type": "beat"}
 
-    # 1. If no current beat, replan
+    # 1. If no current beat, replan (synchronous — user explicitly asked for a beat)
     if script.current_beat is None:
         plan_result = run_plan(session, world, goals, "", plan_model_config)
         if plan_result and plan_result.beats:
@@ -696,7 +836,7 @@ def handle_beat(session, world, goals, script, label, model_config, plan_model_c
 
     beat = script.current_beat
 
-    # 2. If beat has a condition, check it
+    # 2. If beat has a condition, check it (synchronous — gates delivery)
     if beat.condition:
         console.print(f"[dim]Checking condition: {beat.condition}[/dim]")
         try:
@@ -759,16 +899,18 @@ def handle_beat(session, world, goals, script, label, model_config, plan_model_c
     if script.current_beat:
         console.print(f"[magenta]  next beat:  [{script.current_beat.intent}][/magenta]")
     else:
-        # 7. Script exhausted, replan
+        # Script exhausted — background replan
         console.print("[dim]  script complete, replanning...[/dim]")
-        plan_result = run_plan(session, world, goals, "", plan_model_config)
-        if plan_result and plan_result.beats:
-            apply_plan(script, plan_result)
+        _start_plan(session, world, goals, "", plan_model_config)
+
+    # 7. Background eval
+    _bump_version()
+    _start_eval(session, world, goals, script, eval_model_config)
 
     log.append(entry)
 
 
-def handle_world_change(session, world, goals, script, change_text, label, model_config, plan_model_config, log):
+def handle_world_change(session, world, goals, script, change_text, label, model_config, plan_model_config, eval_model_config, log):
     """Process a /world <description> command. Fast path: immediate reaction, background reconcile."""
     # Store as pending
     world.add_pending(change_text)
@@ -778,13 +920,7 @@ def handle_world_change(session, world, goals, script, change_text, label, model
     console.print(f"[dim]{narrator_msg}[/dim]")
     session.inject_system(narrator_msg)
 
-    # Eval before reacting
-    eval_result = run_eval(session, world, goals, script, model_config)
-    if eval_result:
-        display_eval(eval_result)
-        inject_eval(session, eval_result)
-
-    # Character reacts (LLM generates dynamic reaction to world change)
+    # Character reacts (no synchronous eval — narrator injection provides enough context)
     response = stream_response(session, label, "[React to what just happened.]")
 
     entry = {
@@ -793,17 +929,14 @@ def handle_world_change(session, world, goals, script, change_text, label, model
         "narrator": narrator_msg,
         "response": response,
     }
-    if eval_result:
-        entry["eval"] = eval_to_dict(eval_result)
-        # Check if world change triggers replan
-        if eval_result.script_status == "off_book" and eval_result.plan_request:
-            plan_result = run_plan(session, world, goals, eval_result.plan_request, plan_model_config)
-            if plan_result and plan_result.beats:
-                apply_plan(script, plan_result)
     log.append(entry)
 
     # Start background reconciliation
     _start_reconcile(world, model_config, plan_model_config)
+
+    # Background eval
+    _bump_version()
+    _start_eval(session, world, goals, script, eval_model_config)
 
 
 def stream_response(session, label, message) -> str:

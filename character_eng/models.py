@@ -16,7 +16,6 @@ MODELS = {
         "base_url": "https://api.groq.com/openai/v1",
         "api_key_env": "GROQ_API_KEY",
         "stream_usage": False,
-        "hidden": True,
     },
     "cerebras-gpt": {
         "name": "GPT-OSS 120B (Cerebras)",
@@ -75,3 +74,4 @@ MODELS = {
 
 DEFAULT_MODEL = "cerebras-llama"
 PLAN_MODEL = "gemini-3-flash"
+THINK_MODEL = "groq-llama"
