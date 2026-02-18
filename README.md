@@ -131,9 +131,29 @@ uv run -m character_eng.qa_world                       # world state reconciler
 uv run -m character_eng.qa_chat                        # end-to-end chat, world, eval
 uv run -m character_eng.qa_world --model groq-llama    # test with Groq Llama
 uv run -m character_eng.qa_chat --model groq-llama     # test with Groq Llama
+
+# Persona QA (6 parallel personas, HTML report)
+uv run -m character_eng.qa_personas                        # default model + character
+uv run -m character_eng.qa_personas --model groq-llama     # test with Groq Llama
+uv run -m character_eng.qa_personas --turns 5              # quick run with fewer turns
 ```
 
 `test_plan.md` defines the QA chat scenarios in a human-editable format — add new test sections without touching code. Supports `send:`, `world:`, `script:` (load beats for eval tracking), `beat` (run eval), and `expect:` commands including `eval_status:<status>` to assert eval outcomes.
+
+### Persona QA
+
+Automated "subjective" testing — 6 LLM-driven personas chat with the character in parallel, exercising the full async loop (background eval/plan/reconcile). Produces an HTML report for human review.
+
+| Persona | Type | Turns | Behavior |
+|---------|------|-------|----------|
+| AFK Andy | LLM | 12 | Inaction griefer — "k", "idk", "sure", sometimes does nothing |
+| Chaos Carl | LLM | 12 | Overaction griefer — ~40% `/world` (fire, explosions), rest bizarre messages |
+| Casual Player | LLM | 15 | Normal user — asks questions, engages naturally |
+| Bored Player | LLM | 12 | Not having fun — "this is boring", redirects, dismisses |
+| Beat Runner | Scripted | 10 | Every turn: `/beat` — tests autonomous time-passing |
+| Interrupter | Hybrid | 12 | Alternates message→beat→message→beat — tests script interruption |
+
+Each persona runs in its own `ConversationDriver` with fully isolated threading state (locks, result slots, context version). The HTML report shows per-persona conversation cards with action type badges, character responses, eval details in collapsible sections, and stale discard markers.
 
 ## Benchmarking
 
