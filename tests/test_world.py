@@ -18,6 +18,7 @@ from character_eng.world import (
     eval_call,
     format_narrator_message,
     format_pending_narrator,
+    load_beat_guide,
     load_goals,
     load_world_state,
     plan_call,
@@ -1076,6 +1077,34 @@ def test_load_prompt_file_missing_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     with pytest.raises(FileNotFoundError):
         _load_prompt_file("nonexistent.txt")
+
+
+# --- load_beat_guide ---
+
+
+def test_load_beat_guide_substitutes_placeholders(tmp_path, monkeypatch):
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "beat_guide.txt").write_text("Intent: {intent}\nLine: {line}")
+    result = load_beat_guide("Ask about the orb", "Hey, what's that glowy thing?")
+    assert "Intent: Ask about the orb" in result
+    assert "Line: Hey, what's that glowy thing?" in result
+
+
+def test_load_beat_guide_reads_from_disk_each_call(tmp_path, monkeypatch):
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "beat_guide.txt").write_text("v1: {intent}")
+    result1 = load_beat_guide("test", "line")
+    assert "v1: test" in result1
+
+    (tmp_path / "beat_guide.txt").write_text("v2: {intent}")
+    result2 = load_beat_guide("test", "line")
+    assert "v2: test" in result2
+
+
+def test_load_beat_guide_missing_file_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    with pytest.raises(FileNotFoundError):
+        load_beat_guide("intent", "line")
 
 
 # --- Prompt reload (file changes picked up between calls) ---

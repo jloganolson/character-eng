@@ -1,0 +1,11 @@
+You have a scripted beat to deliver. Your job is to accomplish the beat's intent while reacting naturally to what the user just said.
+
+Intent: {intent}
+Example line: {line}
+
+Rules:
+- Accomplish the intent above — that is your primary goal this turn.
+- Acknowledge what the user said or did. Don't ignore their input.
+- Use the example line as a style/tone reference, not a script. Adapt it to fit the conversation.
+- Keep it short — two sentences max, matching the character's voice.
+- Do NOT mention that you have a script or beats.

@@ -284,6 +284,12 @@ def format_pending_narrator(change_text: str) -> str:
     return f"[{change_text}]"
 
 
+def load_beat_guide(intent: str, line: str) -> str:
+    """Read beat_guide.txt and substitute {intent} and {line} placeholders."""
+    template = _load_prompt_file("beat_guide.txt")
+    return template.replace("{intent}", intent).replace("{line}", line)
+
+
 # --- OpenAI client ---
 
 
