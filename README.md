@@ -136,6 +136,11 @@ uv run -m character_eng.qa_chat --model groq-llama     # test with Groq Llama
 uv run -m character_eng.qa_personas                        # default model + character
 uv run -m character_eng.qa_personas --model groq-llama     # test with Groq Llama
 uv run -m character_eng.qa_personas --turns 5              # quick run with fewer turns
+uv run -m character_eng.qa_personas --turns 5 --open       # run and open report in browser
+
+# Open HTML reports in browser
+uv run -m character_eng.open_report                        # latest report in logs/
+uv run -m character_eng.open_report logs/some_report.html  # specific file
 ```
 
 `test_plan.md` defines the QA chat scenarios in a human-editable format — add new test sections without touching code. Supports `send:`, `world:`, `script:` (load beats for eval tracking), `beat` (run eval), and `expect:` commands including `eval_status:<status>` to assert eval outcomes.
@@ -171,4 +176,6 @@ Prints per-run details (TTFT, total time, response text) and a summary table wit
 
 ## Logs
 
-Every chat session and QA run saves a full JSON log to `logs/` (gitignored). The log path is printed when the session ends. Logs include complete untruncated responses — useful for reviewing conversation quality across models.
+Every chat session and QA run saves logs to `logs/` (gitignored). Chat sessions save both a JSON log and an HTML report; persona QA saves an HTML report. The log path is printed when the session ends.
+
+HTML reports (chat sessions and persona QA) include an **annotation UI** — click the pencil icon on any turn to leave a note, then click "Export annotations" in the sticky bottom toolbar to download a `.annotations.json` file. The JSON contains a notes summary plus full conversations for annotated personas/sessions only. Useful for reviewing conversation quality, marking issues, and feeding annotations back into Claude Code.

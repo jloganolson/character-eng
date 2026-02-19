@@ -17,6 +17,7 @@ from rich.text import Text
 from character_eng.chat import ChatSession
 from character_eng.models import DEFAULT_MODEL, MODELS, PLAN_MODEL, THINK_MODEL
 from character_eng.prompts import list_characters, load_prompt
+from character_eng.qa_personas import _action_badge, _esc, annotation_assets
 from character_eng.serve import build_vllm_cmd, get_local_models, kill_port
 from character_eng.world import (
     Beat,
@@ -275,6 +276,159 @@ def save_chat_log(character: str, model_config: dict, log: list[dict], session_i
     }
     log_path.write_text(json.dumps(data, indent=2))
     console.print(f"[dim]Log: {log_path}[/dim]")
+
+
+def save_chat_html(character: str, model_config: dict, log: list[dict], session_id: str = ""):
+    """Write chat log as an annotatable HTML report to logs/."""
+    if not log:
+        return
+    LOGS_DIR.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_key = next((k for k, v in MODELS.items() if v is model_config), "unknown")
+    report_name = f"chat_{character}_{model_key}_{session_id}_{timestamp}"
+    html_path = LOGS_DIR / f"{report_name}.html"
+    label = character.replace("_", " ").title()
+
+    # Map log entries to turn divs
+    turns_html = ""
+    turn_num = 0
+    pending_extras: list[dict] = []  # eval/reconcile entries to attach to next turn
+
+    for entry in log:
+        etype = entry.get("type", "")
+
+        # Accumulate eval/reconcile/plan entries as extras for the preceding turn
+        if etype in ("eval", "reconcile", "plan", "eval_stale", "plan_stale", "reload"):
+            pending_extras.append(entry)
+            continue
+
+        if etype not in ("send", "world", "beat"):
+            continue
+
+        action = etype
+        if etype == "send":
+            action = "message"
+        input_text = entry.get("input", "")
+        response = entry.get("response", "")
+
+        # Input display
+        if action == "beat":
+            input_html = '<div class="beat-input">/beat</div>'
+        elif action == "world":
+            input_html = f'<div class="world-input">/world {_esc(input_text)}</div>'
+        else:
+            input_html = f'<div class="user-input">{_esc(input_text)}</div>'
+
+        # Response
+        resp_html = ""
+        if response:
+            resp_html = f'<div class="npc-response">{_esc(response)}</div>'
+
+        # Extras from preceding eval/reconcile entries
+        extras_html = ""
+        for ex in pending_extras:
+            ex_type = ex.get("type", "")
+            if ex_type == "eval":
+                extras_html += (
+                    f'<details class="eval-details"><summary>eval: {_esc(ex.get("script_status", "?"))}</summary>'
+                    f'<div class="eval-body">'
+                    f'<div><b>thought:</b> {_esc(ex.get("thought", ""))}</div>'
+                    f'<div><b>gaze:</b> {_esc(ex.get("gaze", ""))}</div>'
+                    f'<div><b>expression:</b> {_esc(ex.get("expression", ""))}</div>'
+                    f'<div><b>status:</b> {_esc(ex.get("script_status", ""))}</div>'
+                )
+                if ex.get("plan_request"):
+                    extras_html += f'<div><b>plan_request:</b> {_esc(ex["plan_request"])}</div>'
+                extras_html += "</div></details>"
+            elif ex_type == "reconcile":
+                removals = ", ".join(ex.get("remove_facts", []))
+                additions = ", ".join(ex.get("add_facts", []))
+                events = ", ".join(ex.get("events", []))
+                extras_html += (
+                    f'<details class="eval-details"><summary>reconcile</summary>'
+                    f'<div class="eval-body">'
+                    f'<div><b>removed:</b> {_esc(removals)}</div>'
+                    f'<div><b>added:</b> {_esc(additions)}</div>'
+                    f'<div><b>events:</b> {_esc(events)}</div>'
+                    f'</div></details>'
+                )
+            elif ex_type == "eval_stale":
+                extras_html += ' <span class="stale">STALE DISCARD (eval)</span>'
+            elif ex_type == "plan_stale":
+                extras_html += ' <span class="stale">STALE DISCARD (plan)</span>'
+        pending_extras.clear()
+
+        ann_key = f"{label}:{turn_num}"
+        ann_key_safe = ann_key.replace(" ", "_").replace(":", "_")
+        turns_html += (
+            f'<div class="turn" data-persona="{_esc(label)}" data-turn="{turn_num}"'
+            f' data-action="{_esc(action)}" data-input="{_esc(input_text)}"'
+            f' data-response="{_esc(response)}">'
+            f'<div class="turn-header">Turn {turn_num + 1} {_action_badge(action)}'
+            f' <button class="annotate-btn" data-ann-key="{_esc(ann_key)}"'
+            f' onclick="toggleAnnotation(\'{_esc(label)}\',{turn_num})"'
+            f' title="Annotate this turn">&#9998;</button>'
+            f'</div>'
+            f'{input_html}{resp_html}{extras_html}'
+            f'<div class="annotation-area" id="ann-{ann_key_safe}">'
+            f'<textarea placeholder="Add a note..."'
+            f' oninput="updateAnnotation(\'{_esc(label)}\',{turn_num},this.value)"></textarea>'
+            f'</div>'
+            f'</div>'
+        )
+        turn_num += 1
+
+    ts_display = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Chat — {_esc(label)} — {_esc(model_key)}</title>
+<style>
+  * {{ box-sizing: border-box; }}
+  body {{
+    font-family: -apple-system, system-ui, 'Segoe UI', sans-serif;
+    max-width: 900px; margin: 2em auto; padding: 0 1em;
+    background: #0d1117; color: #c9d1d9;
+  }}
+  h1 {{ color: #58a6ff; margin-bottom: 0.3em; }}
+  .meta {{ color: #8b949e; font-size: 0.9em; margin-bottom: 1.5em; }}
+  .conversation {{
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 0.5em 1em;
+  }}
+  .turn {{ padding: 0.6em 0; border-bottom: 1px solid #21262d; }}
+  .turn:last-child {{ border-bottom: none; }}
+  .turn-header {{ font-size: 0.85em; color: #8b949e; margin-bottom: 0.4em; }}
+  .badge {{
+    display: inline-block; padding: 1px 8px; border-radius: 10px;
+    font-size: 0.8em; color: #fff; font-weight: 600;
+  }}
+  .stale {{
+    background: #d29922; color: #0d1117; padding: 1px 6px;
+    border-radius: 4px; font-size: 0.75em; font-weight: 600; margin-left: 0.5em;
+  }}
+  .user-input {{ color: #58a6ff; margin: 0.3em 0; padding-left: 1em; }}
+  .world-input {{ color: #d29922; margin: 0.3em 0; padding-left: 1em; font-style: italic; }}
+  .beat-input {{ color: #bc8cff; margin: 0.3em 0; padding-left: 1em; font-style: italic; }}
+  .npc-response {{
+    color: #7ee787; margin: 0.3em 0; padding-left: 1em;
+    border-left: 3px solid #238636; padding: 0.3em 0.8em;
+    background: #0d1117; border-radius: 0 4px 4px 0;
+  }}
+  .eval-details {{ margin: 0.3em 0 0 1em; }}
+  .eval-details summary {{ cursor: pointer; color: #8b949e; font-size: 0.85em; }}
+  .eval-body {{
+    padding: 0.5em; background: #0d1117; border-radius: 4px;
+    font-size: 0.85em; margin-top: 0.3em;
+  }}
+  .eval-body div {{ margin: 0.2em 0; }}
+</style></head><body>
+<h1>Chat Session — {_esc(label)}</h1>
+<p class="meta">{ts_display} &middot; model: <b>{_esc(model_config['name'])}</b> (<code>{_esc(model_key)}</code>) &middot; session: <code>{session_id}</code></p>
+<div class="conversation">{turns_html}</div>
+{annotation_assets(report_name, model_key, character)}
+</body></html>"""
+
+    html_path.write_text(html)
+    console.print(f"[dim]HTML: {html_path}[/dim]")
 
 
 def _stop_vllm():
@@ -591,6 +745,7 @@ def chat_loop(character: str, model_config: dict):
             except (EOFError, KeyboardInterrupt):
                 console.print()
                 save_chat_log(character, model_config, log, session_id)
+                save_chat_html(character, model_config, log, session_id)
                 return
 
             if not user_input:
@@ -610,10 +765,12 @@ def chat_loop(character: str, model_config: dict):
             cmd = user_input.lower()
             if cmd == "/quit":
                 save_chat_log(character, model_config, log, session_id)
+                save_chat_html(character, model_config, log, session_id)
                 console.print("Goodbye!")
                 sys.exit(0)
             elif cmd == "/back":
                 save_chat_log(character, model_config, log, session_id)
+                save_chat_html(character, model_config, log, session_id)
                 return
             elif cmd == "/reload":
                 console.print("[yellow]Reloading prompts...[/yellow]")

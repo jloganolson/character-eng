@@ -764,6 +764,175 @@ def _esc(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
+def annotation_assets(report_name: str, model_key: str, character: str) -> str:
+    """Return shared CSS + JS + toolbar HTML for annotation UI.
+
+    Injected before </body> in both persona QA and chat session HTML reports.
+    """
+    return f"""
+<style>
+  .turn {{ position: relative; }}
+  .turn:hover {{ background: #1c2128; }}
+  .annotate-btn {{
+    position: absolute; top: 0.4em; right: 0.5em;
+    background: none; border: none; cursor: pointer;
+    font-size: 1em; opacity: 0.3; transition: opacity 0.15s;
+    padding: 2px 4px;
+  }}
+  .turn:hover .annotate-btn {{ opacity: 0.7; }}
+  .annotate-btn:hover {{ opacity: 1 !important; }}
+  .annotate-btn.has-note {{ opacity: 1; }}
+  .annotation-area {{
+    display: none; margin: 0.4em 0 0.2em 1em;
+  }}
+  .annotation-area.open {{ display: block; }}
+  .annotation-area textarea {{
+    width: 100%; min-height: 3em; padding: 0.4em;
+    background: #0d1117; color: #c9d1d9; border: 1px solid #30363d;
+    border-radius: 4px; font-family: inherit; font-size: 0.9em;
+    resize: vertical;
+  }}
+  .annotation-area textarea:focus {{ border-color: #58a6ff; outline: none; }}
+  #annotation-toolbar {{
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #161b22; border-top: 1px solid #30363d;
+    padding: 0.6em 1.5em; display: flex; align-items: center;
+    gap: 1em; z-index: 100; font-size: 0.9em;
+  }}
+  #annotation-toolbar .count {{ color: #8b949e; }}
+  #annotation-toolbar .count b {{ color: #58a6ff; }}
+  #export-btn {{
+    background: #238636; color: #fff; border: none; padding: 0.4em 1.2em;
+    border-radius: 6px; cursor: pointer; font-size: 0.9em; font-weight: 600;
+  }}
+  #export-btn:hover {{ background: #2ea043; }}
+  #export-btn:disabled {{ background: #30363d; color: #8b949e; cursor: default; }}
+  .save-flash {{
+    color: #7ee787; font-weight: 600; opacity: 0;
+    transition: opacity 0.3s;
+  }}
+  .save-flash.show {{ opacity: 1; }}
+  body {{ padding-bottom: 3.5em; }}
+</style>
+
+<div id="annotation-toolbar">
+  <span class="count"><b id="note-count">0</b> annotations</span>
+  <button id="export-btn" disabled onclick="exportAnnotations()">Export annotations</button>
+  <span class="save-flash" id="save-flash">Saved! Path copied</span>
+</div>
+
+<script>
+const REPORT_NAME = {json_esc(report_name)};
+const MODEL_KEY = {json_esc(model_key)};
+const CHARACTER = {json_esc(character)};
+const annotations = new Map();
+
+function toggleAnnotation(persona, turn) {{
+  const key = persona + ':' + turn;
+  const area = document.getElementById('ann-' + css_safe(key));
+  if (!area) return;
+  area.classList.toggle('open');
+  if (area.classList.contains('open')) {{
+    area.querySelector('textarea').focus();
+  }}
+}}
+
+// Click anywhere on a turn div to toggle its annotation
+document.addEventListener('click', function(e) {{
+  const turn = e.target.closest('.turn');
+  if (!turn) return;
+  // Don't toggle if clicking on interactive elements
+  if (e.target.closest('textarea, details, a, summary, .annotate-btn')) return;
+  const btn = turn.querySelector('.annotate-btn');
+  if (btn) btn.click();
+}});
+
+function css_safe(s) {{ return s.replace(/[^a-zA-Z0-9]/g, '_'); }}
+
+function updateAnnotation(persona, turn, text) {{
+  const key = persona + ':' + turn;
+  const btn = document.querySelector('[data-ann-key="' + key + '"]');
+  if (text.trim()) {{
+    annotations.set(key, text.trim());
+    if (btn) btn.classList.add('has-note');
+  }} else {{
+    annotations.delete(key);
+    if (btn) btn.classList.remove('has-note');
+  }}
+  document.getElementById('note-count').textContent = annotations.size;
+  document.getElementById('export-btn').disabled = annotations.size === 0;
+}}
+
+function exportAnnotations() {{
+  if (annotations.size === 0) return;
+
+  // Build notes summary
+  const notes = [];
+  annotations.forEach(function(note, key) {{
+    const parts = key.split(':');
+    const persona = parts[0];
+    const turn = parseInt(parts[1]);
+    notes.push({{persona: persona, turn: turn, note: note}});
+  }});
+
+  // Build full conversations for annotated personas only
+  const annotatedPersonas = new Set(notes.map(function(n) {{ return n.persona; }}));
+  const conversations = {{}};
+  annotatedPersonas.forEach(function(persona) {{
+    const turns = document.querySelectorAll('.turn[data-persona="' + persona + '"]');
+    const conv = [];
+    turns.forEach(function(el) {{
+      const entry = {{
+        turn: parseInt(el.dataset.turn),
+        action: el.dataset.action || '',
+        input: el.dataset.input || '',
+        response: el.dataset.response || ''
+      }};
+      const key = persona + ':' + el.dataset.turn;
+      if (annotations.has(key)) {{
+        entry.note = annotations.get(key);
+      }}
+      conv.push(entry);
+    }});
+    conversations[persona] = conv;
+  }});
+
+  const data = {{
+    report: REPORT_NAME,
+    model: MODEL_KEY,
+    character: CHARACTER,
+    notes: notes,
+    conversations: conversations
+  }};
+
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], {{type: 'application/json'}});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = REPORT_NAME + '.annotations.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  // Flash feedback
+  const flash = document.getElementById('save-flash');
+  flash.classList.add('show');
+  setTimeout(function() {{ flash.classList.remove('show'); }}, 2000);
+
+  // Copy filename to clipboard
+  navigator.clipboard.writeText(a.download).catch(function() {{}});
+}}
+</script>
+"""
+
+
+def json_esc(s: str) -> str:
+    """JSON-encode a string for safe embedding in JS."""
+    return json.dumps(s)
+
+
 def _action_badge(action: str) -> str:
     """Return an HTML badge for the action type."""
     colors = {
@@ -828,10 +997,23 @@ def generate_html_report(
             if t.response and t.response != "(idle)":
                 resp_html = f'<div class="npc-response">{_esc(t.response)}</div>'
 
+            persona_name = pr.persona.name
+            ann_key = f"{persona_name}:{t.turn}"
+            ann_key_safe = ann_key.replace(" ", "_").replace(":", "_")
             turns_html += (
-                f'<div class="turn">'
-                f'<div class="turn-header">Turn {t.turn + 1} {_action_badge(t.action)}{stale_tag}</div>'
+                f'<div class="turn" data-persona="{_esc(persona_name)}" data-turn="{t.turn}"'
+                f' data-action="{_esc(t.action)}" data-input="{_esc(t.input_text)}"'
+                f' data-response="{_esc(t.response)}">'
+                f'<div class="turn-header">Turn {t.turn + 1} {_action_badge(t.action)}{stale_tag}'
+                f' <button class="annotate-btn" data-ann-key="{_esc(ann_key)}"'
+                f' onclick="toggleAnnotation(\'{_esc(persona_name)}\',{t.turn})"'
+                f' title="Annotate this turn">&#9998;</button>'
+                f'</div>'
                 f'{input_html}{resp_html}{eval_html}'
+                f'<div class="annotation-area" id="ann-{ann_key_safe}">'
+                f'<textarea placeholder="Add a note..."'
+                f' oninput="updateAnnotation(\'{_esc(persona_name)}\',{t.turn},this.value)"></textarea>'
+                f'</div>'
                 f'</div>'
             )
 
@@ -940,6 +1122,7 @@ def generate_html_report(
 </div>
 
 {personas_html}
+{annotation_assets(f"qa_personas_{model_key}_{timestamp}", model_key, character)}
 </body></html>"""
     return html
 
@@ -957,6 +1140,7 @@ def main():
     )
     parser.add_argument("--character", default=CHARACTER, help=f"Character to test (default: {CHARACTER})")
     parser.add_argument("--turns", type=int, default=None, help="Override turn count for all personas")
+    parser.add_argument("--open", action="store_true", help="Open the HTML report in browser after generation")
     args = parser.parse_args()
 
     model_config = MODELS.get(args.model)
@@ -1024,6 +1208,10 @@ def main():
     report_path = LOGS_DIR / f"qa_personas_{args.model}_{timestamp}.html"
     report_path.write_text(html)
     print(f"Report: {report_path}")
+
+    if args.open:
+        from character_eng.open_report import open_in_browser
+        open_in_browser(report_path)
 
 
 if __name__ == "__main__":
