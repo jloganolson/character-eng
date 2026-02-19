@@ -832,6 +832,7 @@ const REPORT_NAME = {json_esc(report_name)};
 const MODEL_KEY = {json_esc(model_key)};
 const CHARACTER = {json_esc(character)};
 const annotations = new Map();
+let lastSavedPath = '';
 
 function toggleAnnotation(persona, turn) {{
   const key = persona + ':' + turn;
@@ -914,9 +915,10 @@ async function exportAnnotations() {{
       }});
       const result = await resp.json();
       if (result.ok) {{
+        lastSavedPath = result.path;
         navigator.clipboard.writeText(result.path).catch(function() {{}});
         flashSaved('Saved — path copied to clipboard');
-        if (confirm('Annotations saved to:\\n' + result.path + '\\n\\nClose the review server?')) {{
+        if (confirm('Annotations saved (path copied to clipboard):\\n' + result.path + '\\n\\nClose the review server?')) {{
           shutdownServer();
         }}
         return;
@@ -942,7 +944,10 @@ async function exportAnnotations() {{
 function shutdownServer() {{
   fetch('/shutdown', {{method: 'POST'}}).then(function() {{
     document.title = document.title + ' (server stopped)';
-    flashSaved('Server stopped — you can close this tab');
+    const msg = lastSavedPath
+      ? 'Server stopped — export saved to ' + lastSavedPath
+      : 'Server stopped — you can close this tab';
+    flashSaved(msg, true);
   }}).catch(function() {{}});
 }}
 
@@ -951,11 +956,13 @@ if (location.protocol === 'http:' || location.protocol === 'https:') {{
   document.getElementById('done-btn').style.display = '';
 }}
 
-function flashSaved(msg) {{
+let _flashTimer = null;
+function flashSaved(msg, persist) {{
+  if (_flashTimer) {{ clearTimeout(_flashTimer); _flashTimer = null; }}
   const flash = document.getElementById('save-flash');
   flash.textContent = msg;
   flash.classList.add('show');
-  setTimeout(function() {{ flash.classList.remove('show'); }}, 3000);
+  if (!persist) _flashTimer = setTimeout(function() {{ flash.classList.remove('show'); _flashTimer = null; }}, 3000);
 }}
 </script>
 """
