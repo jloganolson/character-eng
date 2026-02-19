@@ -914,8 +914,9 @@ async function exportAnnotations() {{
       }});
       const result = await resp.json();
       if (result.ok) {{
-        flashSaved('Saved to ' + result.path);
-        if (confirm('Annotations saved. Close the review server?')) {{
+        navigator.clipboard.writeText(result.path).catch(function() {{}});
+        flashSaved('Saved — path copied to clipboard');
+        if (confirm('Annotations saved to:\\n' + result.path + '\\n\\nClose the review server?')) {{
           shutdownServer();
         }}
         return;
