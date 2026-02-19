@@ -138,9 +138,10 @@ uv run -m character_eng.qa_personas --model groq-llama     # test with Groq Llam
 uv run -m character_eng.qa_personas --turns 5              # quick run with fewer turns
 uv run -m character_eng.qa_personas --turns 5 --open       # run and open report in browser
 
-# Open HTML reports in browser
+# Open HTML reports in browser (starts local server for annotation save)
 uv run -m character_eng.open_report                        # latest report in logs/
 uv run -m character_eng.open_report logs/some_report.html  # specific file
+uv run -m character_eng.open_report --test                 # generate + serve a spoofed test report
 ```
 
 `test_plan.md` defines the QA chat scenarios in a human-editable format — add new test sections without touching code. Supports `send:`, `world:`, `script:` (load beats for eval tracking), `beat` (run eval), and `expect:` commands including `eval_status:<status>` to assert eval outcomes.

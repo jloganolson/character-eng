@@ -283,6 +283,7 @@ def save_chat_html(character: str, model_config: dict, log: list[dict], session_
     if not log:
         return
     LOGS_DIR.mkdir(exist_ok=True)
+    (LOGS_DIR / "annotated").mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     model_key = next((k for k, v in MODELS.items() if v is model_config), "unknown")
     report_name = f"chat_{character}_{model_key}_{session_id}_{timestamp}"
@@ -364,12 +365,10 @@ def save_chat_html(character: str, model_config: dict, log: list[dict], session_
             f'<div class="turn" data-persona="{_esc(label)}" data-turn="{turn_num}"'
             f' data-action="{_esc(action)}" data-input="{_esc(input_text)}"'
             f' data-response="{_esc(response)}">'
-            f'<div class="turn-header">Turn {turn_num + 1} {_action_badge(action)}'
-            f' <button class="annotate-btn" data-ann-key="{_esc(ann_key)}"'
-            f' onclick="toggleAnnotation(\'{_esc(label)}\',{turn_num})"'
-            f' title="Annotate this turn">&#9998;</button>'
-            f'</div>'
+            f'<div class="turn-header">Turn {turn_num + 1} {_action_badge(action)}</div>'
             f'{input_html}{resp_html}{extras_html}'
+            f'<button class="annotate-btn" data-ann-key="{_esc(ann_key)}"'
+            f' onclick="toggleAnnotation(\'{_esc(label)}\',{turn_num})">&#9998; annotate</button>'
             f'<div class="annotation-area" id="ann-{ann_key_safe}">'
             f'<textarea placeholder="Add a note..."'
             f' oninput="updateAnnotation(\'{_esc(label)}\',{turn_num},this.value)"></textarea>'

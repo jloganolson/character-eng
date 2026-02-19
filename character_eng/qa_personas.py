@@ -771,17 +771,13 @@ def annotation_assets(report_name: str, model_key: str, character: str) -> str:
     """
     return f"""
 <style>
-  .turn {{ position: relative; }}
-  .turn:hover {{ background: #1c2128; }}
   .annotate-btn {{
-    position: absolute; top: 0.4em; right: 0.5em;
-    background: none; border: none; cursor: pointer;
-    font-size: 1em; opacity: 0.3; transition: opacity 0.15s;
-    padding: 2px 4px;
+    background: none; border: 1px solid #30363d; cursor: pointer;
+    font-size: 0.8em; color: #8b949e; padding: 2px 8px;
+    border-radius: 4px; margin-top: 0.3em; transition: all 0.15s;
   }}
-  .turn:hover .annotate-btn {{ opacity: 0.7; }}
-  .annotate-btn:hover {{ opacity: 1 !important; }}
-  .annotate-btn.has-note {{ opacity: 1; }}
+  .annotate-btn:hover {{ border-color: #58a6ff; color: #58a6ff; }}
+  .annotate-btn.has-note {{ border-color: #58a6ff; color: #58a6ff; }}
   .annotation-area {{
     display: none; margin: 0.4em 0 0.2em 1em;
   }}
@@ -807,18 +803,28 @@ def annotation_assets(report_name: str, model_key: str, character: str) -> str:
   }}
   #export-btn:hover {{ background: #2ea043; }}
   #export-btn:disabled {{ background: #30363d; color: #8b949e; cursor: default; }}
+  #done-btn {{
+    background: #30363d; color: #c9d1d9; border: none; padding: 0.4em 1.2em;
+    border-radius: 6px; cursor: pointer; font-size: 0.9em; font-weight: 600;
+    display: none;
+  }}
+  #done-btn:hover {{ background: #484f58; }}
   .save-flash {{
     color: #7ee787; font-weight: 600; opacity: 0;
     transition: opacity 0.3s;
   }}
   .save-flash.show {{ opacity: 1; }}
+  .save-path {{ color: #8b949e; font-size: 0.85em; margin-left: auto; }}
+  .save-path code {{ color: #c9d1d9; }}
   body {{ padding-bottom: 3.5em; }}
 </style>
 
 <div id="annotation-toolbar">
   <span class="count"><b id="note-count">0</b> annotations</span>
   <button id="export-btn" disabled onclick="exportAnnotations()">Export annotations</button>
-  <span class="save-flash" id="save-flash">Saved! Path copied</span>
+  <button id="done-btn" onclick="shutdownServer()">Done</button>
+  <span class="save-flash" id="save-flash"></span>
+  <span class="save-path">Save to: <code>logs/annotated/{report_name}.annotations.json</code></span>
 </div>
 
 <script>
@@ -837,16 +843,6 @@ function toggleAnnotation(persona, turn) {{
   }}
 }}
 
-// Click anywhere on a turn div to toggle its annotation
-document.addEventListener('click', function(e) {{
-  const turn = e.target.closest('.turn');
-  if (!turn) return;
-  // Don't toggle if clicking on interactive elements
-  if (e.target.closest('textarea, details, a, summary, .annotate-btn')) return;
-  const btn = turn.querySelector('.annotate-btn');
-  if (btn) btn.click();
-}});
-
 function css_safe(s) {{ return s.replace(/[^a-zA-Z0-9]/g, '_'); }}
 
 function updateAnnotation(persona, turn, text) {{
@@ -863,7 +859,7 @@ function updateAnnotation(persona, turn, text) {{
   document.getElementById('export-btn').disabled = annotations.size === 0;
 }}
 
-function exportAnnotations() {{
+async function exportAnnotations() {{
   if (annotations.size === 0) return;
 
   // Build notes summary
@@ -906,23 +902,59 @@ function exportAnnotations() {{
   }};
 
   const json = JSON.stringify(data, null, 2);
+  const filename = REPORT_NAME + '.annotations.json';
+
+  // If served over HTTP (via open_report), POST to server for direct save
+  if (location.protocol === 'http:' || location.protocol === 'https:') {{
+    try {{
+      const resp = await fetch('/save-annotations', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: json
+      }});
+      const result = await resp.json();
+      if (result.ok) {{
+        flashSaved('Saved to ' + result.path);
+        if (confirm('Annotations saved. Close the review server?')) {{
+          shutdownServer();
+        }}
+        return;
+      }}
+    }} catch (e) {{
+      // Fall through to download
+    }}
+  }}
+
+  // Fallback: browser download (file:// origin)
   const blob = new Blob([json], {{type: 'application/json'}});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = REPORT_NAME + '.annotations.json';
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  flashSaved('Downloaded — save to logs/annotated/');
+}}
 
-  // Flash feedback
+function shutdownServer() {{
+  fetch('/shutdown', {{method: 'POST'}}).then(function() {{
+    document.title = document.title + ' (server stopped)';
+    flashSaved('Server stopped — you can close this tab');
+  }}).catch(function() {{}});
+}}
+
+// Show Done button when served over HTTP
+if (location.protocol === 'http:' || location.protocol === 'https:') {{
+  document.getElementById('done-btn').style.display = '';
+}}
+
+function flashSaved(msg) {{
   const flash = document.getElementById('save-flash');
+  flash.textContent = msg;
   flash.classList.add('show');
-  setTimeout(function() {{ flash.classList.remove('show'); }}, 2000);
-
-  // Copy filename to clipboard
-  navigator.clipboard.writeText(a.download).catch(function() {{}});
+  setTimeout(function() {{ flash.classList.remove('show'); }}, 3000);
 }}
 </script>
 """
@@ -1004,12 +1036,10 @@ def generate_html_report(
                 f'<div class="turn" data-persona="{_esc(persona_name)}" data-turn="{t.turn}"'
                 f' data-action="{_esc(t.action)}" data-input="{_esc(t.input_text)}"'
                 f' data-response="{_esc(t.response)}">'
-                f'<div class="turn-header">Turn {t.turn + 1} {_action_badge(t.action)}{stale_tag}'
-                f' <button class="annotate-btn" data-ann-key="{_esc(ann_key)}"'
-                f' onclick="toggleAnnotation(\'{_esc(persona_name)}\',{t.turn})"'
-                f' title="Annotate this turn">&#9998;</button>'
-                f'</div>'
+                f'<div class="turn-header">Turn {t.turn + 1} {_action_badge(t.action)}{stale_tag}</div>'
                 f'{input_html}{resp_html}{eval_html}'
+                f'<button class="annotate-btn" data-ann-key="{_esc(ann_key)}"'
+                f' onclick="toggleAnnotation(\'{_esc(persona_name)}\',{t.turn})">&#9998; annotate</button>'
                 f'<div class="annotation-area" id="ann-{ann_key_safe}">'
                 f'<textarea placeholder="Add a note..."'
                 f' oninput="updateAnnotation(\'{_esc(persona_name)}\',{t.turn},this.value)"></textarea>'
@@ -1198,6 +1228,7 @@ def main():
 
     # Generate HTML report
     LOGS_DIR.mkdir(exist_ok=True)
+    (LOGS_DIR / "annotated").mkdir(exist_ok=True)
     html = generate_html_report(
         results=results,
         model_key=args.model,
@@ -1210,8 +1241,8 @@ def main():
     print(f"Report: {report_path}")
 
     if args.open:
-        from character_eng.open_report import open_in_browser
-        open_in_browser(report_path)
+        from character_eng.open_report import serve_report
+        serve_report(report_path)
 
 
 if __name__ == "__main__":
