@@ -1064,6 +1064,8 @@ def stream_response(session, label, message, voice_io=None) -> str:
         # Voice mode: feed chunks to TTS, check for barge-in
         voice_io._cancelled.clear()
         voice_io._is_speaking = True
+        if voice_io._speaker is not None:
+            voice_io._speaker.reset_counters()
 
         for chunk in gen:
             if voice_io._cancelled.is_set():
@@ -1099,7 +1101,6 @@ def stream_response(session, label, message, voice_io=None) -> str:
         # Start auto-beat timer if not cancelled and not a barge-in response
         if not voice_io._cancelled.is_set() and not voice_io._barged_in:
             voice_io._start_auto_beat()
-        voice_io._barged_in = False
     else:
         for chunk in gen:
             full_response.append(chunk)
@@ -1118,6 +1119,10 @@ def stream_response(session, label, message, voice_io=None) -> str:
             truncated = response_text[:spoken_chars] + " \u2014"
             session.replace_last_assistant(truncated)
             response_text = truncated
+
+    # Clear barge-in flag after truncation check (must happen after, not before)
+    if voice_io is not None:
+        voice_io._barged_in = False
 
     console.print("\n")
     return response_text

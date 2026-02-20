@@ -549,8 +549,11 @@ class ElevenLabsTTS:
         try:
             self._ws = websocket.WebSocket()
             self._ws.connect(url, header=[f"xi-api-key: {api_key}"])
-        except Exception:
+        except Exception as e:
+            sys.stderr.write(f"[TTS] Connection failed: {e}\n")
+            sys.stderr.flush()
             self._ws = None
+            self._generation_done.set()  # unblock wait_for_done()
             return
 
         # Send initial config
@@ -573,6 +576,7 @@ class ElevenLabsTTS:
 
     def _recv_loop(self):
         """Receive audio chunks from ElevenLabs WebSocket."""
+        chunks_received = 0
         try:
             while self._running:
                 try:
@@ -588,10 +592,22 @@ class ElevenLabsTTS:
                         break
                     if "audio" in data and data["audio"]:
                         pcm = base64.b64decode(data["audio"])
+                        chunks_received += 1
                         self._on_audio(pcm)
-                except Exception:
+                    elif chunks_received == 0:
+                        # Log non-audio messages to help debug silent failures
+                        preview = str(data)[:200]
+                        sys.stderr.write(f"[TTS] non-audio msg: {preview}\n")
+                        sys.stderr.flush()
+                except Exception as e:
+                    if self._running:
+                        sys.stderr.write(f"[TTS] recv error: {e}\n")
+                        sys.stderr.flush()
                     break
         finally:
+            if chunks_received == 0 and self._running:
+                sys.stderr.write("[TTS] Warning: no audio chunks received\n")
+                sys.stderr.flush()
             self._generation_done.set()
 
     def send_text(self, text: str):
