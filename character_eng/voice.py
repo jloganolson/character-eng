@@ -696,7 +696,9 @@ class VoiceIO:
         self._event_queue: queue.Queue[str] = queue.Queue()
         self._cancelled = threading.Event()
         self._is_speaking = False
+        self._barged_in = False
         self._auto_beat_timer: threading.Timer | None = None
+        self._auto_beat_countdown_active = False
         self._mic_mute_during_playback = mic_mute_during_playback
 
         # Components (created in start())
@@ -784,6 +786,7 @@ class VoiceIO:
 
         Checks _cancelled event between chunks so barge-in can interrupt.
         """
+        self._barged_in = False
         self._cancelled.clear()
         self._is_speaking = True
         for chunk in text_chunks:
@@ -822,6 +825,7 @@ class VoiceIO:
 
     def speak_text(self, text: str) -> None:
         """One-shot TTS for pre-rendered beats."""
+        self._barged_in = False
         self._cancelled.clear()
         self._is_speaking = True
         if self._tts is not None:
@@ -854,6 +858,7 @@ class VoiceIO:
     def cancel_speech(self):
         """Barge-in: cancel current LLM+TTS+speaker, cancel auto-beat."""
         self._cancelled.set()
+        self._barged_in = True
         self._is_speaking = False
         self._cancel_auto_beat()
         if self._tts is not None:
@@ -877,13 +882,24 @@ class VoiceIO:
         self._event_queue.put(text)
 
     def _on_turn_start(self):
-        """Called by DeepgramSTT when user starts speaking (barge-in trigger)."""
+        """Called by DeepgramSTT when user starts speaking (barge-in trigger).
+
+        Always cancels the auto-beat timer (user spoke, so don't auto-advance).
+        Only cancels active speech when _is_speaking is True.
+        """
+        self._cancel_auto_beat()
         if self._is_speaking:
+            if self._started:
+                sys.stdout.write("\r\033[K  [heard — interrupting]\n")
+                sys.stdout.flush()
             self.cancel_speech()
 
     def _start_auto_beat(self):
         """Start auto-beat timer — fires /beat after AUTO_BEAT_DELAY seconds."""
         self._cancel_auto_beat()
+        self._auto_beat_countdown_active = True
+        if self._started:
+            threading.Thread(target=self._countdown_loop, daemon=True).start()
         self._auto_beat_timer = threading.Timer(
             AUTO_BEAT_DELAY,
             self._fire_auto_beat,
@@ -893,10 +909,31 @@ class VoiceIO:
 
     def _cancel_auto_beat(self):
         """Cancel the auto-beat timer if running."""
+        self._auto_beat_countdown_active = False
         if self._auto_beat_timer is not None:
             self._auto_beat_timer.cancel()
             self._auto_beat_timer = None
 
     def _fire_auto_beat(self):
         """Auto-beat timer callback — puts /beat on the event queue."""
+        self._auto_beat_countdown_active = False
         self._event_queue.put("/beat")
+
+    def _countdown_loop(self):
+        """Print auto-beat countdown dots to stdout. Clears line on cancel or fire."""
+        sys.stdout.write("  auto-beat ")
+        sys.stdout.flush()
+        for _ in range(int(AUTO_BEAT_DELAY)):
+            if not self._auto_beat_countdown_active:
+                sys.stdout.write("\r\033[K")
+                sys.stdout.flush()
+                return
+            time.sleep(1.0)
+            if not self._auto_beat_countdown_active:
+                sys.stdout.write("\r\033[K")
+                sys.stdout.flush()
+                return
+            sys.stdout.write(".")
+            sys.stdout.flush()
+        sys.stdout.write("\r\033[K")
+        sys.stdout.flush()

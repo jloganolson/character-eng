@@ -114,6 +114,8 @@ If you start speaking while the character is responding, barge-in kicks in:
 - Deepgram detects speech start → cancels LLM stream + TTS + speaker playback (only while TTS is actively generating, guarded by `_is_speaking` flag to ignore ambient noise)
 - Your full utterance is captured and processed as the next input
 - Partial LLM responses are still recorded in conversation history
+- The character is told it was interrupted — it acknowledges briefly and yields the floor
+- Auto-beat is suppressed after the barge-in response, giving you silence until you speak again
 
 ### Voice hotkeys
 

@@ -742,6 +742,13 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 console.print("[dim]Type /help to see available commands[/dim]")
                 continue
 
+            # --- Barge-in context injection ---
+            if voice_io is not None and voice_io._barged_in:
+                session.inject_system(
+                    "[The user interrupted you mid-sentence. They want your attention. "
+                    "Acknowledge the interruption briefly, then listen. Keep it very short.]"
+                )
+
             # --- Turn flow ---
 
             # First user input: natural LLM response, then background eval + replan
@@ -1076,9 +1083,10 @@ def stream_response(session, label, message, voice_io=None) -> str:
             voice_io._tts.close()
         voice_io._is_speaking = False
 
-        # Start auto-beat timer if not cancelled
-        if not voice_io._cancelled.is_set():
+        # Start auto-beat timer if not cancelled and not a barge-in response
+        if not voice_io._cancelled.is_set() and not voice_io._barged_in:
             voice_io._start_auto_beat()
+        voice_io._barged_in = False
     else:
         for chunk in gen:
             full_response.append(chunk)

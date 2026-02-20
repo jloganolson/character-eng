@@ -723,6 +723,59 @@ def test_voice_io_mic_not_muted_when_flag_disabled():
     voice._stt.send_audio.assert_called_once_with(b"\x00" * 100)
 
 
+def test_voice_io_barged_in_initially_false():
+    """_barged_in should be False on new VoiceIO."""
+    voice = VoiceIO()
+    assert voice._barged_in is False
+
+
+def test_voice_io_cancel_speech_sets_barged_in():
+    """cancel_speech() should set _barged_in."""
+    voice = VoiceIO()
+    voice._speaker = MagicMock()
+    voice._tts = MagicMock()
+    voice.cancel_speech()
+    assert voice._barged_in is True
+
+
+def test_voice_io_speak_clears_barged_in():
+    """speak() should clear _barged_in at the start."""
+    voice = VoiceIO()
+    voice._speaker = MagicMock()
+    voice._speaker.is_done.return_value = True
+    voice._tts = MagicMock()
+    voice._tts.wait_for_done.return_value = True
+    voice._barged_in = True
+
+    voice.speak(iter([]))
+    assert voice._barged_in is False
+
+
+def test_voice_io_speak_text_clears_barged_in():
+    """speak_text() should clear _barged_in at the start."""
+    voice = VoiceIO()
+    voice._speaker = MagicMock()
+    voice._speaker.is_done.return_value = True
+    voice._tts = MagicMock()
+    voice._tts.wait_for_done.return_value = True
+    voice._barged_in = True
+
+    voice.speak_text("hello")
+    assert voice._barged_in is False
+
+
+def test_voice_io_turn_start_cancels_auto_beat_when_not_speaking():
+    """_on_turn_start should cancel auto-beat timer even when _is_speaking is False."""
+    voice = VoiceIO()
+    voice._is_speaking = False
+    voice._start_auto_beat()
+    assert voice._auto_beat_timer is not None
+
+    voice._on_turn_start()
+    assert voice._auto_beat_timer is None
+    assert not voice._cancelled.is_set()  # cancel_speech NOT called
+
+
 def test_voice_io_barge_in_guard_when_not_speaking():
     """_on_turn_start should NOT call cancel_speech when _is_speaking is False."""
     voice = VoiceIO()
