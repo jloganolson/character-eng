@@ -582,6 +582,26 @@ def test_voice_io_barge_in_guard_when_speaking():
     assert voice._cancelled.is_set()
 
 
+def test_voice_io_mic_muted_while_speaking():
+    """_on_mic_audio should not forward to STT when _is_speaking is True."""
+    voice = VoiceIO()
+    voice._stt = MagicMock()
+    voice._is_speaking = True
+
+    voice._on_mic_audio(b"\x00" * 100)
+    voice._stt.send_audio.assert_not_called()
+
+
+def test_voice_io_mic_active_when_not_speaking():
+    """_on_mic_audio should forward to STT when _is_speaking is False."""
+    voice = VoiceIO()
+    voice._stt = MagicMock()
+    voice._is_speaking = False
+
+    voice._on_mic_audio(b"\x00" * 100)
+    voice._stt.send_audio.assert_called_once_with(b"\x00" * 100)
+
+
 def test_voice_io_barge_in_guard_when_not_speaking():
     """_on_turn_start should NOT call cancel_speech when _is_speaking is False."""
     voice = VoiceIO()

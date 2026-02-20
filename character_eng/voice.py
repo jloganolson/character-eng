@@ -644,7 +644,7 @@ class VoiceIO:
         )
         self._stt.start()
 
-        self._mic = MicStream(on_audio=self._stt.send_audio, device=self._input_device)
+        self._mic = MicStream(on_audio=self._on_mic_audio, device=self._input_device)
         self._mic.start()
 
         self._keys = KeyListener(self._event_queue)
@@ -778,6 +778,11 @@ class VoiceIO:
             self._tts.close()
         if self._speaker is not None:
             self._speaker.flush()
+
+    def _on_mic_audio(self, data: bytes):
+        """Forward mic audio to STT, unless muted during TTS playback (echo suppression)."""
+        if not self._is_speaking and self._stt is not None:
+            self._stt.send_audio(data)
 
     def _on_transcript(self, text: str):
         """Called by DeepgramSTT when a complete utterance is detected."""
