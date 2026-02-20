@@ -1,3 +1,4 @@
+import argparse
 import atexit
 import json
 import os
@@ -697,7 +698,7 @@ def get_think_model_config():
     return cfg
 
 
-def chat_loop(character: str, model_config: dict):
+def chat_loop(character: str, model_config: dict, voice_mode: bool = False):
     """Run the chat loop for a character. Returns on /back or Ctrl+C."""
     label = character.replace("_", " ").title()
     session_id = uuid.uuid4().hex[:8]
@@ -720,6 +721,29 @@ def chat_loop(character: str, model_config: dict):
     else:
         console.print(f"[dim]Think: using chat model[/dim]")
 
+    # --- Voice setup ---
+    voice_io = None
+    if voice_mode:
+        from character_eng.voice import VoiceIO, check_voice_available, get_default_devices, TOGGLE_VOICE, EXIT, VOICE_ERROR
+        available, reason = check_voice_available()
+        if available:
+            voice_io = VoiceIO()
+            try:
+                voice_io.start()
+                console.print("[green]Voice mode active[/green] — speak to chat, Escape to toggle, hotkeys: w/b/p/g/t")
+                input_dev, output_dev = get_default_devices()
+                if input_dev:
+                    console.print(f"[dim]  Mic:     [{input_dev['index']}] {input_dev['name']}[/dim]")
+                if output_dev:
+                    console.print(f"[dim]  Speaker: [{output_dev['index']}] {output_dev['name']}[/dim]")
+            except Exception as e:
+                console.print(f"[red]Voice init failed: {e}[/red]")
+                console.print("[dim]Falling back to text mode[/dim]")
+                voice_io = None
+        else:
+            console.print(f"[red]Voice unavailable: {reason}[/red]")
+            console.print("[dim]Falling back to text mode[/dim]")
+
     # Outer loop: handles /reload by restarting with fresh session
     while True:
         world = load_world_state(character)
@@ -735,17 +759,50 @@ def chat_loop(character: str, model_config: dict):
 
         had_user_input = False
 
-        console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]  [dim]{session_id}[/dim]  (type /help for commands)\n")
+        mode_tag = " [green]voice[/green]" if voice_io is not None else ""
+        console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]{mode_tag}  [dim]{session_id}[/dim]  (type /help for commands)\n")
 
         # Inner loop: conversation turns
         while True:
-            try:
-                user_input = console.input(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: ").strip()
-            except (EOFError, KeyboardInterrupt):
-                console.print()
-                save_chat_log(character, model_config, log, session_id)
-                save_chat_html(character, model_config, log, session_id)
-                return
+            # --- Get input (voice or text) ---
+            if voice_io is not None:
+                user_input = voice_io.wait_for_input()
+
+                # Handle sentinel strings from voice
+                from character_eng.voice import TOGGLE_VOICE, EXIT, VOICE_ERROR
+                if user_input == EXIT:
+                    console.print()
+                    if voice_io is not None:
+                        voice_io.stop()
+                        voice_io = None
+                    save_chat_log(character, model_config, log, session_id)
+                    save_chat_html(character, model_config, log, session_id)
+                    return
+                elif user_input == TOGGLE_VOICE:
+                    console.print("\n[yellow]Voice off — text mode[/yellow]")
+                    voice_io.stop()
+                    voice_io = None
+                    continue
+                elif user_input == VOICE_ERROR:
+                    console.print("\n[red]Voice error — switching to text mode[/red]")
+                    voice_io.stop()
+                    voice_io = None
+                    continue
+
+                # Show what was transcribed
+                if not user_input.startswith("/"):
+                    console.print(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: {user_input}")
+            else:
+                try:
+                    user_input = console.input(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    console.print()
+                    if voice_io is not None:
+                        voice_io.stop()
+                        voice_io = None
+                    save_chat_log(character, model_config, log, session_id)
+                    save_chat_html(character, model_config, log, session_id)
+                    return
 
             if not user_input:
                 continue
@@ -763,11 +820,17 @@ def chat_loop(character: str, model_config: dict):
             # --- Command dispatch ---
             cmd = user_input.lower()
             if cmd == "/quit":
+                if voice_io is not None:
+                    voice_io.stop()
+                    voice_io = None
                 save_chat_log(character, model_config, log, session_id)
                 save_chat_html(character, model_config, log, session_id)
                 console.print("Goodbye!")
                 sys.exit(0)
             elif cmd == "/back":
+                if voice_io is not None:
+                    voice_io.stop()
+                    voice_io = None
                 save_chat_log(character, model_config, log, session_id)
                 save_chat_html(character, model_config, log, session_id)
                 return
@@ -779,10 +842,52 @@ def chat_loop(character: str, model_config: dict):
                 show_trace(session)
                 continue
             elif cmd == "/help":
-                show_help()
+                show_help(voice_io is not None)
+                continue
+            elif cmd == "/devices":
+                try:
+                    from character_eng.voice import list_audio_devices
+                    devices = list_audio_devices()
+                    lines = []
+                    for d in devices:
+                        tags = []
+                        if d["is_default_input"]:
+                            tags.append("default input")
+                        if d["is_default_output"]:
+                            tags.append("default output")
+                        tag_str = f"  [green]({', '.join(tags)})[/green]" if tags else ""
+                        io = f"{d['inputs']}in/{d['outputs']}out"
+                        lines.append(f"  [cyan]{d['index']:>2}[/cyan]. {d['name']}  [dim]({io})[/dim]{tag_str}")
+                    console.print(Panel("\n".join(lines), title="Audio Devices", border_style="dim"))
+                except ImportError:
+                    console.print("[red]Voice packages not installed. Run: uv sync --extra voice[/red]")
+                continue
+            elif cmd == "/voice":
+                if voice_io is not None:
+                    console.print("[yellow]Voice off — text mode[/yellow]")
+                    voice_io.stop()
+                    voice_io = None
+                else:
+                    from character_eng.voice import VoiceIO, check_voice_available, get_default_devices
+                    available, reason = check_voice_available()
+                    if available:
+                        voice_io = VoiceIO()
+                        try:
+                            voice_io.start()
+                            console.print("[green]Voice mode active[/green] — speak to chat, Escape to toggle, hotkeys: w/b/p/g/t")
+                            input_dev, output_dev = get_default_devices()
+                            if input_dev:
+                                console.print(f"[dim]  Mic:     [{input_dev['index']}] {input_dev['name']}[/dim]")
+                            if output_dev:
+                                console.print(f"[dim]  Speaker: [{output_dev['index']}] {output_dev['name']}[/dim]")
+                        except Exception as e:
+                            console.print(f"[red]Voice init failed: {e}[/red]")
+                            voice_io = None
+                    else:
+                        console.print(f"[red]Voice unavailable: {reason}[/red]")
                 continue
             elif cmd == "/beat":
-                handle_beat(session, world, goals, script, label, model_config, plan_model_config, eval_model_config, log)
+                handle_beat(session, world, goals, script, label, model_config, plan_model_config, eval_model_config, log, voice_io=voice_io)
                 continue
             elif cmd == "/plan":
                 console.print(script.show())
@@ -804,7 +909,7 @@ def chat_loop(character: str, model_config: dict):
                     console.print("[dim]No world state for this character.[/dim]")
                     continue
                 change_text = user_input[7:]  # preserve original case
-                handle_world_change(session, world, goals, script, change_text, label, model_config, plan_model_config, eval_model_config, log)
+                handle_world_change(session, world, goals, script, change_text, label, model_config, plan_model_config, eval_model_config, log, voice_io=voice_io)
                 continue
             elif user_input.startswith("/"):
                 console.print(f"[red]Unknown command: {user_input.split()[0]}[/red]")
@@ -816,7 +921,7 @@ def chat_loop(character: str, model_config: dict):
             # First user input: natural LLM response, then background eval + replan
             if not had_user_input:
                 had_user_input = True
-                response = stream_response(session, label, user_input)
+                response = stream_response(session, label, user_input, voice_io=voice_io)
                 log.append({"type": "send", "input": user_input, "response": response})
                 _bump_version()
                 _start_eval(session, world, goals, script, eval_model_config)
@@ -829,13 +934,13 @@ def chat_loop(character: str, model_config: dict):
 
             if script.current_beat is not None:
                 # Normal path: LLM-guided beat delivery — reacts to user while serving intent
-                response = stream_guided_beat(session, script.current_beat, label, user_input)
+                response = stream_guided_beat(session, script.current_beat, label, user_input, voice_io=voice_io)
                 log.append({"type": "send", "input": user_input, "response": response})
                 _bump_version()
                 _start_eval(session, world, goals, script, eval_model_config)
             else:
                 # No script available (planner unavailable/failed) — LLM generates response
-                response = stream_response(session, label, user_input)
+                response = stream_response(session, label, user_input, voice_io=voice_io)
                 log.append({"type": "send", "input": user_input, "response": response})
                 _bump_version()
                 _start_eval(session, world, goals, script, eval_model_config)
@@ -914,17 +1019,19 @@ def inject_eval(session, result):
     session.inject_system(" ".join(parts))
 
 
-def deliver_beat(session, beat, label):
+def deliver_beat(session, beat, label, voice_io=None):
     """Deliver a pre-rendered beat as the character's response. Returns the beat line."""
     npc_name = Text(f"{label}: ", style="bold magenta")
     console.print(npc_name, end="")
     console.print(beat.line)
     console.print()
     session.add_assistant(beat.line)
+    if voice_io is not None:
+        voice_io.speak_text(beat.line)
     return beat.line
 
 
-def stream_guided_beat(session, beat, label, user_input) -> str:
+def stream_guided_beat(session, beat, label, user_input, voice_io=None) -> str:
     """Use the beat's intent to guide an LLM response that reacts to user input.
 
     Injects beat guidance as a system message, then streams a real LLM response.
@@ -945,7 +1052,7 @@ def stream_guided_beat(session, beat, label, user_input) -> str:
     session.inject_system(guidance)
 
     # Stream a real LLM response guided by the beat intent
-    response = stream_response(session, label, user_input)
+    response = stream_response(session, label, user_input, voice_io=voice_io)
 
     # Inject beat gaze/expression metadata after response
     meta_parts = []
@@ -976,7 +1083,7 @@ def apply_plan(script, plan_result):
         console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"{extras}[/magenta]")
 
 
-def handle_beat(session, world, goals, script, label, model_config, plan_model_config, eval_model_config, log):
+def handle_beat(session, world, goals, script, label, model_config, plan_model_config, eval_model_config, log, voice_io=None):
     """Process a /beat command — condition-gated beat delivery (time passes)."""
     entry = {"type": "beat"}
 
@@ -1019,6 +1126,8 @@ def handle_beat(session, world, goals, script, label, model_config, plan_model_c
                 console.print()
                 session.add_assistant(cond_result.idle)
                 entry["idle"] = cond_result.idle
+                if voice_io is not None:
+                    voice_io.speak_text(cond_result.idle)
             if cond_result.gaze:
                 console.print(f"[dim]  gaze:       {cond_result.gaze}[/dim]")
                 entry["gaze"] = cond_result.gaze
@@ -1038,7 +1147,7 @@ def handle_beat(session, world, goals, script, label, model_config, plan_model_c
         console.print(f"[dim]  {', '.join(parts)}[/dim]")
 
     # 4. Deliver the beat
-    response = deliver_beat(session, beat, label)
+    response = deliver_beat(session, beat, label, voice_io=voice_io)
     entry["response"] = response
 
     # 5. Inject beat metadata
@@ -1066,7 +1175,7 @@ def handle_beat(session, world, goals, script, label, model_config, plan_model_c
     log.append(entry)
 
 
-def handle_world_change(session, world, goals, script, change_text, label, model_config, plan_model_config, eval_model_config, log):
+def handle_world_change(session, world, goals, script, change_text, label, model_config, plan_model_config, eval_model_config, log, voice_io=None):
     """Process a /world <description> command. Fast path: immediate reaction, background reconcile."""
     # Store as pending
     world.add_pending(change_text)
@@ -1077,7 +1186,7 @@ def handle_world_change(session, world, goals, script, change_text, label, model
     session.inject_system(narrator_msg)
 
     # Character reacts (no synchronous eval — narrator injection provides enough context)
-    response = stream_response(session, label, "[React to what just happened.]")
+    response = stream_response(session, label, "[React to what just happened.]", voice_io=voice_io)
 
     entry = {
         "type": "world",
@@ -1095,14 +1204,50 @@ def handle_world_change(session, world, goals, script, change_text, label, model
     _start_eval(session, world, goals, script, eval_model_config)
 
 
-def stream_response(session, label, message) -> str:
-    """Send a message and stream the response. Returns full response text."""
+def stream_response(session, label, message, voice_io=None) -> str:
+    """Send a message and stream the response. Returns full response text.
+
+    When voice_io is provided, also feeds chunks to TTS and checks for barge-in.
+    """
     npc_name = Text(f"{label}: ", style="bold magenta")
     console.print(npc_name, end="")
     full_response = []
-    for chunk in session.send(message):
-        full_response.append(chunk)
-        console.print(chunk, end="", highlight=False)
+    gen = session.send(message)
+
+    if voice_io is not None:
+        # Voice mode: feed chunks to TTS, check for barge-in
+        voice_io._cancelled.clear()
+
+        for chunk in gen:
+            if voice_io._cancelled.is_set():
+                break
+            full_response.append(chunk)
+            console.print(chunk, end="", highlight=False)
+            voice_io._tts.send_text(chunk)
+
+        # Signal end of text input
+        if not voice_io._cancelled.is_set() and voice_io._tts is not None:
+            voice_io._tts.flush()
+
+        # Wait for speaker to finish
+        if voice_io._speaker is not None and not voice_io._cancelled.is_set():
+            while not voice_io._speaker.is_done():
+                if voice_io._cancelled.is_set():
+                    break
+                time.sleep(0.05)
+
+        # Close TTS for next utterance
+        if voice_io._tts is not None:
+            voice_io._tts.close()
+
+        # Start auto-beat timer if not cancelled
+        if not voice_io._cancelled.is_set():
+            voice_io._start_auto_beat()
+    else:
+        for chunk in gen:
+            full_response.append(chunk)
+            console.print(chunk, end="", highlight=False)
+
     console.print("\n")
     return "".join(full_response)
 
@@ -1126,26 +1271,39 @@ def show_trace(session: ChatSession):
     console.print(Panel("\n".join(lines), title="Trace", border_style="dim"))
 
 
-def show_help():
-    console.print(
-        Panel(
-            "/world          - Show current world state\n"
-            "/world <text>   - Describe a change to the world\n"
-            "/beat           - Deliver next scripted beat (time passes)\n"
-            "/plan           - Show current script (beat list)\n"
-            "/goals          - Show character goals\n"
-            "/reload         - Reload prompt files, restart conversation\n"
-            "/trace          - Show system prompt, model, token usage\n"
-            "/back           - Return to character selection\n"
-            "/quit           - Exit program\n"
-            "Ctrl+C          - Return to character selection",
-            title="Commands",
-            border_style="dim",
-        )
+def show_help(voice_active: bool = False):
+    help_text = (
+        "/world          - Show current world state\n"
+        "/world <text>   - Describe a change to the world\n"
+        "/beat           - Deliver next scripted beat (time passes)\n"
+        "/plan           - Show current script (beat list)\n"
+        "/goals          - Show character goals\n"
+        "/voice          - Toggle voice mode on/off\n"
+        "/devices        - List audio input/output devices\n"
+        "/reload         - Reload prompt files, restart conversation\n"
+        "/trace          - Show system prompt, model, token usage\n"
+        "/back           - Return to character selection\n"
+        "/quit           - Exit program\n"
+        "Ctrl+C          - Return to character selection"
     )
+    if voice_active:
+        help_text += (
+            "\n\n[bold]Voice Hotkeys[/bold]\n"
+            "w               - /world\n"
+            "b               - /beat\n"
+            "p               - /plan\n"
+            "g               - /goals\n"
+            "t               - /trace\n"
+            "Escape          - Toggle voice off"
+        )
+    console.print(Panel(help_text, title="Commands", border_style="dim"))
 
 
 def main():
+    parser = argparse.ArgumentParser(description="NPC Character Chat")
+    parser.add_argument("--voice", action="store_true", help="Start in voice mode (Deepgram STT + ElevenLabs TTS)")
+    args = parser.parse_args()
+
     console.print(Panel("[bold]NPC Character Chat[/bold]", border_style="green"))
     try:
         model_config = pick_model()
@@ -1157,7 +1315,7 @@ def main():
             if character is None:
                 console.print("Goodbye!")
                 break
-            chat_loop(character, model_config)
+            chat_loop(character, model_config, voice_mode=args.voice)
     finally:
         _stop_vllm()
 

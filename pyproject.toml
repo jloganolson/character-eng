@@ -10,6 +10,14 @@ dependencies = [
     "rich>=14.3.2",
 ]
 
+[project.optional-dependencies]
+voice = [
+    "deepgram-sdk>=5.3",
+    "sounddevice>=0.5",
+    "numpy>=1.26",
+    "websocket-client>=1.7",
+]
+
 [project.scripts]
 chat = "character_eng.__main__:main"
 
