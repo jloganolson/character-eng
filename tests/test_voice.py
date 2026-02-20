@@ -430,6 +430,172 @@ def test_check_voice_available_missing_elevenlabs_key():
 # --- Sentinel constants ---
 
 
+# --- ElevenLabsTTS generation_done ---
+
+
+@patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test-key"})
+def test_elevenlabs_tts_generation_done_initially_unset():
+    """_generation_done should start unset."""
+    from character_eng.voice import ElevenLabsTTS
+
+    on_audio = MagicMock()
+    tts = ElevenLabsTTS(on_audio)
+    assert not tts._generation_done.is_set()
+
+
+@patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test-key"})
+def test_elevenlabs_tts_wait_for_done_returns_on_event():
+    """wait_for_done should return True when _generation_done is set."""
+    from character_eng.voice import ElevenLabsTTS
+
+    on_audio = MagicMock()
+    tts = ElevenLabsTTS(on_audio)
+
+    def _set():
+        time.sleep(0.05)
+        tts._generation_done.set()
+
+    t = threading.Thread(target=_set)
+    t.start()
+    result = tts.wait_for_done(timeout=1.0)
+    t.join()
+    assert result is True
+
+
+@patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test-key"})
+def test_elevenlabs_tts_wait_for_done_timeout():
+    """wait_for_done should return False on timeout."""
+    from character_eng.voice import ElevenLabsTTS
+
+    on_audio = MagicMock()
+    tts = ElevenLabsTTS(on_audio)
+    result = tts.wait_for_done(timeout=0.05)
+    assert result is False
+
+
+@patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test-key"})
+def test_elevenlabs_tts_close_sets_generation_done():
+    """close() should set _generation_done to unblock waiters."""
+    from character_eng.voice import ElevenLabsTTS
+
+    on_audio = MagicMock()
+    tts = ElevenLabsTTS(on_audio)
+
+    mock_ws = MagicMock()
+    tts._ws = mock_ws
+    tts._running = True
+
+    assert not tts._generation_done.is_set()
+    tts.close()
+    assert tts._generation_done.is_set()
+
+
+@patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test-key"})
+def test_elevenlabs_tts_recv_loop_sets_generation_done_on_is_final():
+    """_recv_loop should set _generation_done when isFinal message arrives."""
+    from character_eng.voice import ElevenLabsTTS
+    import json
+
+    on_audio = MagicMock()
+    tts = ElevenLabsTTS(on_audio)
+
+    # Create a mock WS that returns an isFinal message
+    mock_ws = MagicMock()
+    mock_ws.recv.side_effect = [
+        json.dumps({"audio": "AAAA", "isFinal": False}),  # audio chunk (base64 of 0x00 0x00 0x00)
+        json.dumps({"isFinal": True}),
+    ]
+    tts._ws = mock_ws
+    tts._running = True
+
+    assert not tts._generation_done.is_set()
+    tts._recv_loop()
+    assert tts._generation_done.is_set()
+    assert on_audio.call_count == 1
+
+
+# --- SpeakerStream audio_started ---
+
+
+def test_speaker_audio_started_on_enqueue():
+    """_audio_started should be set when audio is enqueued."""
+    speaker = SpeakerStream()
+    assert not speaker._audio_started.is_set()
+
+    speaker.enqueue(b"\x00" * 100)
+    assert speaker._audio_started.is_set()
+
+
+def test_speaker_audio_started_cleared_on_flush():
+    """flush() should clear _audio_started."""
+    speaker = SpeakerStream()
+    speaker.enqueue(b"\x00" * 100)
+    assert speaker._audio_started.is_set()
+
+    speaker.flush()
+    assert not speaker._audio_started.is_set()
+
+
+def test_speaker_audio_started_cleared_on_stop():
+    """stop() should clear _audio_started."""
+    speaker = SpeakerStream()
+    speaker.enqueue(b"\x00" * 100)
+    assert speaker._audio_started.is_set()
+
+    speaker.stop()
+    assert not speaker._audio_started.is_set()
+
+
+def test_speaker_wait_for_audio_returns_true():
+    """wait_for_audio should return True when audio arrives."""
+    speaker = SpeakerStream()
+
+    def _enqueue():
+        time.sleep(0.05)
+        speaker.enqueue(b"\x00" * 100)
+
+    t = threading.Thread(target=_enqueue)
+    t.start()
+    result = speaker.wait_for_audio(timeout=1.0)
+    t.join()
+    assert result is True
+
+
+def test_speaker_wait_for_audio_timeout():
+    """wait_for_audio should return False on timeout."""
+    speaker = SpeakerStream()
+    result = speaker.wait_for_audio(timeout=0.05)
+    assert result is False
+
+
+# --- VoiceIO barge-in guard ---
+
+
+def test_voice_io_barge_in_guard_when_speaking():
+    """_on_turn_start should call cancel_speech when _is_speaking is True."""
+    voice = VoiceIO()
+    voice._speaker = MagicMock()
+    voice._tts = MagicMock()
+    voice._is_speaking = True
+
+    voice._on_turn_start()
+    assert voice._cancelled.is_set()
+
+
+def test_voice_io_barge_in_guard_when_not_speaking():
+    """_on_turn_start should NOT call cancel_speech when _is_speaking is False."""
+    voice = VoiceIO()
+    voice._speaker = MagicMock()
+    voice._tts = MagicMock()
+    voice._is_speaking = False
+
+    voice._on_turn_start()
+    assert not voice._cancelled.is_set()
+
+
+# --- Sentinel constants ---
+
+
 def test_sentinel_strings_are_distinct():
     """All sentinel strings should be unique."""
     sentinels = [TOGGLE_VOICE, EXIT, VOICE_ERROR]

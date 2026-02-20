@@ -1,12 +1,9 @@
 import argparse
-import atexit
 import json
 import os
-import subprocess
 import sys
 import threading
 import time
-import urllib.request
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -16,10 +13,9 @@ from rich.panel import Panel
 from rich.text import Text
 
 from character_eng.chat import ChatSession
-from character_eng.models import DEFAULT_MODEL, MODELS, PLAN_MODEL, THINK_MODEL
+from character_eng.models import BIG_MODEL, CHAT_MODEL, MODELS
 from character_eng.prompts import list_characters, load_prompt
 from character_eng.qa_personas import _action_badge, _esc, annotation_assets
-from character_eng.serve import build_vllm_cmd, get_local_models, kill_port
 from character_eng.world import (
     Beat,
     ConditionResult,
@@ -39,8 +35,6 @@ from character_eng.world import (
 )
 
 console = Console()
-
-_vllm_process: subprocess.Popen | None = None
 
 LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 
@@ -82,14 +76,14 @@ def _run_reconcile(world: "WorldState", pending: list[str], model_config: dict):
         console.print(f"[red]Background reconcile error: {e}[/red]")
 
 
-def _start_reconcile(world, model_config, plan_model_config):
+def _start_reconcile(world, model_config, big_model_config):
     """Drain pending changes and spawn background reconcile thread."""
     global _reconcile_thread
     pending = world.clear_pending()
     if not pending:
         return
     # Use plan model if available, fall back to chat model
-    cfg = plan_model_config if plan_model_config else model_config
+    cfg = big_model_config if big_model_config else model_config
     _reconcile_thread = threading.Thread(
         target=_run_reconcile, args=(world, pending, cfg), daemon=True
     )
@@ -204,7 +198,7 @@ def _check_eval(session, script, log):
 
 # --- Background plan functions ---
 
-def _run_plan_bg(system_prompt, world, history, goals, plan_request, plan_model_config):
+def _run_plan_bg(system_prompt, world, history, goals, plan_request, big_model_config):
     """Background thread target for plan."""
     global _plan_result
     try:
@@ -214,7 +208,7 @@ def _run_plan_bg(system_prompt, world, history, goals, plan_request, plan_model_
             history=history,
             goals=goals,
             plan_request=plan_request,
-            plan_model_config=plan_model_config,
+            plan_model_config=big_model_config,
         )
         with _plan_lock:
             _plan_result = result
@@ -222,17 +216,17 @@ def _run_plan_bg(system_prompt, world, history, goals, plan_request, plan_model_
         console.print(f"[red]Background plan error: {e}[/red]")
 
 
-def _start_plan(session, world, goals, plan_request, plan_model_config):
+def _start_plan(session, world, goals, plan_request, big_model_config):
     """Kick off background plan. Skips if planner unavailable or one already in flight."""
     global _plan_thread, _plan_version
-    if plan_model_config is None:
+    if big_model_config is None:
         return
     if _plan_thread is not None and _plan_thread.is_alive():
         return
     _plan_version = _context_version
     _plan_thread = threading.Thread(
         target=_run_plan_bg,
-        args=(session.system_prompt, world, session.get_history(), goals, plan_request, plan_model_config),
+        args=(session.system_prompt, world, session.get_history(), goals, plan_request, big_model_config),
         daemon=True,
     )
     _plan_thread.start()
@@ -431,211 +425,16 @@ def save_chat_html(character: str, model_config: dict, log: list[dict], session_
     console.print(f"[dim]HTML: {html_path}[/dim]")
 
 
-def _stop_vllm():
-    """Terminate the managed vLLM process if running."""
-    global _vllm_process
-    if _vllm_process is not None and _vllm_process.poll() is None:
-        console.print("[dim]Stopping vLLM server...[/dim]")
-        _vllm_process.terminate()
-        try:
-            _vllm_process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            _vllm_process.kill()
-            _vllm_process.wait()
-    _vllm_process = None
 
-
-atexit.register(_stop_vllm)
-
-
-def _start_local_model() -> dict | None:
-    """Show local model sub-menu, start vLLM, return model config or None."""
-    global _vllm_process
-    local_models = get_local_models()
-    if not local_models:
+def get_chat_model_config() -> dict | None:
+    """Look up the chat model config, return None if API key not set."""
+    cfg = MODELS.get(CHAT_MODEL)
+    if cfg is None:
         return None
-
-    # Sub-menu for local model selection
-    console.print()
-    console.print("[bold]Local Models[/bold]")
-    for i, (key, cfg) in enumerate(local_models, 1):
-        console.print(f"  [cyan]{i}[/cyan]. {cfg['name']}")
-    console.print(f"  [cyan]b[/cyan]. Back")
-    console.print()
-
-    while True:
-        try:
-            choice = console.input("[bold]Pick a local model:[/bold] ").strip()
-        except (EOFError, KeyboardInterrupt):
-            return None
-        if choice.lower() == "b":
-            return None
-        try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(local_models):
-                break
-        except ValueError:
-            pass
-        console.print("[red]Invalid choice, try again.[/red]")
-
-    key, cfg = local_models[idx]
-    path = cfg.get("path", "")
-    if not os.path.exists(path):
-        console.print(f"[red]Model path not found: {path}[/red]")
+    api_key_env = cfg.get("api_key_env", "")
+    if api_key_env and not os.environ.get(api_key_env):
         return None
-
-    # Kill existing port, build command, launch
-    kill_port("8000")
-    cmd = build_vllm_cmd(key, cfg)
-    console.print(f"[dim]Starting: {' '.join(cmd)}[/dim]\n")
-
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-    except FileNotFoundError:
-        console.print("[red]vllm command not found. Is vLLM installed?[/red]")
-        return None
-
-    _vllm_process = proc
-
-    # Stream vLLM output in a background thread
-    output_lines: list[str] = []
-    def _stream_output():
-        for line in proc.stdout:
-            line = line.rstrip("\n")
-            output_lines.append(line)
-            console.print(f"[dim]{line}[/dim]")
-
-    thread = threading.Thread(target=_stream_output, daemon=True)
-    thread.start()
-
-    # Poll /health every 2s, with 120s timeout
-    health_url = cfg["base_url"].replace("/v1", "/health")
-    deadline = time.monotonic() + 120
-    while time.monotonic() < deadline:
-        # Check if process died
-        if proc.poll() is not None:
-            thread.join(timeout=2)
-            console.print("[red]vLLM failed to start.[/red]")
-            tail = output_lines[-10:] if output_lines else ["(no output)"]
-            for line in tail:
-                console.print(f"[dim]  {line}[/dim]")
-            _vllm_process = None
-            return None
-
-        # Check health
-        try:
-            urllib.request.urlopen(health_url, timeout=2)
-            console.print(f"[green]✓ vLLM ready[/green]")
-            return cfg
-        except Exception:
-            pass
-
-        time.sleep(2)
-
-    # Timeout
-    console.print("[red]vLLM not ready after 120s.[/red]")
-    tail = output_lines[-10:] if output_lines else ["(no output)"]
-    for line in tail:
-        console.print(f"[dim]  {line}[/dim]")
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-    _vllm_process = None
-    return None
-
-
-def _is_local_server_up(base_url: str) -> bool:
-    """Quick check if local vLLM server is responding."""
-    try:
-        health_url = base_url.replace("/v1", "/health")
-        urllib.request.urlopen(health_url, timeout=1)
-        return True
-    except Exception:
-        return False
-
-
-def pick_model() -> dict | None:
-    """Show model menu, return chosen config or None to quit.
-
-    Cloud models need their API key env set. Local models need the vLLM server up.
-    Auto-selects if only one is available. Offers to start vLLM for unavailable local models.
-    """
-    available = []
-    for key, cfg in MODELS.items():
-        if cfg.get("hidden"):
-            continue
-        if cfg.get("local"):
-            if _is_local_server_up(cfg["base_url"]):
-                available.append((key, cfg))
-        elif os.environ.get(cfg.get("api_key_env", "")):
-            available.append((key, cfg))
-
-    # Detect unavailable local models
-    local_all = get_local_models()
-    local_available_keys = {k for k, _ in available if MODELS[k].get("local")}
-    unavailable_local = [(k, c) for k, c in local_all if k not in local_available_keys]
-    has_start_option = len(unavailable_local) > 0
-
-    if not available and not has_start_option:
-        console.print("[red]No models available. Set an API key in .env or start a local vLLM server.[/red]")
-        return None
-
-    if len(available) == 1 and not has_start_option:
-        key, cfg = available[0]
-        console.print(f"[dim]Using {cfg['name']} (only available model)[/dim]")
-        return cfg
-
-    # Show hint about unavailable local models
-    if has_start_option:
-        n = len(unavailable_local)
-        noun = "model" if n == 1 else "models"
-        console.print(f"[dim]{n} local {noun} configured but vLLM not running[/dim]")
-
-    console.print()
-    console.print("[bold]Available Models[/bold]")
-    for i, (key, cfg) in enumerate(available, 1):
-        default_tag = " [dim](default)[/dim]" if key == DEFAULT_MODEL else ""
-        console.print(f"  [cyan]{i}[/cyan]. {cfg['name']}{default_tag}")
-    if has_start_option:
-        console.print(f"  [cyan]s[/cyan]. Start local model")
-    console.print(f"  [cyan]q[/cyan]. Quit")
-    console.print()
-
-    while True:
-        try:
-            choice = console.input("[bold]Pick a model:[/bold] ").strip()
-        except (EOFError, KeyboardInterrupt):
-            return None
-        if choice.lower() == "q":
-            return None
-        if choice.lower() == "s" and has_start_option:
-            result = _start_local_model()
-            if result is not None:
-                return result
-            # Fall back to menu on failure — re-display
-            return pick_model()
-        if choice == "":
-            # Default selection
-            for key, cfg in available:
-                if key == DEFAULT_MODEL:
-                    return cfg
-            if available:
-                return available[0][1]
-            continue
-        try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(available):
-                return available[idx][1]
-        except ValueError:
-            pass
-        console.print("[red]Invalid choice, try again.[/red]")
+    return cfg
 
 
 def pick_character() -> str | None:
@@ -676,20 +475,9 @@ def pick_character() -> str | None:
         console.print("[red]Invalid choice, try again.[/red]")
 
 
-def get_plan_model_config():
-    """Look up the plan model config, return None if API key not set."""
-    cfg = MODELS.get(PLAN_MODEL)
-    if cfg is None:
-        return None
-    api_key_env = cfg.get("api_key_env", "")
-    if api_key_env and not os.environ.get(api_key_env):
-        return None
-    return cfg
-
-
-def get_think_model_config():
-    """Look up the think model config, return None if API key not set."""
-    cfg = MODELS.get(THINK_MODEL)
+def get_big_model_config():
+    """Look up the big model config, return None if API key not set."""
+    cfg = MODELS.get(BIG_MODEL)
     if cfg is None:
         return None
     api_key_env = cfg.get("api_key_env", "")
@@ -703,23 +491,16 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False):
     label = character.replace("_", " ").title()
     session_id = uuid.uuid4().hex[:8]
     log: list[dict] = []
-    plan_model_config = get_plan_model_config()
-    think_model_config = get_think_model_config()
+    big_model_config = get_big_model_config()
 
-    # Resolve eval model: prefer think model, fall back to chat model
-    eval_model_config = think_model_config if think_model_config else model_config
+    # Big model handles eval, plan, and reconcile; falls back to chat model
+    eval_model_config = big_model_config if big_model_config else model_config
 
-    if plan_model_config:
-        plan_label = MODELS[PLAN_MODEL]["name"]
-        console.print(f"[dim]Planner: {plan_label}[/dim]")
+    if big_model_config:
+        big_label = MODELS[BIG_MODEL]["name"]
+        console.print(f"[dim]Big model: {big_label} (eval + plan + reconcile)[/dim]")
     else:
-        console.print(f"[dim]Planner: unavailable (no {MODELS.get(PLAN_MODEL, {}).get('api_key_env', 'API key')} set)[/dim]")
-
-    if think_model_config:
-        think_label = MODELS[THINK_MODEL]["name"]
-        console.print(f"[dim]Think: {think_label}[/dim]")
-    else:
-        console.print(f"[dim]Think: using chat model[/dim]")
+        console.print(f"[dim]Big model: unavailable (no {MODELS.get(BIG_MODEL, {}).get('api_key_env', 'API key')} set), using chat model[/dim]")
 
     # --- Voice setup ---
     voice_io = None
@@ -753,7 +534,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False):
         script = Script()
 
         # Generate initial script at boot (synchronous)
-        plan_result = run_plan(session, world, goals, "", plan_model_config)
+        plan_result = run_plan(session, world, goals, "", big_model_config)
         if plan_result and plan_result.beats:
             apply_plan(script, plan_result)
 
@@ -766,7 +547,15 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False):
         while True:
             # --- Get input (voice or text) ---
             if voice_io is not None:
-                user_input = voice_io.wait_for_input()
+                try:
+                    user_input = voice_io.wait_for_input()
+                except (EOFError, KeyboardInterrupt):
+                    console.print()
+                    voice_io.stop()
+                    voice_io = None
+                    save_chat_log(character, model_config, log, session_id)
+                    save_chat_html(character, model_config, log, session_id)
+                    return
 
                 # Handle sentinel strings from voice
                 from character_eng.voice import TOGGLE_VOICE, EXIT, VOICE_ERROR
@@ -813,7 +602,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False):
 
             needs_plan, plan_request = _check_eval(session, script, log)
             if needs_plan:
-                _start_plan(session, world, goals, plan_request, plan_model_config)
+                _start_plan(session, world, goals, plan_request, big_model_config)
 
             _check_plan(script)
 
@@ -887,7 +676,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False):
                         console.print(f"[red]Voice unavailable: {reason}[/red]")
                 continue
             elif cmd == "/beat":
-                handle_beat(session, world, goals, script, label, model_config, plan_model_config, eval_model_config, log, voice_io=voice_io)
+                handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
                 continue
             elif cmd == "/plan":
                 console.print(script.show())
@@ -909,7 +698,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False):
                     console.print("[dim]No world state for this character.[/dim]")
                     continue
                 change_text = user_input[7:]  # preserve original case
-                handle_world_change(session, world, goals, script, change_text, label, model_config, plan_model_config, eval_model_config, log, voice_io=voice_io)
+                handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
                 continue
             elif user_input.startswith("/"):
                 console.print(f"[red]Unknown command: {user_input.split()[0]}[/red]")
@@ -925,12 +714,12 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False):
                 log.append({"type": "send", "input": user_input, "response": response})
                 _bump_version()
                 _start_eval(session, world, goals, script, eval_model_config)
-                _start_plan(session, world, goals, "", plan_model_config)
+                _start_plan(session, world, goals, "", big_model_config)
                 continue
 
             # Bootstrap: if no script, start background plan and fall through to unguided
             if script.is_empty():
-                _start_plan(session, world, goals, "", plan_model_config)
+                _start_plan(session, world, goals, "", big_model_config)
 
             if script.current_beat is not None:
                 # Normal path: LLM-guided beat delivery — reacts to user while serving intent
@@ -963,9 +752,9 @@ def run_eval(session, world, goals, script, model_config):
         return None
 
 
-def run_plan(session, world, goals, plan_request, plan_model_config):
+def run_plan(session, world, goals, plan_request, big_model_config):
     """Run plan_call synchronously, return PlanResult or None on error."""
-    if plan_model_config is None:
+    if big_model_config is None:
         console.print("[dim]Planner unavailable, skipping.[/dim]")
         return None
     console.print("[dim]Planning...[/dim]")
@@ -976,7 +765,7 @@ def run_plan(session, world, goals, plan_request, plan_model_config):
             history=session.get_history(),
             goals=goals,
             plan_request=plan_request,
-            plan_model_config=plan_model_config,
+            plan_model_config=big_model_config,
         )
     except Exception as e:
         console.print(f"[red]Plan error: {e}[/red]")
@@ -1083,13 +872,13 @@ def apply_plan(script, plan_result):
         console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"{extras}[/magenta]")
 
 
-def handle_beat(session, world, goals, script, label, model_config, plan_model_config, eval_model_config, log, voice_io=None):
+def handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=None):
     """Process a /beat command — condition-gated beat delivery (time passes)."""
     entry = {"type": "beat"}
 
     # 1. If no current beat, replan (synchronous — user explicitly asked for a beat)
     if script.current_beat is None:
-        plan_result = run_plan(session, world, goals, "", plan_model_config)
+        plan_result = run_plan(session, world, goals, "", big_model_config)
         if plan_result and plan_result.beats:
             apply_plan(script, plan_result)
         if script.current_beat is None:
@@ -1166,7 +955,7 @@ def handle_beat(session, world, goals, script, label, model_config, plan_model_c
     else:
         # Script exhausted — background replan
         console.print("[dim]  script complete, replanning...[/dim]")
-        _start_plan(session, world, goals, "", plan_model_config)
+        _start_plan(session, world, goals, "", big_model_config)
 
     # 7. Background eval
     _bump_version()
@@ -1175,7 +964,7 @@ def handle_beat(session, world, goals, script, label, model_config, plan_model_c
     log.append(entry)
 
 
-def handle_world_change(session, world, goals, script, change_text, label, model_config, plan_model_config, eval_model_config, log, voice_io=None):
+def handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=None):
     """Process a /world <description> command. Fast path: immediate reaction, background reconcile."""
     # Store as pending
     world.add_pending(change_text)
@@ -1197,7 +986,7 @@ def handle_world_change(session, world, goals, script, change_text, label, model
     log.append(entry)
 
     # Start background reconciliation
-    _start_reconcile(world, model_config, plan_model_config)
+    _start_reconcile(world, model_config, big_model_config)
 
     # Background eval
     _bump_version()
@@ -1217,6 +1006,7 @@ def stream_response(session, label, message, voice_io=None) -> str:
     if voice_io is not None:
         # Voice mode: feed chunks to TTS, check for barge-in
         voice_io._cancelled.clear()
+        voice_io._is_speaking = True
 
         for chunk in gen:
             if voice_io._cancelled.is_set():
@@ -1229,7 +1019,15 @@ def stream_response(session, label, message, voice_io=None) -> str:
         if not voice_io._cancelled.is_set() and voice_io._tts is not None:
             voice_io._tts.flush()
 
-        # Wait for speaker to finish
+        # Wait for ElevenLabs to finish generating
+        if not voice_io._cancelled.is_set() and voice_io._tts is not None:
+            voice_io._tts.wait_for_done(timeout=15.0)
+
+        # Wait for first audio to arrive at the speaker
+        if not voice_io._cancelled.is_set() and voice_io._speaker is not None:
+            voice_io._speaker.wait_for_audio(timeout=0.5)
+
+        # Wait for speaker to finish playback
         if voice_io._speaker is not None and not voice_io._cancelled.is_set():
             while not voice_io._speaker.is_done():
                 if voice_io._cancelled.is_set():
@@ -1239,6 +1037,7 @@ def stream_response(session, label, message, voice_io=None) -> str:
         # Close TTS for next utterance
         if voice_io._tts is not None:
             voice_io._tts.close()
+        voice_io._is_speaking = False
 
         # Start auto-beat timer if not cancelled
         if not voice_io._cancelled.is_set():
@@ -1305,19 +1104,18 @@ def main():
     args = parser.parse_args()
 
     console.print(Panel("[bold]NPC Character Chat[/bold]", border_style="green"))
-    try:
-        model_config = pick_model()
-        if model_config is None:
+    model_config = get_chat_model_config()
+    if model_config is None:
+        chat_cfg = MODELS.get(CHAT_MODEL, {})
+        console.print(f"[red]Chat model unavailable — set {chat_cfg.get('api_key_env', 'API key')} in .env[/red]")
+        return
+    console.print(f"[dim]Chat: {model_config['name']}[/dim]")
+    while True:
+        character = pick_character()
+        if character is None:
             console.print("Goodbye!")
-            return
-        while True:
-            character = pick_character()
-            if character is None:
-                console.print("Goodbye!")
-                break
-            chat_loop(character, model_config, voice_mode=args.voice)
-    finally:
-        _stop_vllm()
+            break
+        chat_loop(character, model_config, voice_mode=args.voice)
 
 
 if __name__ == "__main__":

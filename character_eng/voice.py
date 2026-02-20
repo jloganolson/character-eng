@@ -194,6 +194,7 @@ class SpeakerStream:
         self._stream = None
         self._done_event = threading.Event()
         self._done_event.set()  # starts "done" (nothing to play)
+        self._audio_started = threading.Event()
 
     def _callback(self, outdata, frames, time_info, status):
         """sounddevice OutputStream callback — runs in audio thread."""
@@ -211,8 +212,7 @@ class SpeakerStream:
                     del self._buffer[:available]
                     outdata[:available] = data
                 # Fill rest with silence
-                for i in range(available, len(outdata)):
-                    outdata[i] = 0
+                outdata[available:] = b'\x00' * (len(outdata) - available)
                 if available == 0:
                     self._done_event.set()
 
@@ -221,12 +221,19 @@ class SpeakerStream:
         with self._lock:
             self._buffer.extend(pcm)
             self._done_event.clear()
+            if len(pcm) > 0:
+                self._audio_started.set()
 
     def flush(self):
         """Clear the playback buffer immediately (barge-in)."""
         with self._lock:
             self._buffer.clear()
             self._done_event.set()
+        self._audio_started.clear()
+
+    def wait_for_audio(self, timeout: float = 0.5) -> bool:
+        """Block until first audio chunk arrives. Returns True if audio arrived, False on timeout."""
+        return self._audio_started.wait(timeout=timeout)
 
     def wait_until_done(self, timeout: float | None = None) -> bool:
         """Block until buffer is drained. Returns True if done, False on timeout."""
@@ -259,6 +266,7 @@ class SpeakerStream:
         with self._lock:
             self._buffer.clear()
             self._done_event.set()
+        self._audio_started.clear()
 
 
 class DeepgramSTT:
@@ -393,7 +401,7 @@ class DeepgramSTT:
 
     def _on_error(self, error):
         """Called on Deepgram errors."""
-        print(f"[voice] Deepgram error: {error}", file=sys.stderr)
+        pass
 
     def stop(self):
         if self._socket is not None:
@@ -433,10 +441,13 @@ class ElevenLabsTTS:
         self._recv_thread: threading.Thread | None = None
         self._running = False
         self._lock = threading.Lock()
+        self._generation_done = threading.Event()
 
     def _connect(self):
         """Open WebSocket connection to ElevenLabs."""
         import websocket
+
+        self._generation_done.clear()
 
         api_key = os.environ["ELEVENLABS_API_KEY"]
         url = (
@@ -445,8 +456,12 @@ class ElevenLabsTTS:
             f"&output_format=pcm_24000"
         )
 
-        self._ws = websocket.WebSocket()
-        self._ws.connect(url, header=[f"xi-api-key: {api_key}"])
+        try:
+            self._ws = websocket.WebSocket()
+            self._ws.connect(url, header=[f"xi-api-key: {api_key}"])
+        except Exception:
+            self._ws = None
+            return
 
         # Send initial config
         init_msg = {
@@ -468,21 +483,26 @@ class ElevenLabsTTS:
 
     def _recv_loop(self):
         """Receive audio chunks from ElevenLabs WebSocket."""
-        while self._running:
-            try:
-                with self._lock:
-                    ws = self._ws
-                if ws is None:
+        try:
+            while self._running:
+                try:
+                    with self._lock:
+                        ws = self._ws
+                    if ws is None:
+                        break
+                    msg = ws.recv()
+                    if not msg:
+                        break
+                    data = json.loads(msg)
+                    if data.get("isFinal"):
+                        break
+                    if "audio" in data and data["audio"]:
+                        pcm = base64.b64decode(data["audio"])
+                        self._on_audio(pcm)
+                except Exception:
                     break
-                msg = ws.recv()
-                if not msg:
-                    break
-                data = json.loads(msg)
-                if "audio" in data and data["audio"]:
-                    pcm = base64.b64decode(data["audio"])
-                    self._on_audio(pcm)
-            except Exception:
-                break
+        finally:
+            self._generation_done.set()
 
     def send_text(self, text: str):
         """Send a text chunk for TTS synthesis."""
@@ -507,9 +527,14 @@ class ElevenLabsTTS:
         except Exception:
             pass
 
+    def wait_for_done(self, timeout: float = 15.0) -> bool:
+        """Block until ElevenLabs sends isFinal. Returns True if done, False on timeout."""
+        return self._generation_done.wait(timeout=timeout)
+
     def close(self):
         """Close the WebSocket connection."""
         self._running = False
+        self._generation_done.set()
         with self._lock:
             if self._ws is not None:
                 try:
@@ -589,6 +614,7 @@ class VoiceIO:
     def __init__(self, voice_id: str = "", input_device: int | None = None, output_device: int | None = None):
         self._event_queue: queue.Queue[str] = queue.Queue()
         self._cancelled = threading.Event()
+        self._is_speaking = False
         self._auto_beat_timer: threading.Timer | None = None
 
         # Components (created in start())
@@ -677,6 +703,7 @@ class VoiceIO:
         Checks _cancelled event between chunks so barge-in can interrupt.
         """
         self._cancelled.clear()
+        self._is_speaking = True
         for chunk in text_chunks:
             if self._cancelled.is_set():
                 break
@@ -687,7 +714,15 @@ class VoiceIO:
         if not self._cancelled.is_set() and self._tts is not None:
             self._tts.flush()
 
-        # Wait for speaker to finish (unless cancelled)
+        # Wait for ElevenLabs to finish generating
+        if not self._cancelled.is_set() and self._tts is not None:
+            self._tts.wait_for_done(timeout=15.0)
+
+        # Wait for first audio to arrive at the speaker
+        if not self._cancelled.is_set() and self._speaker is not None:
+            self._speaker.wait_for_audio(timeout=0.5)
+
+        # Wait for speaker to finish playback
         if self._speaker is not None and not self._cancelled.is_set():
             while not self._speaker.is_done():
                 if self._cancelled.is_set():
@@ -697,6 +732,7 @@ class VoiceIO:
         # Close TTS connection to reset for next utterance
         if self._tts is not None:
             self._tts.close()
+        self._is_speaking = False
 
         # Start auto-beat timer if not cancelled
         if not self._cancelled.is_set():
@@ -705,11 +741,20 @@ class VoiceIO:
     def speak_text(self, text: str) -> None:
         """One-shot TTS for pre-rendered beats."""
         self._cancelled.clear()
+        self._is_speaking = True
         if self._tts is not None:
             self._tts.send_text(text)
             self._tts.flush()
 
-        # Wait for speaker to finish
+        # Wait for ElevenLabs to finish generating
+        if not self._cancelled.is_set() and self._tts is not None:
+            self._tts.wait_for_done(timeout=15.0)
+
+        # Wait for first audio to arrive at the speaker
+        if not self._cancelled.is_set() and self._speaker is not None:
+            self._speaker.wait_for_audio(timeout=0.5)
+
+        # Wait for speaker to finish playback
         if self._speaker is not None and not self._cancelled.is_set():
             while not self._speaker.is_done():
                 if self._cancelled.is_set():
@@ -719,6 +764,7 @@ class VoiceIO:
         # Close TTS for next utterance
         if self._tts is not None:
             self._tts.close()
+        self._is_speaking = False
 
         if not self._cancelled.is_set():
             self._start_auto_beat()
@@ -726,6 +772,7 @@ class VoiceIO:
     def cancel_speech(self):
         """Barge-in: cancel current LLM+TTS+speaker, cancel auto-beat."""
         self._cancelled.set()
+        self._is_speaking = False
         self._cancel_auto_beat()
         if self._tts is not None:
             self._tts.close()
@@ -738,7 +785,8 @@ class VoiceIO:
 
     def _on_turn_start(self):
         """Called by DeepgramSTT when user starts speaking (barge-in trigger)."""
-        self.cancel_speech()
+        if self._is_speaking:
+            self.cancel_speech()
 
     def _start_auto_beat(self):
         """Start auto-beat timer — fires /beat after AUTO_BEAT_DELAY seconds."""

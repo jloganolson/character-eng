@@ -73,7 +73,7 @@ World changes (`/world <text>`) use a two-speed system:
 
 **Fast path** (immediate, no LLM): The change is stored as pending, a narrator message is injected into the conversation, and the character reacts via LLM streaming. This happens instantly.
 
-**Slow path** (background thread): A reconciler LLM (using `PLAN_MODEL` if available, otherwise the chat model) processes all pending changes against ID-tagged dynamic facts, producing structured mutations (add/remove facts by stable ID, events). Results are applied at the start of the next turn with a "Reconciled" diff panel. Multiple `/world` commands before reconciliation accumulate — the next reconcile batch processes all.
+**Slow path** (background thread): A reconciler LLM (using `BIG_MODEL` if available, otherwise the chat model) processes all pending changes against ID-tagged dynamic facts, producing structured mutations (add/remove facts by stable ID, events). Results are applied at the start of the next turn with a "Reconciled" diff panel. Multiple `/world` commands before reconciliation accumulate — the next reconcile batch processes all.
 
 ## Voice mode
 
@@ -94,7 +94,7 @@ Voice mode adds speech I/O as a layer around the existing text pipeline. Everyth
 ### Barge-in
 
 If you start speaking while the character is responding, barge-in kicks in:
-- Deepgram detects speech start → cancels LLM stream + TTS + speaker playback
+- Deepgram detects speech start → cancels LLM stream + TTS + speaker playback (only while TTS is actively generating, guarded by `_is_speaking` flag to ignore ambient noise)
 - Your full utterance is captured and processed as the next input
 - Partial LLM responses are still recorded in conversation history
 
@@ -164,11 +164,7 @@ prompts/characters/my_npc/
 
 ## Local models
 
-Local models run via vLLM on your GPU. You can start vLLM two ways:
-
-**From the app** (recommended) — when local models are configured but vLLM isn't running, the model menu shows a hint and an `s` option to start a local model. Pick a model, and vLLM launches with live output streaming. Once healthy, the model is auto-selected. The vLLM process is cleaned up automatically when you quit the app.
-
-**Standalone** — use `serve.py` directly:
+Local models run via vLLM on your GPU. Start vLLM with `serve.py`:
 
 ```bash
 # Start vLLM server (interactive model picker)
