@@ -144,3 +144,42 @@ def test_init_with_direct_api_key(mock_openai_cls):
         base_url="http://localhost:8000/v1",
     )
     assert session.get_history()[0] == {"role": "system", "content": "You are Greg."}
+
+
+@patch("character_eng.chat.OpenAI")
+def test_send_partial_response_recorded_on_generator_close(mock_openai_cls):
+    """Closing the send() generator mid-stream should still record partial response."""
+    session = ChatSession("You are Greg.", TEST_CONFIG)
+
+    chunk1 = MagicMock()
+    chunk1.choices = [MagicMock()]
+    chunk1.choices[0].delta.content = "Hello "
+    chunk1.usage = None
+
+    chunk2 = MagicMock()
+    chunk2.choices = [MagicMock()]
+    chunk2.choices[0].delta.content = "world!"
+    chunk2.usage = None
+
+    chunk3 = MagicMock()
+    chunk3.choices = [MagicMock()]
+    chunk3.choices[0].delta.content = " More text"
+    chunk3.usage = None
+
+    mock_client = mock_openai_cls.return_value
+    mock_client.chat.completions.create.return_value = iter([chunk1, chunk2, chunk3])
+
+    # Only consume first two chunks, then close the generator (simulates barge-in)
+    gen = session.send("Hi")
+    first = next(gen)
+    second = next(gen)
+    gen.close()  # Barge-in — closes generator mid-stream
+
+    assert first == "Hello "
+    assert second == "world!"
+
+    # Partial response should still be recorded in history
+    history = session.get_history()
+    assert len(history) == 3  # system + user + assistant
+    assert history[1] == {"role": "user", "content": "Hi"}
+    assert history[2] == {"role": "assistant", "content": "Hello world!"}

@@ -1,6 +1,6 @@
 # Character Engine
 
-Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Characters have personalities, world state that evolves during conversation, and a two-speed script system — a fast eval (every turn, non-blocking) tracks progress through premeditated dialogue beats, while a slow planner (Gemini Flash 3) generates multi-beat conversation scripts. Eval and plan run in background threads so the user can keep chatting without waiting. During conversation, beats use LLM-guided delivery: the beat's intent guides the LLM to respond naturally to the user while serving the beat's purpose (no verbatim pasting). The `/beat` command (autonomous time-passing) still uses verbatim delivery for TTS pre-rendering. Each beat includes gaze and expression data for animation.
+Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Optional **voice mode** (Deepgram STT + ElevenLabs TTS) lets you speak to characters and hear them respond. Characters have personalities, world state that evolves during conversation, and a two-speed script system — a fast eval (every turn, non-blocking) tracks progress through premeditated dialogue beats, while a slow planner (Gemini Flash 3) generates multi-beat conversation scripts. Eval and plan run in background threads so the user can keep chatting without waiting. During conversation, beats use LLM-guided delivery: the beat's intent guides the LLM to respond naturally to the user while serving the beat's purpose (no verbatim pasting). The `/beat` command (autonomous time-passing) still uses verbatim delivery for TTS pre-rendering. Each beat includes gaze and expression data for animation.
 
 World state uses a two-speed update system: the fast path immediately stores changes as pending and lets the character react (no LLM call needed), while the slow path reconciles pending changes into structured state mutations in the background using stable fact IDs (`f1`, `f2`, ...) — eliminating index-shift bugs that plagued small models.
 
@@ -12,12 +12,22 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 uv sync
 ```
 
-Add API keys to `.env` (at least one required):
+For voice mode (optional):
+
+```bash
+uv sync --extra voice
+```
+
+Add API keys to `.env` (at least one LLM key required):
 
 ```
 CEREBRAS_API_KEY=your_key_here
 GROQ_API_KEY=your_key_here
 GEMINI_API_KEY=your_key_here
+
+# Voice mode (optional)
+DEEPGRAM_API_KEY=your_key_here
+ELEVENLABS_API_KEY=your_key_here
 ```
 
 If multiple keys are set, you'll choose a model at startup. If only one is set, it's auto-selected. The planner and reconciler require `GEMINI_API_KEY` — if not set, the script system runs in eval-only mode and the reconciler falls back to the chat model. Background eval uses `GROQ_API_KEY` for faster thinking via Groq Llama 70B — if not set, falls back to the chat model.
@@ -25,7 +35,8 @@ If multiple keys are set, you'll choose a model at startup. If only one is set, 
 ## Run
 
 ```bash
-uv run -m character_eng
+uv run -m character_eng          # text mode
+uv run -m character_eng --voice  # voice mode (speak to chat, hear responses)
 ```
 
 Pick a character from the menu, then chat. The character evaluates each turn in the background, tracks a script of dialogue beats, and adapts naturally. In-session commands:
@@ -37,6 +48,8 @@ Pick a character from the menu, then chat. The character evaluates each turn in 
 | `/beat` | Deliver next scripted beat (time passes) — checks conditions, shows idle line if not met |
 | `/plan` | Show current script (beat list with current beat highlighted) |
 | `/goals` | Show character goals (long-term) |
+| `/voice` | Toggle voice mode on/off mid-session |
+| `/devices` | List audio input/output devices |
 | `/reload` | Reload all prompt files from disk (for live editing) |
 | `/trace` | Show system prompt, model, and token usage |
 | `/back` | Return to character select |
@@ -60,7 +73,57 @@ World changes (`/world <text>`) use a two-speed system:
 
 **Fast path** (immediate, no LLM): The change is stored as pending, a narrator message is injected into the conversation, and the character reacts via LLM streaming. This happens instantly.
 
-**Slow path** (background thread): A reconciler LLM (using `PLAN_MODEL` if available, otherwise the chat model) processes all pending changes against ID-tagged dynamic facts, producing structured mutations (add/remove facts by stable ID, events). Results are applied at the start of the next turn with a "Reconciled" diff panel. Multiple `/world` commands before reconciliation accumulate — the next reconcile batch processes all.
+**Slow path** (background thread): A reconciler LLM (using `BIG_MODEL` if available, otherwise the chat model) processes all pending changes against ID-tagged dynamic facts, producing structured mutations (add/remove facts by stable ID, events). Results are applied at the start of the next turn with a "Reconciled" diff panel. Multiple `/world` commands before reconciliation accumulate — the next reconcile batch processes all.
+
+## Voice mode
+
+Voice mode adds speech I/O as a layer around the existing text pipeline. Everything works the same — voice just replaces keyboard input with microphone and adds TTS output.
+
+**Start with voice**: `uv run -m character_eng --voice`
+**Toggle mid-session**: `/voice` command or `Escape` hotkey
+
+### How it works
+
+1. **Mic** (sounddevice 16kHz) captures audio and streams it to Deepgram
+2. **Deepgram** (nova-3 model) detects speech turns and returns transcripts
+3. Transcript replaces keyboard input — goes through the same `ChatSession.send()` pipeline
+4. **LLM response chunks** stream simultaneously to the terminal and to ElevenLabs TTS
+5. **ElevenLabs** (eleven_flash_v2_5) streams PCM audio back to the speaker in real-time
+6. **Auto-beat**: 4 seconds after the character finishes speaking, `/beat` fires automatically (advancing the script)
+
+### Barge-in
+
+If you start speaking while the character is responding, barge-in kicks in:
+- Deepgram detects speech start → cancels LLM stream + TTS + speaker playback (only while TTS is actively generating, guarded by `_is_speaking` flag to ignore ambient noise)
+- Your full utterance is captured and processed as the next input
+- Partial LLM responses are still recorded in conversation history
+
+### Voice hotkeys
+
+In voice mode, single keystrokes trigger commands (no Enter needed):
+
+| Key | Command |
+|-----|---------|
+| `w` | `/world` |
+| `b` | `/beat` |
+| `p` | `/plan` |
+| `g` | `/goals` |
+| `t` | `/trace` |
+| `Escape` | Toggle voice off |
+
+### Audio devices
+
+When voice mode starts, the active mic and speaker are printed. Use `/devices` to list all available audio devices with their indices. The app uses your system defaults — change them in your OS audio settings.
+
+### Requirements
+
+Voice mode requires `uv sync --extra voice` and two API keys in `.env`:
+- `DEEPGRAM_API_KEY` — for speech-to-text
+- `ELEVENLABS_API_KEY` — for text-to-speech
+
+Run `uv run -m character_eng.qa_voice` to verify connectivity (no mic needed).
+
+If voice deps or keys are missing, the app falls back to text mode gracefully.
 
 ## Editing prompts
 
@@ -101,11 +164,7 @@ prompts/characters/my_npc/
 
 ## Local models
 
-Local models run via vLLM on your GPU. You can start vLLM two ways:
-
-**From the app** (recommended) — when local models are configured but vLLM isn't running, the model menu shows a hint and an `s` option to start a local model. Pick a model, and vLLM launches with live output streaming. Once healthy, the model is auto-selected. The vLLM process is cleaned up automatically when you quit the app.
-
-**Standalone** — use `serve.py` directly:
+Local models run via vLLM on your GPU. Start vLLM with `serve.py`:
 
 ```bash
 # Start vLLM server (interactive model picker)
@@ -131,6 +190,9 @@ uv run -m character_eng.qa_world                       # world state reconciler
 uv run -m character_eng.qa_chat                        # end-to-end chat, world, eval
 uv run -m character_eng.qa_world --model groq-llama    # test with Groq Llama
 uv run -m character_eng.qa_chat --model groq-llama     # test with Groq Llama
+
+# Voice connectivity test (Deepgram + ElevenLabs, no mic needed)
+uv run -m character_eng.qa_voice
 
 # Persona QA (6 parallel personas, HTML report)
 uv run -m character_eng.qa_personas                        # default model + character

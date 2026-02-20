@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from character_eng.chat import ChatSession
-from character_eng.models import DEFAULT_MODEL, MODELS, PLAN_MODEL, THINK_MODEL
+from character_eng.models import BIG_MODEL, DEFAULT_MODEL, MODELS
 from character_eng.prompts import load_prompt
 from character_eng.world import (
     Beat,
@@ -64,12 +64,8 @@ def _get_model_config(model_key: str) -> dict | None:
     return cfg
 
 
-def _get_plan_model_config() -> dict | None:
-    return _get_model_config(PLAN_MODEL)
-
-
-def _get_think_model_config() -> dict | None:
-    return _get_model_config(THINK_MODEL)
+def _get_big_model_config() -> dict | None:
+    return _get_model_config(BIG_MODEL)
 
 
 # ---------------------------------------------------------------------------
@@ -84,9 +80,9 @@ class ConversationDriver:
     def __init__(self, character: str, model_config: dict):
         self.character = character
         self.model_config = model_config
-        self.plan_model_config = _get_plan_model_config()
-        think_cfg = _get_think_model_config()
-        self.eval_model_config = think_cfg if think_cfg else model_config
+        big_cfg = _get_big_model_config()
+        self.big_model_config = big_cfg
+        self.eval_model_config = big_cfg if big_cfg else model_config
 
         # Core state
         self.world = load_world_state(character)
@@ -148,7 +144,7 @@ class ConversationDriver:
         pending = self.world.clear_pending()
         if not pending:
             return
-        cfg = self.plan_model_config if self.plan_model_config else self.model_config
+        cfg = self.big_model_config if self.big_model_config else self.model_config
         self._reconcile_thread = threading.Thread(
             target=self._run_reconcile, args=(pending, cfg), daemon=True
         )
@@ -246,7 +242,7 @@ class ConversationDriver:
 
     # --- Background plan ---
 
-    def _run_plan_bg(self, system_prompt, history, goals, plan_request, plan_model_config):
+    def _run_plan_bg(self, system_prompt, history, goals, plan_request, big_model_config):
         try:
             result = plan_call(
                 system_prompt=system_prompt,
@@ -254,7 +250,7 @@ class ConversationDriver:
                 history=history,
                 goals=goals,
                 plan_request=plan_request,
-                plan_model_config=plan_model_config,
+                plan_model_config=big_model_config,
             )
             with self._plan_lock:
                 self._plan_result = result
@@ -262,7 +258,7 @@ class ConversationDriver:
             pass
 
     def _start_plan(self, plan_request: str = ""):
-        if self.plan_model_config is None:
+        if self.big_model_config is None:
             return
         if self._plan_thread is not None and self._plan_thread.is_alive():
             return
@@ -274,7 +270,7 @@ class ConversationDriver:
                 self.session.get_history(),
                 self.goals,
                 plan_request,
-                self.plan_model_config,
+                self.big_model_config,
             ),
             daemon=True,
         )
@@ -324,7 +320,7 @@ class ConversationDriver:
 
     def boot(self):
         """Synchronous initial plan (same as __main__.py boot)."""
-        if self.plan_model_config is None:
+        if self.big_model_config is None:
             return
         try:
             result = plan_call(
@@ -333,7 +329,7 @@ class ConversationDriver:
                 history=self.session.get_history(),
                 goals=self.goals,
                 plan_request="",
-                plan_model_config=self.plan_model_config,
+                plan_model_config=self.big_model_config,
             )
             if result and result.beats:
                 self.script.replace(result.beats)
@@ -421,7 +417,7 @@ class ConversationDriver:
 
         # If no current beat, synchronous replan
         if self.script.current_beat is None:
-            if self.plan_model_config:
+            if self.big_model_config:
                 try:
                     result = plan_call(
                         system_prompt=self.session.system_prompt,
@@ -429,7 +425,7 @@ class ConversationDriver:
                         history=self.session.get_history(),
                         goals=self.goals,
                         plan_request="",
-                        plan_model_config=self.plan_model_config,
+                        plan_model_config=self.big_model_config,
                     )
                     if result and result.beats:
                         self.script.replace(result.beats)
@@ -1192,12 +1188,13 @@ def main():
         print(f"Missing API key: {env}")
         return
 
-    # Persona LLM: use think model (Groq 70B) if available, else chat model
-    persona_model_config = _get_think_model_config() or model_config
+    # Persona LLM: use big model if available, else chat model
+    big_cfg = _get_big_model_config()
+    persona_model_config = big_cfg or model_config
 
     print(f"Persona QA — model: {model_config['name']} ({args.model}), character: {args.character}")
     print(f"Persona LLM: {persona_model_config['name']}")
-    print(f"Plan model: {_get_plan_model_config()['name'] if _get_plan_model_config() else 'unavailable'}")
+    print(f"Big model: {big_cfg['name'] if big_cfg else 'unavailable'}")
     print(f"Running {len(PERSONAS)} personas in parallel...\n")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

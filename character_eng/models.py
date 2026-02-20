@@ -72,6 +72,10 @@ MODELS = {
     },
 }
 
-DEFAULT_MODEL = "cerebras-llama"
-PLAN_MODEL = "gemini-3-flash"
-THINK_MODEL = "groq-llama"
+# ── Active model selection ──────────────────────────────────────
+# Change these two lines to swap models. Everything else adapts.
+CHAT_MODEL = "cerebras-llama"   # small/fast  — streaming dialogue
+BIG_MODEL = "groq-llama"        # big/slow    — eval, plan, reconcile
+
+# Legacy alias used by QA scripts
+DEFAULT_MODEL = CHAT_MODEL

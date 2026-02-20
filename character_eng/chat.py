@@ -21,7 +21,11 @@ class ChatSession:
         self._last_usage = None
 
     def send(self, message: str):
-        """Send a message and yield streamed text chunks."""
+        """Send a message and yield streamed text chunks.
+
+        Uses try/finally so partial responses (e.g. from barge-in closing the
+        generator mid-stream) still get recorded in message history.
+        """
         self._messages.append({"role": "user", "content": message})
 
         kwargs = dict(
@@ -35,15 +39,18 @@ class ChatSession:
         stream = self._client.chat.completions.create(**kwargs)
 
         full_response = []
-        for chunk in stream:
-            if chunk.usage:
-                self._last_usage = chunk.usage
-            if chunk.choices and chunk.choices[0].delta.content:
-                text = chunk.choices[0].delta.content
-                full_response.append(text)
-                yield text
-
-        self._messages.append({"role": "assistant", "content": "".join(full_response)})
+        try:
+            for chunk in stream:
+                if chunk.usage:
+                    self._last_usage = chunk.usage
+                if chunk.choices and chunk.choices[0].delta.content:
+                    text = chunk.choices[0].delta.content
+                    full_response.append(text)
+                    yield text
+        finally:
+            response_text = "".join(full_response)
+            if response_text:
+                self._messages.append({"role": "assistant", "content": response_text})
 
     def add_assistant(self, content: str):
         """Add an assistant message to history without making an LLM call."""
