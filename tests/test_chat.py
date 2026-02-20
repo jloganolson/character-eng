@@ -147,6 +147,18 @@ def test_init_with_direct_api_key(mock_openai_cls):
 
 
 @patch("character_eng.chat.OpenAI")
+def test_replace_last_assistant(mock_openai_cls):
+    """replace_last_assistant should modify the most recent assistant message."""
+    session = ChatSession("You are Greg.", TEST_CONFIG)
+    session.add_assistant("Full response here.")
+    session.inject_system("Some eval note.")
+    session.replace_last_assistant("Full resp —")
+    history = session.get_history()
+    assert history[1] == {"role": "assistant", "content": "Full resp —"}
+    assert history[2] == {"role": "system", "content": "Some eval note."}
+
+
+@patch("character_eng.chat.OpenAI")
 def test_send_partial_response_recorded_on_generator_close(mock_openai_cls):
     """Closing the send() generator mid-stream should still record partial response."""
     session = ChatSession("You are Greg.", TEST_CONFIG)

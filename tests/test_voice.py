@@ -679,6 +679,68 @@ def test_speaker_wait_for_audio_timeout():
     assert result is False
 
 
+def test_speaker_bytes_enqueued_tracks_enqueue():
+    """_bytes_enqueued should increment on enqueue."""
+    speaker = SpeakerStream()
+    assert speaker._bytes_enqueued == 0
+    speaker.enqueue(b"\x00" * 100)
+    assert speaker._bytes_enqueued == 100
+    speaker.enqueue(b"\x00" * 200)
+    assert speaker._bytes_enqueued == 300
+
+
+def test_speaker_bytes_played_tracks_callback():
+    """_bytes_played should increment when callback consumes from buffer."""
+    speaker = SpeakerStream()
+    speaker.enqueue(b"\x42" * 4800)
+    outdata = bytearray(4800)
+    speaker._callback(outdata, 2400, None, None)
+    assert speaker._bytes_played == 4800
+
+
+def test_speaker_playback_ratio():
+    """playback_ratio should reflect fraction of enqueued audio that was played."""
+    speaker = SpeakerStream()
+    speaker.enqueue(b"\x42" * 4800)
+    assert speaker.playback_ratio == 0.0
+    # Play half
+    outdata = bytearray(2400)
+    speaker._callback(outdata, 1200, None, None)
+    assert abs(speaker.playback_ratio - 0.5) < 0.01
+
+
+def test_speaker_playback_ratio_empty():
+    """playback_ratio should be 0.0 when nothing enqueued."""
+    speaker = SpeakerStream()
+    assert speaker.playback_ratio == 0.0
+
+
+def test_speaker_reset_counters():
+    """reset_counters should zero both played and enqueued."""
+    speaker = SpeakerStream()
+    speaker.enqueue(b"\x00" * 100)
+    outdata = bytearray(100)
+    speaker._callback(outdata, 50, None, None)
+    assert speaker._bytes_enqueued > 0
+    assert speaker._bytes_played > 0
+    speaker.reset_counters()
+    assert speaker._bytes_enqueued == 0
+    assert speaker._bytes_played == 0
+
+
+def test_speaker_flush_preserves_counters():
+    """flush() should NOT reset byte counters (needed for barge-in ratio)."""
+    speaker = SpeakerStream()
+    speaker.enqueue(b"\x00" * 100)
+    outdata = bytearray(50)
+    speaker._callback(outdata, 25, None, None)
+    played_before = speaker._bytes_played
+    enqueued_before = speaker._bytes_enqueued
+    speaker.flush()
+    assert speaker._bytes_played == played_before
+    assert speaker._bytes_enqueued == enqueued_before
+
+
 # --- VoiceIO barge-in guard ---
 
 
@@ -762,6 +824,22 @@ def test_voice_io_speak_text_clears_barged_in():
 
     voice.speak_text("hello")
     assert voice._barged_in is False
+
+
+def test_voice_io_speaker_playback_ratio_delegates():
+    """speaker_playback_ratio should delegate to speaker.playback_ratio."""
+    voice = VoiceIO()
+    mock_speaker = MagicMock()
+    mock_speaker.playback_ratio = 0.75
+    voice._speaker = mock_speaker
+    assert voice.speaker_playback_ratio == 0.75
+
+
+def test_voice_io_speaker_playback_ratio_no_speaker():
+    """speaker_playback_ratio should return 1.0 when no speaker."""
+    voice = VoiceIO()
+    voice._speaker = None
+    assert voice.speaker_playback_ratio == 1.0
 
 
 def test_voice_io_turn_start_cancels_auto_beat_when_not_speaking():

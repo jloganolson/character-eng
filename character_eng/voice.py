@@ -228,6 +228,8 @@ class SpeakerStream:
         self._audio_started = threading.Event()
         self._actual_rate = self.NATIVE_RATE
         self._resample = False
+        self._bytes_played = 0
+        self._bytes_enqueued = 0
 
     def _callback(self, outdata, frames, time_info, status):
         """sounddevice OutputStream callback — runs in audio thread."""
@@ -237,12 +239,14 @@ class SpeakerStream:
             if available >= bytes_needed:
                 data = bytes(self._buffer[:bytes_needed])
                 del self._buffer[:bytes_needed]
+                self._bytes_played += bytes_needed
                 outdata[:] = data
             else:
                 # Partial data + silence
                 if available > 0:
                     data = bytes(self._buffer[:available])
                     del self._buffer[:available]
+                    self._bytes_played += available
                     outdata[:available] = data
                 # Fill rest with silence
                 outdata[available:] = b'\x00' * (len(outdata) - available)
@@ -255,6 +259,7 @@ class SpeakerStream:
             pcm = self._upsample(pcm)
         with self._lock:
             self._buffer.extend(pcm)
+            self._bytes_enqueued += len(pcm)
             self._done_event.clear()
             if len(pcm) > 0:
                 self._audio_started.set()
@@ -275,6 +280,20 @@ class SpeakerStream:
         old_idx = np.arange(old_len)
         new_idx = np.linspace(0, old_len - 1, new_len)
         return np.interp(new_idx, old_idx, samples.astype(np.float64)).astype(np.int16).tobytes()
+
+    def reset_counters(self):
+        """Reset played/enqueued byte counters for a new utterance."""
+        with self._lock:
+            self._bytes_played = 0
+            self._bytes_enqueued = 0
+
+    @property
+    def playback_ratio(self) -> float:
+        """Fraction of enqueued audio that has been played (0.0 to 1.0)."""
+        with self._lock:
+            if self._bytes_enqueued == 0:
+                return 0.0
+            return min(self._bytes_played / self._bytes_enqueued, 1.0)
 
     def flush(self):
         """Clear the playback buffer immediately (barge-in)."""
@@ -781,6 +800,13 @@ class VoiceIO:
                 if not self._started:
                     return EXIT
 
+    @property
+    def speaker_playback_ratio(self) -> float:
+        """Fraction of last utterance's audio that was actually played (0.0-1.0)."""
+        if self._speaker is not None:
+            return self._speaker.playback_ratio
+        return 1.0
+
     def speak(self, text_chunks: Iterator[str]) -> None:
         """Feed LLM streaming chunks to TTS, wait for speaker to finish, start auto-beat.
 
@@ -789,6 +815,8 @@ class VoiceIO:
         self._barged_in = False
         self._cancelled.clear()
         self._is_speaking = True
+        if self._speaker is not None:
+            self._speaker.reset_counters()
         for chunk in text_chunks:
             if self._cancelled.is_set():
                 break
@@ -828,6 +856,8 @@ class VoiceIO:
         self._barged_in = False
         self._cancelled.clear()
         self._is_speaking = True
+        if self._speaker is not None:
+            self._speaker.reset_counters()
         if self._tts is not None:
             self._tts.send_text(text)
             self._tts.flush()
@@ -886,11 +916,12 @@ class VoiceIO:
 
         Always cancels the auto-beat timer (user spoke, so don't auto-advance).
         Only cancels active speech when _is_speaking is True.
+        Uses \\n prefix (not \\r) to preserve partial response text on the terminal.
         """
         self._cancel_auto_beat()
         if self._is_speaking:
             if self._started:
-                sys.stdout.write("\r\033[K  [heard — interrupting]\n")
+                sys.stdout.write("\n  [heard — interrupting]\n")
                 sys.stdout.flush()
             self.cancel_speech()
 

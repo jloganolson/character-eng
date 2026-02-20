@@ -858,9 +858,16 @@ def deliver_beat(session, beat, label, voice_io=None):
     console.print(npc_name, end="")
     console.print(beat.line)
     console.print()
-    session.add_assistant(beat.line)
     if voice_io is not None:
         voice_io.speak_text(beat.line)
+        if voice_io._barged_in:
+            ratio = voice_io.speaker_playback_ratio
+            spoken_chars = max(int(len(beat.line) * ratio), 1)
+            if spoken_chars < len(beat.line):
+                truncated = beat.line[:spoken_chars] + " \u2014"
+                session.add_assistant(truncated)
+                return truncated
+    session.add_assistant(beat.line)
     return beat.line
 
 
@@ -957,10 +964,16 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
                 npc_name = f"{label}: "
                 console.print(f"[bold magenta]{npc_name}[/bold magenta]{cond_result.idle}")
                 console.print()
-                session.add_assistant(cond_result.idle)
-                entry["idle"] = cond_result.idle
+                idle_text = cond_result.idle
                 if voice_io is not None:
-                    voice_io.speak_text(cond_result.idle)
+                    voice_io.speak_text(idle_text)
+                    if voice_io._barged_in:
+                        ratio = voice_io.speaker_playback_ratio
+                        spoken = max(int(len(idle_text) * ratio), 1)
+                        if spoken < len(idle_text):
+                            idle_text = idle_text[:spoken] + " \u2014"
+                session.add_assistant(idle_text)
+                entry["idle"] = idle_text
             if cond_result.gaze:
                 console.print(f"[dim]  gaze:       {cond_result.gaze}[/dim]")
                 entry["gaze"] = cond_result.gaze
@@ -1092,8 +1105,22 @@ def stream_response(session, label, message, voice_io=None) -> str:
             full_response.append(chunk)
             console.print(chunk, end="", highlight=False)
 
+    # Close generator to trigger chat.py's finally block (records partial response)
+    gen.close()
+
+    response_text = "".join(full_response)
+
+    # Truncate history to approximate what was actually spoken on barge-in
+    if voice_io is not None and voice_io._barged_in and response_text:
+        ratio = voice_io.speaker_playback_ratio
+        spoken_chars = max(int(len(response_text) * ratio), 1)
+        if spoken_chars < len(response_text):
+            truncated = response_text[:spoken_chars] + " \u2014"
+            session.replace_last_assistant(truncated)
+            response_text = truncated
+
     console.print("\n")
-    return "".join(full_response)
+    return response_text
 
 
 def show_trace(session: ChatSession):

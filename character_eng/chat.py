@@ -56,6 +56,13 @@ class ChatSession:
         """Add an assistant message to history without making an LLM call."""
         self._messages.append({"role": "assistant", "content": content})
 
+    def replace_last_assistant(self, content: str):
+        """Replace the most recent assistant message (for barge-in truncation)."""
+        for i in range(len(self._messages) - 1, -1, -1):
+            if self._messages[i]["role"] == "assistant":
+                self._messages[i]["content"] = content
+                return
+
     def inject_system(self, content: str):
         """Append a system message to the conversation history."""
         self._messages.append({"role": "system", "content": content})

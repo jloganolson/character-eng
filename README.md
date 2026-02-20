@@ -116,6 +116,7 @@ If you start speaking while the character is responding, barge-in kicks in:
 - Partial LLM responses are still recorded in conversation history
 - The character is told it was interrupted — it acknowledges briefly and yields the floor
 - Auto-beat is suppressed after the barge-in response, giving you silence until you speak again
+- Conversation history is truncated to approximate what was actually spoken (using speaker playback ratio), so the LLM knows where it was cut off
 
 ### Voice hotkeys
 
