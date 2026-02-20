@@ -1058,6 +1058,8 @@ def stream_response(session, label, message, voice_io=None) -> str:
     npc_name = Text(f"{label}: ", style="bold magenta")
     console.print(npc_name, end="")
     full_response = []
+    t_start = time.time()
+    t_first = None
     gen = session.send(message)
 
     if voice_io is not None:
@@ -1066,13 +1068,18 @@ def stream_response(session, label, message, voice_io=None) -> str:
         voice_io._is_speaking = True
         if voice_io._speaker is not None:
             voice_io._speaker.reset_counters()
+            voice_io._speaker._audio_started.clear()
 
         for chunk in gen:
             if voice_io._cancelled.is_set():
                 break
+            if t_first is None:
+                t_first = time.time()
             full_response.append(chunk)
             console.print(chunk, end="", highlight=False)
             voice_io._tts.send_text(chunk)
+
+        t_llm_done = time.time()
 
         # Signal end of text input
         if not voice_io._cancelled.is_set() and voice_io._tts is not None:
@@ -1083,8 +1090,10 @@ def stream_response(session, label, message, voice_io=None) -> str:
             voice_io._tts.wait_for_done(timeout=15.0)
 
         # Wait for first audio to arrive at the speaker
+        t_first_audio = None
         if not voice_io._cancelled.is_set() and voice_io._speaker is not None:
-            voice_io._speaker.wait_for_audio(timeout=0.5)
+            if voice_io._speaker.wait_for_audio(timeout=0.5):
+                t_first_audio = time.time()
 
         # Wait for speaker to finish playback
         if voice_io._speaker is not None and not voice_io._cancelled.is_set():
@@ -1103,6 +1112,8 @@ def stream_response(session, label, message, voice_io=None) -> str:
             voice_io._start_auto_beat()
     else:
         for chunk in gen:
+            if t_first is None:
+                t_first = time.time()
             full_response.append(chunk)
             console.print(chunk, end="", highlight=False)
 
@@ -1124,7 +1135,17 @@ def stream_response(session, label, message, voice_io=None) -> str:
     if voice_io is not None:
         voice_io._barged_in = False
 
-    console.print("\n")
+    # Timing info
+    t_end = time.time()
+    ttft_ms = int((t_first - t_start) * 1000) if t_first else 0
+    if voice_io is not None and t_first:
+        llm_ms = int((t_llm_done - t_start) * 1000)
+        first_audio_ms = int((t_first_audio - t_start) * 1000) if t_first_audio else 0
+        spoken_ms = int((t_end - t_start) * 1000)
+        console.print(f"\n[dim]  {ttft_ms}ms TTFT · {llm_ms}ms LLM · {first_audio_ms}ms first audio · {spoken_ms}ms spoken[/dim]\n")
+    else:
+        total_ms = int((t_end - t_start) * 1000)
+        console.print(f"\n[dim]  {ttft_ms}ms TTFT · {total_ms}ms total[/dim]\n")
     return response_text
 
 
