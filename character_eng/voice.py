@@ -111,10 +111,13 @@ class MicStream:
 
     Callback puts raw bytes on a queue. A feeder daemon thread drains the queue
     and calls on_audio(bytes) — typically sending to Deepgram.
+
+    If the device doesn't support mono, opens with the device's actual channel
+    count and downmixes to mono (takes channel 0) in the callback.
     """
 
     SAMPLE_RATE = 16000
-    CHANNELS = 1
+    CHANNELS = 1  # target: mono for Deepgram
     DTYPE = "int16"
     BLOCKSIZE = 1280  # ~80ms at 16kHz
 
@@ -125,10 +128,20 @@ class MicStream:
         self._stream = None
         self._feeder: threading.Thread | None = None
         self._running = False
+        self._actual_channels = 1
 
     def _callback(self, indata, frames, time_info, status):
         """sounddevice InputStream callback — runs in audio thread."""
-        self._queue.put(bytes(indata))
+        raw = bytes(indata)
+        if self._actual_channels > 1:
+            # Downmix: take channel 0 only (every Nth int16 sample)
+            import numpy as np
+
+            samples = np.frombuffer(raw, dtype=np.int16)
+            mono = samples[:: self._actual_channels].copy()
+            self._queue.put(mono.tobytes())
+        else:
+            self._queue.put(raw)
 
     def _feed_loop(self):
         """Daemon thread that drains the queue and calls on_audio."""
@@ -143,17 +156,35 @@ class MicStream:
         import sounddevice as sd
 
         self._running = True
-        kwargs = dict(
-            samplerate=self.SAMPLE_RATE,
-            channels=self.CHANNELS,
-            dtype=self.DTYPE,
-            blocksize=self.BLOCKSIZE,
-            callback=self._callback,
-        )
+
+        # Determine channel count: try mono first, fall back to device's count
+        channels_to_try = [self.CHANNELS]
         if self._device is not None:
-            kwargs["device"] = self._device
-        self._stream = sd.RawInputStream(**kwargs)
-        self._stream.start()
+            dev_info = sd.query_devices(self._device)
+            dev_channels = int(dev_info["max_input_channels"])
+            if dev_channels > 1 and dev_channels not in channels_to_try:
+                channels_to_try.append(dev_channels)
+
+        for channels in channels_to_try:
+            kwargs = dict(
+                samplerate=self.SAMPLE_RATE,
+                channels=channels,
+                dtype=self.DTYPE,
+                blocksize=self.BLOCKSIZE,
+                callback=self._callback,
+            )
+            if self._device is not None:
+                kwargs["device"] = self._device
+            try:
+                self._stream = sd.RawInputStream(**kwargs)
+                self._stream.start()
+                self._actual_channels = channels
+                break
+            except sd.PortAudioError:
+                if channels == channels_to_try[-1]:
+                    raise
+                continue
+
         self._feeder = threading.Thread(target=self._feed_loop, daemon=True)
         self._feeder.start()
 
@@ -177,15 +208,15 @@ class MicStream:
 class SpeakerStream:
     """Plays PCM audio via sounddevice OutputStream.
 
-    Output at 24kHz/16-bit/mono matching ElevenLabs PCM output format.
-    enqueue(pcm) adds audio. flush() clears buffer (barge-in).
-    wait_until_done() blocks until buffer drained.
+    Input at 24kHz/16-bit/mono matching ElevenLabs PCM output format.
+    If the device doesn't support 24kHz, falls back to 48kHz with 2x upsampling.
+    enqueue(pcm) adds audio (resampled automatically if needed).
+    flush() clears buffer (barge-in). wait_until_done() blocks until buffer drained.
     """
 
-    SAMPLE_RATE = 24000
+    NATIVE_RATE = 24000  # ElevenLabs PCM output rate
     CHANNELS = 1
     DTYPE = "int16"
-    BLOCKSIZE = 2400  # 100ms at 24kHz
 
     def __init__(self, device: int | None = None):
         self._device = device
@@ -195,6 +226,8 @@ class SpeakerStream:
         self._done_event = threading.Event()
         self._done_event.set()  # starts "done" (nothing to play)
         self._audio_started = threading.Event()
+        self._actual_rate = self.NATIVE_RATE
+        self._resample = False
 
     def _callback(self, outdata, frames, time_info, status):
         """sounddevice OutputStream callback — runs in audio thread."""
@@ -217,12 +250,31 @@ class SpeakerStream:
                     self._done_event.set()
 
     def enqueue(self, pcm: bytes):
-        """Add PCM audio bytes to the playback buffer."""
+        """Add PCM audio bytes to the playback buffer. Resamples if needed."""
+        if self._resample and len(pcm) > 0:
+            pcm = self._upsample(pcm)
         with self._lock:
             self._buffer.extend(pcm)
             self._done_event.clear()
             if len(pcm) > 0:
                 self._audio_started.set()
+
+    def _upsample(self, pcm: bytes) -> bytes:
+        """Resample 24kHz PCM to the actual output rate."""
+        import numpy as np
+
+        ratio = self._actual_rate / self.NATIVE_RATE
+        samples = np.frombuffer(pcm, dtype=np.int16)
+        int_ratio = self._actual_rate // self.NATIVE_RATE
+        if self._actual_rate == int_ratio * self.NATIVE_RATE:
+            # Integer ratio (e.g. 48000/24000 = 2x): simple repeat
+            return np.repeat(samples, int_ratio).tobytes()
+        # Non-integer ratio (e.g. 44100/24000): linear interpolation
+        old_len = len(samples)
+        new_len = round(old_len * ratio)
+        old_idx = np.arange(old_len)
+        new_idx = np.linspace(0, old_len - 1, new_len)
+        return np.interp(new_idx, old_idx, samples.astype(np.float64)).astype(np.int16).tobytes()
 
     def flush(self):
         """Clear the playback buffer immediately (barge-in)."""
@@ -246,17 +298,36 @@ class SpeakerStream:
     def start(self):
         import sounddevice as sd
 
-        kwargs = dict(
-            samplerate=self.SAMPLE_RATE,
-            channels=self.CHANNELS,
-            dtype=self.DTYPE,
-            blocksize=self.BLOCKSIZE,
-            callback=self._callback,
-        )
+        # Build sample rate fallback chain: native 24kHz → 48kHz → device default
+        rates_to_try = [self.NATIVE_RATE, 48000]
         if self._device is not None:
-            kwargs["device"] = self._device
-        self._stream = sd.RawOutputStream(**kwargs)
-        self._stream.start()
+            dev_info = sd.query_devices(self._device)
+            dev_rate = int(dev_info["default_samplerate"])
+            if dev_rate not in rates_to_try:
+                rates_to_try.append(dev_rate)
+
+        last_error = None
+        for rate in rates_to_try:
+            kwargs = dict(
+                samplerate=rate,
+                channels=self.CHANNELS,
+                dtype=self.DTYPE,
+                blocksize=int(rate * 0.1),  # 100ms
+                callback=self._callback,
+            )
+            if self._device is not None:
+                kwargs["device"] = self._device
+            try:
+                self._stream = sd.RawOutputStream(**kwargs)
+                self._stream.start()
+                self._actual_rate = rate
+                self._resample = (rate != self.NATIVE_RATE)
+                return
+            except sd.PortAudioError as e:
+                last_error = e
+                continue
+
+        raise last_error
 
     def stop(self):
         if self._stream is not None:
@@ -551,6 +622,8 @@ class KeyListener:
     """Non-blocking keystroke reader using tty.setcbreak().
 
     Daemon thread reads single keystrokes and puts mapped commands on the event queue.
+    Saves terminal settings before entering cbreak mode and registers an atexit
+    handler so settings are restored even on abrupt exit (SIGINT/Ctrl+C).
     """
 
     def __init__(self, event_queue: queue.Queue):
@@ -559,11 +632,20 @@ class KeyListener:
         self._running = False
         self._old_settings = None
 
+    def _restore_terminal(self):
+        """Restore saved terminal settings immediately."""
+        if self._old_settings is not None:
+            try:
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, self._old_settings)
+            except Exception:
+                pass
+
     def _listen_loop(self):
         """Read keystrokes in cbreak mode."""
+        if not sys.stdin.isatty():
+            return
         fd = sys.stdin.fileno()
         try:
-            self._old_settings = termios.tcgetattr(fd)
             tty.setcbreak(fd)
             while self._running:
                 # Use select to avoid blocking indefinitely
@@ -575,24 +657,23 @@ class KeyListener:
         except Exception:
             pass
         finally:
-            if self._old_settings is not None:
-                try:
-                    termios.tcsetattr(fd, termios.TCSADRAIN, self._old_settings)
-                except Exception:
-                    pass
+            self._restore_terminal()
 
     def start(self):
+        import atexit
+
+        # Save terminal settings *before* spawning the thread so stop() always has them
+        if sys.stdin.isatty():
+            self._old_settings = termios.tcgetattr(sys.stdin.fileno())
+            atexit.register(self._restore_terminal)
+
         self._running = True
         self._thread = threading.Thread(target=self._listen_loop, daemon=True)
         self._thread.start()
 
     def stop(self):
         self._running = False
-        if self._old_settings is not None:
-            try:
-                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._old_settings)
-            except Exception:
-                pass
+        self._restore_terminal()
         if self._thread is not None:
             self._thread.join(timeout=1)
             self._thread = None
@@ -611,11 +692,12 @@ class VoiceIO:
         voice.stop()
     """
 
-    def __init__(self, voice_id: str = "", input_device: int | None = None, output_device: int | None = None):
+    def __init__(self, voice_id: str = "", input_device: int | None = None, output_device: int | None = None, mic_mute_during_playback: bool = True):
         self._event_queue: queue.Queue[str] = queue.Queue()
         self._cancelled = threading.Event()
         self._is_speaking = False
         self._auto_beat_timer: threading.Timer | None = None
+        self._mic_mute_during_playback = mic_mute_during_playback
 
         # Components (created in start())
         self._speaker: SpeakerStream | None = None
@@ -780,8 +862,14 @@ class VoiceIO:
             self._speaker.flush()
 
     def _on_mic_audio(self, data: bytes):
-        """Forward mic audio to STT, unless muted during TTS playback (echo suppression)."""
-        if not self._is_speaking and self._stt is not None:
+        """Forward mic audio to STT, unless muted during TTS playback (echo suppression).
+
+        When mic_mute_during_playback is False (e.g. device has hardware AEC),
+        audio is always forwarded, enabling voice barge-in during playback.
+        """
+        if self._mic_mute_during_playback and self._is_speaking:
+            return
+        if self._stt is not None:
             self._stt.send_audio(data)
 
     def _on_transcript(self, text: str):

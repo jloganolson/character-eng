@@ -13,6 +13,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from character_eng.chat import ChatSession
+from character_eng.config import load_config
 from character_eng.models import BIG_MODEL, CHAT_MODEL, MODELS
 from character_eng.prompts import list_characters, load_prompt
 from character_eng.qa_personas import _action_badge, _esc, annotation_assets
@@ -426,6 +427,50 @@ def save_chat_html(character: str, model_config: dict, log: list[dict], session_
 
 
 
+def _voice_dev_kw(voice_cfg):
+    """Build kwargs dict from voice config for device display."""
+    kw = {}
+    if voice_cfg is not None:
+        if voice_cfg.input_device is not None:
+            kw["input_device"] = voice_cfg.input_device
+        if voice_cfg.output_device is not None:
+            kw["output_device"] = voice_cfg.output_device
+    return kw
+
+
+def _create_voice_io(voice_cfg, VoiceIO_cls):
+    """Create a VoiceIO instance from voice config."""
+    kw = _voice_dev_kw(voice_cfg)
+    if voice_cfg is not None and not voice_cfg.mic_mute_during_playback:
+        kw["mic_mute_during_playback"] = False
+    return VoiceIO_cls(**kw)
+
+
+def _show_voice_devices(dev_kw, get_default_devices, list_audio_devices):
+    """Print the active mic/speaker devices after voice init."""
+    devs = list_audio_devices() if dev_kw else None
+
+    if "input_device" in dev_kw:
+        dev = next((d for d in devs if d["index"] == dev_kw["input_device"]), None)
+        if dev:
+            console.print(f"[dim]  Mic:     [{dev['index']}] {dev['name']}[/dim]")
+    else:
+        input_dev, _ = get_default_devices()
+        if input_dev:
+            console.print(f"[dim]  Mic:     [{input_dev['index']}] {input_dev['name']}[/dim]")
+
+    if "output_device" in dev_kw:
+        if devs is None:
+            devs = list_audio_devices()
+        dev = next((d for d in devs if d["index"] == dev_kw["output_device"]), None)
+        if dev:
+            console.print(f"[dim]  Speaker: [{dev['index']}] {dev['name']}[/dim]")
+    else:
+        _, output_dev = get_default_devices()
+        if output_dev:
+            console.print(f"[dim]  Speaker: [{output_dev['index']}] {output_dev['name']}[/dim]")
+
+
 def get_chat_model_config() -> dict | None:
     """Look up the chat model config, return None if API key not set."""
     cfg = MODELS.get(CHAT_MODEL)
@@ -486,7 +531,7 @@ def get_big_model_config():
     return cfg
 
 
-def chat_loop(character: str, model_config: dict, voice_mode: bool = False):
+def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voice_cfg=None):
     """Run the chat loop for a character. Returns on /back or Ctrl+C."""
     label = character.replace("_", " ").title()
     session_id = uuid.uuid4().hex[:8]
@@ -505,18 +550,14 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False):
     # --- Voice setup ---
     voice_io = None
     if voice_mode:
-        from character_eng.voice import VoiceIO, check_voice_available, get_default_devices, TOGGLE_VOICE, EXIT, VOICE_ERROR
+        from character_eng.voice import VoiceIO, check_voice_available, get_default_devices, list_audio_devices, TOGGLE_VOICE, EXIT, VOICE_ERROR
         available, reason = check_voice_available()
         if available:
-            voice_io = VoiceIO()
+            voice_io = _create_voice_io(voice_cfg, VoiceIO)
             try:
                 voice_io.start()
                 console.print("[green]Voice mode active[/green] — speak to chat, Escape to toggle, hotkeys: w/b/p/g/t")
-                input_dev, output_dev = get_default_devices()
-                if input_dev:
-                    console.print(f"[dim]  Mic:     [{input_dev['index']}] {input_dev['name']}[/dim]")
-                if output_dev:
-                    console.print(f"[dim]  Speaker: [{output_dev['index']}] {output_dev['name']}[/dim]")
+                _show_voice_devices(_voice_dev_kw(voice_cfg), get_default_devices, list_audio_devices)
             except Exception as e:
                 console.print(f"[red]Voice init failed: {e}[/red]")
                 console.print("[dim]Falling back to text mode[/dim]")
@@ -657,18 +698,14 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False):
                     voice_io.stop()
                     voice_io = None
                 else:
-                    from character_eng.voice import VoiceIO, check_voice_available, get_default_devices
+                    from character_eng.voice import VoiceIO, check_voice_available, get_default_devices, list_audio_devices
                     available, reason = check_voice_available()
                     if available:
-                        voice_io = VoiceIO()
+                        voice_io = _create_voice_io(voice_cfg, VoiceIO)
                         try:
                             voice_io.start()
                             console.print("[green]Voice mode active[/green] — speak to chat, Escape to toggle, hotkeys: w/b/p/g/t")
-                            input_dev, output_dev = get_default_devices()
-                            if input_dev:
-                                console.print(f"[dim]  Mic:     [{input_dev['index']}] {input_dev['name']}[/dim]")
-                            if output_dev:
-                                console.print(f"[dim]  Speaker: [{output_dev['index']}] {output_dev['name']}[/dim]")
+                            _show_voice_devices(_voice_dev_kw(voice_cfg), get_default_devices, list_audio_devices)
                         except Exception as e:
                             console.print(f"[red]Voice init failed: {e}[/red]")
                             voice_io = None
@@ -1103,6 +1140,11 @@ def main():
     parser.add_argument("--voice", action="store_true", help="Start in voice mode (Deepgram STT + ElevenLabs TTS)")
     args = parser.parse_args()
 
+    cfg = load_config()
+
+    # --voice flag overrides config; config.voice.enabled is the default
+    voice_mode = args.voice or cfg.voice.enabled
+
     console.print(Panel("[bold]NPC Character Chat[/bold]", border_style="green"))
     model_config = get_chat_model_config()
     if model_config is None:
@@ -1115,7 +1157,7 @@ def main():
         if character is None:
             console.print("Goodbye!")
             break
-        chat_loop(character, model_config, voice_mode=args.voice)
+        chat_loop(character, model_config, voice_mode=voice_mode, voice_cfg=cfg.voice)
 
 
 if __name__ == "__main__":

@@ -32,6 +32,23 @@ ELEVENLABS_API_KEY=your_key_here
 
 If multiple keys are set, you'll choose a model at startup. If only one is set, it's auto-selected. The planner and reconciler require `GEMINI_API_KEY` — if not set, the script system runs in eval-only mode and the reconciler falls back to the chat model. Background eval uses `GROQ_API_KEY` for faster thinking via Groq Llama 70B — if not set, falls back to the chat model.
 
+### Configuration (optional)
+
+Copy `config.example.toml` to `config.toml` for persistent settings (gitignored):
+
+```bash
+cp config.example.toml config.toml
+```
+
+```toml
+[voice]
+input_device = 14    # audio device index (run /devices in-app to list)
+output_device = 14   # audio device index
+enabled = true       # start in voice mode by default
+```
+
+The app works without `config.toml` — all settings have defaults. The `--voice` flag still works as an override.
+
 ## Run
 
 ```bash
@@ -113,7 +130,7 @@ In voice mode, single keystrokes trigger commands (no Enter needed):
 
 ### Audio devices
 
-When voice mode starts, the active mic and speaker are printed. Use `/devices` to list all available audio devices with their indices. The app uses your system defaults — change them in your OS audio settings.
+When voice mode starts, the active mic and speaker are printed. Use `/devices` to list all available audio devices with their indices. To use a specific device, set `input_device` and/or `output_device` in `config.toml`. Without config, the app uses your system defaults.
 
 ### Requirements
 

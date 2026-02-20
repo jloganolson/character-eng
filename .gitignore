@@ -12,5 +12,8 @@ wheels/
 # Environment variables
 .env
 
+# User-local config
+config.toml
+
 # QA logs
 logs/

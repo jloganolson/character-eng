@@ -1,0 +1,16 @@
+# User settings for character_eng.
+# Copy this file to config.toml and edit.
+# config.toml is gitignored — your settings stay local.
+
+[voice]
+# Audio device indices (run /devices in-app to list available devices).
+# Leave commented out to use system defaults.
+# input_device = 14    # microphone / mic array
+# output_device = 14   # speaker / line-out
+
+# Start in voice mode by default (same as --voice flag).
+# enabled = false
+
+# Mic muting during TTS playback (echo suppression).
+# Set to false if your mic has hardware AEC (e.g. reSpeaker XVF3800).
+# mic_mute_during_playback = true
