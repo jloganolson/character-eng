@@ -72,8 +72,11 @@ def get_default_devices() -> tuple[dict | None, dict | None]:
     return input_dev, output_dev
 
 
-def check_voice_available() -> tuple[bool, str]:
+def check_voice_available(tts_backend: str = "elevenlabs") -> tuple[bool, str]:
     """Check if voice dependencies and API keys are available.
+
+    Args:
+        tts_backend: "elevenlabs" or "local" — controls which TTS deps are checked.
 
     Returns (available, reason) tuple.
     """
@@ -86,21 +89,35 @@ def check_voice_available() -> tuple[bool, str]:
         import numpy  # noqa: F401
     except ImportError:
         missing.append("numpy")
+
+    # STT is always Deepgram
     try:
         import deepgram  # noqa: F401
     except ImportError:
         missing.append("deepgram-sdk")
-    try:
-        import websocket  # noqa: F401
-    except ImportError:
-        missing.append("websocket-client")
+
+    if tts_backend == "elevenlabs":
+        try:
+            import websocket  # noqa: F401
+        except ImportError:
+            missing.append("websocket-client")
+    elif tts_backend == "local":
+        try:
+            import torch  # noqa: F401
+        except ImportError:
+            missing.append("torch")
+        try:
+            import transformers  # noqa: F401
+        except ImportError:
+            missing.append("transformers")
 
     if missing:
-        return False, f"Missing packages: {', '.join(missing)}. Install with: uv sync --extra voice"
+        extra = "local-tts" if tts_backend == "local" else "voice"
+        return False, f"Missing packages: {', '.join(missing)}. Install with: uv sync --extra {extra}"
 
     if not os.environ.get("DEEPGRAM_API_KEY"):
         return False, "DEEPGRAM_API_KEY not set in .env"
-    if not os.environ.get("ELEVENLABS_API_KEY"):
+    if tts_backend == "elevenlabs" and not os.environ.get("ELEVENLABS_API_KEY"):
         return False, "ELEVENLABS_API_KEY not set in .env"
 
     return True, ""
@@ -727,7 +744,17 @@ class VoiceIO:
         voice.stop()
     """
 
-    def __init__(self, voice_id: str = "", input_device: int | None = None, output_device: int | None = None, mic_mute_during_playback: bool = True):
+    def __init__(
+        self,
+        voice_id: str = "",
+        input_device: int | None = None,
+        output_device: int | None = None,
+        mic_mute_during_playback: bool = True,
+        tts_backend: str = "elevenlabs",
+        ref_audio: str = "",
+        tts_model: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+        tts_device: str = "cuda:0",
+    ):
         self._event_queue: queue.Queue[str] = queue.Queue()
         self._cancelled = threading.Event()
         self._is_speaking = False
@@ -745,6 +772,10 @@ class VoiceIO:
         self._voice_id = voice_id
         self._input_device = input_device
         self._output_device = output_device
+        self._tts_backend = tts_backend
+        self._ref_audio = ref_audio
+        self._tts_model = tts_model
+        self._tts_device = tts_device
         self._started = False
 
     def start(self):
@@ -752,10 +783,20 @@ class VoiceIO:
         self._speaker = SpeakerStream(device=self._output_device)
         self._speaker.start()
 
-        self._tts = ElevenLabsTTS(
-            on_audio=self._speaker.enqueue,
-            voice_id=self._voice_id,
-        )
+        if self._tts_backend == "local":
+            from character_eng.local_tts import LocalTTS
+
+            self._tts = LocalTTS(
+                on_audio=self._speaker.enqueue,
+                ref_audio_path=self._ref_audio,
+                model_id=self._tts_model,
+                device=self._tts_device,
+            )
+        else:
+            self._tts = ElevenLabsTTS(
+                on_audio=self._speaker.enqueue,
+                voice_id=self._voice_id,
+            )
 
         self._stt = DeepgramSTT(
             on_transcript=self._on_transcript,

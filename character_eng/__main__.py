@@ -441,8 +441,13 @@ def _voice_dev_kw(voice_cfg):
 def _create_voice_io(voice_cfg, VoiceIO_cls):
     """Create a VoiceIO instance from voice config."""
     kw = _voice_dev_kw(voice_cfg)
-    if voice_cfg is not None and not voice_cfg.mic_mute_during_playback:
-        kw["mic_mute_during_playback"] = False
+    if voice_cfg is not None:
+        if not voice_cfg.mic_mute_during_playback:
+            kw["mic_mute_during_playback"] = False
+        kw["tts_backend"] = voice_cfg.tts_backend
+        kw["ref_audio"] = voice_cfg.ref_audio
+        kw["tts_model"] = voice_cfg.tts_model
+        kw["tts_device"] = voice_cfg.tts_device
     return VoiceIO_cls(**kw)
 
 
@@ -551,7 +556,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
     voice_io = None
     if voice_mode:
         from character_eng.voice import VoiceIO, check_voice_available, get_default_devices, list_audio_devices, TOGGLE_VOICE, EXIT, VOICE_ERROR
-        available, reason = check_voice_available()
+        available, reason = check_voice_available(tts_backend=voice_cfg.tts_backend if voice_cfg else "elevenlabs")
         if available:
             voice_io = _create_voice_io(voice_cfg, VoiceIO)
             try:
@@ -699,7 +704,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     voice_io = None
                 else:
                     from character_eng.voice import VoiceIO, check_voice_available, get_default_devices, list_audio_devices
-                    available, reason = check_voice_available()
+                    available, reason = check_voice_available(tts_backend=voice_cfg.tts_backend if voice_cfg else "elevenlabs")
                     if available:
                         voice_io = _create_voice_io(voice_cfg, VoiceIO)
                         try:

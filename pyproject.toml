@@ -17,6 +17,19 @@ voice = [
     "numpy>=1.26",
     "websocket-client>=1.7",
 ]
+local-tts = [
+    "torch>=2.4",
+    "torchaudio",
+    "transformers==4.57.3",
+    "accelerate>=1.12.0",
+    "librosa",
+    "soundfile",
+    "sounddevice>=0.5",
+    "numpy>=1.26",
+    "einops",
+    "onnxruntime",
+    "deepgram-sdk>=5.3",
+]
 
 [project.scripts]
 chat = "character_eng.__main__:main"

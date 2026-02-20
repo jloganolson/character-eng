@@ -15,7 +15,8 @@ uv sync
 For voice mode (optional):
 
 ```bash
-uv sync --extra voice
+uv sync --extra voice       # ElevenLabs cloud TTS (default)
+uv sync --extra local-tts   # Local Qwen3-TTS on GPU (~2GB VRAM for 0.6B model)
 ```
 
 Add API keys to `.env` (at least one LLM key required):
@@ -45,6 +46,12 @@ cp config.example.toml config.toml
 input_device = 14    # audio device index (run /devices in-app to list)
 output_device = 14   # audio device index
 enabled = true       # start in voice mode by default
+
+# Use local GPU TTS instead of ElevenLabs (requires uv sync --extra local-tts)
+# tts_backend = "local"
+# ref_audio = "/path/to/reference.wav"
+# tts_model = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+# tts_device = "cuda:0"
 ```
 
 The app works without `config.toml` — all settings have defaults. The `--voice` flag still works as an override.
@@ -135,11 +142,21 @@ In voice mode, single keystrokes trigger commands (no Enter needed):
 
 When voice mode starts, the active mic and speaker are printed. Use `/devices` to list all available audio devices with their indices. To use a specific device, set `input_device` and/or `output_device` in `config.toml`. Without config, the app uses your system defaults.
 
+### TTS backends
+
+Voice mode supports two TTS backends, configured via `tts_backend` in `config.toml`:
+
+**ElevenLabs (default)**: Cloud TTS, low latency, streaming text input. Requires `uv sync --extra voice` and `ELEVENLABS_API_KEY` in `.env`.
+
+**Local Qwen3-TTS**: GPU TTS via vendored Qwen3-TTS package. Requires `uv sync --extra local-tts`, a reference audio WAV for voice cloning, and ~2GB VRAM for the 0.6B model. No `ELEVENLABS_API_KEY` needed. Set `tts_backend = "local"` and `ref_audio` in `config.toml`. Model loads once on first speech and persists across utterances.
+
+Both backends use the same 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`) — no changes to the main conversation loop.
+
 ### Requirements
 
-Voice mode requires `uv sync --extra voice` and two API keys in `.env`:
-- `DEEPGRAM_API_KEY` — for speech-to-text
-- `ELEVENLABS_API_KEY` — for text-to-speech
+Voice mode requires `uv sync --extra voice` (or `--extra local-tts` for local TTS) and at least:
+- `DEEPGRAM_API_KEY` — for speech-to-text (always required)
+- `ELEVENLABS_API_KEY` — for ElevenLabs TTS (only when `tts_backend = "elevenlabs"`)
 
 Run `uv run -m character_eng.qa_voice` to verify connectivity (no mic needed).
 

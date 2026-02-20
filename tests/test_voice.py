@@ -498,7 +498,7 @@ def test_key_listener_puts_mapped_command():
 
 @patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1", "ELEVENLABS_API_KEY": "key2"})
 def test_check_voice_available_all_present():
-    """Should return True when all deps and keys are present."""
+    """Should return True when all deps and keys are present (elevenlabs backend)."""
     with patch.dict("sys.modules", {
         "sounddevice": MagicMock(),
         "numpy": MagicMock(),
@@ -536,6 +536,38 @@ def test_check_voice_available_missing_elevenlabs_key():
         available, reason = check_voice_available()
         assert available is False
         assert "ELEVENLABS_API_KEY" in reason
+
+
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
+def test_check_voice_available_local_backend():
+    """Should return True for local backend when torch/transformers are present (no ELEVENLABS_API_KEY needed)."""
+    with patch.dict("sys.modules", {
+        "sounddevice": MagicMock(),
+        "numpy": MagicMock(),
+        "deepgram": MagicMock(),
+        "torch": MagicMock(),
+        "transformers": MagicMock(),
+    }):
+        available, reason = check_voice_available(tts_backend="local")
+        assert available is True
+        assert reason == ""
+
+
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
+def test_check_voice_available_local_missing_torch():
+    """Should return False for local backend when torch is missing."""
+    import importlib
+
+    with patch.dict("sys.modules", {
+        "sounddevice": MagicMock(),
+        "numpy": MagicMock(),
+        "deepgram": MagicMock(),
+        "torch": None,
+        "transformers": MagicMock(),
+    }):
+        available, reason = check_voice_available(tts_backend="local")
+        assert available is False
+        assert "torch" in reason
 
 
 # --- Sentinel constants ---
@@ -866,6 +898,21 @@ def test_voice_io_barge_in_guard_when_not_speaking():
 
 
 # --- Sentinel constants ---
+
+
+def test_voice_io_stores_tts_backend():
+    """VoiceIO should store tts_backend and local TTS config params."""
+    voice = VoiceIO(tts_backend="local", ref_audio="/path/ref.wav", tts_model="my-model", tts_device="cuda:1")
+    assert voice._tts_backend == "local"
+    assert voice._ref_audio == "/path/ref.wav"
+    assert voice._tts_model == "my-model"
+    assert voice._tts_device == "cuda:1"
+
+
+def test_voice_io_default_tts_backend():
+    """VoiceIO should default to elevenlabs backend."""
+    voice = VoiceIO()
+    assert voice._tts_backend == "elevenlabs"
 
 
 def test_sentinel_strings_are_distinct():
