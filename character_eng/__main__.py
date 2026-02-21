@@ -555,7 +555,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
     # --- Voice setup ---
     voice_io = None
     if voice_mode:
-        from character_eng.voice import VoiceIO, check_voice_available, get_default_devices, list_audio_devices, TOGGLE_VOICE, EXIT, VOICE_ERROR
+        from character_eng.voice import VoiceIO, check_voice_available, get_default_devices, list_audio_devices, VOICE_OFF, EXIT, VOICE_ERROR
         available, reason = check_voice_available(tts_backend=voice_cfg.tts_backend if voice_cfg else "elevenlabs")
         if available:
             voice_io = _create_voice_io(voice_cfg, VoiceIO)
@@ -606,7 +606,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     return
 
                 # Handle sentinel strings from voice
-                from character_eng.voice import TOGGLE_VOICE, EXIT, VOICE_ERROR
+                from character_eng.voice import VOICE_OFF, EXIT, VOICE_ERROR
                 if user_input == EXIT:
                     console.print()
                     if voice_io is not None:
@@ -615,7 +615,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     save_chat_log(character, model_config, log, session_id)
                     save_chat_html(character, model_config, log, session_id)
                     return
-                elif user_input == TOGGLE_VOICE:
+                elif user_input == VOICE_OFF:
                     console.print("\n[yellow]Voice off — text mode[/yellow]")
                     voice_io.stop()
                     voice_io = None

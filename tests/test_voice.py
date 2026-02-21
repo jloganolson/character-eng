@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 from character_eng.voice import (
     AUTO_BEAT_DELAY,
     EXIT,
-    TOGGLE_VOICE,
+    VOICE_OFF,
     VOICE_ERROR,
     KeyListener,
     MicStream,
@@ -477,7 +477,7 @@ def test_key_map_contains_expected_keys():
     assert _KEY_MAP["p"] == "/plan"
     assert _KEY_MAP["g"] == "/goals"
     assert _KEY_MAP["t"] == "/trace"
-    assert _KEY_MAP["\x1b"] == TOGGLE_VOICE
+    assert _KEY_MAP["\x1b"] == VOICE_OFF
     assert _KEY_MAP["\x03"] == EXIT
 
 
@@ -917,7 +917,7 @@ def test_voice_io_default_tts_backend():
 
 def test_sentinel_strings_are_distinct():
     """All sentinel strings should be unique."""
-    sentinels = [TOGGLE_VOICE, EXIT, VOICE_ERROR]
+    sentinels = [VOICE_OFF, EXIT, VOICE_ERROR]
     assert len(set(sentinels)) == len(sentinels)
     for s in sentinels:
         assert s.startswith("__") and s.endswith("__")

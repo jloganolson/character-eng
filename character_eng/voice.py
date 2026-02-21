@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Sentinel strings returned by wait_for_input()
-TOGGLE_VOICE = "__TOGGLE_VOICE__"
+VOICE_OFF = "__VOICE_OFF__"
 EXIT = "__EXIT__"
 VOICE_ERROR = "__VOICE_ERROR__"
 
@@ -35,7 +35,7 @@ _KEY_MAP = {
     "p": "/plan",
     "g": "/goals",
     "t": "/trace",
-    "\x1b": TOGGLE_VOICE,  # Escape
+    "\x1b": VOICE_OFF,  # Escape
     "\x03": EXIT,  # Ctrl+C
 }
 
@@ -678,8 +678,9 @@ class KeyListener:
     handler so settings are restored even on abrupt exit (SIGINT/Ctrl+C).
     """
 
-    def __init__(self, event_queue: queue.Queue):
+    def __init__(self, event_queue: queue.Queue, on_voice_off: Callable[[], None] | None = None):
         self._event_queue = event_queue
+        self._on_voice_off = on_voice_off
         self._thread: threading.Thread | None = None
         self._running = False
         self._old_settings = None
@@ -705,7 +706,10 @@ class KeyListener:
                 if ready:
                     ch = sys.stdin.read(1)
                     if ch in _KEY_MAP:
-                        self._event_queue.put(_KEY_MAP[ch])
+                        mapped = _KEY_MAP[ch]
+                        self._event_queue.put(mapped)
+                        if mapped == VOICE_OFF and self._on_voice_off is not None:
+                            self._on_voice_off()
         except Exception:
             pass
         finally:
@@ -809,7 +813,7 @@ class VoiceIO:
         self._mic = MicStream(on_audio=self._on_mic_audio, device=self._input_device)
         self._mic.start()
 
-        self._keys = KeyListener(self._event_queue)
+        self._keys = KeyListener(self._event_queue, on_voice_off=self.cancel_speech)
         self._keys.start()
 
         self._started = True
@@ -850,7 +854,7 @@ class VoiceIO:
         """Block until user speaks, auto-beat fires, or hotkey pressed.
 
         Returns:
-            Transcript text, "/beat", or sentinel strings (TOGGLE_VOICE, EXIT, VOICE_ERROR)
+            Transcript text, "/beat", or sentinel strings (VOICE_OFF, EXIT, VOICE_ERROR)
         """
         while True:
             try:

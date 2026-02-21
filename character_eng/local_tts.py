@@ -9,6 +9,7 @@ Model is loaded once (singleton) and persists across utterances.
 
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 from pathlib import Path
@@ -110,6 +111,10 @@ class LocalTTS:
 
     def _generate(self, text: str):
         """Background thread: run model, stream PCM chunks via on_audio."""
+        # Suppress "Setting pad_token_id to eos_token_id" noise
+        gen_logger = logging.getLogger("transformers.generation.utils")
+        prev_level = gen_logger.level
+        gen_logger.setLevel(logging.ERROR)
         try:
             singleton = load_model(
                 self._model_id, self._device, self._ref_audio_path
@@ -137,6 +142,7 @@ class LocalTTS:
             sys.stderr.write(f"[LocalTTS] Generation error: {e}\n")
             sys.stderr.flush()
         finally:
+            gen_logger.setLevel(prev_level)
             self._generation_done.set()
 
     def wait_for_done(self, timeout: float = 30.0) -> bool:
