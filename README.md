@@ -43,7 +43,7 @@ cp config.example.toml config.toml
 
 ```toml
 [voice]
-input_device = 14    # audio device index (run /devices in-app to list)
+input_device = 14    # audio device index (run: uv run -m character_eng.devices)
 output_device = 14   # audio device index
 enabled = true       # start in voice mode by default
 
@@ -140,7 +140,7 @@ In voice mode, single keystrokes trigger commands (no Enter needed):
 
 ### Audio devices
 
-When voice mode starts, the active mic and speaker are printed. Use `/devices` to list all available audio devices with their indices. To use a specific device, set `input_device` and/or `output_device` in `config.toml`. Without config, the app uses your system defaults.
+When voice mode starts, the active mic and speaker are printed. Use `/devices` in-app or `uv run -m character_eng.devices` from the terminal to list all available audio devices with their indices. To use a specific device, set `input_device` and/or `output_device` in `config.toml`. Without config, the app uses your system defaults.
 
 ### TTS backends
 
