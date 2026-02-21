@@ -148,7 +148,7 @@ Voice mode supports two TTS backends, configured via `tts_backend` in `config.to
 
 **ElevenLabs (default)**: Cloud TTS, low latency, streaming text input. Requires `uv sync --extra voice` and `ELEVENLABS_API_KEY` in `.env`.
 
-**Local Qwen3-TTS**: GPU TTS via vendored Qwen3-TTS package. Requires `uv sync --extra local-tts`, a reference audio WAV for voice cloning, and ~2GB VRAM for the 0.6B model. No `ELEVENLABS_API_KEY` needed. Set `tts_backend = "local"` and `ref_audio` in `config.toml`. Model loads once on first speech and persists across utterances.
+**Local Qwen3-TTS**: GPU TTS via vendored Qwen3-TTS package. Requires `uv sync --extra local-tts`, a reference audio WAV for voice cloning, and ~2GB VRAM for the 0.6B model. No `ELEVENLABS_API_KEY` needed. Set `tts_backend = "local"` and `ref_audio` in `config.toml`. Model loads once on first speech and persists across utterances. Uses Flash Attention 2 for optimized inference (`flash-attn` included in `local-tts` extras; `torch` pinned to 2.8.x for wheel compatibility).
 
 Both backends use the same 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`) — no changes to the main conversation loop.
 

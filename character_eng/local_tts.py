@@ -46,6 +46,7 @@ def load_model(model_id: str, device: str, ref_audio_path: str) -> dict:
             model_id,
             device_map=device,
             dtype=torch.bfloat16,
+            attn_implementation="flash_attention_2",
         )
 
         sys.stderr.write(f"[LocalTTS] Extracting voice from {ref_audio_path}...\n")
