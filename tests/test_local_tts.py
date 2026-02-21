@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from character_eng.local_tts import LocalTTS, _ensure_model
+from character_eng.local_tts import LocalTTS, load_model
 
 
 def test_send_text_buffers():
@@ -92,7 +92,7 @@ def test_generate_converts_float32_to_int16_pcm():
 
     mock_singleton = {"model": mock_model, "prompt": mock_prompt}
 
-    with patch("character_eng.local_tts._ensure_model", return_value=mock_singleton):
+    with patch("character_eng.local_tts.load_model", return_value=mock_singleton):
         tts._generate("Hello world")
 
     # Should have called on_audio once with int16 PCM bytes
@@ -123,7 +123,7 @@ def test_generate_respects_cancelled():
 
     mock_singleton = {"model": mock_model, "prompt": mock_prompt}
 
-    with patch("character_eng.local_tts._ensure_model", return_value=mock_singleton):
+    with patch("character_eng.local_tts.load_model", return_value=mock_singleton):
         tts._generate("Hello")
 
     # Should not have delivered any audio (cancelled before first chunk)
@@ -138,7 +138,7 @@ def test_generate_sets_done_on_completion():
     mock_model.generate_voice_clone_stream.return_value = iter([])
     mock_singleton = {"model": mock_model, "prompt": MagicMock()}
 
-    with patch("character_eng.local_tts._ensure_model", return_value=mock_singleton):
+    with patch("character_eng.local_tts.load_model", return_value=mock_singleton):
         tts._generate("Hello")
 
     assert tts._generation_done.is_set()
@@ -148,7 +148,7 @@ def test_generate_sets_done_on_error():
     """_generate should set _generation_done even if an error occurs."""
     tts = LocalTTS(on_audio=MagicMock(), ref_audio_path="/fake/ref.wav")
 
-    with patch("character_eng.local_tts._ensure_model", side_effect=RuntimeError("fail")):
+    with patch("character_eng.local_tts.load_model", side_effect=RuntimeError("fail")):
         tts._generate("Hello")
 
     assert tts._generation_done.is_set()

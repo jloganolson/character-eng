@@ -784,8 +784,10 @@ class VoiceIO:
         self._speaker.start()
 
         if self._tts_backend == "local":
-            from character_eng.local_tts import LocalTTS
+            from character_eng.local_tts import LocalTTS, load_model
 
+            # Eagerly load model + extract voice at startup
+            load_model(self._tts_model, self._tts_device, self._ref_audio)
             self._tts = LocalTTS(
                 on_audio=self._speaker.enqueue,
                 ref_audio_path=self._ref_audio,

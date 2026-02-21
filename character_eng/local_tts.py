@@ -26,8 +26,11 @@ _model_singleton: dict | None = None
 _model_lock = threading.Lock()
 
 
-def _ensure_model(model_id: str, device: str, ref_audio_path: str) -> dict:
-    """Load model + prompt on first call, return cached dict on subsequent calls."""
+def load_model(model_id: str, device: str, ref_audio_path: str) -> dict:
+    """Load model + extract voice prompt. Call at startup for eager loading.
+
+    Thread-safe singleton — second call returns cached result instantly.
+    """
     global _model_singleton
     with _model_lock:
         if _model_singleton is not None:
@@ -45,6 +48,9 @@ def _ensure_model(model_id: str, device: str, ref_audio_path: str) -> dict:
             dtype=torch.bfloat16,
         )
 
+        sys.stderr.write(f"[LocalTTS] Extracting voice from {ref_audio_path}...\n")
+        sys.stderr.flush()
+
         # Pre-compute voice clone prompt from reference audio
         prompt_items = model.create_voice_clone_prompt(
             ref_audio=ref_audio_path,
@@ -53,7 +59,7 @@ def _ensure_model(model_id: str, device: str, ref_audio_path: str) -> dict:
         prompt = prompt_items[0]
 
         _model_singleton = {"model": model, "prompt": prompt}
-        sys.stderr.write("[LocalTTS] Model loaded.\n")
+        sys.stderr.write("[LocalTTS] Ready.\n")
         sys.stderr.flush()
         return _model_singleton
 
@@ -104,7 +110,7 @@ class LocalTTS:
     def _generate(self, text: str):
         """Background thread: run model, stream PCM chunks via on_audio."""
         try:
-            singleton = _ensure_model(
+            singleton = load_model(
                 self._model_id, self._device, self._ref_audio_path
             )
             model = singleton["model"]

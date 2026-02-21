@@ -561,7 +561,9 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             voice_io = _create_voice_io(voice_cfg, VoiceIO)
             try:
                 voice_io.start()
-                console.print("[green]Voice mode active[/green] — speak to chat, Escape to toggle, hotkeys: w/b/p/g/t")
+                _tts_label = "Local Qwen3-TTS" if (voice_cfg and voice_cfg.tts_backend == "local") else "ElevenLabs"
+                console.print(f"[green]Voice mode active[/green] — speak to chat, Escape to toggle, hotkeys: w/b/p/g/t")
+                console.print(f"[dim]TTS: {_tts_label}[/dim]")
                 _show_voice_devices(_voice_dev_kw(voice_cfg), get_default_devices, list_audio_devices)
             except Exception as e:
                 console.print(f"[red]Voice init failed: {e}[/red]")
@@ -709,7 +711,9 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                         voice_io = _create_voice_io(voice_cfg, VoiceIO)
                         try:
                             voice_io.start()
+                            _tts_label = "Local Qwen3-TTS" if (voice_cfg and voice_cfg.tts_backend == "local") else "ElevenLabs"
                             console.print("[green]Voice mode active[/green] — speak to chat, Escape to toggle, hotkeys: w/b/p/g/t")
+                            console.print(f"[dim]TTS: {_tts_label}[/dim]")
                             _show_voice_devices(_voice_dev_kw(voice_cfg), get_default_devices, list_audio_devices)
                         except Exception as e:
                             console.print(f"[red]Voice init failed: {e}[/red]")
