@@ -43,9 +43,10 @@ cp config.example.toml config.toml
 
 ```toml
 [voice]
-input_device = 14    # audio device index (run: uv run -m character_eng.devices)
-output_device = 14   # audio device index
-enabled = true       # start in voice mode by default
+input_device = "reSpeaker"   # by name substring (case-insensitive), or integer index
+output_device = "reSpeaker"  # route TTS through device for hardware AEC reference
+enabled = true               # start in voice mode by default
+mic_mute_during_playback = false  # disable for hardware AEC mics (e.g. XVF3800)
 
 # Use local GPU TTS instead of ElevenLabs (requires uv sync --extra local-tts)
 # tts_backend = "local"
@@ -140,7 +141,20 @@ In voice mode, single keystrokes trigger commands (no Enter needed):
 
 ### Audio devices
 
-When voice mode starts, the active mic and speaker are printed. Use `/devices` in-app or `uv run -m character_eng.devices` from the terminal to list all available audio devices with their indices. To use a specific device, set `input_device` and/or `output_device` in `config.toml`. Without config, the app uses your system defaults.
+When voice mode starts, the active mic and speaker are printed. Use `/devices` in-app or `uv run -m character_eng.devices` from the terminal to list all available audio devices with their indices. To use a specific device, set `input_device` and/or `output_device` in `config.toml` — either as an integer index or a name substring (case-insensitive, e.g. `"reSpeaker"`). Name-based matching survives USB re-enumeration across reboots/suspends. Without config, the app uses your system defaults.
+
+### Hardware AEC (reSpeaker XVF3800)
+
+For mic arrays with hardware acoustic echo cancellation, route TTS output through the device's speaker output so the DSP has an echo reference signal. Set both `input_device` and `output_device` to the device name, and disable software mic muting:
+
+```toml
+[voice]
+input_device = "reSpeaker"
+output_device = "reSpeaker"
+mic_mute_during_playback = false
+```
+
+This enables true voice barge-in during TTS playback — the hardware AEC cancels speaker audio from the mic, so Deepgram only hears the user's voice.
 
 ### TTS backends
 

@@ -3,10 +3,14 @@
 # config.toml is gitignored — your settings stay local.
 
 [voice]
-# Audio device indices (run /devices in-app to list available devices).
+# Audio devices — use index (integer) or name substring (string).
+# Name matching is case-insensitive; first match wins.
+# Run /devices in-app or `uv run -m character_eng.devices` to list available devices.
 # Leave commented out to use system defaults.
-# input_device = 14    # microphone / mic array
-# output_device = 14   # speaker / line-out
+# input_device = 14           # by index
+# input_device = "reSpeaker"  # by name substring
+# output_device = 14
+# output_device = "reSpeaker"
 
 # Start in voice mode by default (same as --voice flag).
 # enabled = false

@@ -9,8 +9,8 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.toml"
 
 @dataclass
 class VoiceConfig:
-    input_device: int | None = None
-    output_device: int | None = None
+    input_device: int | str | None = None
+    output_device: int | str | None = None
     enabled: bool = False
     mic_mute_during_playback: bool = True  # False for devices with hardware AEC
     tts_backend: str = "elevenlabs"  # "elevenlabs" or "local"

@@ -72,6 +72,36 @@ def get_default_devices() -> tuple[dict | None, dict | None]:
     return input_dev, output_dev
 
 
+def resolve_device(spec: int | str | None, kind: str = "output") -> int | None:
+    """Resolve a device spec to a sounddevice index.
+
+    Args:
+        spec: int (use directly), str (match by name substring, case-insensitive),
+              or None (use system default).
+        kind: "input" or "output" — filters to devices with matching capability.
+
+    Returns:
+        Device index, or None to use system default.
+
+    Raises:
+        RuntimeError: if string spec matches no device.
+    """
+    if spec is None:
+        return None
+    if isinstance(spec, int):
+        return spec
+    # String: search by name
+    import sounddevice as sd
+
+    for i, d in enumerate(sd.query_devices()):
+        if spec.lower() in d["name"].lower():
+            if kind == "output" and d["max_output_channels"] > 0:
+                return i
+            if kind == "input" and d["max_input_channels"] > 0:
+                return i
+    raise RuntimeError(f"No {kind} device matching '{spec}'")
+
+
 def check_voice_available(tts_backend: str = "elevenlabs") -> tuple[bool, str]:
     """Check if voice dependencies and API keys are available.
 
@@ -334,13 +364,16 @@ class SpeakerStream:
     def start(self):
         import sounddevice as sd
 
-        # Build sample rate fallback chain: native 24kHz → 48kHz → device default
-        rates_to_try = [self.NATIVE_RATE, 48000]
+        # Build sample rate fallback chain: device default → native 24kHz → 48kHz
+        # Device default first avoids noisy failed probes on non-24kHz devices
+        rates_to_try = []
         if self._device is not None:
             dev_info = sd.query_devices(self._device)
             dev_rate = int(dev_info["default_samplerate"])
-            if dev_rate not in rates_to_try:
-                rates_to_try.append(dev_rate)
+            rates_to_try.append(dev_rate)
+        for r in [self.NATIVE_RATE, 48000]:
+            if r not in rates_to_try:
+                rates_to_try.append(r)
 
         last_error = None
         for rate in rates_to_try:
@@ -354,8 +387,17 @@ class SpeakerStream:
             if self._device is not None:
                 kwargs["device"] = self._device
             try:
-                self._stream = sd.RawOutputStream(**kwargs)
-                self._stream.start()
+                # Suppress PortAudio C-level stderr noise during sample rate probing
+                devnull = os.open(os.devnull, os.O_WRONLY)
+                old_stderr = os.dup(2)
+                os.dup2(devnull, 2)
+                try:
+                    self._stream = sd.RawOutputStream(**kwargs)
+                    self._stream.start()
+                finally:
+                    os.dup2(old_stderr, 2)
+                    os.close(devnull)
+                    os.close(old_stderr)
                 self._actual_rate = rate
                 self._resample = (rate != self.NATIVE_RATE)
                 return
@@ -784,6 +826,10 @@ class VoiceIO:
 
     def start(self):
         """Initialize and start all voice components."""
+        # Resolve string device names to indices
+        self._input_device = resolve_device(self._input_device, "input")
+        self._output_device = resolve_device(self._output_device, "output")
+
         self._speaker = SpeakerStream(device=self._output_device)
         self._speaker.start()
 

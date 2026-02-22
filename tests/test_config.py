@@ -92,3 +92,17 @@ def test_tts_backend_partial_defaults(tmp_path):
     assert cfg.voice.ref_audio == ""
     assert cfg.voice.tts_model == "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
     assert cfg.voice.tts_device == "cuda:0"
+
+
+def test_string_device_names(tmp_path):
+    """Device names as strings are accepted alongside integers."""
+    toml = tmp_path / "config.toml"
+    toml.write_text(
+        "[voice]\n"
+        'input_device = "reSpeaker"\n'
+        'output_device = "reSpeaker"\n'
+    )
+    with patch("character_eng.config.CONFIG_PATH", toml):
+        cfg = load_config()
+    assert cfg.voice.input_device == "reSpeaker"
+    assert cfg.voice.output_device == "reSpeaker"

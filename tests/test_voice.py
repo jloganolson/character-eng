@@ -16,6 +16,7 @@ from character_eng.voice import (
     VoiceIO,
     _KEY_MAP,
     check_voice_available,
+    resolve_device,
 )
 
 
@@ -921,3 +922,53 @@ def test_sentinel_strings_are_distinct():
     assert len(set(sentinels)) == len(sentinels)
     for s in sentinels:
         assert s.startswith("__") and s.endswith("__")
+
+
+# --- resolve_device ---
+
+
+def test_resolve_device_none_returns_none():
+    """None spec → None (use system default)."""
+    assert resolve_device(None) is None
+
+
+def test_resolve_device_int_passthrough():
+    """Integer spec → returned as-is."""
+    assert resolve_device(5, "input") == 5
+    assert resolve_device(0, "output") == 0
+
+
+def test_resolve_device_string_match():
+    """String spec matches device by name substring."""
+    fake_devices = [
+        {"name": "Audioengine 2+", "max_input_channels": 0, "max_output_channels": 2},
+        {"name": "reSpeaker XVF3800 4-Mic Array", "max_input_channels": 2, "max_output_channels": 2},
+        {"name": "HyperX Quadcast", "max_input_channels": 2, "max_output_channels": 0},
+    ]
+    with patch("sounddevice.query_devices", return_value=fake_devices):
+        assert resolve_device("reSpeaker", "input") == 1
+        assert resolve_device("reSpeaker", "output") == 1
+        assert resolve_device("audioengine", "output") == 0
+        assert resolve_device("Quadcast", "input") == 2
+
+
+def test_resolve_device_string_no_match():
+    """String spec with no match raises RuntimeError."""
+    fake_devices = [
+        {"name": "Some Device", "max_input_channels": 2, "max_output_channels": 2},
+    ]
+    with patch("sounddevice.query_devices", return_value=fake_devices):
+        import pytest
+        with pytest.raises(RuntimeError, match="No output device matching"):
+            resolve_device("nonexistent", "output")
+
+
+def test_resolve_device_string_wrong_kind():
+    """String spec matching a device without the right I/O kind raises RuntimeError."""
+    fake_devices = [
+        {"name": "Output Only", "max_input_channels": 0, "max_output_channels": 2},
+    ]
+    with patch("sounddevice.query_devices", return_value=fake_devices):
+        import pytest
+        with pytest.raises(RuntimeError, match="No input device matching"):
+            resolve_device("Output Only", "input")

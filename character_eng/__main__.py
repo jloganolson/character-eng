@@ -428,13 +428,18 @@ def save_chat_html(character: str, model_config: dict, log: list[dict], session_
 
 
 def _voice_dev_kw(voice_cfg):
-    """Build kwargs dict from voice config for device display."""
+    """Build kwargs dict from voice config for device display.
+
+    Resolves string device names to indices via resolve_device().
+    """
     kw = {}
     if voice_cfg is not None:
         if voice_cfg.input_device is not None:
-            kw["input_device"] = voice_cfg.input_device
+            from character_eng.voice import resolve_device
+            kw["input_device"] = resolve_device(voice_cfg.input_device, "input")
         if voice_cfg.output_device is not None:
-            kw["output_device"] = voice_cfg.output_device
+            from character_eng.voice import resolve_device
+            kw["output_device"] = resolve_device(voice_cfg.output_device, "output")
     return kw
 
 
