@@ -876,6 +876,7 @@ class VoiceIO:
                 on_audio=self._speaker.enqueue,
                 server_url=server_url,
                 ref_audio=self._ref_audio,
+                voice="" if self._pocket_voice else "alba",
             )
         else:
             self._tts = ElevenLabsTTS(
