@@ -51,6 +51,12 @@ uv run -m character_eng.tts_benchmark --backend chatterbox --runs 5
 # Compare TTS backends by ear (type text, press key to hear from different backends)
 uv run -m character_eng.tts_compare
 
+# Batch TTS comparison (generate WAVs + metrics report from text file)
+uv run -m character_eng.tts_batch tts_lines.txt
+
+# Batch with specific backends
+uv run -m character_eng.tts_batch tts_lines.txt --backends kokoro,pocket,kani
+
 # Kill local vLLM server
 lsof -ti:8000 | xargs kill -9
 
@@ -100,6 +106,7 @@ Interactive NPC character chat CLI with two-tier LLM backend. All use OpenAI-com
 - **`character_eng/pocket_tts.py`** — Streaming HTTP client for Pocket-TTS server (100M causal transformer). 4-method interface. `flush()` POSTs to `{server_url}/tts` with multipart form data, receives streaming WAV via chunked HTTP transfer, parses WAV header, delivers raw int16 PCM as chunks arrive. True autoregressive streaming — flat ~80ms TTFA. 24kHz native. Supports voice cloning. Only needs `requests`. Server: `pocket-tts serve --port 8003`.
 - **`character_eng/tts_compare.py`** — CLI tool for comparing TTS backends by ear. Runnable via `uv run -m character_eng.tts_compare`. Two-level loop: type text, press 1-6 to hear from different backends (ElevenLabs, KaniTTS, Qwen3-TTS, KittenTTS, Kokoro, Pocket-TTS). Shows TTFA timing after each play. Uses `SpeakerStream` from `voice.py` for playback.
 - **`character_eng/tts_benchmark.py`** — TTS backend speed benchmark. Runnable via `uv run -m character_eng.tts_benchmark [--backend ...] [--runs N]`. Measures TTFA (time to first audio), total generation time, audio duration, and RTF (real-time factor) across three sentence lengths (short/medium/long). Supports all eight TTS backends. Prints rich summary table, saves JSON logs to `logs/tts_benchmark_{timestamp}.json`.
+- **`character_eng/tts_batch.py`** — Batch TTS comparison tool. Runnable via `uv run -m character_eng.tts_batch tts_lines.txt [--backends kokoro,pocket,kani]`. Reads lines from a text file, runs each through all reachable backends, saves one combined `.wav` per backend (all lines concatenated with beep separators), and writes a `report.md` with per-line TTFA/total/audio/RTF metrics. Default backends: kokoro, pocket, kani, local, elevenlabs. Probes backends before starting, skips unreachable ones. Uses hardcoded ElevenLabs voice ID `qXpMhyvQqiRxWQs4qSSB`. Output goes to `logs/tts_batch_{timestamp}/`.
 - **`character_eng/devices.py`** — Audio device lister. Runnable via `uv run -m character_eng.devices`. Prints all audio input/output devices with index, direction (IN/OUT), and name. Used to find device indices for `config.toml`.
 - **`character_eng/qa_voice.py`** — Voice integration test. Runnable via `uv run -m character_eng.qa_voice`. Three tests: audio device enumeration (sounddevice), Deepgram STT connectivity (opens live WebSocket, sends sine wave PCM, verifies response), ElevenLabs TTS connectivity (opens stream-input WebSocket, sends test text, verifies audio bytes received). No microphone/speaker needed — tests API connectivity only.
 

@@ -324,6 +324,20 @@ uv run -m character_eng.tts_compare
 
 Type a line of text, then press 1-6 to hear it from: ElevenLabs, KaniTTS, Qwen3-TTS, KittenTTS, Kokoro, or Pocket-TTS. Shows TTFA timing after each play. Press Enter for new text, Ctrl+C to quit.
 
+### Batch TTS comparison
+
+Run lines from a text file through multiple backends, save WAVs and a metrics report:
+
+```bash
+# Run all default backends (kokoro, pocket, kani, local, elevenlabs)
+uv run -m character_eng.tts_batch tts_lines.txt
+
+# Run specific backends only
+uv run -m character_eng.tts_batch tts_lines.txt --backends kokoro,pocket,kani
+```
+
+Creates a timestamped directory under `logs/tts_batch_*/` with one combined `.wav` per backend (all lines concatenated with beep separators) and a `report.md` summarizing TTFA, total time, audio duration, and RTF for every line. Unreachable backends are automatically skipped.
+
 ## Logs
 
 Every chat session and QA run saves logs to `logs/` (gitignored). Chat sessions save both a JSON log and an HTML report; persona QA saves an HTML report. The log path is printed when the session ends.
