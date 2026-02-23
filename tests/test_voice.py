@@ -916,6 +916,75 @@ def test_voice_io_default_tts_backend():
     assert voice._tts_backend == "elevenlabs"
 
 
+def test_voice_io_stores_tts_server_url():
+    """VoiceIO should store tts_server_url."""
+    voice = VoiceIO(tts_backend="pocket", tts_server_url="http://localhost:9999")
+    assert voice._tts_server_url == "http://localhost:9999"
+    assert voice._tts_backend == "pocket"
+
+
+def test_voice_io_default_tts_server_url():
+    """VoiceIO should default tts_server_url to empty string."""
+    voice = VoiceIO()
+    assert voice._tts_server_url == ""
+
+
+def test_voice_io_stores_ref_text():
+    """VoiceIO should store ref_text param."""
+    voice = VoiceIO(tts_backend="qwen", ref_text="Hello this is a test.")
+    assert voice._ref_text == "Hello this is a test."
+    assert voice._tts_backend == "qwen"
+
+
+def test_voice_io_default_ref_text():
+    """VoiceIO should default ref_text to empty string."""
+    voice = VoiceIO()
+    assert voice._ref_text == ""
+
+
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
+def test_check_voice_available_qwen_backend():
+    """Should return True for qwen backend (alias for local) when torch/transformers are present."""
+    with patch.dict("sys.modules", {
+        "sounddevice": MagicMock(),
+        "numpy": MagicMock(),
+        "deepgram": MagicMock(),
+        "torch": MagicMock(),
+        "transformers": MagicMock(),
+    }):
+        available, reason = check_voice_available(tts_backend="qwen")
+        assert available is True
+        assert reason == ""
+
+
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
+def test_check_voice_available_pocket_backend():
+    """Should return True for pocket backend when requests is present."""
+    with patch.dict("sys.modules", {
+        "sounddevice": MagicMock(),
+        "numpy": MagicMock(),
+        "deepgram": MagicMock(),
+        "requests": MagicMock(),
+    }):
+        available, reason = check_voice_available(tts_backend="pocket")
+        assert available is True
+        assert reason == ""
+
+
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
+def test_check_voice_available_pocket_missing_requests():
+    """Should return False for pocket backend when requests is missing."""
+    with patch.dict("sys.modules", {
+        "sounddevice": MagicMock(),
+        "numpy": MagicMock(),
+        "deepgram": MagicMock(),
+        "requests": None,
+    }):
+        available, reason = check_voice_available(tts_backend="pocket")
+        assert available is False
+        assert "requests" in reason
+
+
 def test_sentinel_strings_are_distinct():
     """All sentinel strings should be unique."""
     sentinels = [VOICE_OFF, EXIT, VOICE_ERROR]

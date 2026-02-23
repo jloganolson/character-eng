@@ -19,11 +19,26 @@
 # Set to false if your mic has hardware AEC (e.g. reSpeaker XVF3800).
 # mic_mute_during_playback = true
 
-# TTS backend: "elevenlabs" (cloud, default) or "local" (Qwen3-TTS on GPU).
-# Local requires: uv sync --extra local-tts (~2GB VRAM for 0.6B model).
+# TTS backend: "elevenlabs" (cloud), "qwen" (Qwen3-TTS, in-process GPU),
+#              "pocket" (Pocket-TTS server), or "local" (alias for qwen).
+#              Default: "elevenlabs".
 # tts_backend = "elevenlabs"
 
-# Local TTS settings (only used when tts_backend = "local"):
+# --- ElevenLabs (cloud, default) ---
+# Requires ELEVENLABS_API_KEY in .env. No extra install needed beyond `uv sync --extra voice`.
+
+# --- Qwen3-TTS (in-process GPU, voice cloning) ---
+# Requires: uv sync --extra local-tts (~2GB VRAM for 0.6B model).
+# tts_backend = "qwen"
 # ref_audio = "/path/to/reference.wav"   # reference audio for voice cloning
+# ref_text = ""                          # transcript of ref_audio for ICL mode (higher quality cloning)
 # tts_model = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"  # HuggingFace model ID
 # tts_device = "cuda:0"                  # GPU device
+
+# --- Pocket-TTS (external server, streaming voice cloning) ---
+# Requires: running Pocket-TTS server (`pocket-tts serve --port 8003`).
+# Client uses `requests` (in voice extras). Supports voice cloning via
+# ref_audio (WAV upload) or cached .safetensors voice file.
+# tts_backend = "pocket"
+# tts_server_url = "http://localhost:8003"
+# ref_audio = "/path/to/reference.wav"   # WAV for voice cloning (optional)

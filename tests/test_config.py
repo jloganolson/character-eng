@@ -106,3 +106,46 @@ def test_string_device_names(tmp_path):
         cfg = load_config()
     assert cfg.voice.input_device == "reSpeaker"
     assert cfg.voice.output_device == "reSpeaker"
+
+
+def test_tts_server_url_defaults():
+    """Missing config.toml → tts_server_url defaults to empty string."""
+    with patch("character_eng.config.CONFIG_PATH", Path("/nonexistent/config.toml")):
+        cfg = load_config()
+    assert cfg.voice.tts_server_url == ""
+
+
+def test_tts_server_url_parsed(tmp_path):
+    """tts_server_url should be parsed from config."""
+    toml = tmp_path / "config.toml"
+    toml.write_text(
+        "[voice]\n"
+        'tts_backend = "pocket"\n'
+        'tts_server_url = "http://localhost:9999"\n'
+    )
+    with patch("character_eng.config.CONFIG_PATH", toml):
+        cfg = load_config()
+    assert cfg.voice.tts_backend == "pocket"
+    assert cfg.voice.tts_server_url == "http://localhost:9999"
+
+
+def test_ref_text_defaults():
+    """Missing config.toml → ref_text defaults to empty string."""
+    with patch("character_eng.config.CONFIG_PATH", Path("/nonexistent/config.toml")):
+        cfg = load_config()
+    assert cfg.voice.ref_text == ""
+
+
+def test_ref_text_parsed(tmp_path):
+    """ref_text should be parsed from config."""
+    toml = tmp_path / "config.toml"
+    toml.write_text(
+        "[voice]\n"
+        'tts_backend = "qwen"\n'
+        'ref_audio = "/path/to/ref.wav"\n'
+        'ref_text = "Hello, this is a test transcript."\n'
+    )
+    with patch("character_eng.config.CONFIG_PATH", toml):
+        cfg = load_config()
+    assert cfg.voice.tts_backend == "qwen"
+    assert cfg.voice.ref_text == "Hello, this is a test transcript."

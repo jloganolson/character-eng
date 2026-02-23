@@ -13,10 +13,12 @@ class VoiceConfig:
     output_device: int | str | None = None
     enabled: bool = False
     mic_mute_during_playback: bool = True  # False for devices with hardware AEC
-    tts_backend: str = "elevenlabs"  # "elevenlabs" or "local"
-    ref_audio: str = ""  # path to reference audio WAV for local voice cloning
+    tts_backend: str = "elevenlabs"  # "elevenlabs", "qwen", "pocket", or "local" (alias for qwen)
+    ref_audio: str = ""  # path to reference audio WAV for voice cloning
+    ref_text: str = ""  # transcript of ref_audio for qwen ICL mode (higher quality cloning)
     tts_model: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"  # HuggingFace model ID
     tts_device: str = "cuda:0"  # GPU device for local TTS
+    tts_server_url: str = ""  # server URL for pocket backend
 
 
 @dataclass
@@ -40,7 +42,9 @@ def load_config() -> AppConfig:
         mic_mute_during_playback=voice_data.get("mic_mute_during_playback", True),
         tts_backend=voice_data.get("tts_backend", "elevenlabs"),
         ref_audio=voice_data.get("ref_audio", ""),
+        ref_text=voice_data.get("ref_text", ""),
         tts_model=voice_data.get("tts_model", "Qwen/Qwen3-TTS-12Hz-0.6B-Base"),
         tts_device=voice_data.get("tts_device", "cuda:0"),
+        tts_server_url=voice_data.get("tts_server_url", ""),
     )
     return AppConfig(voice=voice)

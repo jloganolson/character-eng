@@ -48,11 +48,17 @@ output_device = "reSpeaker"  # route TTS through device for hardware AEC referen
 enabled = true               # start in voice mode by default
 mic_mute_during_playback = false  # disable for hardware AEC mics (e.g. XVF3800)
 
-# Use local GPU TTS instead of ElevenLabs (requires uv sync --extra local-tts)
-# tts_backend = "local"
+# Use Qwen3-TTS on GPU (requires uv sync --extra local-tts)
+# tts_backend = "qwen"
 # ref_audio = "/path/to/reference.wav"
+# ref_text = ""               # transcript of ref_audio for ICL mode (higher quality cloning)
 # tts_model = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
 # tts_device = "cuda:0"
+
+# Use Pocket-TTS server (requires running pocket-tts serve --port 8003)
+# tts_backend = "pocket"
+# tts_server_url = "http://localhost:8003"
+# ref_audio = "/path/to/reference.wav"
 ```
 
 The app works without `config.toml` — all settings have defaults. The `--voice` flag still works as an override.
@@ -158,13 +164,15 @@ This enables true voice barge-in during TTS playback — the hardware AEC cancel
 
 ### TTS backends
 
-Voice mode supports two TTS backends, configured via `tts_backend` in `config.toml`:
+Voice mode supports three TTS backends, configured via `tts_backend` in `config.toml`:
 
 **ElevenLabs (default)**: Cloud TTS, low latency, streaming text input. Requires `uv sync --extra voice` and `ELEVENLABS_API_KEY` in `.env`.
 
-**Local Qwen3-TTS**: GPU TTS via vendored Qwen3-TTS package. Requires `uv sync --extra local-tts`, a reference audio WAV for voice cloning, and ~2GB VRAM for the 0.6B model. No `ELEVENLABS_API_KEY` needed. Set `tts_backend = "local"` and `ref_audio` in `config.toml`. Model loads once on first speech and persists across utterances. Uses Flash Attention 2 for optimized inference (`flash-attn` included in `local-tts` extras; `torch` pinned to 2.8.x for wheel compatibility).
+**Qwen3-TTS** (`tts_backend = "qwen"`): GPU TTS via vendored Qwen3-TTS package. Requires `uv sync --extra local-tts`, a reference audio WAV for voice cloning, and ~2GB VRAM for the 0.6B model. No `ELEVENLABS_API_KEY` needed. Set `ref_audio` in `config.toml`. Two cloning modes: with `ref_text` (transcript of ref_audio) uses ICL mode for higher quality; without uses x-vector-only mode. Model loads once on first speech and persists across utterances. Uses Flash Attention 2 for optimized inference (`flash-attn` included in `local-tts` extras; `torch` pinned to 2.8.x for wheel compatibility). `"local"` is accepted as a legacy alias for `"qwen"`.
 
-Both backends use the same 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`) — no changes to the main conversation loop.
+**Pocket-TTS** (`tts_backend = "pocket"`): Streaming HTTP client for Pocket-TTS server (100M causal transformer). True autoregressive streaming with flat ~80ms TTFA. Supports voice cloning via `ref_audio` (WAV upload). Requires a running Pocket-TTS server (`pocket-tts serve --port 8003`). Set `tts_server_url` in `config.toml` (default: `http://localhost:8003`). Only needs `requests` (included in voice extras).
+
+All backends use the same 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`) — no changes to the main conversation loop.
 
 ### Requirements
 

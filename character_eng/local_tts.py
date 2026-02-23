@@ -27,10 +27,12 @@ _model_singleton: dict | None = None
 _model_lock = threading.Lock()
 
 
-def load_model(model_id: str, device: str, ref_audio_path: str) -> dict:
+def load_model(model_id: str, device: str, ref_audio_path: str, ref_text: str = "") -> dict:
     """Load model + extract voice prompt. Call at startup for eager loading.
 
     Thread-safe singleton — second call returns cached result instantly.
+    When ref_text is provided, uses ICL mode (higher quality cloning).
+    Without ref_text, uses x_vector_only mode (speaker embedding only).
     """
     global _model_singleton
     with _model_lock:
@@ -50,13 +52,16 @@ def load_model(model_id: str, device: str, ref_audio_path: str) -> dict:
             attn_implementation="flash_attention_2",
         )
 
-        sys.stderr.write(f"[LocalTTS] Extracting voice from {ref_audio_path}...\n")
+        use_xvec_only = not bool(ref_text)
+        mode_str = "x-vector only" if use_xvec_only else "ICL (with ref text)"
+        sys.stderr.write(f"[LocalTTS] Extracting voice from {ref_audio_path} ({mode_str})...\n")
         sys.stderr.flush()
 
         # Pre-compute voice clone prompt from reference audio
         prompt_items = model.create_voice_clone_prompt(
             ref_audio=ref_audio_path,
-            x_vector_only_mode=True,
+            ref_text=ref_text if ref_text else None,
+            x_vector_only_mode=use_xvec_only,
         )
         prompt = prompt_items[0]
 
@@ -80,11 +85,13 @@ class LocalTTS:
         ref_audio_path: str = "",
         model_id: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
         device: str = "cuda:0",
+        ref_text: str = "",
     ):
         self._on_audio = on_audio
         self._ref_audio_path = ref_audio_path
         self._model_id = model_id
         self._device = device
+        self._ref_text = ref_text
         self._buffer: list[str] = []
         self._cancelled = threading.Event()
         self._generation_done = threading.Event()
@@ -117,7 +124,8 @@ class LocalTTS:
         gen_logger.setLevel(logging.ERROR)
         try:
             singleton = load_model(
-                self._model_id, self._device, self._ref_audio_path
+                self._model_id, self._device, self._ref_audio_path,
+                ref_text=self._ref_text,
             )
             model = singleton["model"]
             prompt = singleton["prompt"]
