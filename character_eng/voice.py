@@ -919,7 +919,7 @@ class VoiceIO:
 
         pocket_bin = shutil.which("pocket-tts")
         if pocket_bin is None:
-            raise RuntimeError("pocket-tts not found in PATH. Install with: pip install pocket-tts")
+            raise RuntimeError("pocket-tts not found in PATH. Install with: uv sync --extra voice")
 
         cmd = [pocket_bin, "serve", "--port", str(port)]
         if self._pocket_voice:

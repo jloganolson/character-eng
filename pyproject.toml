@@ -16,6 +16,7 @@ voice = [
     "sounddevice>=0.5",
     "numpy>=1.26",
     "websocket-client>=1.7",
+    "pocket-tts>=1.0",
 ]
 local-tts = [
     "torch>=2.8,<2.9",
