@@ -569,7 +569,9 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             voice_io = _create_voice_io(voice_cfg, VoiceIO)
             try:
                 voice_io.start()
-                _tts_label = "Local Qwen3-TTS" if (voice_cfg and voice_cfg.tts_backend == "local") else "ElevenLabs"
+                _backend = voice_cfg.tts_backend if voice_cfg else "elevenlabs"
+                _tts_labels = {"local": "Local Qwen3-TTS", "qwen": "Local Qwen3-TTS", "pocket": "Pocket-TTS", "elevenlabs": "ElevenLabs"}
+                _tts_label = _tts_labels.get(_backend, _backend)
                 console.print(f"[green]Voice mode active[/green] — speak to chat, Escape to toggle, hotkeys: w/b/p/g/t")
                 console.print(f"[dim]TTS: {_tts_label}[/dim]")
                 _show_voice_devices(_voice_dev_kw(voice_cfg), get_default_devices, list_audio_devices)
@@ -719,7 +721,9 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                         voice_io = _create_voice_io(voice_cfg, VoiceIO)
                         try:
                             voice_io.start()
-                            _tts_label = "Local Qwen3-TTS" if (voice_cfg and voice_cfg.tts_backend == "local") else "ElevenLabs"
+                            _backend = voice_cfg.tts_backend if voice_cfg else "elevenlabs"
+                            _tts_labels = {"local": "Local Qwen3-TTS", "qwen": "Local Qwen3-TTS", "pocket": "Pocket-TTS", "elevenlabs": "ElevenLabs"}
+                            _tts_label = _tts_labels.get(_backend, _backend)
                             console.print("[green]Voice mode active[/green] — speak to chat, Escape to toggle, hotkeys: w/b/p/g/t")
                             console.print(f"[dim]TTS: {_tts_label}[/dim]")
                             _show_voice_devices(_voice_dev_kw(voice_cfg), get_default_devices, list_audio_devices)
