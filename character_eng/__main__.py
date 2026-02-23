@@ -451,8 +451,11 @@ def _create_voice_io(voice_cfg, VoiceIO_cls):
             kw["mic_mute_during_playback"] = False
         kw["tts_backend"] = voice_cfg.tts_backend
         kw["ref_audio"] = voice_cfg.ref_audio
+        kw["ref_text"] = voice_cfg.ref_text
         kw["tts_model"] = voice_cfg.tts_model
         kw["tts_device"] = voice_cfg.tts_device
+        kw["tts_server_url"] = voice_cfg.tts_server_url
+        kw["pocket_voice"] = voice_cfg.pocket_voice
     return VoiceIO_cls(**kw)
 
 

@@ -19,6 +19,7 @@ class VoiceConfig:
     tts_model: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"  # HuggingFace model ID
     tts_device: str = "cuda:0"  # GPU device for local TTS
     tts_server_url: str = ""  # server URL for pocket backend
+    pocket_voice: str = "voices/greg.safetensors"  # path to .safetensors or WAV for pocket-tts serve --voice
 
 
 @dataclass
@@ -46,5 +47,6 @@ def load_config() -> AppConfig:
         tts_model=voice_data.get("tts_model", "Qwen/Qwen3-TTS-12Hz-0.6B-Base"),
         tts_device=voice_data.get("tts_device", "cuda:0"),
         tts_server_url=voice_data.get("tts_server_url", ""),
+        pocket_voice=voice_data.get("pocket_voice", "voices/greg.safetensors"),
     )
     return AppConfig(voice=voice)

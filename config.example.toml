@@ -36,9 +36,11 @@
 # tts_device = "cuda:0"                  # GPU device
 
 # --- Pocket-TTS (external server, streaming voice cloning) ---
-# Requires: running Pocket-TTS server (`pocket-tts serve --port 8003`).
 # Client uses `requests` (in voice extras). Supports voice cloning via
 # ref_audio (WAV upload) or cached .safetensors voice file.
+# Server auto-starts when not running and auto-stops on exit.
+# For faster startup, run the server persistently in the background.
 # tts_backend = "pocket"
 # tts_server_url = "http://localhost:8003"
 # ref_audio = "/path/to/reference.wav"   # WAV for voice cloning (optional)
+# pocket_voice = "voices/greg.safetensors"  # voice file for pocket-tts serve --voice (default)

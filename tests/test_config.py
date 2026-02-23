@@ -149,3 +149,24 @@ def test_ref_text_parsed(tmp_path):
         cfg = load_config()
     assert cfg.voice.tts_backend == "qwen"
     assert cfg.voice.ref_text == "Hello, this is a test transcript."
+
+
+def test_pocket_voice_defaults():
+    """Missing config.toml → pocket_voice defaults to voices/greg.safetensors."""
+    with patch("character_eng.config.CONFIG_PATH", Path("/nonexistent/config.toml")):
+        cfg = load_config()
+    assert cfg.voice.pocket_voice == "voices/greg.safetensors"
+
+
+def test_pocket_voice_parsed(tmp_path):
+    """pocket_voice should be parsed from config."""
+    toml = tmp_path / "config.toml"
+    toml.write_text(
+        "[voice]\n"
+        'tts_backend = "pocket"\n'
+        'pocket_voice = "/path/to/voice.safetensors"\n'
+    )
+    with patch("character_eng.config.CONFIG_PATH", toml):
+        cfg = load_config()
+    assert cfg.voice.tts_backend == "pocket"
+    assert cfg.voice.pocket_voice == "/path/to/voice.safetensors"

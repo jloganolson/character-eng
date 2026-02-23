@@ -942,6 +942,21 @@ def test_voice_io_default_ref_text():
     assert voice._ref_text == ""
 
 
+def test_voice_io_stores_pocket_voice():
+    """VoiceIO should store pocket_voice param."""
+    voice = VoiceIO(tts_backend="pocket", pocket_voice="/path/to/voice.safetensors")
+    assert voice._pocket_voice == "/path/to/voice.safetensors"
+    assert voice._tts_backend == "pocket"
+
+
+def test_voice_io_default_pocket_voice():
+    """VoiceIO should default pocket_voice to empty string (config provides the real default)."""
+    voice = VoiceIO()
+    assert voice._pocket_voice == ""
+    assert voice._pocket_server is None
+    assert voice._pocket_we_started is False
+
+
 @patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
 def test_check_voice_available_qwen_backend():
     """Should return True for qwen backend (alias for local) when torch/transformers are present."""

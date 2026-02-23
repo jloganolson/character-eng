@@ -12,12 +12,15 @@ import os
 import queue
 import select
 import struct
+import subprocess
 import sys
 import termios
 import threading
 import time
 import tty
+from pathlib import Path
 from typing import Callable, Iterator
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -812,6 +815,7 @@ class VoiceIO:
         tts_model: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
         tts_device: str = "cuda:0",
         tts_server_url: str = "",
+        pocket_voice: str = "",
     ):
         self._event_queue: queue.Queue[str] = queue.Queue()
         self._cancelled = threading.Event()
@@ -836,6 +840,9 @@ class VoiceIO:
         self._tts_model = tts_model
         self._tts_device = tts_device
         self._tts_server_url = tts_server_url
+        self._pocket_voice = pocket_voice
+        self._pocket_server: subprocess.Popen | None = None
+        self._pocket_we_started = False
         self._started = False
 
     def start(self):
@@ -863,9 +870,11 @@ class VoiceIO:
         elif self._tts_backend == "pocket":
             from character_eng.pocket_tts import PocketTTS
 
+            server_url = self._tts_server_url or "http://localhost:8003"
+            self._ensure_pocket_server(server_url)
             self._tts = PocketTTS(
                 on_audio=self._speaker.enqueue,
-                server_url=self._tts_server_url or "http://localhost:8003",
+                server_url=server_url,
                 ref_audio=self._ref_audio,
             )
         else:
@@ -888,6 +897,110 @@ class VoiceIO:
 
         self._started = True
 
+    def _ensure_pocket_server(self, server_url: str):
+        """Check if Pocket-TTS server is running; start it if not."""
+        import requests as _requests
+
+        parsed = urlparse(server_url)
+        port = parsed.port or 8003
+
+        # Check if server is already running
+        try:
+            _requests.get(server_url, timeout=2)
+            sys.stderr.write(f"[Pocket-TTS] Server already running on port {port}\n")
+            sys.stderr.flush()
+            return
+        except Exception:
+            pass
+
+        # Build command — resolve binary path for venv compatibility
+        import shutil
+
+        pocket_bin = shutil.which("pocket-tts")
+        if pocket_bin is None:
+            raise RuntimeError("pocket-tts not found in PATH. Install with: pip install pocket-tts")
+
+        cmd = [pocket_bin, "serve", "--port", str(port)]
+        if self._pocket_voice:
+            # Resolve relative paths against project root
+            voice_path = Path(self._pocket_voice)
+            if not voice_path.is_absolute():
+                voice_path = Path(__file__).resolve().parent.parent / voice_path
+            cmd.extend(["--voice", str(voice_path)])
+
+        sys.stderr.write(f"[Pocket-TTS] Starting server on port {port}...\n")
+        sys.stderr.flush()
+
+        self._pocket_server = subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,  # own process group so we can kill children too
+        )
+        self._pocket_we_started = True
+
+        # Poll until server responds
+        deadline = time.time() + 15.0
+        while time.time() < deadline:
+            time.sleep(0.5)
+            if self._pocket_server.poll() is not None:
+                sys.stderr.write(
+                    f"[Pocket-TTS] Server process exited with code {self._pocket_server.returncode}\n"
+                )
+                sys.stderr.flush()
+                self._pocket_we_started = False
+                self._pocket_server = None
+                raise RuntimeError("Pocket-TTS server failed to start")
+            try:
+                _requests.get(server_url, timeout=1)
+                sys.stderr.write("[Pocket-TTS] Server ready.\n")
+                hint_cmd = f"pocket-tts serve --port {port}"
+                if self._pocket_voice:
+                    hint_cmd += f" --voice {voice_path}"
+                sys.stderr.write(
+                    f"[Pocket-TTS] Tip: run in background for faster startup next time:\n"
+                    f"  {hint_cmd} &\n"
+                )
+                sys.stderr.flush()
+                return
+            except Exception:
+                continue
+
+        # Timeout
+        self._stop_pocket_server()
+        raise RuntimeError("Pocket-TTS server did not become ready within 15s")
+
+    def _stop_pocket_server(self):
+        """Stop the Pocket-TTS server if we started it."""
+        if not self._pocket_we_started or self._pocket_server is None:
+            return
+
+        parsed = urlparse(self._tts_server_url or "http://localhost:8003")
+        port = parsed.port or 8003
+
+        sys.stderr.write("[Pocket-TTS] Stopping server...\n")
+        sys.stderr.flush()
+        # Kill the entire process group (server + uvicorn child)
+        pgid = os.getpgid(self._pocket_server.pid)
+        os.killpg(pgid, 15)  # SIGTERM
+        try:
+            self._pocket_server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(pgid, 9)  # SIGKILL
+            self._pocket_server.wait(timeout=2)
+
+        hint_cmd = f"pocket-tts serve --port {port}"
+        if self._pocket_voice:
+            voice_path = Path(self._pocket_voice)
+            if not voice_path.is_absolute():
+                voice_path = Path(__file__).resolve().parent.parent / voice_path
+            hint_cmd += f" --voice {voice_path}"
+        sys.stderr.write(
+            f"[Pocket-TTS] Server stopped. For persistent server, run:\n"
+            f"  {hint_cmd} &\n"
+        )
+        sys.stderr.flush()
+        self._pocket_server = None
+        self._pocket_we_started = False
+
     def stop(self):
         """Stop all voice components and cancel timers."""
         self._started = False
@@ -908,6 +1021,8 @@ class VoiceIO:
         if self._keys is not None:
             self._keys.stop()
             self._keys = None
+
+        self._stop_pocket_server()
 
         # Drain event queue
         while not self._event_queue.empty():
