@@ -12,11 +12,10 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 uv sync
 ```
 
-For voice mode (optional):
+For local Qwen3-TTS on GPU (optional, ~2GB VRAM):
 
 ```bash
-uv sync --extra voice       # ElevenLabs cloud TTS (default)
-uv sync --extra local-tts   # Local Qwen3-TTS on GPU (~2GB VRAM for 0.6B model)
+uv sync --extra local-tts
 ```
 
 Add API keys to `.env` (at least one LLM key required):
@@ -167,17 +166,17 @@ This enables true voice barge-in during TTS playback — the hardware AEC cancel
 
 Voice mode supports three TTS backends, configured via `tts_backend` in `config.toml`:
 
-**ElevenLabs (default)**: Cloud TTS, low latency, streaming text input. Requires `uv sync --extra voice` and `ELEVENLABS_API_KEY` in `.env`.
+**ElevenLabs (default)**: Cloud TTS, low latency, streaming text input. Requires `ELEVENLABS_API_KEY` in `.env`.
 
 **Qwen3-TTS** (`tts_backend = "qwen"`): GPU TTS via vendored Qwen3-TTS package. Requires `uv sync --extra local-tts`, a reference audio WAV for voice cloning, and ~2GB VRAM for the 0.6B model. No `ELEVENLABS_API_KEY` needed. Set `ref_audio` in `config.toml`. Two cloning modes: with `ref_text` (transcript of ref_audio) uses ICL mode for higher quality; without uses x-vector-only mode. Model loads once on first speech and persists across utterances. Uses Flash Attention 2 for optimized inference (`flash-attn` included in `local-tts` extras; `torch` pinned to 2.8.x for wheel compatibility). `"local"` is accepted as a legacy alias for `"qwen"`.
 
-**Pocket-TTS** (`tts_backend = "pocket"`): Streaming HTTP client for Pocket-TTS server (100M causal transformer). True autoregressive streaming with flat ~80ms TTFA. Supports voice cloning via `ref_audio` (WAV upload) or `pocket_voice` (path to `.safetensors` voice file passed to `pocket-tts serve --voice`). The server **auto-starts** when not already running and **auto-stops** on exit. For faster startup, run the server persistently in the background (`pocket-tts serve --port 8003 &`). Set `tts_server_url` in `config.toml` (default: `http://localhost:8003`). Only needs `requests` (included in voice extras).
+**Pocket-TTS** (`tts_backend = "pocket"`): Streaming HTTP client for Pocket-TTS server (100M causal transformer). True autoregressive streaming with flat ~80ms TTFA. Supports voice cloning via `ref_audio` (WAV upload) or `pocket_voice` (path to `.safetensors` voice file passed to `pocket-tts serve --voice`). The server **auto-starts** when not already running and **auto-stops** on exit. For faster startup, run the server persistently in the background (`pocket-tts serve --port 8003 &`). Set `tts_server_url` in `config.toml` (default: `http://localhost:8003`). Only needs `requests` (included in main dependencies).
 
 All backends use the same 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`) — no changes to the main conversation loop.
 
 ### Requirements
 
-Voice mode requires `uv sync --extra voice` (or `--extra local-tts` for local TTS) and at least:
+Voice mode requires at least:
 - `DEEPGRAM_API_KEY` — for speech-to-text (always required)
 - `ELEVENLABS_API_KEY` — for ElevenLabs TTS (only when `tts_backend = "elevenlabs"`)
 

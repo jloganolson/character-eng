@@ -204,32 +204,27 @@ name = "character-eng"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "deepgram-sdk" },
+    { name = "numpy" },
     { name = "openai" },
+    { name = "pocket-tts" },
     { name = "python-dotenv" },
     { name = "rich" },
+    { name = "sounddevice" },
+    { name = "websocket-client" },
 ]
 
 [package.optional-dependencies]
 local-tts = [
     { name = "accelerate" },
-    { name = "deepgram-sdk" },
     { name = "einops" },
     { name = "flash-attn" },
     { name = "librosa" },
-    { name = "numpy" },
     { name = "onnxruntime" },
-    { name = "sounddevice" },
     { name = "soundfile" },
     { name = "torch" },
     { name = "torchaudio" },
     { name = "transformers" },
-]
-voice = [
-    { name = "deepgram-sdk" },
-    { name = "numpy" },
-    { name = "pocket-tts" },
-    { name = "sounddevice" },
-    { name = "websocket-client" },
 ]
 
 [package.dev-dependencies]
@@ -240,27 +235,24 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", marker = "extra == 'local-tts'", specifier = ">=1.12.0" },
-    { name = "deepgram-sdk", marker = "extra == 'local-tts'", specifier = ">=5.3" },
-    { name = "deepgram-sdk", marker = "extra == 'voice'", specifier = ">=5.3" },
+    { name = "deepgram-sdk", specifier = ">=5.3" },
     { name = "einops", marker = "extra == 'local-tts'" },
     { name = "flash-attn", marker = "extra == 'local-tts'", specifier = "==2.8.3" },
     { name = "librosa", marker = "extra == 'local-tts'" },
-    { name = "numpy", marker = "extra == 'local-tts'", specifier = ">=1.26" },
-    { name = "numpy", marker = "extra == 'voice'", specifier = ">=1.26" },
+    { name = "numpy", specifier = ">=1.26" },
     { name = "onnxruntime", marker = "extra == 'local-tts'" },
     { name = "openai", specifier = ">=1.86.0" },
-    { name = "pocket-tts", marker = "extra == 'voice'", specifier = ">=1.0" },
+    { name = "pocket-tts", specifier = ">=1.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "rich", specifier = ">=14.3.2" },
-    { name = "sounddevice", marker = "extra == 'local-tts'", specifier = ">=0.5" },
-    { name = "sounddevice", marker = "extra == 'voice'", specifier = ">=0.5" },
+    { name = "sounddevice", specifier = ">=0.5" },
     { name = "soundfile", marker = "extra == 'local-tts'" },
     { name = "torch", marker = "extra == 'local-tts'", specifier = ">=2.8,<2.9" },
     { name = "torchaudio", marker = "extra == 'local-tts'" },
     { name = "transformers", marker = "extra == 'local-tts'", specifier = "==4.57.3" },
-    { name = "websocket-client", marker = "extra == 'voice'", specifier = ">=1.7" },
+    { name = "websocket-client", specifier = ">=1.7" },
 ]
-provides-extras = ["voice", "local-tts"]
+provides-extras = ["local-tts"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.0.2" }]

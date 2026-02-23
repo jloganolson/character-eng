@@ -499,53 +499,32 @@ def test_key_listener_puts_mapped_command():
 
 @patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1", "ELEVENLABS_API_KEY": "key2"})
 def test_check_voice_available_all_present():
-    """Should return True when all deps and keys are present (elevenlabs backend)."""
-    with patch.dict("sys.modules", {
-        "sounddevice": MagicMock(),
-        "numpy": MagicMock(),
-        "deepgram": MagicMock(),
-        "websocket": MagicMock(),
-    }):
-        available, reason = check_voice_available()
-        assert available is True
-        assert reason == ""
+    """Should return True when all keys are present (elevenlabs backend)."""
+    available, reason = check_voice_available()
+    assert available is True
+    assert reason == ""
 
 
 @patch.dict("os.environ", {"DEEPGRAM_API_KEY": "", "ELEVENLABS_API_KEY": "key2"})
 def test_check_voice_available_missing_deepgram_key():
     """Should return False when DEEPGRAM_API_KEY is not set."""
-    with patch.dict("sys.modules", {
-        "sounddevice": MagicMock(),
-        "numpy": MagicMock(),
-        "deepgram": MagicMock(),
-        "websocket": MagicMock(),
-    }):
-        available, reason = check_voice_available()
-        assert available is False
-        assert "DEEPGRAM_API_KEY" in reason
+    available, reason = check_voice_available()
+    assert available is False
+    assert "DEEPGRAM_API_KEY" in reason
 
 
 @patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1", "ELEVENLABS_API_KEY": ""})
 def test_check_voice_available_missing_elevenlabs_key():
     """Should return False when ELEVENLABS_API_KEY is not set."""
-    with patch.dict("sys.modules", {
-        "sounddevice": MagicMock(),
-        "numpy": MagicMock(),
-        "deepgram": MagicMock(),
-        "websocket": MagicMock(),
-    }):
-        available, reason = check_voice_available()
-        assert available is False
-        assert "ELEVENLABS_API_KEY" in reason
+    available, reason = check_voice_available()
+    assert available is False
+    assert "ELEVENLABS_API_KEY" in reason
 
 
 @patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
 def test_check_voice_available_local_backend():
     """Should return True for local backend when torch/transformers are present (no ELEVENLABS_API_KEY needed)."""
     with patch.dict("sys.modules", {
-        "sounddevice": MagicMock(),
-        "numpy": MagicMock(),
-        "deepgram": MagicMock(),
         "torch": MagicMock(),
         "transformers": MagicMock(),
     }):
@@ -557,12 +536,7 @@ def test_check_voice_available_local_backend():
 @patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
 def test_check_voice_available_local_missing_torch():
     """Should return False for local backend when torch is missing."""
-    import importlib
-
     with patch.dict("sys.modules", {
-        "sounddevice": MagicMock(),
-        "numpy": MagicMock(),
-        "deepgram": MagicMock(),
         "torch": None,
         "transformers": MagicMock(),
     }):
@@ -961,9 +935,6 @@ def test_voice_io_default_pocket_voice():
 def test_check_voice_available_qwen_backend():
     """Should return True for qwen backend (alias for local) when torch/transformers are present."""
     with patch.dict("sys.modules", {
-        "sounddevice": MagicMock(),
-        "numpy": MagicMock(),
-        "deepgram": MagicMock(),
         "torch": MagicMock(),
         "transformers": MagicMock(),
     }):
@@ -974,30 +945,10 @@ def test_check_voice_available_qwen_backend():
 
 @patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
 def test_check_voice_available_pocket_backend():
-    """Should return True for pocket backend when requests is present."""
-    with patch.dict("sys.modules", {
-        "sounddevice": MagicMock(),
-        "numpy": MagicMock(),
-        "deepgram": MagicMock(),
-        "requests": MagicMock(),
-    }):
-        available, reason = check_voice_available(tts_backend="pocket")
-        assert available is True
-        assert reason == ""
-
-
-@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
-def test_check_voice_available_pocket_missing_requests():
-    """Should return False for pocket backend when requests is missing."""
-    with patch.dict("sys.modules", {
-        "sounddevice": MagicMock(),
-        "numpy": MagicMock(),
-        "deepgram": MagicMock(),
-        "requests": None,
-    }):
-        available, reason = check_voice_available(tts_backend="pocket")
-        assert available is False
-        assert "requests" in reason
+    """Should return True for pocket backend (all deps are main dependencies)."""
+    available, reason = check_voice_available(tts_backend="pocket")
+    assert available is True
+    assert reason == ""
 
 
 def test_sentinel_strings_are_distinct():

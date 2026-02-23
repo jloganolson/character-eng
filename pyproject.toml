@@ -8,16 +8,14 @@ dependencies = [
     "openai>=1.86.0",
     "python-dotenv>=1.2.1",
     "rich>=14.3.2",
-]
-
-[project.optional-dependencies]
-voice = [
     "deepgram-sdk>=5.3",
     "sounddevice>=0.5",
     "numpy>=1.26",
     "websocket-client>=1.7",
     "pocket-tts>=1.0",
 ]
+
+[project.optional-dependencies]
 local-tts = [
     "torch>=2.8,<2.9",
     "torchaudio",
@@ -25,11 +23,8 @@ local-tts = [
     "accelerate>=1.12.0",
     "librosa",
     "soundfile",
-    "sounddevice>=0.5",
-    "numpy>=1.26",
     "einops",
     "onnxruntime",
-    "deepgram-sdk>=5.3",
     "flash-attn==2.8.3",
 ]
 

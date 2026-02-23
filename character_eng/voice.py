@@ -113,28 +113,10 @@ def check_voice_available(tts_backend: str = "elevenlabs") -> tuple[bool, str]:
 
     Returns (available, reason) tuple.
     """
-    missing = []
-    try:
-        import sounddevice  # noqa: F401
-    except ImportError:
-        missing.append("sounddevice")
-    try:
-        import numpy  # noqa: F401
-    except ImportError:
-        missing.append("numpy")
-
-    # STT is always Deepgram
-    try:
-        import deepgram  # noqa: F401
-    except ImportError:
-        missing.append("deepgram-sdk")
-
-    if tts_backend == "elevenlabs":
-        try:
-            import websocket  # noqa: F401
-        except ImportError:
-            missing.append("websocket-client")
-    elif tts_backend in ("local", "qwen"):
+    # Base voice deps (sounddevice, numpy, deepgram, websocket-client, pocket-tts)
+    # are in main dependencies — always installed. Only local-tts (qwen) needs extras.
+    if tts_backend in ("local", "qwen"):
+        missing = []
         try:
             import torch  # noqa: F401
         except ImportError:
@@ -143,20 +125,8 @@ def check_voice_available(tts_backend: str = "elevenlabs") -> tuple[bool, str]:
             import transformers  # noqa: F401
         except ImportError:
             missing.append("transformers")
-    elif tts_backend == "pocket":
-        try:
-            import requests  # noqa: F401
-        except ImportError:
-            missing.append("requests")
-
-    if missing:
-        _extra_map = {
-            "local": "local-tts",
-            "qwen": "local-tts",
-            "pocket": "voice",
-        }
-        extra = _extra_map.get(tts_backend, "voice")
-        return False, f"Missing packages: {', '.join(missing)}. Install with: uv sync --extra {extra}"
+        if missing:
+            return False, f"Missing packages: {', '.join(missing)}. Install with: uv sync --extra local-tts"
 
     if not os.environ.get("DEEPGRAM_API_KEY"):
         return False, "DEEPGRAM_API_KEY not set in .env"
