@@ -149,7 +149,7 @@ def check_voice_available(tts_backend: str = "elevenlabs") -> tuple[bool, str]:
             import torch  # noqa: F401
         except ImportError:
             missing.append("torch")
-    elif tts_backend in ("kani", "mio"):
+    elif tts_backend in ("kani", "mio", "kitten", "kokoro", "pocket"):
         try:
             import requests  # noqa: F401
         except ImportError:
@@ -161,6 +161,9 @@ def check_voice_available(tts_backend: str = "elevenlabs") -> tuple[bool, str]:
             "chatterbox": "chatterbox-tts",
             "kani": "voice",
             "mio": "voice",
+            "kitten": "voice",
+            "kokoro": "voice",
+            "pocket": "voice",
         }
         extra = _extra_map.get(tts_backend, "voice")
         return False, f"Missing packages: {', '.join(missing)}. Install with: uv sync --extra {extra}"
@@ -888,6 +891,27 @@ class VoiceIO:
             self._tts = MioTTS(
                 on_audio=self._speaker.enqueue,
                 server_url=self._tts_server_url or "http://localhost:8001",
+            )
+        elif self._tts_backend == "kitten":
+            from character_eng.kitten_tts import KittenTTS
+
+            self._tts = KittenTTS(
+                on_audio=self._speaker.enqueue,
+                server_url=self._tts_server_url or "http://localhost:8005",
+            )
+        elif self._tts_backend == "kokoro":
+            from character_eng.kokoro_tts import KokoroTTS
+
+            self._tts = KokoroTTS(
+                on_audio=self._speaker.enqueue,
+                server_url=self._tts_server_url or "http://localhost:8880",
+            )
+        elif self._tts_backend == "pocket":
+            from character_eng.pocket_tts import PocketTTS
+
+            self._tts = PocketTTS(
+                on_audio=self._speaker.enqueue,
+                server_url=self._tts_server_url or "http://localhost:8003",
             )
         else:
             self._tts = ElevenLabsTTS(

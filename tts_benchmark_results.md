@@ -9,22 +9,31 @@
 
 | Backend | Sentence | Avg TTFA (ms) | Avg Total (ms) | Avg Audio (ms) | Avg RTF |
 |---------|----------|---------------|----------------|----------------|---------|
-| **Chatterbox** | short (7w) | 711 | 712 | 2,340 | 0.305 |
-| **Chatterbox** | medium (35w) | 983 | 2,776 | 10,393 | 0.267 |
-| **Chatterbox** | long (66w) | 1,609 | 5,108 | 20,920 | 0.244 |
+| **Kokoro** | short (7w) | 51 | 51 | 2,149 | 0.023 |
+| **Kokoro** | medium (35w) | 86 | 87 | 11,171 | 0.008 |
+| **Kokoro** | long (66w) | 157 | 157 | 22,381 | 0.007 |
+| **Pocket-TTS** | short (7w) | 74 | 700 | 2,787 | 0.251 |
+| **Pocket-TTS** | medium (35w) | 92 | 2,680 | 10,573 | 0.253 |
+| **Pocket-TTS** | long (66w) | 114 | 4,901 | 19,187 | 0.255 |
 | **KaniTTS** | short (7w) | 301 | 591 | 3,520 | 0.168 |
 | **KaniTTS** | medium (35w) | 301 | 1,460 | 12,373 | 0.118 |
 | **KaniTTS** | long (66w) | 301 | 2,487 | 24,400 | 0.102 |
 | **MioTTS** | short (7w) | 293 | 293 | 2,560 | 0.115 |
 | **MioTTS** | medium (35w) | 645 | 1,640 | 14,227 | 0.115 |
 | **MioTTS** | long (66w) | 899 | 2,919 | 25,227 | 0.116 |
+| **KittenTTS** | short (7w) | 527 | 527 | 2,450 | 0.215 |
+| **KittenTTS** | medium (35w) | 2,256 | 2,256 | 11,275 | 0.200 |
+| **KittenTTS** | long (66w) | 4,081 | 4,081 | 21,375 | 0.191 |
+| **Chatterbox** | short (7w) | 711 | 712 | 2,340 | 0.305 |
+| **Chatterbox** | medium (35w) | 983 | 2,776 | 10,393 | 0.267 |
+| **Chatterbox** | long (66w) | 1,609 | 5,108 | 20,920 | 0.244 |
 
 ## Key Metrics
 
-- **TTFA** — Time to first audio (latency before audio starts playing)
-- **Total** — Total wall-clock generation time
-- **Audio** — Duration of generated audio
-- **RTF** — Real-time factor (generation time / audio duration; lower = faster than realtime)
+- **TTFA** -- Time to first audio (latency before audio starts playing)
+- **Total** -- Total wall-clock generation time
+- **Audio** -- Duration of generated audio
+- **RTF** -- Real-time factor (generation time / audio duration; lower = faster than realtime)
 
 ## Streaming Analysis
 
@@ -32,58 +41,65 @@
 
 | Backend | Short TTFA | Medium TTFA | Long TTFA | Streaming type |
 |---------|-----------|-------------|-----------|----------------|
+| **Kokoro** | 51ms | 86ms | 157ms | One-shot ONNX (so fast it doesn't matter) |
+| **Pocket-TTS** | 74ms | 92ms | 114ms | True autoregressive streaming (causal transformer) |
 | **KaniTTS** | 301ms | 301ms | 301ms | True SSE streaming (flat) |
 | **MioTTS** | 293ms | 645ms | 899ms | Sentence pipelining |
+| **KittenTTS** | 527ms | 2,256ms | 4,081ms | One-shot ONNX (no streaming) |
 | **Chatterbox** | 711ms | 983ms | 1,609ms | Sentence pipelining |
 
-**KaniTTS** has true token-level streaming via SSE — TTFA is dead flat at ~300ms regardless of input length. The server generates audio chunks as it decodes tokens and streams them immediately.
+**Kokoro** is the TTFA winner -- the 82M ONNX model is so fast that TTFA = total time. Even on the long sentence, it finishes generating all audio in 157ms. No streaming needed when inference is 143x realtime.
 
-**MioTTS** and **Chatterbox** use sentence-level pipelining: text is split at sentence boundaries, the first sentence is generated and delivered immediately, then subsequent sentences are generated sequentially. TTFA = first-sentence generation time, which scales with first-sentence length but is much faster than waiting for the full text.
+**Pocket-TTS** has true autoregressive streaming via chunked HTTP WAV -- TTFA is nearly flat (74-114ms) while total time scales linearly. The causal transformer generates audio frame-by-frame, and each frame streams out as it's decoded.
 
-### Before vs after streaming (TTFA improvement)
+**KaniTTS** has true SSE streaming -- TTFA is dead flat at ~300ms regardless of input length.
 
-| Backend | Old short | Old long | New short | New long | Long improvement |
-|---------|----------|---------|----------|---------|-----------------|
-| Chatterbox | 981ms | 4,458ms | 711ms | 1,609ms | **2.8x faster** |
-| KaniTTS | 1,442ms* | 315ms | 301ms | 301ms | flat (was hidden by warmup) |
-| MioTTS | 430ms | 2,360ms | 293ms | 899ms | **2.6x faster** |
+**KittenTTS** has no streaming and is the slowest. TTFA = Total because all audio arrives at once. The larger ONNX model (15-80M) generates at ~5x realtime but still takes 4 seconds for long text.
 
-*KaniTTS old short was inflated by server warmup on first request (now excluded via warmup run).
+### Speed ranking (RTF on long text)
 
-### Speed (RTF)
-
-| Backend | Avg RTF (long) | Notes |
-|---------|---------------|-------|
-| KaniTTS | 0.102 | Fastest. ~10x realtime |
-| MioTTS | 0.116 | ~8.6x realtime |
-| Chatterbox | 0.244 | ~4.1x realtime |
+| Rank | Backend | RTF (long) | Speed vs realtime |
+|------|---------|-----------|-------------------|
+| 1 | Kokoro | 0.007 | **143x** realtime |
+| 2 | KaniTTS | 0.102 | 10x realtime |
+| 3 | MioTTS | 0.116 | 8.6x realtime |
+| 4 | KittenTTS | 0.191 | 5.2x realtime |
+| 5 | Chatterbox | 0.244 | 4.1x realtime |
+| 6 | Pocket-TTS | 0.255 | 3.9x realtime |
 
 ### Setup Complexity
 
-| Backend | Architecture | GPU VRAM |
-|---------|-------------|----------|
-| Chatterbox | In-process (350M params) | ~1-2 GB |
-| KaniTTS | External server (FastAPI + NeMo) | ~4 GB |
-| MioTTS | Two servers (vLLM LLM + FastAPI codec) | ~7 GB |
+| Backend | Architecture | GPU VRAM | Voice Cloning |
+|---------|-------------|----------|---------------|
+| Kokoro | External server (FastAPI + ONNX) | ~1 GB | No (54 presets) |
+| Pocket-TTS | External server (FastAPI + causal transformer) | CPU-only (100M) | Yes (ref audio) |
+| KaniTTS | External server (FastAPI + NeMo) | ~4 GB | No |
+| KittenTTS | External server (FastAPI + ONNX) | ~0.5 GB | No (8 voices) |
+| Chatterbox | In-process (350M params) | ~1-2 GB | Yes (ref audio) |
+| MioTTS | Two servers (vLLM LLM + FastAPI codec) | ~7 GB | No (presets) |
 
 ### Recommendation
 
-- **Lowest latency:** KaniTTS — true streaming, flat 300ms TTFA at any text length
-- **Fastest generation:** KaniTTS at 0.102 RTF
-- **Simplest setup:** Chatterbox — no server, `pip install`, still 4.1x realtime
-- **Best overall:** KaniTTS — streaming + fastest + single server
+- **Lowest latency:** Kokoro -- 51ms TTFA (short), 157ms (long). So fast streaming is irrelevant.
+- **Best streaming:** Pocket-TTS -- true causal streaming, flat ~80ms TTFA, with voice cloning
+- **Fastest RTF:** Kokoro at 0.007 (143x realtime)
+- **Simplest setup:** Kokoro -- lightweight ONNX model, single server, 54 preset voices
+- **Best for voice cloning:** Pocket-TTS -- only streaming model that supports ref audio
+- **Best overall:** Kokoro for preset voices, Pocket-TTS for voice cloning
 
-## Implementation Details
+## Server Ports
 
-### True streaming (KaniTTS)
-The KaniTTS server generates speech tokens autoregressively and converts each chunk to audio via a codec in real-time. Audio chunks are sent as base64-encoded PCM in SSE events (`speech.audio.delta`). The client streams the HTTP response and delivers audio as each SSE event arrives.
-
-### Sentence pipelining (Chatterbox, MioTTS)
-Neither model supports token-level streaming (Chatterbox needs all tokens before vocoding; MioTTS codec needs all tokens for decoding). Instead, text is split at sentence boundaries (`re.split(r"(?<=[.!?])\s+", text)`), and each sentence is generated independently. The first sentence's audio is delivered as soon as it's ready, while subsequent sentences are generated and delivered sequentially.
+| Backend | Port | Server Location |
+|---------|------|----------------|
+| KaniTTS | 8000 | `/home/logan/Projects/kani-tts-2-openai-server/` |
+| MioTTS | 8001 (API) + 8100 (vLLM) | `/home/logan/Projects/MioTTS-Inference/` |
+| Pocket-TTS | 8003 | `uv run pocket-tts serve --port 8003` |
+| KittenTTS | 8005 | `/home/logan/Projects/Kitten-TTS-Server/` |
+| Kokoro | 8880 | `/home/logan/Projects/Kokoro-FastAPI/` |
 
 ## Notes
 
 - Benchmark includes a warmup run (excluded from metrics) to eliminate cold-start effects
-- KaniTTS server: `/home/logan/Projects/kani-tts-2-openai-server/` on port 8000
-- MioTTS servers: vLLM on port 8100, API on port 8001 with `--max-text-length 500`
-- MioTTS server: `/home/logan/Projects/MioTTS-Inference/`
+- Kokoro and KittenTTS are one-shot (TTFA = Total) because ONNX inference completes before any chunked delivery
+- Pocket-TTS runs on CPU by default; GPU provides no speedup for this 100M model
+- MioTTS requires `--max-text-length 500` on the vLLM server

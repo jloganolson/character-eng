@@ -160,7 +160,7 @@ This enables true voice barge-in during TTS playback — the hardware AEC cancel
 
 ### TTS backends
 
-Voice mode supports five TTS backends, configured via `tts_backend` in `config.toml`. All share the same 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`) — no changes to the main conversation loop.
+Voice mode supports eight TTS backends, configured via `tts_backend` in `config.toml`. All share the same 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`) — no changes to the main conversation loop.
 
 **ElevenLabs (default)**: Cloud TTS, low latency, streaming text input. Requires `uv sync --extra voice` and `ELEVENLABS_API_KEY` in `.env`.
 
@@ -171,6 +171,12 @@ Voice mode supports five TTS backends, configured via `tts_backend` in `config.t
 **KaniTTS-2** (`tts_backend = "kani"`): SSE streaming HTTP client. Connects to a KaniTTS-2 OpenAI-compatible server. True streaming = lowest time-to-first-audio of local options. Only needs `requests` (in voice extras, no GPU deps client-side). Set `tts_server_url` in `config.toml` (default: `http://localhost:8000`). Server must be started externally.
 
 **MioTTS** (`tts_backend = "mio"`): HTTP client. Connects to a MioTTS server (vLLM + codec). Receives complete WAV, resamples 44.1kHz → 24kHz. Only needs `requests`. Set `tts_server_url` in `config.toml` (default: `http://localhost:8001`). Server must be started externally.
+
+**KittenTTS** (`tts_backend = "kitten"`): HTTP client. Connects to a Kitten-TTS-Server (ONNX, 8 fixed voices). Receives complete WAV, delivers in chunks. Only needs `requests`. Set `tts_server_url` in `config.toml` (default: `http://localhost:8005`). Server must be started externally.
+
+**Kokoro** (`tts_backend = "kokoro"`): HTTP client. Connects to a Kokoro-FastAPI server (82M ONNX, 54 preset voices). Fastest backend at 143x realtime — so fast streaming is irrelevant. Only needs `requests`. Set `tts_server_url` in `config.toml` (default: `http://localhost:8880`). Server must be started externally.
+
+**Pocket-TTS** (`tts_backend = "pocket"`): Streaming HTTP client. Connects to a Pocket-TTS server (100M causal transformer). True autoregressive streaming with flat ~80ms TTFA. Supports voice cloning via ref audio. CPU-only (no GPU needed). Only needs `requests`. Set `tts_server_url` in `config.toml` (default: `http://localhost:8003`). Server: `uv run pocket-tts serve --port 8003`.
 
 ### Requirements
 
@@ -306,7 +312,17 @@ uv run -m character_eng.tts_benchmark
 uv run -m character_eng.tts_benchmark --backend chatterbox --runs 5
 ```
 
-Measures TTFA (time to first audio), total generation time, audio duration, and RTF (real-time factor). Results saved to `logs/tts_benchmark_*.json`.
+Measures TTFA (time to first audio), total generation time, audio duration, and RTF (real-time factor). Supports all eight backends: `local`, `chatterbox`, `kani`, `mio`, `kitten`, `kokoro`, `pocket`, `elevenlabs`. Results saved to `logs/tts_benchmark_*.json`. See `tts_benchmark_results.md` for full results across all backends.
+
+### TTS comparison tool
+
+Compare TTS backends by ear — type text, press a number key to hear it from different backends:
+
+```bash
+uv run -m character_eng.tts_compare
+```
+
+Type a line of text, then press 1-6 to hear it from: ElevenLabs, KaniTTS, Qwen3-TTS, KittenTTS, Kokoro, or Pocket-TTS. Shows TTFA timing after each play. Press Enter for new text, Ctrl+C to quit.
 
 ## Logs
 

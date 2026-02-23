@@ -102,6 +102,27 @@ def _create_backend(backend: str, ref_audio: str, device: str, server_url: str):
             on_audio=on_audio,
             server_url=server_url or "http://localhost:8001",
         )
+    elif backend == "kitten":
+        from character_eng.kitten_tts import KittenTTS
+
+        tts = KittenTTS(
+            on_audio=on_audio,
+            server_url=server_url or "http://localhost:8005",
+        )
+    elif backend == "kokoro":
+        from character_eng.kokoro_tts import KokoroTTS
+
+        tts = KokoroTTS(
+            on_audio=on_audio,
+            server_url=server_url or "http://localhost:8880",
+        )
+    elif backend == "pocket":
+        from character_eng.pocket_tts import PocketTTS
+
+        tts = PocketTTS(
+            on_audio=on_audio,
+            server_url=server_url or "http://localhost:8003",
+        )
     elif backend == "elevenlabs":
         from character_eng.voice import ElevenLabsTTS
 
@@ -241,7 +262,7 @@ def main():
     parser = argparse.ArgumentParser(description="TTS backend speed benchmark")
     parser.add_argument(
         "--backend",
-        choices=["local", "chatterbox", "kani", "mio", "elevenlabs"],
+        choices=["local", "chatterbox", "kani", "mio", "kitten", "kokoro", "pocket", "elevenlabs"],
         help="TTS backend to benchmark (default: from config.toml)",
     )
     parser.add_argument(
