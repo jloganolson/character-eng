@@ -17,6 +17,7 @@ class VoiceConfig:
     ref_audio: str = ""  # path to reference audio WAV for local voice cloning
     tts_model: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"  # HuggingFace model ID
     tts_device: str = "cuda:0"  # GPU device for local TTS
+    tts_server_url: str = ""  # server URL for kani/mio backends
 
 
 @dataclass
@@ -42,5 +43,6 @@ def load_config() -> AppConfig:
         ref_audio=voice_data.get("ref_audio", ""),
         tts_model=voice_data.get("tts_model", "Qwen/Qwen3-TTS-12Hz-0.6B-Base"),
         tts_device=voice_data.get("tts_device", "cuda:0"),
+        tts_server_url=voice_data.get("tts_server_url", ""),
     )
     return AppConfig(voice=voice)

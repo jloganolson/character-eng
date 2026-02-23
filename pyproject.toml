@@ -16,6 +16,7 @@ voice = [
     "sounddevice>=0.5",
     "numpy>=1.26",
     "websocket-client>=1.7",
+    "requests>=2.31",
 ]
 local-tts = [
     "torch>=2.8,<2.9",
@@ -45,4 +46,6 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "numpy>=1.26",
+    "requests>=2.31",
 ]

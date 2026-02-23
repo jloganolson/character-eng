@@ -916,6 +916,91 @@ def test_voice_io_default_tts_backend():
     assert voice._tts_backend == "elevenlabs"
 
 
+def test_voice_io_stores_tts_server_url():
+    """VoiceIO should store tts_server_url."""
+    voice = VoiceIO(tts_backend="kani", tts_server_url="http://localhost:9999")
+    assert voice._tts_server_url == "http://localhost:9999"
+    assert voice._tts_backend == "kani"
+
+
+def test_voice_io_default_tts_server_url():
+    """VoiceIO should default tts_server_url to empty string."""
+    voice = VoiceIO()
+    assert voice._tts_server_url == ""
+
+
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
+def test_check_voice_available_chatterbox_backend():
+    """Should return True for chatterbox backend when deps are present."""
+    with patch.dict("sys.modules", {
+        "sounddevice": MagicMock(),
+        "numpy": MagicMock(),
+        "deepgram": MagicMock(),
+        "chatterbox": MagicMock(),
+        "torch": MagicMock(),
+    }):
+        available, reason = check_voice_available(tts_backend="chatterbox")
+        assert available is True
+        assert reason == ""
+
+
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
+def test_check_voice_available_chatterbox_missing_deps():
+    """Should return False for chatterbox when chatterbox-tts is missing."""
+    with patch.dict("sys.modules", {
+        "sounddevice": MagicMock(),
+        "numpy": MagicMock(),
+        "deepgram": MagicMock(),
+        "chatterbox": None,
+        "torch": MagicMock(),
+    }):
+        available, reason = check_voice_available(tts_backend="chatterbox")
+        assert available is False
+        assert "chatterbox-tts" in reason
+
+
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
+def test_check_voice_available_kani_backend():
+    """Should return True for kani backend when requests is present."""
+    with patch.dict("sys.modules", {
+        "sounddevice": MagicMock(),
+        "numpy": MagicMock(),
+        "deepgram": MagicMock(),
+        "requests": MagicMock(),
+    }):
+        available, reason = check_voice_available(tts_backend="kani")
+        assert available is True
+        assert reason == ""
+
+
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
+def test_check_voice_available_mio_backend():
+    """Should return True for mio backend when requests is present."""
+    with patch.dict("sys.modules", {
+        "sounddevice": MagicMock(),
+        "numpy": MagicMock(),
+        "deepgram": MagicMock(),
+        "requests": MagicMock(),
+    }):
+        available, reason = check_voice_available(tts_backend="mio")
+        assert available is True
+        assert reason == ""
+
+
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
+def test_check_voice_available_kani_missing_requests():
+    """Should return False for kani backend when requests is missing."""
+    with patch.dict("sys.modules", {
+        "sounddevice": MagicMock(),
+        "numpy": MagicMock(),
+        "deepgram": MagicMock(),
+        "requests": None,
+    }):
+        available, reason = check_voice_available(tts_backend="kani")
+        assert available is False
+        assert "requests" in reason
+
+
 def test_sentinel_strings_are_distinct():
     """All sentinel strings should be unique."""
     sentinels = [VOICE_OFF, EXIT, VOICE_ERROR]

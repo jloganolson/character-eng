@@ -15,8 +15,9 @@ uv sync
 For voice mode (optional):
 
 ```bash
-uv sync --extra voice       # ElevenLabs cloud TTS (default)
-uv sync --extra local-tts   # Local Qwen3-TTS on GPU (~2GB VRAM for 0.6B model)
+uv sync --extra voice           # ElevenLabs cloud TTS (default) + kani/mio HTTP clients
+uv sync --extra local-tts       # Local Qwen3-TTS on GPU (~2GB VRAM for 0.6B model)
+uv pip install chatterbox-tts   # Chatterbox-Turbo (separate due to torch version conflict)
 ```
 
 Add API keys to `.env` (at least one LLM key required):
@@ -48,11 +49,12 @@ output_device = "reSpeaker"  # route TTS through device for hardware AEC referen
 enabled = true               # start in voice mode by default
 mic_mute_during_playback = false  # disable for hardware AEC mics (e.g. XVF3800)
 
-# Use local GPU TTS instead of ElevenLabs (requires uv sync --extra local-tts)
-# tts_backend = "local"
-# ref_audio = "/path/to/reference.wav"
-# tts_model = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
-# tts_device = "cuda:0"
+# TTS backend: "elevenlabs", "local", "chatterbox", "kani", or "mio"
+# tts_backend = "elevenlabs"
+# ref_audio = "/path/to/reference.wav"   # for local/chatterbox voice cloning
+# tts_model = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"  # for local backend
+# tts_device = "cuda:0"                  # for local/chatterbox
+# tts_server_url = "http://localhost:8000"  # for kani/mio backends
 ```
 
 The app works without `config.toml` — all settings have defaults. The `--voice` flag still works as an override.
@@ -158,13 +160,17 @@ This enables true voice barge-in during TTS playback — the hardware AEC cancel
 
 ### TTS backends
 
-Voice mode supports two TTS backends, configured via `tts_backend` in `config.toml`:
+Voice mode supports five TTS backends, configured via `tts_backend` in `config.toml`. All share the same 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`) — no changes to the main conversation loop.
 
 **ElevenLabs (default)**: Cloud TTS, low latency, streaming text input. Requires `uv sync --extra voice` and `ELEVENLABS_API_KEY` in `.env`.
 
-**Local Qwen3-TTS**: GPU TTS via vendored Qwen3-TTS package. Requires `uv sync --extra local-tts`, a reference audio WAV for voice cloning, and ~2GB VRAM for the 0.6B model. No `ELEVENLABS_API_KEY` needed. Set `tts_backend = "local"` and `ref_audio` in `config.toml`. Model loads once on first speech and persists across utterances. Uses Flash Attention 2 for optimized inference (`flash-attn` included in `local-tts` extras; `torch` pinned to 2.8.x for wheel compatibility).
+**Local Qwen3-TTS** (`tts_backend = "local"`): GPU TTS via vendored Qwen3-TTS package. Requires `uv sync --extra local-tts`, a reference audio WAV for voice cloning, and ~2GB VRAM for the 0.6B model. No `ELEVENLABS_API_KEY` needed. Set `ref_audio` in `config.toml`. Model loads once on first speech and persists across utterances. Uses Flash Attention 2 for optimized inference (`flash-attn` included in `local-tts` extras; `torch` pinned to 2.8.x for wheel compatibility).
 
-Both backends use the same 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`) — no changes to the main conversation loop.
+**Chatterbox-Turbo** (`tts_backend = "chatterbox"`): In-process GPU TTS (350M params, 24kHz). Zero-shot voice cloning from a 10-second reference WAV. Install with `uv pip install chatterbox-tts` (not via extras — conflicts with local-tts torch version). Set `ref_audio` in `config.toml`.
+
+**KaniTTS-2** (`tts_backend = "kani"`): SSE streaming HTTP client. Connects to a KaniTTS-2 OpenAI-compatible server. True streaming = lowest time-to-first-audio of local options. Only needs `requests` (in voice extras, no GPU deps client-side). Set `tts_server_url` in `config.toml` (default: `http://localhost:8000`). Server must be started externally.
+
+**MioTTS** (`tts_backend = "mio"`): HTTP client. Connects to a MioTTS server (vLLM + codec). Receives complete WAV, resamples 44.1kHz → 24kHz. Only needs `requests`. Set `tts_server_url` in `config.toml` (default: `http://localhost:8001`). Server must be started externally.
 
 ### Requirements
 
@@ -287,6 +293,20 @@ uv run -m character_eng.benchmark --model cerebras-llama --runs 5
 ```
 
 Prints per-run details (TTFT, total time, response text) and a summary table with averages and standard deviations. Full results are saved to `logs/benchmark_*.json`.
+
+### TTS benchmarking
+
+Measure TTS backend performance across three sentence lengths (short/medium/long):
+
+```bash
+# Benchmark the configured TTS backend (from config.toml)
+uv run -m character_eng.tts_benchmark
+
+# Benchmark a specific backend with more runs
+uv run -m character_eng.tts_benchmark --backend chatterbox --runs 5
+```
+
+Measures TTFA (time to first audio), total generation time, audio duration, and RTF (real-time factor). Results saved to `logs/tts_benchmark_*.json`.
 
 ## Logs
 

@@ -106,7 +106,7 @@ def check_voice_available(tts_backend: str = "elevenlabs") -> tuple[bool, str]:
     """Check if voice dependencies and API keys are available.
 
     Args:
-        tts_backend: "elevenlabs" or "local" — controls which TTS deps are checked.
+        tts_backend: "elevenlabs", "local", "chatterbox", "kani", or "mio".
 
     Returns (available, reason) tuple.
     """
@@ -140,9 +140,29 @@ def check_voice_available(tts_backend: str = "elevenlabs") -> tuple[bool, str]:
             import transformers  # noqa: F401
         except ImportError:
             missing.append("transformers")
+    elif tts_backend == "chatterbox":
+        try:
+            import chatterbox  # noqa: F401
+        except ImportError:
+            missing.append("chatterbox-tts")
+        try:
+            import torch  # noqa: F401
+        except ImportError:
+            missing.append("torch")
+    elif tts_backend in ("kani", "mio"):
+        try:
+            import requests  # noqa: F401
+        except ImportError:
+            missing.append("requests")
 
     if missing:
-        extra = "local-tts" if tts_backend == "local" else "voice"
+        _extra_map = {
+            "local": "local-tts",
+            "chatterbox": "chatterbox-tts",
+            "kani": "voice",
+            "mio": "voice",
+        }
+        extra = _extra_map.get(tts_backend, "voice")
         return False, f"Missing packages: {', '.join(missing)}. Install with: uv sync --extra {extra}"
 
     if not os.environ.get("DEEPGRAM_API_KEY"):
@@ -800,6 +820,7 @@ class VoiceIO:
         ref_audio: str = "",
         tts_model: str = "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
         tts_device: str = "cuda:0",
+        tts_server_url: str = "",
     ):
         self._event_queue: queue.Queue[str] = queue.Queue()
         self._cancelled = threading.Event()
@@ -822,6 +843,7 @@ class VoiceIO:
         self._ref_audio = ref_audio
         self._tts_model = tts_model
         self._tts_device = tts_device
+        self._tts_server_url = tts_server_url
         self._started = False
 
     def start(self):
@@ -843,6 +865,29 @@ class VoiceIO:
                 ref_audio_path=self._ref_audio,
                 model_id=self._tts_model,
                 device=self._tts_device,
+            )
+        elif self._tts_backend == "chatterbox":
+            from character_eng.chatterbox_tts import ChatterboxTTS, load_model as cb_load
+
+            cb_load(self._tts_device)
+            self._tts = ChatterboxTTS(
+                on_audio=self._speaker.enqueue,
+                ref_audio_path=self._ref_audio,
+                device=self._tts_device,
+            )
+        elif self._tts_backend == "kani":
+            from character_eng.kani_tts import KaniTTS
+
+            self._tts = KaniTTS(
+                on_audio=self._speaker.enqueue,
+                server_url=self._tts_server_url or "http://localhost:8000",
+            )
+        elif self._tts_backend == "mio":
+            from character_eng.mio_tts import MioTTS
+
+            self._tts = MioTTS(
+                on_audio=self._speaker.enqueue,
+                server_url=self._tts_server_url or "http://localhost:8001",
             )
         else:
             self._tts = ElevenLabsTTS(

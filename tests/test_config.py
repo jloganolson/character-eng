@@ -94,6 +94,27 @@ def test_tts_backend_partial_defaults(tmp_path):
     assert cfg.voice.tts_device == "cuda:0"
 
 
+def test_tts_server_url_defaults():
+    """Missing config.toml → tts_server_url defaults to empty string."""
+    with patch("character_eng.config.CONFIG_PATH", Path("/nonexistent/config.toml")):
+        cfg = load_config()
+    assert cfg.voice.tts_server_url == ""
+
+
+def test_tts_server_url_parsed(tmp_path):
+    """tts_server_url should be parsed from config."""
+    toml = tmp_path / "config.toml"
+    toml.write_text(
+        "[voice]\n"
+        'tts_backend = "kani"\n'
+        'tts_server_url = "http://localhost:9999"\n'
+    )
+    with patch("character_eng.config.CONFIG_PATH", toml):
+        cfg = load_config()
+    assert cfg.voice.tts_backend == "kani"
+    assert cfg.voice.tts_server_url == "http://localhost:9999"
+
+
 def test_string_device_names(tmp_path):
     """Device names as strings are accepted alongside integers."""
     toml = tmp_path / "config.toml"

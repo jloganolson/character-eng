@@ -19,11 +19,31 @@
 # Set to false if your mic has hardware AEC (e.g. reSpeaker XVF3800).
 # mic_mute_during_playback = true
 
-# TTS backend: "elevenlabs" (cloud, default) or "local" (Qwen3-TTS on GPU).
-# Local requires: uv sync --extra local-tts (~2GB VRAM for 0.6B model).
+# TTS backend: "elevenlabs" (cloud), "local" (Qwen3-TTS), "chatterbox",
+#              "kani" (server), or "mio" (server). Default: "elevenlabs".
 # tts_backend = "elevenlabs"
 
-# Local TTS settings (only used when tts_backend = "local"):
+# --- ElevenLabs (cloud, default) ---
+# Requires ELEVENLABS_API_KEY in .env. No extra install needed beyond `uv sync --extra voice`.
+
+# --- Local Qwen3-TTS (in-process GPU) ---
+# Requires: uv sync --extra local-tts (~2GB VRAM for 0.6B model).
 # ref_audio = "/path/to/reference.wav"   # reference audio for voice cloning
 # tts_model = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"  # HuggingFace model ID
 # tts_device = "cuda:0"                  # GPU device
+
+# --- Chatterbox-Turbo (in-process GPU, zero-shot voice cloning) ---
+# Requires: uv pip install chatterbox-tts (conflicts with local-tts torch version).
+# tts_backend = "chatterbox"
+# ref_audio = "/path/to/reference.wav"   # 10s reference WAV for voice cloning
+# tts_device = "cuda:0"
+
+# --- KaniTTS-2 (external server, SSE streaming) ---
+# Requires: running KaniTTS server externally. Client uses `requests` (in voice extras).
+# tts_backend = "kani"
+# tts_server_url = "http://localhost:8000"
+
+# --- MioTTS (external server, WAV response) ---
+# Requires: running MioTTS vLLM + codec server externally. Client uses `requests`.
+# tts_backend = "mio"
+# tts_server_url = "http://localhost:8001"
