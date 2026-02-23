@@ -63,7 +63,7 @@ BACKEND_PORTS = {
 ELEVENLABS_VOICE_ID = "qXpMhyvQqiRxWQs4qSSB"
 
 
-def _create_backend(backend: str, ref_audio: str, device: str, server_url: str):
+def _create_backend(backend: str, ref_audio: str, device: str, server_url: str, ref_text: str = ""):
     """Create a TTS backend instance. Returns (tts, on_audio_cb, metrics_dict, pcm_buf)."""
     metrics = {
         "ttfa": None,
@@ -87,11 +87,13 @@ def _create_backend(backend: str, ref_audio: str, device: str, server_url: str):
             model_id="Qwen/Qwen3-TTS-12Hz-0.6B-Base",
             device=device,
             ref_audio_path=ref_audio,
+            ref_text=ref_text,
         )
         tts = LocalTTS(
             on_audio=on_audio,
             ref_audio_path=ref_audio,
             device=device,
+            ref_text=ref_text,
         )
     elif backend == "kani":
         from character_eng.kani_tts import KaniTTS
@@ -178,10 +180,10 @@ def _save_wav(path: Path, pcm: bytes):
         wf.writeframes(pcm)
 
 
-def _check_backend(backend: str, ref_audio: str, device: str, server_url: str) -> bool:
+def _check_backend(backend: str, ref_audio: str, device: str, server_url: str, ref_text: str = "") -> bool:
     """Check if a backend is reachable by doing a quick test generation."""
     try:
-        tts, metrics, pcm_buf = _create_backend(backend, ref_audio, device, server_url)
+        tts, metrics, pcm_buf = _create_backend(backend, ref_audio, device, server_url, ref_text=ref_text)
         _run_one(tts, metrics, "Test.")
         return metrics["total_bytes"] > 0
     except Exception:
@@ -243,6 +245,7 @@ def main():
 
     cfg = load_config()
     ref_audio = cfg.voice.ref_audio
+    ref_text = cfg.voice.ref_text
     device = cfg.voice.tts_device
     server_url = cfg.voice.tts_server_url
 
@@ -260,7 +263,7 @@ def main():
     reachable = []
     for b in backends:
         console.print(f"  Checking {b}...", end=" ")
-        if _check_backend(b, ref_audio, device, server_url):
+        if _check_backend(b, ref_audio, device, server_url, ref_text=ref_text):
             console.print("[green]OK[/green]")
             reachable.append(b)
         else:
@@ -281,7 +284,7 @@ def main():
         # Warmup
         console.print("  [dim]Warmup...[/dim]")
         try:
-            tts, metrics, pcm_buf = _create_backend(b, ref_audio, device, server_url)
+            tts, metrics, pcm_buf = _create_backend(b, ref_audio, device, server_url, ref_text=ref_text)
             _run_one(tts, metrics, "Warmup sentence.")
         except Exception:
             pass
@@ -289,7 +292,7 @@ def main():
         combined_pcm = bytearray()
 
         for i, line in enumerate(lines, 1):
-            tts, metrics, pcm_buf = _create_backend(b, ref_audio, device, server_url)
+            tts, metrics, pcm_buf = _create_backend(b, ref_audio, device, server_url, ref_text=ref_text)
             try:
                 result = _run_one(tts, metrics, line)
                 result["line_num"] = i
