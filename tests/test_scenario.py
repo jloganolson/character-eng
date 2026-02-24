@@ -1,0 +1,298 @@
+import json
+from unittest.mock import MagicMock, patch
+
+import character_eng.scenario as scenario_mod
+import character_eng.world as world_mod
+from character_eng.person import PeopleState
+from character_eng.scenario import (
+    DirectorResult,
+    ScenarioScript,
+    Stage,
+    StageExit,
+    director_call,
+    load_scenario_script,
+)
+from character_eng.world import WorldState
+
+TEST_CONFIG = {
+    "name": "Test Model",
+    "model": "test-model",
+    "base_url": "https://test.example.com/v1",
+    "api_key_env": "GEMINI_API_KEY",
+    "stream_usage": True,
+}
+
+
+def _mock_openai_response(data: dict):
+    mock_message = MagicMock()
+    mock_message.content = json.dumps(data)
+    mock_choice = MagicMock()
+    mock_choice.message = mock_message
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+    return mock_response
+
+
+# --- ScenarioScript ---
+
+
+def test_scenario_script_active_stage():
+    s = ScenarioScript(
+        name="test",
+        stages={"a": Stage("a", "Goal A"), "b": Stage("b", "Goal B")},
+        start="a",
+        current_stage="a",
+    )
+    assert s.active_stage.name == "a"
+    assert s.active_stage.goal == "Goal A"
+
+
+def test_scenario_script_active_stage_none():
+    s = ScenarioScript(name="test", stages={}, start="", current_stage="missing")
+    assert s.active_stage is None
+
+
+def test_scenario_script_advance_to():
+    s = ScenarioScript(
+        name="test",
+        stages={"a": Stage("a", "Goal A"), "b": Stage("b", "Goal B")},
+        start="a",
+        current_stage="a",
+    )
+    assert s.advance_to("b") is True
+    assert s.current_stage == "b"
+    assert s.active_stage.name == "b"
+
+
+def test_scenario_script_advance_to_invalid():
+    s = ScenarioScript(
+        name="test",
+        stages={"a": Stage("a", "Goal A")},
+        start="a",
+        current_stage="a",
+    )
+    assert s.advance_to("nonexistent") is False
+    assert s.current_stage == "a"
+
+
+def test_scenario_script_render():
+    s = ScenarioScript(
+        name="test",
+        stages={
+            "a": Stage("a", "Goal A", exits=[StageExit("someone arrives", "b")]),
+            "b": Stage("b", "Goal B"),
+        },
+        start="a",
+        current_stage="a",
+    )
+    text = s.render()
+    assert "→ a: Goal A" in text
+    assert "  b: Goal B" in text
+    assert "someone arrives" in text
+    assert "→ b" in text
+
+
+def test_scenario_script_show_panel():
+    s = ScenarioScript(name="test", stages={"a": Stage("a", "Goal A")}, start="a", current_stage="a")
+    panel = s.show()
+    assert panel.title == "Scenario"
+
+
+# --- load_scenario_script ---
+
+
+def test_load_scenario_script(tmp_path, monkeypatch):
+    char_dir = tmp_path / "characters" / "test_char"
+    char_dir.mkdir(parents=True)
+    (char_dir / "scenario_script.toml").write_text("""
+[scenario]
+name = "Test Scenario"
+start = "intro"
+
+[[stage]]
+name = "intro"
+goal = "Introduce yourself"
+
+[[stage.exit]]
+condition = "The visitor said hello"
+goto = "chat"
+
+[[stage]]
+name = "chat"
+goal = "Have a conversation"
+""")
+
+    monkeypatch.setattr(scenario_mod, "CHARACTERS_DIR", tmp_path / "characters")
+
+    script = load_scenario_script("test_char")
+    assert script is not None
+    assert script.name == "Test Scenario"
+    assert script.start == "intro"
+    assert script.current_stage == "intro"
+    assert len(script.stages) == 2
+    assert script.stages["intro"].goal == "Introduce yourself"
+    assert len(script.stages["intro"].exits) == 1
+    assert script.stages["intro"].exits[0].condition == "The visitor said hello"
+    assert script.stages["intro"].exits[0].goto == "chat"
+
+
+def test_load_scenario_script_not_found(tmp_path, monkeypatch):
+    char_dir = tmp_path / "characters" / "test_char"
+    char_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(scenario_mod, "CHARACTERS_DIR", tmp_path / "characters")
+
+    script = load_scenario_script("test_char")
+    assert script is None
+
+
+def test_load_scenario_script_greg():
+    """Smoke test: load greg's actual scenario_script.toml."""
+    script = load_scenario_script("greg")
+    assert script is not None
+    assert script.start == "waiting"
+    assert "waiting" in script.stages
+    assert "pitch" in script.stages
+    assert len(script.stages["waiting"].exits) >= 1
+
+
+# --- director_call (mocked) ---
+
+
+@patch("character_eng.scenario._make_client")
+def test_director_call_hold(mock_make_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "director_system.txt").write_text("You are director.")
+
+    data = {"thought": "No exit condition met.", "status": "hold", "exit_index": -1}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    scenario = ScenarioScript(
+        name="test",
+        stages={"a": Stage("a", "Goal A", exits=[StageExit("someone arrives", "b")])},
+        start="a",
+        current_stage="a",
+    )
+
+    result = director_call(scenario, world=None, people=None, history=[], model_config=TEST_CONFIG)
+    assert result.status == "hold"
+    assert result.exit_index == -1
+
+
+@patch("character_eng.scenario._make_client")
+def test_director_call_advance(mock_make_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "director_system.txt").write_text("You are director.")
+
+    data = {"thought": "Someone has arrived.", "status": "advance", "exit_index": 0}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    scenario = ScenarioScript(
+        name="test",
+        stages={
+            "a": Stage("a", "Goal A", exits=[StageExit("someone arrives", "b")]),
+            "b": Stage("b", "Goal B"),
+        },
+        start="a",
+        current_stage="a",
+    )
+
+    result = director_call(scenario, world=None, people=None, history=[], model_config=TEST_CONFIG)
+    assert result.status == "advance"
+    assert result.exit_index == 0
+
+
+@patch("character_eng.scenario._make_client")
+def test_director_call_context_includes_exits(mock_make_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "director_system.txt").write_text("You are director.")
+
+    data = {"thought": "Checking.", "status": "hold", "exit_index": -1}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    scenario = ScenarioScript(
+        name="test",
+        stages={"a": Stage("a", "Goal A", exits=[StageExit("visitor leaves", "b")])},
+        start="a",
+        current_stage="a",
+    )
+
+    director_call(scenario, world=None, people=None, history=[], model_config=TEST_CONFIG)
+
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "CURRENT STAGE" in user_msg
+    assert "Goal A" in user_msg
+    assert "visitor leaves" in user_msg
+    assert "→ b" in user_msg
+
+
+@patch("character_eng.scenario._make_client")
+def test_director_call_context_includes_people(mock_make_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "director_system.txt").write_text("You are director.")
+
+    data = {"thought": "People here.", "status": "hold", "exit_index": -1}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    scenario = ScenarioScript(
+        name="test",
+        stages={"a": Stage("a", "Goal A")},
+        start="a",
+        current_stage="a",
+    )
+
+    people = PeopleState()
+    people.add_person(name="Alice", presence="present")
+
+    director_call(scenario, world=None, people=people, history=[], model_config=TEST_CONFIG)
+
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "PEOPLE PRESENT" in user_msg
+    assert "Alice" in user_msg
+
+
+@patch("character_eng.scenario._make_client")
+def test_director_call_reads_prompt_file(mock_make_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "director_system.txt").write_text("Director v1")
+
+    data = {"thought": "ok", "status": "hold", "exit_index": -1}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    scenario = ScenarioScript(
+        name="test",
+        stages={"a": Stage("a", "Goal A")},
+        start="a",
+        current_stage="a",
+    )
+
+    director_call(scenario, world=None, people=None, history=[], model_config=TEST_CONFIG)
+
+    call_args = mock_client.chat.completions.create.call_args
+    messages = call_args[1]["messages"]
+    assert messages[0]["content"] == "Director v1"
+
+    # Hot-reload
+    (tmp_path / "director_system.txt").write_text("Director v2")
+    director_call(scenario, world=None, people=None, history=[], model_config=TEST_CONFIG)
+    msgs_v2 = mock_client.chat.completions.create.call_args[1]["messages"]
+    assert msgs_v2[0]["content"] == "Director v2"
+
+
+def test_director_call_no_active_stage():
+    """director_call returns hold when no active stage."""
+    scenario = ScenarioScript(name="test", stages={}, start="", current_stage="missing")
+    result = director_call(scenario, world=None, people=None, history=[], model_config=TEST_CONFIG)
+    assert result.status == "hold"

@@ -15,8 +15,11 @@ from rich.text import Text
 from character_eng.chat import ChatSession
 from character_eng.config import load_config
 from character_eng.models import BIG_MODEL, CHAT_MODEL, MODELS
+from character_eng.perception import PerceptionEvent, load_sim_script, process_perception
+from character_eng.person import PeopleState
 from character_eng.prompts import list_characters, load_prompt
 from character_eng.qa_personas import _action_badge, _esc, annotation_assets
+from character_eng.scenario import DirectorResult, load_scenario_script, director_call
 from character_eng.world import (
     Beat,
     ConditionResult,
@@ -56,6 +59,12 @@ _plan_result: PlanResult | None = None
 _plan_thread: threading.Thread | None = None
 _plan_version: int = 0
 
+# --- Background director threading ---
+_director_lock = threading.Lock()
+_director_result: DirectorResult | None = None
+_director_thread: threading.Thread | None = None
+_director_version: int = 0
+
 # --- Context version counter (main thread only) ---
 _context_version: int = 0
 
@@ -66,18 +75,18 @@ def _bump_version():
     _context_version += 1
 
 
-def _run_reconcile(world: "WorldState", pending: list[str], model_config: dict):
+def _run_reconcile(world: "WorldState", pending: list[str], model_config: dict, people=None):
     """Background thread target. Calls reconcile_call, stores result under lock."""
     global _reconcile_result
     try:
-        result = reconcile_call(world, pending, model_config)
+        result = reconcile_call(world, pending, model_config, people=people)
         with _reconcile_lock:
             _reconcile_result = result
     except Exception as e:
         console.print(f"[red]Background reconcile error: {e}[/red]")
 
 
-def _start_reconcile(world, model_config, big_model_config):
+def _start_reconcile(world, model_config, big_model_config, people=None):
     """Drain pending changes and spawn background reconcile thread."""
     global _reconcile_thread
     pending = world.clear_pending()
@@ -86,12 +95,12 @@ def _start_reconcile(world, model_config, big_model_config):
     # Use plan model if available, fall back to chat model
     cfg = big_model_config if big_model_config else model_config
     _reconcile_thread = threading.Thread(
-        target=_run_reconcile, args=(world, pending, cfg), daemon=True
+        target=_run_reconcile, args=(world, pending, cfg, people), daemon=True
     )
     _reconcile_thread.start()
 
 
-def _check_reconcile(world, log):
+def _check_reconcile(world, log, people=None):
     """Check if background reconcile result is ready. If so, apply and display."""
     global _reconcile_result, _reconcile_thread
     with _reconcile_lock:
@@ -115,10 +124,22 @@ def _check_reconcile(world, log):
     if result.events:
         for event in result.events:
             diff_lines.append(f"  [cyan]~ {event}[/cyan]")
+    if result.person_updates:
+        for pu in result.person_updates:
+            for fid in pu.remove_facts:
+                diff_lines.append(f"  [red]- {pu.person_id}: {fid}[/red]")
+            for fact in pu.add_facts:
+                diff_lines.append(f"  [green]+ {pu.person_id}: {fact}[/green]")
+            if pu.set_name:
+                diff_lines.append(f"  [blue]  {pu.person_id} name → {pu.set_name}[/blue]")
+            if pu.set_presence:
+                diff_lines.append(f"  [blue]  {pu.person_id} presence → {pu.set_presence}[/blue]")
     if diff_lines:
         console.print(Panel("\n".join(diff_lines), title="Reconciled", border_style="yellow"))
 
     world.apply_update(result)
+    if people is not None and result.person_updates:
+        people.apply_updates(result.person_updates)
 
     log.append({
         "type": "reconcile",
@@ -130,7 +151,7 @@ def _check_reconcile(world, log):
 
 # --- Background eval functions ---
 
-def _run_eval(system_prompt, world, history, model_config, goals, script):
+def _run_eval(system_prompt, world, history, model_config, goals, script, people=None, stage_goal=""):
     """Background thread target for eval."""
     global _eval_result
     try:
@@ -141,6 +162,8 @@ def _run_eval(system_prompt, world, history, model_config, goals, script):
             model_config=model_config,
             goals=goals,
             script=script,
+            people=people,
+            stage_goal=stage_goal,
         )
         with _eval_lock:
             _eval_result = result
@@ -148,7 +171,7 @@ def _run_eval(system_prompt, world, history, model_config, goals, script):
         console.print(f"[red]Background eval error: {e}[/red]")
 
 
-def _start_eval(session, world, goals, script, model_config):
+def _start_eval(session, world, goals, script, model_config, people=None, stage_goal=""):
     """Kick off background eval. Skips if one is already in flight."""
     global _eval_thread, _eval_version
     if _eval_thread is not None and _eval_thread.is_alive():
@@ -156,7 +179,7 @@ def _start_eval(session, world, goals, script, model_config):
     _eval_version = _context_version
     _eval_thread = threading.Thread(
         target=_run_eval,
-        args=(session.system_prompt, world, session.get_history(), model_config, goals, script),
+        args=(session.system_prompt, world, session.get_history(), model_config, goals, script, people, stage_goal),
         daemon=True,
     )
     _eval_thread.start()
@@ -199,7 +222,7 @@ def _check_eval(session, script, log):
 
 # --- Background plan functions ---
 
-def _run_plan_bg(system_prompt, world, history, goals, plan_request, big_model_config):
+def _run_plan_bg(system_prompt, world, history, goals, plan_request, big_model_config, people=None, stage_goal=""):
     """Background thread target for plan."""
     global _plan_result
     try:
@@ -210,6 +233,8 @@ def _run_plan_bg(system_prompt, world, history, goals, plan_request, big_model_c
             goals=goals,
             plan_request=plan_request,
             plan_model_config=big_model_config,
+            people=people,
+            stage_goal=stage_goal,
         )
         with _plan_lock:
             _plan_result = result
@@ -217,7 +242,7 @@ def _run_plan_bg(system_prompt, world, history, goals, plan_request, big_model_c
         console.print(f"[red]Background plan error: {e}[/red]")
 
 
-def _start_plan(session, world, goals, plan_request, big_model_config):
+def _start_plan(session, world, goals, plan_request, big_model_config, people=None, stage_goal=""):
     """Kick off background plan. Skips if planner unavailable or one already in flight."""
     global _plan_thread, _plan_version
     if big_model_config is None:
@@ -227,7 +252,7 @@ def _start_plan(session, world, goals, plan_request, big_model_config):
     _plan_version = _context_version
     _plan_thread = threading.Thread(
         target=_run_plan_bg,
-        args=(session.system_prompt, world, session.get_history(), goals, plan_request, big_model_config),
+        args=(session.system_prompt, world, session.get_history(), goals, plan_request, big_model_config, people, stage_goal),
         daemon=True,
     )
     _plan_thread.start()
@@ -251,6 +276,71 @@ def _check_plan(script):
 
     if result.beats:
         apply_plan(script, result)
+
+
+# --- Background director functions ---
+
+def _run_director(scenario, world, people, history, model_config):
+    """Background thread target for director."""
+    global _director_result
+    try:
+        result = director_call(scenario, world, people, history, model_config)
+        with _director_lock:
+            _director_result = result
+    except Exception as e:
+        console.print(f"[red]Background director error: {e}[/red]")
+
+
+def _start_director(scenario, world, people, session, model_config):
+    """Kick off background director. Skips if one is already in flight or no scenario."""
+    global _director_thread, _director_version
+    if scenario is None:
+        return
+    if _director_thread is not None and _director_thread.is_alive():
+        return
+    _director_version = _context_version
+    _director_thread = threading.Thread(
+        target=_run_director,
+        args=(scenario, world, people, session.get_history(), model_config),
+        daemon=True,
+    )
+    _director_thread.start()
+
+
+def _check_director(scenario, script, session, world, goals, people, big_model_config):
+    """Check if background director result is ready. Returns whether a stage transition occurred."""
+    global _director_result, _director_thread
+    with _director_lock:
+        result = _director_result
+        _director_result = None
+
+    if result is None:
+        return False
+
+    _director_thread = None
+
+    if _director_version != _context_version:
+        console.print("[dim](director result discarded — stale)[/dim]")
+        return False
+
+    if result.status == "advance" and result.exit_index >= 0 and scenario is not None:
+        stage = scenario.active_stage
+        if stage and 0 <= result.exit_index < len(stage.exits):
+            exit_obj = stage.exits[result.exit_index]
+            if scenario.advance_to(exit_obj.goto):
+                new_stage = scenario.active_stage
+                console.print(f"[cyan]  director: {result.thought}[/cyan]")
+                if new_stage:
+                    console.print(f"[bold cyan]Stage → {new_stage.name}: {new_stage.goal}[/bold cyan]")
+                    # Trigger replanning with new stage goal
+                    stage_goal = new_stage.goal if new_stage else ""
+                    _start_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
+                return True
+    else:
+        if result.thought:
+            console.print(f"[dim]  director: {result.thought}[/dim]")
+
+    return False
 
 
 def save_chat_log(character: str, model_config: dict, log: list[dict], session_id: str = ""):
@@ -299,7 +389,7 @@ def save_chat_html(character: str, model_config: dict, log: list[dict], session_
             pending_extras.append(entry)
             continue
 
-        if etype not in ("send", "world", "beat"):
+        if etype not in ("send", "world", "beat", "see"):
             continue
 
         action = etype
@@ -313,6 +403,8 @@ def save_chat_html(character: str, model_config: dict, log: list[dict], session_
             input_html = '<div class="beat-input">/beat</div>'
         elif action == "world":
             input_html = f'<div class="world-input">/world {_esc(input_text)}</div>'
+        elif action == "see":
+            input_html = f'<div class="world-input">/see {_esc(input_text)}</div>'
         else:
             input_html = f'<div class="user-input">{_esc(input_text)}</div>'
 
@@ -587,12 +679,20 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
     while True:
         world = load_world_state(character)
         goals = load_goals(character)
-        system_prompt = load_prompt(character, world_state=world)
+        people = PeopleState()
+        scenario = load_scenario_script(character)
+        system_prompt = load_prompt(character, world_state=world, people_state=people)
         session = ChatSession(system_prompt, model_config)
         script = Script()
 
+        if scenario:
+            console.print(f"[dim]Scenario: {scenario.name} (stage: {scenario.current_stage})[/dim]")
+
+        # Get stage goal for planner context
+        stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
+
         # Generate initial script at boot (synchronous)
-        plan_result = run_plan(session, world, goals, "", big_model_config)
+        plan_result = run_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
         if plan_result and plan_result.beats:
             apply_plan(script, plan_result)
 
@@ -655,12 +755,16 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 continue
 
             # --- Turn start: check background results ---
+            stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
+
             if world is not None:
-                _check_reconcile(world, log)
+                _check_reconcile(world, log, people=people)
 
             needs_plan, plan_request = _check_eval(session, script, log)
             if needs_plan:
-                _start_plan(session, world, goals, plan_request, big_model_config)
+                _start_plan(session, world, goals, plan_request, big_model_config, people=people, stage_goal=stage_goal)
+
+            _check_director(scenario, script, session, world, goals, people, big_model_config)
 
             _check_plan(script)
 
@@ -734,7 +838,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                         console.print(f"[red]Voice unavailable: {reason}[/red]")
                 continue
             elif cmd == "/beat":
-                handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
+                handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario)
                 continue
             elif cmd == "/plan":
                 console.print(script.show())
@@ -756,7 +860,30 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print("[dim]No world state for this character.[/dim]")
                     continue
                 change_text = user_input[7:]  # preserve original case
-                handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
+                handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario)
+                continue
+            elif cmd == "/stage":
+                if scenario is None:
+                    console.print("[dim]No scenario loaded for this character.[/dim]")
+                else:
+                    console.print(scenario.show())
+                continue
+            elif cmd == "/people":
+                console.print(people.show())
+                continue
+            elif cmd.startswith("/see "):
+                if world is None:
+                    console.print("[dim]No world state for this character.[/dim]")
+                    continue
+                see_text = user_input[5:]  # preserve original case
+                handle_perception(session, world, goals, script, people, scenario, see_text, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
+                continue
+            elif cmd.startswith("/sim "):
+                sim_name = user_input[5:].strip()
+                if not sim_name:
+                    console.print("[red]Usage: /sim <name>[/red]")
+                    continue
+                run_sim(sim_name, character, session, world, goals, script, people, scenario, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
                 continue
             elif user_input.startswith("/"):
                 console.print(f"[red]Unknown command: {user_input.split()[0]}[/red]")
@@ -778,26 +905,29 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 response = stream_response(session, label, user_input, voice_io=voice_io)
                 log.append({"type": "send", "input": user_input, "response": response})
                 _bump_version()
-                _start_eval(session, world, goals, script, eval_model_config)
-                _start_plan(session, world, goals, "", big_model_config)
+                _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
+                _start_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
+                _start_director(scenario, world, people, session, eval_model_config)
                 continue
 
             # Bootstrap: if no script, start background plan and fall through to unguided
             if script.is_empty():
-                _start_plan(session, world, goals, "", big_model_config)
+                _start_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
 
             if script.current_beat is not None:
                 # Normal path: LLM-guided beat delivery — reacts to user while serving intent
                 response = stream_guided_beat(session, script.current_beat, label, user_input, voice_io=voice_io)
                 log.append({"type": "send", "input": user_input, "response": response})
                 _bump_version()
-                _start_eval(session, world, goals, script, eval_model_config)
+                _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
+                _start_director(scenario, world, people, session, eval_model_config)
             else:
                 # No script available (planner unavailable/failed) — LLM generates response
                 response = stream_response(session, label, user_input, voice_io=voice_io)
                 log.append({"type": "send", "input": user_input, "response": response})
                 _bump_version()
-                _start_eval(session, world, goals, script, eval_model_config)
+                _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
+                _start_director(scenario, world, people, session, eval_model_config)
 
 
 def run_eval(session, world, goals, script, model_config):
@@ -817,7 +947,7 @@ def run_eval(session, world, goals, script, model_config):
         return None
 
 
-def run_plan(session, world, goals, plan_request, big_model_config):
+def run_plan(session, world, goals, plan_request, big_model_config, people=None, stage_goal=""):
     """Run plan_call synchronously, return PlanResult or None on error."""
     if big_model_config is None:
         console.print("[dim]Planner unavailable, skipping.[/dim]")
@@ -831,6 +961,8 @@ def run_plan(session, world, goals, plan_request, big_model_config):
             goals=goals,
             plan_request=plan_request,
             plan_model_config=big_model_config,
+            people=people,
+            stage_goal=stage_goal,
         )
     except Exception as e:
         console.print(f"[red]Plan error: {e}[/red]")
@@ -944,7 +1076,7 @@ def apply_plan(script, plan_result):
         console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"{extras}[/magenta]")
 
 
-def handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=None):
+def handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=None, people=None, scenario=None):
     """Process a /beat command — condition-gated beat delivery (time passes)."""
     entry = {"type": "beat"}
 
@@ -1027,22 +1159,24 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
         session.inject_system(" ".join(meta_parts))
 
     # 6. Advance
+    stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
     script.advance()
     if script.current_beat:
         console.print(f"[magenta]  next beat:  [{script.current_beat.intent}][/magenta]")
     else:
         # Script exhausted — background replan
         console.print("[dim]  script complete, replanning...[/dim]")
-        _start_plan(session, world, goals, "", big_model_config)
+        _start_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
 
-    # 7. Background eval
+    # 7. Background eval + director
     _bump_version()
-    _start_eval(session, world, goals, script, eval_model_config)
+    _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
+    _start_director(scenario, world, people, session, eval_model_config)
 
     log.append(entry)
 
 
-def handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=None):
+def handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=None, people=None, scenario=None):
     """Process a /world <description> command. Fast path: immediate reaction, background reconcile."""
     # Store as pending
     world.add_pending(change_text)
@@ -1064,11 +1198,87 @@ def handle_world_change(session, world, goals, script, change_text, label, model
     log.append(entry)
 
     # Start background reconciliation
-    _start_reconcile(world, model_config, big_model_config)
+    stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
+    _start_reconcile(world, model_config, big_model_config, people=people)
 
-    # Background eval
+    # Background eval + director
     _bump_version()
-    _start_eval(session, world, goals, script, eval_model_config)
+    _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
+    _start_director(scenario, world, people, session, eval_model_config)
+
+
+def handle_perception(session, world, goals, script, people, scenario, see_text, label, model_config, big_model_config, eval_model_config, log, voice_io=None):
+    """Process a /see <text> command. Perception event: narrator injection, character reaction, background reconcile+eval+director."""
+    event = PerceptionEvent(description=see_text, source="manual")
+    _, narrator_msg = process_perception(event, people, world)
+
+    console.print(f"[dim]{narrator_msg}[/dim]")
+    session.inject_system(narrator_msg)
+
+    # Character reacts
+    response = stream_response(session, label, "[React to what you just noticed.]", voice_io=voice_io)
+
+    entry = {
+        "type": "see",
+        "input": see_text,
+        "narrator": narrator_msg,
+        "response": response,
+    }
+    log.append(entry)
+
+    # Start background reconciliation + eval + director
+    stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
+    _start_reconcile(world, model_config, big_model_config, people=people)
+    _bump_version()
+    _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
+    _start_director(scenario, world, people, session, eval_model_config)
+
+
+def run_sim(sim_name, character, session, world, goals, script, people, scenario, label, model_config, big_model_config, eval_model_config, log, voice_io=None):
+    """Run a sim script — replay perception events and dialogue with timing."""
+    try:
+        sim = load_sim_script(character, sim_name)
+    except FileNotFoundError:
+        console.print(f"[red]Sim script not found: {sim_name}[/red]")
+        return
+
+    console.print(f"[cyan]Sim: {sim_name} ({len(sim.events)} events)[/cyan]")
+    start_time = time.time()
+
+    for i, event in enumerate(sim.events):
+        # Wait for the right time offset
+        elapsed = time.time() - start_time
+        wait = event.time_offset - elapsed
+        if wait > 0:
+            time.sleep(wait)
+
+        # Check background results between events
+        stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
+        if world is not None:
+            _check_reconcile(world, log, people=people)
+        needs_plan, plan_request = _check_eval(session, script, log)
+        if needs_plan:
+            _start_plan(session, world, goals, plan_request, big_model_config, people=people, stage_goal=stage_goal)
+        _check_director(scenario, script, session, world, goals, people, big_model_config)
+        _check_plan(script)
+
+        console.print(f"[cyan]Sim: event {i + 1}/{len(sim.events)}[/cyan]")
+
+        desc = event.description
+        if desc.startswith('"') and desc.endswith('"'):
+            # Quoted line → user message
+            text = desc.strip('"')
+            console.print(f"[bold blue]You[/bold blue]: {text}")
+            response = stream_response(session, label, text, voice_io=voice_io)
+            log.append({"type": "send", "input": text, "response": response})
+            _bump_version()
+            _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
+            _start_director(scenario, world, people, session, eval_model_config)
+        else:
+            # Unquoted → perception event
+            handle_perception(session, world, goals, script, people, scenario, desc, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
+
+    console.print(f"[cyan]Sim: complete[/cyan]")
 
 
 def stream_response(session, label, message, voice_io=None) -> str:
@@ -1196,6 +1406,10 @@ def show_help(voice_active: bool = False):
         "/beat           - Deliver next scripted beat (time passes)\n"
         "/plan           - Show current script (beat list)\n"
         "/goals          - Show character goals\n"
+        "/see <text>     - Describe what the character sees (perception event)\n"
+        "/sim <name>     - Run a sim script (timed perception events)\n"
+        "/stage          - Show current scenario stage + exits\n"
+        "/people         - Show tracked people\n"
         "/voice          - Toggle voice mode on/off\n"
         "/devices        - List audio input/output devices\n"
         "/reload         - Reload prompt files, restart conversation\n"
@@ -1212,6 +1426,7 @@ def show_help(voice_active: bool = False):
             "p               - /plan\n"
             "g               - /goals\n"
             "t               - /trace\n"
+            "s               - /stage\n"
             "Escape          - Toggle voice off"
         )
     console.print(Panel(help_text, title="Commands", border_style="dim"))
@@ -1243,12 +1458,18 @@ def run_smoke():
     # --- Startup: load everything ---
     world = load_world_state(character)
     goals = load_goals(character)
-    system_prompt = load_prompt(character, world_state=world)
+    people = PeopleState()
+    scenario = load_scenario_script(character)
+    system_prompt = load_prompt(character, world_state=world, people_state=people)
     session = ChatSession(system_prompt, model_config)
     script = Script()
 
+    stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
+    if scenario:
+        console.print(f"[dim]Scenario: {scenario.name} (stage: {scenario.current_stage})[/dim]")
+
     console.print("[dim]Planning...[/dim]")
-    plan_result = run_plan(session, world, goals, "", big_model_config)
+    plan_result = run_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
     if plan_result and plan_result.beats:
         apply_plan(script, plan_result)
         console.print(f"[dim]Got {len(script.beats)} beats[/dim]")
@@ -1272,10 +1493,12 @@ def run_smoke():
                     return 1
             elif action == "world":
                 handle_world_change(session, world, goals, script, text, label,
-                                    model_config, big_model_config, eval_model_config, log)
+                                    model_config, big_model_config, eval_model_config, log,
+                                    people=people, scenario=scenario)
             elif action == "beat":
                 handle_beat(session, world, goals, script, label,
-                            model_config, big_model_config, eval_model_config, log)
+                            model_config, big_model_config, eval_model_config, log,
+                            people=people, scenario=scenario)
         except Exception as e:
             console.print(f"[red]Smoke test failed: {e}[/red]")
             import traceback

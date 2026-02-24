@@ -1,4 +1,5 @@
 import character_eng.prompts as prompts_mod
+from character_eng.person import PeopleState
 from character_eng.prompts import list_characters, load_prompt
 from character_eng.world import WorldState
 
@@ -120,3 +121,37 @@ def test_list_characters(tmp_path, monkeypatch):
 
     result = list_characters()
     assert result == ["alpha", "beta"]
+
+
+def test_load_prompt_with_people_state(tmp_path, monkeypatch):
+    prompts_dir, char_dir = _setup_char(
+        tmp_path,
+        "test_char",
+        "World: {{world}}\nPeople: {{people}}\nChar: {{character}}",
+        **{"character.txt": "I am test"},
+    )
+
+    monkeypatch.setattr(prompts_mod, "PROMPTS_DIR", prompts_dir)
+    monkeypatch.setattr(prompts_mod, "CHARACTERS_DIR", prompts_dir / "characters")
+
+    people = PeopleState()
+    p = people.add_person(name="Alice", presence="present")
+    p.add_fact("Wearing a hat")
+
+    result = load_prompt("test_char", people_state=people)
+    assert "Alice (present)" in result
+    assert "Wearing a hat" in result
+
+
+def test_load_prompt_people_macro_empty_when_no_people(tmp_path, monkeypatch):
+    prompts_dir, char_dir = _setup_char(
+        tmp_path,
+        "test_char",
+        "People: {{people}}\nDone",
+    )
+
+    monkeypatch.setattr(prompts_mod, "PROMPTS_DIR", prompts_dir)
+    monkeypatch.setattr(prompts_mod, "CHARACTERS_DIR", prompts_dir / "characters")
+
+    result = load_prompt("test_char")
+    assert "People: \n" in result

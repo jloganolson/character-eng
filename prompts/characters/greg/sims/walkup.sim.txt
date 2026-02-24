@@ -1,0 +1,19 @@
+# Walkup sim: a person approaches, browses, engages, and leaves
+# Format: time_offset | description
+# Quoted descriptions are injected as user dialogue
+
+0.0 | A person appears down the sidewalk, walking toward the stand
+3.0 | The person slows down and reads the sign
+5.0 | The person steps up to the table and looks at the cooler
+7.0 | "Hey, is this your stand?"
+10.0 | "How much for a water?"
+13.0 | The person pulls out a dollar bill
+15.0 | "Here you go"
+18.0 | The person takes a sip of water
+20.0 | "So what kind of advice do you give?"
+25.0 | "I've been thinking about switching careers. Any thoughts?"
+30.0 | The person nods thoughtfully
+33.0 | "Thanks, that actually helps"
+36.0 | The person finishes their water and sets the cup down
+38.0 | "Well, I should get going. Thanks Greg!"
+40.0 | The person waves and walks away down the sidewalk

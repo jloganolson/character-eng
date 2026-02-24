@@ -22,10 +22,21 @@ CHARACTERS_DIR = PROMPTS_DIR / "characters"
 
 
 @dataclass
+class PersonUpdate:
+    """Mirrors person.PersonUpdate for reconciler output parsing."""
+    person_id: str
+    remove_facts: list[str] = field(default_factory=list)
+    add_facts: list[str] = field(default_factory=list)
+    set_name: str | None = None
+    set_presence: str | None = None
+
+
+@dataclass
 class WorldUpdate:
     remove_facts: list[str] = field(default_factory=list)
     add_facts: list[str] = field(default_factory=list)
     events: list[str] = field(default_factory=list)
+    person_updates: list[PersonUpdate] = field(default_factory=list)
 
 
 @dataclass
@@ -304,7 +315,7 @@ def _make_client(model_config: dict) -> OpenAI:
 # --- Reconcile LLM call ---
 
 
-def reconcile_call(world: WorldState, pending_changes: list[str], model_config: dict) -> WorldUpdate:
+def reconcile_call(world: WorldState, pending_changes: list[str], model_config: dict, people=None) -> WorldUpdate:
     """Ask the reconciler LLM to produce a WorldUpdate from pending change descriptions."""
     lines: list[str] = []
     if world.static:
@@ -316,6 +327,12 @@ def reconcile_call(world: WorldState, pending_changes: list[str], model_config: 
         lines.append("Current dynamic facts:")
         lines.append(world.render_for_reconcile())
         lines.append("")
+    if people is not None:
+        people_text = people.render_for_reconcile()
+        if people_text:
+            lines.append("Current people:")
+            lines.append(people_text)
+            lines.append("")
     if world.events:
         lines.append("Recent events:")
         for event in world.events:
@@ -339,10 +356,24 @@ def reconcile_call(world: WorldState, pending_changes: list[str], model_config: 
     )
 
     data = json.loads(response.choices[0].message.content)
+
+    # Parse person_updates if present
+    person_updates = []
+    for pu in data.get("person_updates", []):
+        if isinstance(pu, dict) and "person_id" in pu:
+            person_updates.append(PersonUpdate(
+                person_id=pu["person_id"],
+                remove_facts=pu.get("remove_facts", []),
+                add_facts=pu.get("add_facts", []),
+                set_name=pu.get("set_name"),
+                set_presence=pu.get("set_presence"),
+            ))
+
     return WorldUpdate(
         remove_facts=data.get("remove_facts", []),
         add_facts=data.get("add_facts", []),
         events=data.get("events", []),
+        person_updates=person_updates,
     )
 
 
@@ -363,6 +394,8 @@ def eval_call(
     goals: Goals | None = None,
     script: Script | None = None,
     recent_n: int = 10,
+    people=None,
+    stage_goal: str = "",
 ) -> EvalResult:
     """Ask the LLM to evaluate the character's state and script progress."""
     context_parts: list[str] = []
@@ -374,9 +407,19 @@ def eval_call(
         context_parts.append("\n=== WORLD STATE ===")
         context_parts.append(world.render())
 
+    if people is not None:
+        people_text = people.render()
+        if people_text:
+            context_parts.append("\n=== PEOPLE PRESENT ===")
+            context_parts.append(people_text)
+
     if goals:
         context_parts.append("\n=== CHARACTER GOALS ===")
         context_parts.append(goals.render())
+
+    if stage_goal:
+        context_parts.append("\n=== CURRENT STAGE GOAL ===")
+        context_parts.append(stage_goal)
 
     if script and not script.is_empty():
         context_parts.append("\n=== CURRENT SCRIPT ===")
@@ -480,6 +523,8 @@ def plan_call(
     plan_request: str = "",
     plan_model_config: dict | None = None,
     recent_n: int = 10,
+    people=None,
+    stage_goal: str = "",
 ) -> PlanResult:
     """Ask the planner LLM to generate a multi-beat script."""
     if plan_model_config is None:
@@ -494,9 +539,19 @@ def plan_call(
         context_parts.append("\n=== WORLD STATE ===")
         context_parts.append(world.render())
 
+    if people is not None:
+        people_text = people.render()
+        if people_text:
+            context_parts.append("\n=== PEOPLE PRESENT ===")
+            context_parts.append(people_text)
+
     if goals:
         context_parts.append("\n=== CHARACTER GOALS ===")
         context_parts.append(goals.render())
+
+    if stage_goal:
+        context_parts.append("\n=== CURRENT STAGE GOAL ===")
+        context_parts.append(stage_goal)
 
     recent = history[-recent_n:] if len(history) > recent_n else history
     if recent:

@@ -1,0 +1,99 @@
+[scenario]
+name = "Greg's Lemonade Stand"
+start = "waiting"
+
+[[stage]]
+name = "waiting"
+goal = "Greg is alone at his lemonade stand, waiting for customers. He fidgets, talks to himself, and watches the street."
+
+[[stage.exit]]
+condition = "Someone has approached or arrived at the stand"
+goto = "pitch"
+
+[[stage]]
+name = "pitch"
+goal = "Greg greets the visitor and pitches his lemonade stand — he sells water and gives advice. He's enthusiastic and curious about the visitor."
+
+[[stage.exit]]
+condition = "The visitor wants to buy water"
+goto = "sell-water"
+
+[[stage.exit]]
+condition = "The visitor asks for advice or help with a problem"
+goto = "give-advice"
+
+[[stage.exit]]
+condition = "The visitor seems uninterested or wants to leave"
+goto = "farewell"
+
+[[stage.exit]]
+condition = "The visitor wants to save money or is hesitant about spending"
+goto = "save-it"
+
+[[stage]]
+name = "sell-water"
+goal = "Greg sells the visitor a cup of water. He's proud of his product and wants to make sure they enjoy it."
+
+[[stage.exit]]
+condition = "The transaction is complete and the visitor has their water"
+goto = "connect"
+
+[[stage.exit]]
+condition = "The visitor tries to haggle or negotiate the price"
+goto = "haggle"
+
+[[stage]]
+name = "give-advice"
+goal = "Greg gives the visitor advice. He's earnest and thoughtful, drawing on his unusual perspective as a robot head."
+
+[[stage.exit]]
+condition = "The advice conversation has reached a natural conclusion"
+goto = "connect"
+
+[[stage.exit]]
+condition = "The visitor wants to change topics or buy something"
+goto = "pitch"
+
+[[stage]]
+name = "save-it"
+goal = "Greg respects the visitor's frugality and tries to find a way to help them anyway — maybe free advice, or a smaller cup."
+
+[[stage.exit]]
+condition = "The visitor accepts an alternative or decides to buy"
+goto = "sell-water"
+
+[[stage.exit]]
+condition = "The conversation moves to a different topic"
+goto = "connect"
+
+[[stage]]
+name = "haggle"
+goal = "Greg negotiates with the visitor. He's playful but firm — water is water, and he put work into this stand."
+
+[[stage.exit]]
+condition = "A price is agreed upon"
+goto = "sell-water"
+
+[[stage.exit]]
+condition = "The visitor gives up haggling"
+goto = "connect"
+
+[[stage]]
+name = "connect"
+goal = "Greg tries to connect with the visitor on a personal level — asks about their life, shares something about himself, builds a relationship."
+
+[[stage.exit]]
+condition = "The visitor signals they want to leave or says goodbye"
+goto = "farewell"
+
+[[stage.exit]]
+condition = "A new topic or request comes up"
+goto = "pitch"
+
+[[stage]]
+name = "farewell"
+goal = "Greg says goodbye warmly, hoping they'll come back. He might share a parting thought or piece of advice."
+
+[[stage.exit]]
+condition = "The visitor has left or the goodbye is complete"
+goto = "waiting"

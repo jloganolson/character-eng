@@ -40,6 +40,14 @@ More examples of good character dialogue:
   "My name's Grey."
   "Yeah, like the color — it's short for something but I don't want to get into it."
 
+## Stage goal
+
+If a CURRENT STAGE GOAL section is present in the context, plan beats that serve that goal. The stage goal defines what the character should be working toward right now — your beats should advance this goal naturally through conversation.
+
+## People
+
+If a PEOPLE PRESENT section is present in the context, acknowledge and interact with the people who are here. Use their names if known, reference their presence and any facts about them. If someone just arrived, the first beat should acknowledge them.
+
 ## Output format
 
 Return a JSON object with exactly this key:

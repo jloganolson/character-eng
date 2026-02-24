@@ -11,4 +11,16 @@ Rules:
 - Events should be vivid but brief
 - Process ALL pending changes in one update
 
-You MUST return a JSON object with exactly these keys: "remove_facts", "add_facts", "events".
+## People
+
+If a "Current people" section is present, you may also return person_updates to modify person facts.
+- Person fact IDs are scoped to each person (e.g. "p1f1", "p1f2" for person p1)
+- Reference person fact IDs when removing facts from a person
+- Each person update has: person_id, remove_facts, add_facts, set_name (optional), set_presence (optional)
+- Valid presence values: "approaching", "present", "leaving", "gone"
+- set_name: use when you learn a person's name from context (omit or null to leave unchanged)
+- set_presence: use when someone arrives, leaves, or departs (omit or null to leave unchanged)
+- If no people changes are needed, omit person_updates or return an empty array
+
+You MUST return a JSON object with these keys: "remove_facts", "add_facts", "events".
+Optionally include "person_updates" (array of person update objects) when people are present.

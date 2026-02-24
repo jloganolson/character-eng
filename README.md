@@ -1,6 +1,12 @@
 # Character Engine
 
-Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Optional **voice mode** (Deepgram STT + ElevenLabs TTS) lets you speak to characters and hear them respond. Characters have personalities, world state that evolves during conversation, and a two-speed script system — a fast eval (every turn, non-blocking) tracks progress through premeditated dialogue beats, while a slow planner (Gemini Flash 3) generates multi-beat conversation scripts. Eval and plan run in background threads so the user can keep chatting without waiting. During conversation, beats use LLM-guided delivery: the beat's intent guides the LLM to respond naturally to the user while serving the beat's purpose (no verbatim pasting). The `/beat` command (autonomous time-passing) still uses verbatim delivery for TTS pre-rendering. Each beat includes gaze and expression data for animation.
+Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Optional **voice mode** (Deepgram STT + ElevenLabs TTS) lets you speak to characters and hear them respond. Characters have personalities, world state that evolves during conversation, and a two-speed script system — a fast eval (every turn, non-blocking) tracks progress through premeditated dialogue beats, while a slow planner generates multi-beat conversation scripts. Eval and plan run in background threads so the user can keep chatting without waiting. During conversation, beats use LLM-guided delivery: the beat's intent guides the LLM to respond naturally to the user while serving the beat's purpose (no verbatim pasting). The `/beat` command (autonomous time-passing) still uses verbatim delivery for TTS pre-rendering. Each beat includes gaze and expression data for animation.
+
+**Scenario director**: Characters can have a branching scenario script (TOML) defining stages with goals and exit conditions. A director LLM runs after each turn to evaluate whether the conversation has met an exit condition, advancing the scenario to the next stage and triggering replanning.
+
+**Person tracking**: Individual people are tracked alongside world state with scoped fact IDs (`p1f1`, `p1f2`, ...). The reconciler LLM handles person-fact assignments — no heuristic matching needed.
+
+**Perception layer**: The `/see` command lets you describe what the character perceives, and `/sim` replays scripted perception events from `.sim.txt` files with timing.
 
 World state uses a two-speed update system: the fast path immediately stores changes as pending and lets the character react (no LLM call needed), while the slow path reconciles pending changes into structured state mutations in the background using stable fact IDs (`f1`, `f2`, ...) — eliminating index-shift bugs that plagued small models.
 
@@ -77,8 +83,12 @@ Pick a character from the menu, then chat. The character evaluates each turn in 
 |---------|-------------|
 | `/world` | Show current world state (facts with stable IDs, pending changes, events) |
 | `/world <text>` | Describe a change — character reacts immediately, reconciler updates state in background |
+| `/see <text>` | Describe something the character perceives — character reacts, reconciler processes |
+| `/sim <name>` | Replay a sim script with timing (quoted lines = dialogue, unquoted = perception) |
 | `/beat` | Deliver next scripted beat (time passes) — checks conditions, shows idle line if not met |
 | `/plan` | Show current script (beat list with current beat highlighted) |
+| `/stage` | Show current scenario stage and available exits |
+| `/people` | Show tracked people (names, presence, facts) |
 | `/goals` | Show character goals (long-term) |
 | `/voice` | Toggle voice mode on/off mid-session |
 | `/devices` | List audio input/output devices |
@@ -144,6 +154,7 @@ In voice mode, single keystrokes trigger commands (no Enter needed):
 | `p` | `/plan` |
 | `g` | `/goals` |
 | `t` | `/trace` |
+| `s` | `/stage` |
 | `Escape` | Toggle voice off |
 
 ### Audio devices
@@ -191,11 +202,13 @@ Characters live in `prompts/characters/<name>/` with these files:
 
 | File | Purpose |
 |------|---------|
-| `prompt.txt` | Main template — uses `{{global_rules}}`, `{{character}}`, `{{scenario}}`, `{{world}}` macros |
+| `prompt.txt` | Main template — uses `{{global_rules}}`, `{{character}}`, `{{scenario}}`, `{{world}}`, `{{people}}` macros |
 | `character.txt` | Personality, voice, and goals (optional `Long-term goal:` line) |
 | `scenario.txt` | Situation and context |
 | `world_static.txt` | Permanent facts (one per line, optional) |
 | `world_dynamic.txt` | Initial mutable state (one per line, loaded with stable IDs `f1`, `f2`, ...) |
+| `scenario_script.toml` | Branching scenario stages with exit conditions (optional, parsed by director) |
+| `sims/*.sim.txt` | Sim scripts for `/sim` command — `time_offset \| description` per line (optional) |
 
 `prompts/global_rules.txt` contains rules shared across all characters.
 
@@ -203,10 +216,11 @@ System-level prompts are also editable files in `prompts/`:
 
 | File | Purpose |
 |------|---------|
-| `reconcile_system.txt` | System prompt for the world-state reconciler LLM (processes pending changes using stable fact IDs) |
+| `reconcile_system.txt` | System prompt for the world-state reconciler LLM (processes pending changes using stable fact IDs, including person-scoped IDs) |
 | `eval_system.txt` | System prompt for the character eval LLM (script tracking + inner monologue) |
 | `condition_system.txt` | System prompt for the condition checker LLM (gates beat delivery) |
-| `plan_system.txt` | System prompt for the conversation planner LLM (beat generation with conditions) |
+| `plan_system.txt` | System prompt for the conversation planner LLM (beat generation with conditions, stage-goal and people aware) |
+| `director_system.txt` | System prompt for the scenario director LLM (evaluates stage exit conditions) |
 | `beat_guide.txt` | Template for beat guidance injected before LLM-guided delivery (`{intent}` and `{line}` placeholders) |
 
 **Live editing works** — edit any character prompt file in your editor, then type `/reload` in the chat to pick up changes without restarting. The conversation resets but you keep your place in the character menu. Reconciler, eval, and plan system prompts are re-read on every call, so edits take effect immediately without `/reload`.
@@ -257,7 +271,7 @@ uv run -m character_eng.qa_chat --model groq-llama     # test with Groq Llama
 # Voice connectivity test (Deepgram + ElevenLabs, no mic needed)
 uv run -m character_eng.qa_voice
 
-# Persona QA (6 parallel personas, HTML report)
+# Persona QA (7 parallel personas, HTML report)
 uv run -m character_eng.qa_personas                        # default model + character
 uv run -m character_eng.qa_personas --model groq-llama     # test with Groq Llama
 uv run -m character_eng.qa_personas --turns 5              # quick run with fewer turns
@@ -273,7 +287,7 @@ uv run -m character_eng.open_report --test                 # generate + serve a 
 
 ### Persona QA
 
-Automated "subjective" testing — 6 LLM-driven personas chat with the character in parallel, exercising the full async loop (background eval/plan/reconcile). Produces an HTML report for human review.
+Automated "subjective" testing — 7 LLM-driven personas chat with the character in parallel, exercising the full async loop (background eval/plan/reconcile/director). Produces an HTML report for human review.
 
 | Persona | Type | Turns | Behavior |
 |---------|------|-------|----------|
@@ -283,8 +297,9 @@ Automated "subjective" testing — 6 LLM-driven personas chat with the character
 | Bored Player | LLM | 12 | Not having fun — "this is boring", redirects, dismisses |
 | Beat Runner | Scripted | 10 | Every turn: `/beat` — tests autonomous time-passing |
 | Interrupter | Hybrid | 12 | Alternates message→beat→message→beat — tests script interruption |
+| Scene Observer | LLM | 15 | Perception tester — mix of `/see` and messages, simulates approach/interact/leave |
 
-Each persona runs in its own `ConversationDriver` with fully isolated threading state (locks, result slots, context version). The HTML report shows per-persona conversation cards with action type badges, character responses, eval details in collapsible sections, and stale discard markers.
+Each persona runs in its own `ConversationDriver` with fully isolated threading state (locks, result slots, context version, people state, scenario script). The HTML report shows per-persona conversation cards with action type badges, character responses, eval details in collapsible sections, and stale discard markers.
 
 ## Benchmarking
 

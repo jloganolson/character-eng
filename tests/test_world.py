@@ -4,9 +4,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import character_eng.world as world_mod
+from character_eng.person import PeopleState
 from character_eng.world import (
     Beat,
     Goals,
+    PersonUpdate,
     Script,
     WorldState,
     WorldUpdate,
@@ -507,6 +509,94 @@ def test_reconcile_call_picks_up_file_changes(mock_make_client, tmp_path, monkey
     assert msgs_v2[0]["content"] == "Reconcile prompt v2"
 
 
+# --- reconcile_call with people ---
+
+
+@patch("character_eng.world._make_client")
+def test_reconcile_call_with_people_context(mock_make_client):
+    """People state is included in the user message when provided."""
+    data = {"remove_facts": [], "add_facts": [], "events": ["thing"]}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    ws = _ws_with_dynamic("Orb on table")
+    people = PeopleState()
+    p = people.add_person(name="Alice", presence="present")
+    p.add_fact("Wearing a hat")
+
+    reconcile_call(ws, ["test change"], TEST_CONFIG, people=people)
+
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "Current people:" in user_msg
+    assert "Alice" in user_msg
+    assert "p1f1. Wearing a hat" in user_msg
+
+
+@patch("character_eng.world._make_client")
+def test_reconcile_call_without_people_backward_compat(mock_make_client):
+    """reconcile_call without people param works as before."""
+    data = {"remove_facts": [], "add_facts": ["New fact"], "events": ["thing"]}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    ws = WorldState()
+    update = reconcile_call(ws, ["test"], TEST_CONFIG)
+
+    assert update.add_facts == ["New fact"]
+    assert update.person_updates == []
+
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "Current people:" not in user_msg
+
+
+@patch("character_eng.world._make_client")
+def test_reconcile_call_parses_person_updates(mock_make_client):
+    """person_updates in LLM response are parsed into PersonUpdate objects."""
+    data = {
+        "remove_facts": [],
+        "add_facts": [],
+        "events": ["Alice arrived"],
+        "person_updates": [
+            {
+                "person_id": "p1",
+                "remove_facts": [],
+                "add_facts": ["Carrying a backpack"],
+                "set_name": "Alice",
+                "set_presence": "present",
+            }
+        ],
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    ws = WorldState()
+    update = reconcile_call(ws, ["someone arrives"], TEST_CONFIG)
+
+    assert len(update.person_updates) == 1
+    pu = update.person_updates[0]
+    assert pu.person_id == "p1"
+    assert pu.add_facts == ["Carrying a backpack"]
+    assert pu.set_name == "Alice"
+    assert pu.set_presence == "present"
+
+
+@patch("character_eng.world._make_client")
+def test_reconcile_call_no_person_updates_key(mock_make_client):
+    """Missing person_updates key in response defaults to empty list."""
+    data = {"remove_facts": [], "add_facts": [], "events": ["thing"]}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    update = reconcile_call(WorldState(), ["test"], TEST_CONFIG)
+    assert update.person_updates == []
+
+
 # --- eval_call (mocked) ---
 
 
@@ -705,6 +795,60 @@ def test_eval_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatch
     eval_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
     msgs_v2 = mock_client.chat.completions.create.call_args[1]["messages"]
     assert msgs_v2[0]["content"] == "Eval prompt v2"
+
+
+# --- eval_call with people and stage_goal ---
+
+
+@patch("character_eng.world._make_client")
+def test_eval_call_people_in_context(mock_make_client):
+    """People state is included in the user message when provided."""
+    data = {"thought": "ok", "gaze": "visitor", "expression": "neutral", "script_status": "hold"}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    people = PeopleState()
+    people.add_person(name="Alice", presence="present")
+
+    eval_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG, people=people)
+
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "PEOPLE PRESENT" in user_msg
+    assert "Alice" in user_msg
+
+
+@patch("character_eng.world._make_client")
+def test_eval_call_stage_goal_in_context(mock_make_client):
+    """Stage goal is included in the user message when provided."""
+    data = {"thought": "ok", "gaze": "orb", "expression": "neutral", "script_status": "hold"}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    eval_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG, stage_goal="Sell lemonade")
+
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "CURRENT STAGE GOAL" in user_msg
+    assert "Sell lemonade" in user_msg
+
+
+@patch("character_eng.world._make_client")
+def test_eval_call_no_people_no_stage_goal(mock_make_client):
+    """Without people or stage_goal, those sections don't appear."""
+    data = {"thought": "ok", "gaze": "orb", "expression": "neutral", "script_status": "hold"}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    eval_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
+
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "PEOPLE PRESENT" not in user_msg
+    assert "CURRENT STAGE GOAL" not in user_msg
 
 
 # --- condition_check_call (mocked) ---
@@ -939,6 +1083,60 @@ def test_plan_call_reads_plan_system_txt(mock_make_client, tmp_path, monkeypatch
     call_args = mock_client.chat.completions.create.call_args
     messages = call_args[1]["messages"]
     assert messages[0]["content"] == "You are planner v1."
+
+
+# --- plan_call with people and stage_goal ---
+
+
+@patch("character_eng.world._make_client")
+def test_plan_call_people_in_context(mock_make_client):
+    """People state is included in the user message when provided."""
+    data = {"beats": [{"line": "Hi Alice!", "intent": "Greet"}]}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    people = PeopleState()
+    people.add_person(name="Alice", presence="present")
+
+    plan_call("sys prompt", world=None, history=[], plan_model_config=PLAN_CONFIG, people=people)
+
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "PEOPLE PRESENT" in user_msg
+    assert "Alice" in user_msg
+
+
+@patch("character_eng.world._make_client")
+def test_plan_call_stage_goal_in_context(mock_make_client):
+    """Stage goal is included in the user message when provided."""
+    data = {"beats": [{"line": "Hi!", "intent": "Greet"}]}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    plan_call("sys prompt", world=None, history=[], plan_model_config=PLAN_CONFIG, stage_goal="Sell lemonade")
+
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "CURRENT STAGE GOAL" in user_msg
+    assert "Sell lemonade" in user_msg
+
+
+@patch("character_eng.world._make_client")
+def test_plan_call_no_people_no_stage_goal(mock_make_client):
+    """Without people or stage_goal, those sections don't appear."""
+    data = {"beats": [{"line": "Hi!", "intent": "Greet"}]}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    plan_call("sys prompt", world=None, history=[], plan_model_config=PLAN_CONFIG)
+
+    call_args = mock_client.chat.completions.create.call_args
+    user_msg = call_args[1]["messages"][1]["content"]
+    assert "PEOPLE PRESENT" not in user_msg
+    assert "CURRENT STAGE GOAL" not in user_msg
 
 
 # --- _load_prompt_file ---

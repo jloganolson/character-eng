@@ -24,7 +24,10 @@ from openai import OpenAI
 
 from character_eng.chat import ChatSession
 from character_eng.models import BIG_MODEL, DEFAULT_MODEL, MODELS
+from character_eng.perception import PerceptionEvent, process_perception
+from character_eng.person import PeopleState
 from character_eng.prompts import load_prompt
+from character_eng.scenario import DirectorResult, director_call, load_scenario_script
 from character_eng.world import (
     Beat,
     ConditionResult,
@@ -87,7 +90,9 @@ class ConversationDriver:
         # Core state
         self.world = load_world_state(character)
         self.goals = load_goals(character)
-        self.system_prompt = load_prompt(character, world_state=self.world)
+        self.people = PeopleState()
+        self.scenario = load_scenario_script(character)
+        self.system_prompt = load_prompt(character, world_state=self.world, people_state=self.people)
         self.session = ChatSession(self.system_prompt, model_config)
         self.script = Script()
         self.label = character.replace("_", " ").title()
@@ -108,6 +113,12 @@ class ConversationDriver:
         self._plan_result: PlanResult | None = None
         self._plan_thread: threading.Thread | None = None
         self._plan_version: int = 0
+
+        # Background director
+        self._director_lock = threading.Lock()
+        self._director_result: DirectorResult | None = None
+        self._director_thread: threading.Thread | None = None
+        self._director_version: int = 0
 
         # Context version counter
         self._context_version: int = 0
@@ -134,7 +145,7 @@ class ConversationDriver:
 
     def _run_reconcile(self, pending: list[str], cfg: dict):
         try:
-            result = reconcile_call(self.world, pending, cfg)
+            result = reconcile_call(self.world, pending, cfg, people=self.people)
             with self._reconcile_lock:
                 self._reconcile_result = result
         except Exception:
@@ -159,6 +170,8 @@ class ConversationDriver:
             return None
         self._reconcile_thread = None
         self.world.apply_update(result)
+        if result.person_updates:
+            self.people.apply_updates(result.person_updates)
         return {
             "type": "reconcile",
             "remove_facts": result.remove_facts,
@@ -168,7 +181,7 @@ class ConversationDriver:
 
     # --- Background eval ---
 
-    def _run_eval(self, system_prompt, history, goals, script, model_config):
+    def _run_eval(self, system_prompt, history, goals, script, model_config, people, stage_goal):
         try:
             result = eval_call(
                 system_prompt=system_prompt,
@@ -177,6 +190,8 @@ class ConversationDriver:
                 model_config=model_config,
                 goals=goals,
                 script=script,
+                people=people,
+                stage_goal=stage_goal,
             )
             with self._eval_lock:
                 self._eval_result = result
@@ -187,6 +202,9 @@ class ConversationDriver:
         if self._eval_thread is not None and self._eval_thread.is_alive():
             return
         self._eval_version = self._context_version
+        stage_goal = ""
+        if self.scenario and self.scenario.active_stage:
+            stage_goal = self.scenario.active_stage.goal
         self._eval_thread = threading.Thread(
             target=self._run_eval,
             args=(
@@ -195,6 +213,8 @@ class ConversationDriver:
                 self.goals,
                 self.script,
                 self.eval_model_config,
+                self.people,
+                stage_goal,
             ),
             daemon=True,
         )
@@ -242,7 +262,7 @@ class ConversationDriver:
 
     # --- Background plan ---
 
-    def _run_plan_bg(self, system_prompt, history, goals, plan_request, big_model_config):
+    def _run_plan_bg(self, system_prompt, history, goals, plan_request, big_model_config, people, stage_goal):
         try:
             result = plan_call(
                 system_prompt=system_prompt,
@@ -251,6 +271,8 @@ class ConversationDriver:
                 goals=goals,
                 plan_request=plan_request,
                 plan_model_config=big_model_config,
+                people=people,
+                stage_goal=stage_goal,
             )
             with self._plan_lock:
                 self._plan_result = result
@@ -263,6 +285,9 @@ class ConversationDriver:
         if self._plan_thread is not None and self._plan_thread.is_alive():
             return
         self._plan_version = self._context_version
+        stage_goal = ""
+        if self.scenario and self.scenario.active_stage:
+            stage_goal = self.scenario.active_stage.goal
         self._plan_thread = threading.Thread(
             target=self._run_plan_bg,
             args=(
@@ -271,6 +296,8 @@ class ConversationDriver:
                 self.goals,
                 plan_request,
                 self.big_model_config,
+                self.people,
+                stage_goal,
             ),
             daemon=True,
         )
@@ -297,6 +324,72 @@ class ConversationDriver:
             }
         return None
 
+    # --- Background director ---
+
+    def _run_director(self, scenario, world, people, history, model_config):
+        try:
+            result = director_call(
+                scenario=scenario,
+                world=world,
+                people=people,
+                history=history,
+                model_config=model_config,
+            )
+            with self._director_lock:
+                self._director_result = result
+        except Exception:
+            pass
+
+    def _start_director(self):
+        if self.scenario is None:
+            return
+        if self._director_thread is not None and self._director_thread.is_alive():
+            return
+        self._director_version = self._context_version
+        cfg = self.big_model_config if self.big_model_config else self.model_config
+        self._director_thread = threading.Thread(
+            target=self._run_director,
+            args=(
+                self.scenario,
+                self.world,
+                self.people,
+                self.session.get_history(),
+                cfg,
+            ),
+            daemon=True,
+        )
+        self._director_thread.start()
+
+    def _check_director(self) -> dict | None:
+        """Check if background director is ready. Returns log entry or None."""
+        with self._director_lock:
+            result = self._director_result
+            self._director_result = None
+        if result is None:
+            return None
+        self._director_thread = None
+
+        if self._director_version != self._context_version:
+            return {"type": "director_stale"}
+
+        entry = {
+            "type": "director",
+            "thought": result.thought,
+            "status": result.status,
+            "exit_index": result.exit_index,
+        }
+
+        if result.status == "advance" and self.scenario:
+            stage = self.scenario.active_stage
+            if stage and 0 <= result.exit_index < len(stage.exits):
+                target = stage.exits[result.exit_index].goto
+                self.scenario.advance_to(target)
+                entry["advanced_to"] = target
+                # Trigger replan with new stage goal
+                self._start_plan("")
+
+        return entry
+
     # --- Turn-start checks ---
 
     def _turn_start_checks(self):
@@ -312,6 +405,10 @@ class ConversationDriver:
         if needs_plan:
             self._start_plan(plan_request)
 
+        director_entry = self._check_director()
+        if director_entry:
+            self.log.append(director_entry)
+
         plan_entry = self._check_plan()
         if plan_entry:
             self.log.append(plan_entry)
@@ -322,6 +419,9 @@ class ConversationDriver:
         """Synchronous initial plan (same as __main__.py boot)."""
         if self.big_model_config is None:
             return
+        stage_goal = ""
+        if self.scenario and self.scenario.active_stage:
+            stage_goal = self.scenario.active_stage.goal
         try:
             result = plan_call(
                 system_prompt=self.session.system_prompt,
@@ -330,6 +430,8 @@ class ConversationDriver:
                 goals=self.goals,
                 plan_request="",
                 plan_model_config=self.big_model_config,
+                people=self.people,
+                stage_goal=stage_goal,
             )
             if result and result.beats:
                 self.script.replace(result.beats)
@@ -353,6 +455,7 @@ class ConversationDriver:
             self.log.append({"type": "send", "input": text, "response": response})
             self._bump_version()
             self._start_eval()
+            self._start_director()
             self._start_plan("")
             return response
 
@@ -381,6 +484,7 @@ class ConversationDriver:
         self.log.append({"type": "send", "input": text, "response": response})
         self._bump_version()
         self._start_eval()
+        self._start_director()
         return response
 
     def send_world(self, text: str) -> str:
@@ -406,6 +510,7 @@ class ConversationDriver:
         self._start_reconcile()
         self._bump_version()
         self._start_eval()
+        self._start_director()
         return response
 
     def send_beat(self) -> str:
@@ -418,6 +523,9 @@ class ConversationDriver:
         # If no current beat, synchronous replan
         if self.script.current_beat is None:
             if self.big_model_config:
+                stage_goal = ""
+                if self.scenario and self.scenario.active_stage:
+                    stage_goal = self.scenario.active_stage.goal
                 try:
                     result = plan_call(
                         system_prompt=self.session.system_prompt,
@@ -426,6 +534,8 @@ class ConversationDriver:
                         goals=self.goals,
                         plan_request="",
                         plan_model_config=self.big_model_config,
+                        people=self.people,
+                        stage_goal=stage_goal,
                     )
                     if result and result.beats:
                         self.script.replace(result.beats)
@@ -487,12 +597,36 @@ class ConversationDriver:
 
         self._bump_version()
         self._start_eval()
+        self._start_director()
         self.log.append(entry)
+        return response
+
+    def send_see(self, text: str) -> str:
+        """Perception event: process, inject narrator, collect response, start background.
+        Returns character response text."""
+        self._turn_start_checks()
+
+        event = PerceptionEvent(description=text, source="persona")
+        _, narrator_msg = process_perception(event, self.people, self.world)
+        self.session.inject_system(narrator_msg)
+        response = self._collect_response("[React to what you just noticed.]")
+
+        self.log.append({
+            "type": "see",
+            "input": text,
+            "narrator": narrator_msg,
+            "response": response,
+        })
+
+        self._start_reconcile()
+        self._bump_version()
+        self._start_eval()
+        self._start_director()
         return response
 
     def wait_for_background(self, timeout: float = 15.0):
         """Join any active background threads."""
-        for t in [self._reconcile_thread, self._eval_thread, self._plan_thread]:
+        for t in [self._reconcile_thread, self._eval_thread, self._plan_thread, self._director_thread]:
             if t is not None and t.is_alive():
                 t.join(timeout=timeout)
         # Final drain of results
@@ -509,10 +643,11 @@ You MUST respond with valid JSON only — no other text.
 Output format:
 {"action": "<action>", "text": "<text>"}
 
-action must be one of: "message", "world", "beat", "nothing"
+action must be one of: "message", "world", "beat", "see", "nothing"
 - "message": send a chat message (put your message in "text")
 - "world": describe a world change (put description in "text")
 - "beat": request the next scripted beat (text is ignored)
+- "see": describe something the character perceives (put description in "text")
 - "nothing": do nothing this turn (text is ignored)
 
 Your persona:
@@ -599,6 +734,21 @@ PERSONAS: list[PersonaConfig] = [
         ),
         action_override=lambda turn: "message" if turn % 2 == 0 else "beat",
     ),
+    PersonaConfig(
+        name="Scene Observer",
+        description="Perception tester — approaches, interacts, leaves",
+        turns=15,
+        persona_prompt=(
+            "You are simulating a person approaching an NPC at a lemonade stand. "
+            "You use a mix of 'see' and 'message' actions to simulate a scene. "
+            "Use 'see' to describe things you or others do physically (approach, "
+            "pick up items, gesture, look around, walk away). Use 'message' for "
+            "dialogue. Early turns: approach and look around (see). Middle turns: "
+            "chat and interact (mix of message and see). Final turns: say goodbye "
+            "and leave (message then see). About 40% see, 60% message. "
+            "Keep descriptions and dialogue short and natural."
+        ),
+    ),
 ]
 
 
@@ -628,6 +778,8 @@ def _get_persona_action(
             messages.append({"role": "user", "content": f"You said: {entry['input']}\nNPC replied: {entry['response']}"})
         elif entry.get("type") == "world":
             messages.append({"role": "user", "content": f"You changed the world: {entry['input']}\nNPC reacted: {entry['response']}"})
+        elif entry.get("type") == "see":
+            messages.append({"role": "user", "content": f"You observed: {entry['input']}\nNPC reacted: {entry['response']}"})
         elif entry.get("type") == "beat":
             messages.append({"role": "user", "content": f"Beat delivered: {entry.get('response', '(none)')}"})
     messages.append({"role": "user", "content": "What do you do next?"})
@@ -642,7 +794,7 @@ def _get_persona_action(
         data = json.loads(response.choices[0].message.content)
         action = data.get("action", "message")
         text = data.get("text", "")
-        if action not in ("message", "world", "beat", "nothing"):
+        if action not in ("message", "world", "beat", "see", "nothing"):
             action = "message"
         return {"action": action, "text": text}
     except Exception:
@@ -724,6 +876,8 @@ def run_persona(
                 record.response = driver.send_beat()
             elif action == "world":
                 record.response = driver.send_world(text or "something strange happens")
+            elif action == "see":
+                record.response = driver.send_see(text or "someone walks by")
             else:  # message
                 record.response = driver.send_message(text or "hey")
 
@@ -975,6 +1129,7 @@ def _action_badge(action: str) -> str:
         "message": "#58a6ff",
         "world": "#d29922",
         "beat": "#bc8cff",
+        "see": "#7ee787",
         "nothing": "#8b949e",
     }
     color = colors.get(action, "#8b949e")
