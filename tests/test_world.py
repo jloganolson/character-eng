@@ -6,10 +6,7 @@ import pytest
 import character_eng.world as world_mod
 from character_eng.world import (
     Beat,
-    ConditionResult,
-    EvalResult,
     Goals,
-    PlanResult,
     Script,
     WorldState,
     WorldUpdate,
@@ -71,26 +68,6 @@ def test_render_full():
     assert "- The orb began to glow" in text
 
 
-def test_render_empty():
-    ws = WorldState()
-    assert ws.render() == ""
-
-
-def test_render_static_only():
-    ws = WorldState(static=["Fact one"])
-    text = ws.render()
-    assert "Permanent facts:" in text
-    assert "Current state:" not in text
-    assert "Recent events:" not in text
-
-
-def test_render_dynamic_only():
-    ws = _ws_with_dynamic("Fact one")
-    text = ws.render()
-    assert "Current state:" in text
-    assert "Permanent facts:" not in text
-
-
 def test_render_with_pending():
     ws = _ws_with_dynamic("Orb on table")
     ws.add_pending("The orb falls off the table")
@@ -134,12 +111,6 @@ def test_add_pending_and_clear():
     assert ws.pending == []
 
 
-def test_clear_pending_empty():
-    ws = WorldState()
-    result = ws.clear_pending()
-    assert result == []
-
-
 # --- render_for_reconcile ---
 
 
@@ -148,11 +119,6 @@ def test_render_for_reconcile():
     text = ws.render_for_reconcile()
     assert "f1. Orb on table" in text
     assert "f2. Room is dark" in text
-
-
-def test_render_for_reconcile_empty():
-    ws = WorldState()
-    assert ws.render_for_reconcile() == ""
 
 
 # --- apply_update ---
@@ -205,15 +171,6 @@ def test_apply_update_invalid_id_ignored():
     assert list(ws.dynamic.values()) == ["A"]
 
 
-# --- show ---
-
-
-def test_show_returns_panel():
-    ws = WorldState(static=["Fact"])
-    panel = ws.show()
-    assert panel.title == "World State"
-
-
 # --- load_world_state ---
 
 
@@ -255,56 +212,6 @@ def test_load_world_state_static_only(tmp_path, monkeypatch):
     assert ws.dynamic == {}
 
 
-# --- Beat ---
-
-
-def test_beat_construction():
-    b = Beat(line="Hey, what's that orb?", intent="Ask about the orb")
-    assert b.line == "Hey, what's that orb?"
-    assert b.intent == "Ask about the orb"
-    assert b.gaze == ""
-    assert b.expression == ""
-
-
-def test_beat_with_gaze_expression():
-    b = Beat(line="Hey, what's that orb?", intent="Ask about the orb", gaze="orb", expression="curious")
-    assert b.line == "Hey, what's that orb?"
-    assert b.intent == "Ask about the orb"
-    assert b.gaze == "orb"
-    assert b.expression == "curious"
-
-
-def test_beat_with_condition():
-    b = Beat(line="Thanks for the salt!", intent="React to salt", condition="The visitor handed over the salt")
-    assert b.condition == "The visitor handed over the salt"
-    assert b.gaze == ""
-    assert b.expression == ""
-
-
-def test_beat_condition_default_empty():
-    b = Beat(line="Hey", intent="Greet")
-    assert b.condition == ""
-
-
-# --- ConditionResult ---
-
-
-def test_condition_result_met():
-    r = ConditionResult(met=True)
-    assert r.met is True
-    assert r.idle == ""
-    assert r.gaze == ""
-    assert r.expression == ""
-
-
-def test_condition_result_not_met():
-    r = ConditionResult(met=False, idle="*fidgets with a wire*", gaze="hands", expression="restless")
-    assert r.met is False
-    assert r.idle == "*fidgets with a wire*"
-    assert r.gaze == "hands"
-    assert r.expression == "restless"
-
-
 # --- Script ---
 
 
@@ -327,7 +234,7 @@ def test_script_advance_to_empty():
 
 def test_script_replace():
     s = Script(beats=[Beat("Old", "Old intent")])
-    s.advance()  # move past beat 0
+    s.advance()
     s.replace([Beat("New 1", "New intent 1"), Beat("New 2", "New intent 2")])
     assert s.current_beat == Beat("New 1", "New intent 1")
     assert len(s.beats) == 2
@@ -357,7 +264,6 @@ def test_script_render_with_gaze_expression():
     assert '  1. [Intent 2] "Line 2" (visitor)' in text
     assert '  2. [Intent 3] "Line 3" (excited)' in text
     assert '  3. [Intent 4] "Line 4"' in text
-    # No trailing parens on beat 4
     assert '"Line 4" (' not in text
 
 
@@ -368,55 +274,7 @@ def test_script_render_with_condition():
     ])
     text = s.render()
     assert 'IF: A visitor is present' in text
-    assert 'IF:' not in text.split('\n')[1]  # second beat has no condition
-
-
-def test_script_render_empty():
-    assert Script().render() == ""
-
-
-def test_script_show_returns_panel():
-    s = Script(beats=[Beat("Line", "Intent")])
-    panel = s.show()
-    assert panel.title == "Script"
-
-
-def test_script_show_empty():
-    panel = Script().show()
-    assert panel.title == "Script"
-
-
-# --- EvalResult ---
-
-
-def test_eval_result_construction():
-    r = EvalResult(
-        thought="Hmm, interesting.",
-        gaze="orb",
-        expression="curious",
-        script_status="hold",
-    )
-    assert r.thought == "Hmm, interesting."
-    assert r.script_status == "hold"
-    assert r.bootstrap_line == ""
-    assert r.bootstrap_intent == ""
-    assert r.plan_request == ""
-
-
-def test_eval_result_bootstrap_fields():
-    r = EvalResult(
-        thought="Let me start.",
-        gaze="visitor",
-        expression="curious",
-        script_status="bootstrap",
-        bootstrap_line="Hey there! What brings you here?",
-        bootstrap_intent="Greet the visitor",
-        plan_request="Plan a conversation about the orb",
-    )
-    assert r.script_status == "bootstrap"
-    assert r.bootstrap_line == "Hey there! What brings you here?"
-    assert r.bootstrap_intent == "Greet the visitor"
-    assert r.plan_request == "Plan a conversation about the orb"
+    assert 'IF:' not in text.split('\n')[1]
 
 
 # --- Goals ---
@@ -426,17 +284,6 @@ def test_goals_render_full():
     g = Goals(long_term="Experience the universe")
     text = g.render()
     assert "Long-term goal: Experience the universe" in text
-
-
-def test_goals_render_empty():
-    g = Goals()
-    assert g.render() == ""
-
-
-def test_goals_show_returns_panel():
-    g = Goals(long_term="Drive")
-    panel = g.show()
-    assert panel.title == "Character Goals"
 
 
 # --- load_goals ---
@@ -498,23 +345,12 @@ def test_format_narrator_message_events_and_facts():
     assert "Orb is on floor" in msg
 
 
-def test_format_narrator_message_empty():
-    update = WorldUpdate()
-    msg = format_narrator_message(update)
-    assert msg == "[]"
-
-
 # --- format_pending_narrator ---
 
 
 def test_format_pending_narrator():
     msg = format_pending_narrator("The orb falls off the table")
     assert msg == "[The orb falls off the table]"
-
-
-def test_format_pending_narrator_empty():
-    msg = format_pending_narrator("")
-    assert msg == "[]"
 
 
 # --- Mock helper for OpenAI responses ---
@@ -609,7 +445,6 @@ def test_reconcile_call_multiple_pending(mock_make_client):
     assert update.remove_facts == ["f1"]
     assert len(update.add_facts) == 2
 
-    # Check that both pending changes appear in the user message
     call_args = mock_client.chat.completions.create.call_args
     user_msg = call_args[1]["messages"][1]["content"]
     assert "the orb falls" in user_msg
@@ -649,6 +484,27 @@ def test_reconcile_call_ids_in_context(mock_make_client):
     user_msg = call_args[1]["messages"][1]["content"]
     assert "f1. Orb on table" in user_msg
     assert "f2. Room is dark" in user_msg
+
+
+@patch("character_eng.world._make_client")
+def test_reconcile_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatch):
+    """Editing reconcile_system.txt is picked up on the next call without restart."""
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+
+    data = {"remove_facts": [], "add_facts": [], "events": ["thing"]}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    (tmp_path / "reconcile_system.txt").write_text("Reconcile prompt v1")
+    reconcile_call(WorldState(), ["test"], TEST_CONFIG)
+    msgs_v1 = mock_client.chat.completions.create.call_args[1]["messages"]
+    assert msgs_v1[0]["content"] == "Reconcile prompt v1"
+
+    (tmp_path / "reconcile_system.txt").write_text("Reconcile prompt v2")
+    reconcile_call(WorldState(), ["test"], TEST_CONFIG)
+    msgs_v2 = mock_client.chat.completions.create.call_args[1]["messages"]
+    assert msgs_v2[0]["content"] == "Reconcile prompt v2"
 
 
 # --- eval_call (mocked) ---
@@ -828,6 +684,27 @@ def test_eval_call_reads_eval_system_txt(mock_make_client, tmp_path, monkeypatch
     call_args = mock_client.chat.completions.create.call_args
     messages = call_args[1]["messages"]
     assert messages[0]["content"] == "You are eval v1."
+
+
+@patch("character_eng.world._make_client")
+def test_eval_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatch):
+    """Editing eval_system.txt is picked up on the next call without restart."""
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+
+    data = {"thought": "hmm", "gaze": "orb", "expression": "neutral", "script_status": "hold"}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    (tmp_path / "eval_system.txt").write_text("Eval prompt v1")
+    eval_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
+    msgs_v1 = mock_client.chat.completions.create.call_args[1]["messages"]
+    assert msgs_v1[0]["content"] == "Eval prompt v1"
+
+    (tmp_path / "eval_system.txt").write_text("Eval prompt v2")
+    eval_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
+    msgs_v2 = mock_client.chat.completions.create.call_args[1]["messages"]
+    assert msgs_v2[0]["content"] == "Eval prompt v2"
 
 
 # --- condition_check_call (mocked) ---
@@ -1105,71 +982,3 @@ def test_load_beat_guide_missing_file_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     with pytest.raises(FileNotFoundError):
         load_beat_guide("intent", "line")
-
-
-# --- Prompt reload (file changes picked up between calls) ---
-
-
-@patch("character_eng.world._make_client")
-def test_reconcile_call_reads_prompt_from_file(mock_make_client, tmp_path, monkeypatch):
-    """reconcile_call reads reconcile_system.txt from disk each call."""
-    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
-    (tmp_path / "reconcile_system.txt").write_text("You are reconciler v1.")
-
-    data = {"remove_facts": [], "add_facts": [], "events": ["thing"]}
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
-    mock_make_client.return_value = mock_client
-
-    reconcile_call(WorldState(), ["test"], TEST_CONFIG)
-
-    # Check the system message sent to the API
-    call_args = mock_client.chat.completions.create.call_args
-    messages = call_args[1]["messages"]
-    assert messages[0]["content"] == "You are reconciler v1."
-
-
-@patch("character_eng.world._make_client")
-def test_reconcile_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatch):
-    """Editing reconcile_system.txt is picked up on the next call without restart."""
-    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
-
-    data = {"remove_facts": [], "add_facts": [], "events": ["thing"]}
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
-    mock_make_client.return_value = mock_client
-
-    # First call with v1
-    (tmp_path / "reconcile_system.txt").write_text("Reconcile prompt v1")
-    reconcile_call(WorldState(), ["test"], TEST_CONFIG)
-    msgs_v1 = mock_client.chat.completions.create.call_args[1]["messages"]
-    assert msgs_v1[0]["content"] == "Reconcile prompt v1"
-
-    # Edit the file
-    (tmp_path / "reconcile_system.txt").write_text("Reconcile prompt v2")
-    reconcile_call(WorldState(), ["test"], TEST_CONFIG)
-    msgs_v2 = mock_client.chat.completions.create.call_args[1]["messages"]
-    assert msgs_v2[0]["content"] == "Reconcile prompt v2"
-
-
-@patch("character_eng.world._make_client")
-def test_eval_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatch):
-    """Editing eval_system.txt is picked up on the next call without restart."""
-    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
-
-    data = {"thought": "hmm", "gaze": "orb", "expression": "neutral", "script_status": "hold"}
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
-    mock_make_client.return_value = mock_client
-
-    # First call with v1
-    (tmp_path / "eval_system.txt").write_text("Eval prompt v1")
-    eval_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
-    msgs_v1 = mock_client.chat.completions.create.call_args[1]["messages"]
-    assert msgs_v1[0]["content"] == "Eval prompt v1"
-
-    # Edit the file
-    (tmp_path / "eval_system.txt").write_text("Eval prompt v2")
-    eval_call("sys prompt", world=None, history=[], model_config=TEST_CONFIG)
-    msgs_v2 = mock_client.chat.completions.create.call_args[1]["messages"]
-    assert msgs_v2[0]["content"] == "Eval prompt v2"

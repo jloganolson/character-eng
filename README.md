@@ -68,6 +68,7 @@ The app works without `config.toml` — all settings have defaults. The `--voice
 ```bash
 uv run -m character_eng          # text mode
 uv run -m character_eng --voice  # voice mode (speak to chat, hear responses)
+uv run -m character_eng --smoke  # smoke test (auto greg, scripted inputs, exit)
 ```
 
 Pick a character from the menu, then chat. The character evaluates each turn in the background, tracks a script of dialogue beats, and adapts naturally. In-session commands:
@@ -241,8 +242,11 @@ Available local models: LFM-2 2.6B (`lfm-2.6b`), LFM-2.5 1.2B (`lfm-1.2b`). The 
 ## Testing
 
 ```bash
-# Unit tests (mocked, fast)
+# Unit tests + e2e smoke (includes real LLM smoke test when API keys are set)
 uv run pytest
+
+# E2e smoke test standalone (sends real messages, exercises full startup path)
+uv run -m character_eng --smoke
 
 # Integration tests (hit real LLM, default model: cerebras-llama)
 uv run -m character_eng.qa_world                       # world state reconciler

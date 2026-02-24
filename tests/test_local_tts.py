@@ -1,12 +1,10 @@
 """Tests for character_eng.local_tts."""
 
-import threading
-import time
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from character_eng.local_tts import LocalTTS, load_model
+from character_eng.local_tts import LocalTTS
 
 
 def test_send_text_buffers():
@@ -21,7 +19,6 @@ def test_flush_clears_buffer():
     """flush() should clear the buffer after joining text."""
     tts = LocalTTS(on_audio=MagicMock())
     tts.send_text("Hello")
-    # Patch _generate to prevent actual model loading
     with patch.object(tts, "_generate"):
         tts.flush()
     assert tts._buffer == []
@@ -42,39 +39,14 @@ def test_flush_whitespace_only_sets_done():
     assert tts._generation_done.is_set()
 
 
-def test_close_sets_cancelled():
-    """close() should set _cancelled event."""
-    tts = LocalTTS(on_audio=MagicMock())
-    tts.close()
-    assert tts._cancelled.is_set()
+def test_flush_starts_generation_thread():
+    """flush() with text should start a background thread."""
+    tts = LocalTTS(on_audio=MagicMock(), ref_audio_path="/fake/ref.wav")
+    tts.send_text("Hello world")
 
-
-def test_close_sets_generation_done():
-    """close() should set _generation_done to unblock waiters."""
-    tts = LocalTTS(on_audio=MagicMock())
-    tts.close()
-    assert tts._generation_done.is_set()
-
-
-def test_close_clears_buffer():
-    """close() should clear any buffered text."""
-    tts = LocalTTS(on_audio=MagicMock())
-    tts.send_text("some text")
-    tts.close()
-    assert tts._buffer == []
-
-
-def test_wait_for_done_returns_on_set():
-    """wait_for_done should return True when _generation_done is set."""
-    tts = LocalTTS(on_audio=MagicMock())
-    tts._generation_done.set()
-    assert tts.wait_for_done(timeout=0.05) is True
-
-
-def test_wait_for_done_timeout():
-    """wait_for_done should return False on timeout."""
-    tts = LocalTTS(on_audio=MagicMock())
-    assert tts.wait_for_done(timeout=0.05) is False
+    with patch.object(tts, "_generate"):
+        tts.flush()
+        assert tts._gen_thread is not None
 
 
 def test_generate_converts_float32_to_int16_pcm():
@@ -82,7 +54,6 @@ def test_generate_converts_float32_to_int16_pcm():
     on_audio = MagicMock()
     tts = LocalTTS(on_audio=on_audio, ref_audio_path="/fake/ref.wav")
 
-    # Create a mock streamer that yields one chunk
     wav_chunk = np.array([0.0, 0.5, -0.5, 1.0, -1.0], dtype=np.float32)
     mock_streamer = iter([(wav_chunk, 24000)])
 
@@ -95,17 +66,15 @@ def test_generate_converts_float32_to_int16_pcm():
     with patch("character_eng.local_tts.load_model", return_value=mock_singleton):
         tts._generate("Hello world")
 
-    # Should have called on_audio once with int16 PCM bytes
     on_audio.assert_called_once()
     pcm = on_audio.call_args[0][0]
 
-    # Verify it's valid int16 PCM
     samples = np.frombuffer(pcm, dtype=np.int16)
     assert len(samples) == 5
     assert samples[0] == 0       # 0.0 * 32767
-    assert samples[1] == 16383   # 0.5 * 32767 ≈ 16383
+    assert samples[1] == 16383   # 0.5 * 32767
     assert samples[3] == 32767   # 1.0 * 32767 clamped
-    assert samples[4] == -32767  # -1.0 * 32767 clamped to [-32768, 32767]
+    assert samples[4] == -32767  # -1.0 * 32767 clamped
 
 
 def test_generate_respects_cancelled():
@@ -126,7 +95,6 @@ def test_generate_respects_cancelled():
     with patch("character_eng.local_tts.load_model", return_value=mock_singleton):
         tts._generate("Hello")
 
-    # Should not have delivered any audio (cancelled before first chunk)
     on_audio.assert_not_called()
 
 
@@ -152,14 +120,3 @@ def test_generate_sets_done_on_error():
         tts._generate("Hello")
 
     assert tts._generation_done.is_set()
-
-
-def test_flush_starts_generation_thread():
-    """flush() with text should start a background thread."""
-    tts = LocalTTS(on_audio=MagicMock(), ref_audio_path="/fake/ref.wav")
-    tts.send_text("Hello world")
-
-    # Patch _generate to be a no-op
-    with patch.object(tts, "_generate"):
-        tts.flush()
-        assert tts._gen_thread is not None

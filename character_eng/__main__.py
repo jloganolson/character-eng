@@ -1217,10 +1217,83 @@ def show_help(voice_active: bool = False):
     console.print(Panel(help_text, title="Commands", border_style="dim"))
 
 
+def run_smoke():
+    """Smoke test: auto-select greg, send a message, /world change, /beat, exit.
+
+    Exercises the full startup + chat path with real LLM calls.
+    Returns exit code 0 on success, 1 on failure.
+    """
+    console.print(Panel("[bold]Smoke Test[/bold]", border_style="yellow"))
+    model_config = get_chat_model_config()
+    if model_config is None:
+        chat_cfg = MODELS.get(CHAT_MODEL, {})
+        console.print(f"[red]Smoke test failed: chat model unavailable — set {chat_cfg.get('api_key_env', 'API key')} in .env[/red]")
+        return 1
+
+    character = "greg"
+    label = character.replace("_", " ").title()
+    big_model_config = get_big_model_config()
+    eval_model_config = big_model_config if big_model_config else model_config
+    log: list[dict] = []
+
+    console.print(f"[dim]Chat: {model_config['name']}[/dim]")
+    if big_model_config:
+        console.print(f"[dim]Big model: {MODELS[BIG_MODEL]['name']}[/dim]")
+
+    # --- Startup: load everything ---
+    world = load_world_state(character)
+    goals = load_goals(character)
+    system_prompt = load_prompt(character, world_state=world)
+    session = ChatSession(system_prompt, model_config)
+    script = Script()
+
+    console.print("[dim]Planning...[/dim]")
+    plan_result = run_plan(session, world, goals, "", big_model_config)
+    if plan_result and plan_result.beats:
+        apply_plan(script, plan_result)
+        console.print(f"[dim]Got {len(script.beats)} beats[/dim]")
+
+    # --- Scripted sequence ---
+    steps = [
+        ("send", "Hello, what's going on here?"),
+        ("world", "a bird lands on the desk"),
+        ("beat", None),
+    ]
+
+    for action, text in steps:
+        console.print(f"\n[yellow]▶ smoke: {action}" + (f" {text}" if text else "") + "[/yellow]")
+        try:
+            if action == "send":
+                response = stream_response(session, label, text)
+                log.append({"type": "send", "input": text, "response": response})
+                _bump_version()
+                if not response.strip():
+                    console.print("[red]Smoke test failed: empty response[/red]")
+                    return 1
+            elif action == "world":
+                handle_world_change(session, world, goals, script, text, label,
+                                    model_config, big_model_config, eval_model_config, log)
+            elif action == "beat":
+                handle_beat(session, world, goals, script, label,
+                            model_config, big_model_config, eval_model_config, log)
+        except Exception as e:
+            console.print(f"[red]Smoke test failed: {e}[/red]")
+            import traceback
+            traceback.print_exc()
+            return 1
+
+    console.print(f"\n[bold green]Smoke test passed[/bold green] ({len(log)} log entries)")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="NPC Character Chat")
     parser.add_argument("--voice", action="store_true", help="Start in voice mode (Deepgram STT + ElevenLabs TTS)")
+    parser.add_argument("--smoke", action="store_true", help="Run smoke test (auto greg, scripted inputs, exit)")
     args = parser.parse_args()
+
+    if args.smoke:
+        sys.exit(run_smoke())
 
     cfg = load_config()
 

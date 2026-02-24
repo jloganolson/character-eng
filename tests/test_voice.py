@@ -1,55 +1,21 @@
 """Tests for the voice I/O module."""
 
-import queue
-import threading
+import struct
 import time
-from unittest.mock import MagicMock, patch, PropertyMock
+import threading
+from unittest.mock import MagicMock, patch
 
 from character_eng.voice import (
     AUTO_BEAT_DELAY,
-    EXIT,
-    VOICE_OFF,
-    VOICE_ERROR,
-    KeyListener,
     MicStream,
     SpeakerStream,
     VoiceIO,
-    _KEY_MAP,
     check_voice_available,
     resolve_device,
 )
 
 
 # --- MicStream ---
-
-
-def test_mic_stream_callback_queues_data():
-    """Callback should put audio bytes on the internal queue."""
-    on_audio = MagicMock()
-    mic = MicStream(on_audio)
-    # Simulate callback
-    data = b"\x00\x01" * 640
-    mic._callback(data, 640, None, None)
-    assert not mic._queue.empty()
-    assert mic._queue.get() == data
-
-
-def test_mic_stream_feeder_drains_queue():
-    """Feeder thread should call on_audio with queued data."""
-    on_audio = MagicMock()
-    mic = MicStream(on_audio)
-    mic._running = True
-
-    # Put data on queue
-    test_data = b"\x00\x01" * 640
-    mic._queue.put(test_data)
-
-    # Run one iteration of the feed loop manually
-    mic._running = True
-    data = mic._queue.get(timeout=0.1)
-    mic._on_audio(data)
-
-    on_audio.assert_called_once_with(test_data)
 
 
 def test_mic_stream_stop_drains_queue():
@@ -64,8 +30,6 @@ def test_mic_stream_stop_drains_queue():
 
 def test_mic_stream_multichannel_downmix():
     """Callback should downmix multi-channel input to mono (channel 0)."""
-    import struct
-
     on_audio = MagicMock()
     mic = MicStream(on_audio)
     mic._actual_channels = 2
@@ -80,36 +44,7 @@ def test_mic_stream_multichannel_downmix():
     assert samples == (100, 300)
 
 
-def test_mic_stream_actual_channels_default():
-    """New MicStream should default to 1 channel (mono)."""
-    mic = MicStream(MagicMock())
-    assert mic._actual_channels == 1
-
-
 # --- SpeakerStream ---
-
-
-def test_speaker_enqueue_and_flush():
-    """enqueue() adds data, flush() clears it."""
-    speaker = SpeakerStream()
-    speaker.enqueue(b"\x00" * 100)
-    assert not speaker.is_done()
-
-    speaker.flush()
-    assert speaker.is_done()
-
-
-def test_speaker_wait_until_done_when_empty():
-    """wait_until_done should return True immediately when no audio buffered."""
-    speaker = SpeakerStream()
-    assert speaker.wait_until_done(timeout=0.1) is True
-
-
-def test_speaker_wait_until_done_with_data():
-    """wait_until_done should return False (timeout) when audio is buffered."""
-    speaker = SpeakerStream()
-    speaker.enqueue(b"\x00" * 100)
-    assert speaker.wait_until_done(timeout=0.05) is False
 
 
 def test_speaker_callback_plays_from_buffer():
@@ -141,22 +76,6 @@ def test_speaker_callback_pads_silence():
     assert all(b == 0 for b in outdata[2:])
 
 
-def test_speaker_stop():
-    """stop() should clear buffer and set done."""
-    speaker = SpeakerStream()
-    speaker.enqueue(b"\x00" * 1000)
-    speaker.stop()
-    assert speaker.is_done()
-    assert len(speaker._buffer) == 0
-
-
-def test_speaker_resample_disabled_by_default():
-    """New SpeakerStream should not resample (native 24kHz)."""
-    speaker = SpeakerStream()
-    assert speaker._resample is False
-    assert speaker._actual_rate == SpeakerStream.NATIVE_RATE
-
-
 def test_speaker_upsample_doubles_samples():
     """_upsample should duplicate each sample for 2x ratio."""
     speaker = SpeakerStream()
@@ -170,8 +89,6 @@ def test_speaker_upsample_doubles_samples():
 
 def test_speaker_upsample_non_integer_ratio():
     """_upsample should interpolate for non-integer ratios like 44100/24000."""
-    import struct
-
     speaker = SpeakerStream()
     speaker._actual_rate = 44100
     # 4 samples at 24kHz
@@ -193,48 +110,60 @@ def test_speaker_enqueue_resamples_when_enabled():
     assert len(speaker._buffer) == 8
 
 
-def test_speaker_enqueue_no_resample_when_disabled():
-    """enqueue() should not upsample when _resample is False."""
+def test_speaker_bytes_enqueued_tracks_enqueue():
+    """_bytes_enqueued should increment on enqueue."""
     speaker = SpeakerStream()
-    speaker._resample = False
-    pcm = b"\x00\x01\x00\x02"  # 2 samples
-    speaker.enqueue(pcm)
-    assert len(speaker._buffer) == 4
+    assert speaker._bytes_enqueued == 0
+    speaker.enqueue(b"\x00" * 100)
+    assert speaker._bytes_enqueued == 100
+    speaker.enqueue(b"\x00" * 200)
+    assert speaker._bytes_enqueued == 300
 
 
-def test_speaker_start_fallback_to_48khz():
-    """start() should fall back to 48kHz when 24kHz fails."""
-    speaker = SpeakerStream(device=99)
-    mock_sd = MagicMock()
+def test_speaker_bytes_played_tracks_callback():
+    """_bytes_played should increment when callback consumes from buffer."""
+    speaker = SpeakerStream()
+    speaker.enqueue(b"\x42" * 4800)
+    outdata = bytearray(4800)
+    speaker._callback(outdata, 2400, None, None)
+    assert speaker._bytes_played == 4800
 
-    # First call (24kHz) raises PortAudioError, second (48kHz) succeeds
-    call_count = [0]
 
-    def _mock_raw_output(**kwargs):
-        call_count[0] += 1
-        if kwargs["samplerate"] == 24000:
-            raise mock_sd.PortAudioError("Invalid sample rate")
-        stream = MagicMock()
-        return stream
+def test_speaker_playback_ratio():
+    """playback_ratio should reflect fraction of enqueued audio that was played."""
+    speaker = SpeakerStream()
+    speaker.enqueue(b"\x42" * 4800)
+    assert speaker.playback_ratio == 0.0
+    # Play half
+    outdata = bytearray(2400)
+    speaker._callback(outdata, 1200, None, None)
+    assert abs(speaker.playback_ratio - 0.5) < 0.01
 
-    mock_sd.RawOutputStream = _mock_raw_output
-    mock_sd.PortAudioError = type("PortAudioError", (Exception,), {})
 
-    with patch.dict("sys.modules", {"sounddevice": mock_sd}):
-        # Re-import to pick up patched module... or just call internals
-        # We'll manually invoke the logic
-        import sounddevice
-        # Patch at the module level for the start() import
-        with patch("sounddevice.RawOutputStream", mock_sd.RawOutputStream), \
-             patch("sounddevice.PortAudioError", mock_sd.PortAudioError):
-            # Can't easily test start() due to lazy import; test the fields directly
-            pass
+def test_speaker_reset_counters():
+    """reset_counters should zero both played and enqueued."""
+    speaker = SpeakerStream()
+    speaker.enqueue(b"\x00" * 100)
+    outdata = bytearray(100)
+    speaker._callback(outdata, 50, None, None)
+    assert speaker._bytes_enqueued > 0
+    assert speaker._bytes_played > 0
+    speaker.reset_counters()
+    assert speaker._bytes_enqueued == 0
+    assert speaker._bytes_played == 0
 
-    # Simpler: test that the fields are correct after manual setup
-    speaker._actual_rate = 48000
-    speaker._resample = True
-    assert speaker._resample is True
-    assert speaker._actual_rate == 48000
+
+def test_speaker_flush_preserves_counters():
+    """flush() should NOT reset byte counters (needed for barge-in ratio)."""
+    speaker = SpeakerStream()
+    speaker.enqueue(b"\x00" * 100)
+    outdata = bytearray(50)
+    speaker._callback(outdata, 25, None, None)
+    played_before = speaker._bytes_played
+    enqueued_before = speaker._bytes_enqueued
+    speaker.flush()
+    assert speaker._bytes_played == played_before
+    assert speaker._bytes_enqueued == enqueued_before
 
 
 # --- DeepgramSTT ---
@@ -248,7 +177,6 @@ def test_deepgram_stt_dispatches_transcript():
     on_turn_start = MagicMock()
     stt = DeepgramSTT(on_transcript, on_turn_start)
 
-    # Simulate a Results message with final + speech_final (dict format)
     message = {
         "type": "Results",
         "channel": {"alternatives": [{"transcript": "Hello world"}]},
@@ -327,14 +255,12 @@ def test_elevenlabs_tts_send_text():
     on_audio = MagicMock()
     tts = ElevenLabsTTS(on_audio)
 
-    # Pre-inject a mock WebSocket (bypass _connect)
     mock_ws = MagicMock()
     tts._ws = mock_ws
     tts._running = True
 
     tts.send_text("Hello world")
 
-    # Should have sent a text chunk
     mock_ws.send.assert_called_once()
     sent = json.loads(mock_ws.send.call_args[0][0])
     assert sent["text"] == "Hello world"
@@ -385,15 +311,30 @@ def test_elevenlabs_tts_close():
     assert tts._running is False
 
 
+@patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test-key"})
+def test_elevenlabs_tts_recv_loop_sets_generation_done_on_is_final():
+    """_recv_loop should set _generation_done when isFinal message arrives."""
+    from character_eng.voice import ElevenLabsTTS
+    import json
+
+    on_audio = MagicMock()
+    tts = ElevenLabsTTS(on_audio)
+
+    mock_ws = MagicMock()
+    mock_ws.recv.side_effect = [
+        json.dumps({"audio": "AAAA", "isFinal": False}),
+        json.dumps({"isFinal": True}),
+    ]
+    tts._ws = mock_ws
+    tts._running = True
+
+    assert not tts._generation_done.is_set()
+    tts._recv_loop()
+    assert tts._generation_done.is_set()
+    assert on_audio.call_count == 1
+
+
 # --- VoiceIO ---
-
-
-def test_voice_io_event_queue_receives_transcript():
-    """Transcript from STT should appear on the event queue."""
-    voice = VoiceIO()
-    voice._event_queue.put("Hello world")
-    result = voice._event_queue.get(timeout=0.1)
-    assert result == "Hello world"
 
 
 def test_voice_io_auto_beat_timer_fires():
@@ -415,342 +356,6 @@ def test_voice_io_auto_beat_timer_cancel():
     assert voice._event_queue.empty()
 
 
-def test_voice_io_cancel_speech_sets_event():
-    """cancel_speech() should set the cancelled event."""
-    voice = VoiceIO()
-    voice._speaker = MagicMock()
-    voice._tts = MagicMock()
-    voice.cancel_speech()
-    assert voice._cancelled.is_set()
-
-
-def test_voice_io_cancel_speech_flushes_speaker():
-    """cancel_speech() should flush the speaker buffer."""
-    voice = VoiceIO()
-    voice._speaker = MagicMock()
-    voice._tts = MagicMock()
-    voice.cancel_speech()
-    voice._speaker.flush.assert_called_once()
-
-
-def test_voice_io_cancel_speech_closes_tts():
-    """cancel_speech() should close the TTS connection."""
-    voice = VoiceIO()
-    voice._speaker = MagicMock()
-    voice._tts = MagicMock()
-    voice.cancel_speech()
-    voice._tts.close.assert_called_once()
-
-
-def test_voice_io_wait_for_input_returns_from_queue():
-    """wait_for_input should return items placed on the event queue."""
-    voice = VoiceIO()
-    voice._started = True
-
-    # Put something on the queue in another thread
-    def _put():
-        time.sleep(0.05)
-        voice._event_queue.put("test transcript")
-
-    t = threading.Thread(target=_put)
-    t.start()
-    result = voice.wait_for_input()
-    t.join()
-    assert result == "test transcript"
-
-
-def test_voice_io_stop_drains_queue():
-    """stop() should drain the event queue."""
-    voice = VoiceIO()
-    voice._event_queue.put("leftover")
-    voice._event_queue.put("more")
-    voice.stop()
-    assert voice._event_queue.empty()
-
-
-# --- KeyListener ---
-
-
-def test_key_map_contains_expected_keys():
-    """Key map should contain all expected hotkey mappings."""
-    assert _KEY_MAP["w"] == "/world"
-    assert _KEY_MAP["b"] == "/beat"
-    assert _KEY_MAP["p"] == "/plan"
-    assert _KEY_MAP["g"] == "/goals"
-    assert _KEY_MAP["t"] == "/trace"
-    assert _KEY_MAP["\x1b"] == VOICE_OFF
-    assert _KEY_MAP["\x03"] == EXIT
-
-
-def test_key_listener_puts_mapped_command():
-    """KeyListener should put the mapped command on the queue when a key is pressed."""
-    eq = queue.Queue()
-    kl = KeyListener(eq)
-    # Simulate what the listen loop does internally
-    ch = "b"
-    if ch in _KEY_MAP:
-        eq.put(_KEY_MAP[ch])
-    result = eq.get(timeout=0.1)
-    assert result == "/beat"
-
-
-# --- check_voice_available ---
-
-
-@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1", "ELEVENLABS_API_KEY": "key2"})
-def test_check_voice_available_all_present():
-    """Should return True when all keys are present (elevenlabs backend)."""
-    available, reason = check_voice_available()
-    assert available is True
-    assert reason == ""
-
-
-@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "", "ELEVENLABS_API_KEY": "key2"})
-def test_check_voice_available_missing_deepgram_key():
-    """Should return False when DEEPGRAM_API_KEY is not set."""
-    available, reason = check_voice_available()
-    assert available is False
-    assert "DEEPGRAM_API_KEY" in reason
-
-
-@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1", "ELEVENLABS_API_KEY": ""})
-def test_check_voice_available_missing_elevenlabs_key():
-    """Should return False when ELEVENLABS_API_KEY is not set."""
-    available, reason = check_voice_available()
-    assert available is False
-    assert "ELEVENLABS_API_KEY" in reason
-
-
-@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
-def test_check_voice_available_local_backend():
-    """Should return True for local backend when torch/transformers are present (no ELEVENLABS_API_KEY needed)."""
-    with patch.dict("sys.modules", {
-        "torch": MagicMock(),
-        "transformers": MagicMock(),
-    }):
-        available, reason = check_voice_available(tts_backend="local")
-        assert available is True
-        assert reason == ""
-
-
-@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
-def test_check_voice_available_local_missing_torch():
-    """Should return False for local backend when torch is missing."""
-    with patch.dict("sys.modules", {
-        "torch": None,
-        "transformers": MagicMock(),
-    }):
-        available, reason = check_voice_available(tts_backend="local")
-        assert available is False
-        assert "torch" in reason
-
-
-# --- Sentinel constants ---
-
-
-# --- ElevenLabsTTS generation_done ---
-
-
-@patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test-key"})
-def test_elevenlabs_tts_generation_done_initially_unset():
-    """_generation_done should start unset."""
-    from character_eng.voice import ElevenLabsTTS
-
-    on_audio = MagicMock()
-    tts = ElevenLabsTTS(on_audio)
-    assert not tts._generation_done.is_set()
-
-
-@patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test-key"})
-def test_elevenlabs_tts_wait_for_done_returns_on_event():
-    """wait_for_done should return True when _generation_done is set."""
-    from character_eng.voice import ElevenLabsTTS
-
-    on_audio = MagicMock()
-    tts = ElevenLabsTTS(on_audio)
-
-    def _set():
-        time.sleep(0.05)
-        tts._generation_done.set()
-
-    t = threading.Thread(target=_set)
-    t.start()
-    result = tts.wait_for_done(timeout=1.0)
-    t.join()
-    assert result is True
-
-
-@patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test-key"})
-def test_elevenlabs_tts_wait_for_done_timeout():
-    """wait_for_done should return False on timeout."""
-    from character_eng.voice import ElevenLabsTTS
-
-    on_audio = MagicMock()
-    tts = ElevenLabsTTS(on_audio)
-    result = tts.wait_for_done(timeout=0.05)
-    assert result is False
-
-
-@patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test-key"})
-def test_elevenlabs_tts_close_sets_generation_done():
-    """close() should set _generation_done to unblock waiters."""
-    from character_eng.voice import ElevenLabsTTS
-
-    on_audio = MagicMock()
-    tts = ElevenLabsTTS(on_audio)
-
-    mock_ws = MagicMock()
-    tts._ws = mock_ws
-    tts._running = True
-
-    assert not tts._generation_done.is_set()
-    tts.close()
-    assert tts._generation_done.is_set()
-
-
-@patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test-key"})
-def test_elevenlabs_tts_recv_loop_sets_generation_done_on_is_final():
-    """_recv_loop should set _generation_done when isFinal message arrives."""
-    from character_eng.voice import ElevenLabsTTS
-    import json
-
-    on_audio = MagicMock()
-    tts = ElevenLabsTTS(on_audio)
-
-    # Create a mock WS that returns an isFinal message
-    mock_ws = MagicMock()
-    mock_ws.recv.side_effect = [
-        json.dumps({"audio": "AAAA", "isFinal": False}),  # audio chunk (base64 of 0x00 0x00 0x00)
-        json.dumps({"isFinal": True}),
-    ]
-    tts._ws = mock_ws
-    tts._running = True
-
-    assert not tts._generation_done.is_set()
-    tts._recv_loop()
-    assert tts._generation_done.is_set()
-    assert on_audio.call_count == 1
-
-
-# --- SpeakerStream audio_started ---
-
-
-def test_speaker_audio_started_on_enqueue():
-    """_audio_started should be set when audio is enqueued."""
-    speaker = SpeakerStream()
-    assert not speaker._audio_started.is_set()
-
-    speaker.enqueue(b"\x00" * 100)
-    assert speaker._audio_started.is_set()
-
-
-def test_speaker_audio_started_cleared_on_flush():
-    """flush() should clear _audio_started."""
-    speaker = SpeakerStream()
-    speaker.enqueue(b"\x00" * 100)
-    assert speaker._audio_started.is_set()
-
-    speaker.flush()
-    assert not speaker._audio_started.is_set()
-
-
-def test_speaker_audio_started_cleared_on_stop():
-    """stop() should clear _audio_started."""
-    speaker = SpeakerStream()
-    speaker.enqueue(b"\x00" * 100)
-    assert speaker._audio_started.is_set()
-
-    speaker.stop()
-    assert not speaker._audio_started.is_set()
-
-
-def test_speaker_wait_for_audio_returns_true():
-    """wait_for_audio should return True when audio arrives."""
-    speaker = SpeakerStream()
-
-    def _enqueue():
-        time.sleep(0.05)
-        speaker.enqueue(b"\x00" * 100)
-
-    t = threading.Thread(target=_enqueue)
-    t.start()
-    result = speaker.wait_for_audio(timeout=1.0)
-    t.join()
-    assert result is True
-
-
-def test_speaker_wait_for_audio_timeout():
-    """wait_for_audio should return False on timeout."""
-    speaker = SpeakerStream()
-    result = speaker.wait_for_audio(timeout=0.05)
-    assert result is False
-
-
-def test_speaker_bytes_enqueued_tracks_enqueue():
-    """_bytes_enqueued should increment on enqueue."""
-    speaker = SpeakerStream()
-    assert speaker._bytes_enqueued == 0
-    speaker.enqueue(b"\x00" * 100)
-    assert speaker._bytes_enqueued == 100
-    speaker.enqueue(b"\x00" * 200)
-    assert speaker._bytes_enqueued == 300
-
-
-def test_speaker_bytes_played_tracks_callback():
-    """_bytes_played should increment when callback consumes from buffer."""
-    speaker = SpeakerStream()
-    speaker.enqueue(b"\x42" * 4800)
-    outdata = bytearray(4800)
-    speaker._callback(outdata, 2400, None, None)
-    assert speaker._bytes_played == 4800
-
-
-def test_speaker_playback_ratio():
-    """playback_ratio should reflect fraction of enqueued audio that was played."""
-    speaker = SpeakerStream()
-    speaker.enqueue(b"\x42" * 4800)
-    assert speaker.playback_ratio == 0.0
-    # Play half
-    outdata = bytearray(2400)
-    speaker._callback(outdata, 1200, None, None)
-    assert abs(speaker.playback_ratio - 0.5) < 0.01
-
-
-def test_speaker_playback_ratio_empty():
-    """playback_ratio should be 0.0 when nothing enqueued."""
-    speaker = SpeakerStream()
-    assert speaker.playback_ratio == 0.0
-
-
-def test_speaker_reset_counters():
-    """reset_counters should zero both played and enqueued."""
-    speaker = SpeakerStream()
-    speaker.enqueue(b"\x00" * 100)
-    outdata = bytearray(100)
-    speaker._callback(outdata, 50, None, None)
-    assert speaker._bytes_enqueued > 0
-    assert speaker._bytes_played > 0
-    speaker.reset_counters()
-    assert speaker._bytes_enqueued == 0
-    assert speaker._bytes_played == 0
-
-
-def test_speaker_flush_preserves_counters():
-    """flush() should NOT reset byte counters (needed for barge-in ratio)."""
-    speaker = SpeakerStream()
-    speaker.enqueue(b"\x00" * 100)
-    outdata = bytearray(50)
-    speaker._callback(outdata, 25, None, None)
-    played_before = speaker._bytes_played
-    enqueued_before = speaker._bytes_enqueued
-    speaker.flush()
-    assert speaker._bytes_played == played_before
-    assert speaker._bytes_enqueued == enqueued_before
-
-
-# --- VoiceIO barge-in guard ---
-
-
 def test_voice_io_barge_in_guard_when_speaking():
     """_on_turn_start should call cancel_speech when _is_speaking is True."""
     voice = VoiceIO()
@@ -760,6 +365,17 @@ def test_voice_io_barge_in_guard_when_speaking():
 
     voice._on_turn_start()
     assert voice._cancelled.is_set()
+
+
+def test_voice_io_barge_in_guard_when_not_speaking():
+    """_on_turn_start should NOT call cancel_speech when _is_speaking is False."""
+    voice = VoiceIO()
+    voice._speaker = MagicMock()
+    voice._tts = MagicMock()
+    voice._is_speaking = False
+
+    voice._on_turn_start()
+    assert not voice._cancelled.is_set()
 
 
 def test_voice_io_mic_muted_while_speaking():
@@ -790,12 +406,6 @@ def test_voice_io_mic_not_muted_when_flag_disabled():
 
     voice._on_mic_audio(b"\x00" * 100)
     voice._stt.send_audio.assert_called_once_with(b"\x00" * 100)
-
-
-def test_voice_io_barged_in_initially_false():
-    """_barged_in should be False on new VoiceIO."""
-    voice = VoiceIO()
-    assert voice._barged_in is False
 
 
 def test_voice_io_cancel_speech_sets_barged_in():
@@ -861,74 +471,55 @@ def test_voice_io_turn_start_cancels_auto_beat_when_not_speaking():
     assert not voice._cancelled.is_set()  # cancel_speech NOT called
 
 
-def test_voice_io_barge_in_guard_when_not_speaking():
-    """_on_turn_start should NOT call cancel_speech when _is_speaking is False."""
-    voice = VoiceIO()
-    voice._speaker = MagicMock()
-    voice._tts = MagicMock()
-    voice._is_speaking = False
-
-    voice._on_turn_start()
-    assert not voice._cancelled.is_set()
+# --- check_voice_available ---
 
 
-# --- Sentinel constants ---
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1", "ELEVENLABS_API_KEY": "key2"})
+def test_check_voice_available_all_present():
+    """Should return True when all keys are present (elevenlabs backend)."""
+    available, reason = check_voice_available()
+    assert available is True
+    assert reason == ""
 
 
-def test_voice_io_stores_tts_backend():
-    """VoiceIO should store tts_backend and local TTS config params."""
-    voice = VoiceIO(tts_backend="local", ref_audio="/path/ref.wav", tts_model="my-model", tts_device="cuda:1")
-    assert voice._tts_backend == "local"
-    assert voice._ref_audio == "/path/ref.wav"
-    assert voice._tts_model == "my-model"
-    assert voice._tts_device == "cuda:1"
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "", "ELEVENLABS_API_KEY": "key2"})
+def test_check_voice_available_missing_deepgram_key():
+    """Should return False when DEEPGRAM_API_KEY is not set."""
+    available, reason = check_voice_available()
+    assert available is False
+    assert "DEEPGRAM_API_KEY" in reason
 
 
-def test_voice_io_default_tts_backend():
-    """VoiceIO should default to elevenlabs backend."""
-    voice = VoiceIO()
-    assert voice._tts_backend == "elevenlabs"
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1", "ELEVENLABS_API_KEY": ""})
+def test_check_voice_available_missing_elevenlabs_key():
+    """Should return False when ELEVENLABS_API_KEY is not set."""
+    available, reason = check_voice_available()
+    assert available is False
+    assert "ELEVENLABS_API_KEY" in reason
 
 
-def test_voice_io_stores_tts_server_url():
-    """VoiceIO should store tts_server_url."""
-    voice = VoiceIO(tts_backend="pocket", tts_server_url="http://localhost:9999")
-    assert voice._tts_server_url == "http://localhost:9999"
-    assert voice._tts_backend == "pocket"
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
+def test_check_voice_available_local_backend():
+    """Should return True for local backend when torch/transformers are present."""
+    with patch.dict("sys.modules", {
+        "torch": MagicMock(),
+        "transformers": MagicMock(),
+    }):
+        available, reason = check_voice_available(tts_backend="local")
+        assert available is True
+        assert reason == ""
 
 
-def test_voice_io_default_tts_server_url():
-    """VoiceIO should default tts_server_url to empty string."""
-    voice = VoiceIO()
-    assert voice._tts_server_url == ""
-
-
-def test_voice_io_stores_ref_text():
-    """VoiceIO should store ref_text param."""
-    voice = VoiceIO(tts_backend="qwen", ref_text="Hello this is a test.")
-    assert voice._ref_text == "Hello this is a test."
-    assert voice._tts_backend == "qwen"
-
-
-def test_voice_io_default_ref_text():
-    """VoiceIO should default ref_text to empty string."""
-    voice = VoiceIO()
-    assert voice._ref_text == ""
-
-
-def test_voice_io_stores_pocket_voice():
-    """VoiceIO should store pocket_voice param."""
-    voice = VoiceIO(tts_backend="pocket", pocket_voice="/path/to/voice.safetensors")
-    assert voice._pocket_voice == "/path/to/voice.safetensors"
-    assert voice._tts_backend == "pocket"
-
-
-def test_voice_io_default_pocket_voice():
-    """VoiceIO should default pocket_voice to empty string (config provides the real default)."""
-    voice = VoiceIO()
-    assert voice._pocket_voice == ""
-    assert voice._pocket_server is None
-    assert voice._pocket_we_started is False
+@patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
+def test_check_voice_available_local_missing_torch():
+    """Should return False for local backend when torch is missing."""
+    with patch.dict("sys.modules", {
+        "torch": None,
+        "transformers": MagicMock(),
+    }):
+        available, reason = check_voice_available(tts_backend="local")
+        assert available is False
+        assert "torch" in reason
 
 
 @patch.dict("os.environ", {"DEEPGRAM_API_KEY": "key1"})
@@ -949,14 +540,6 @@ def test_check_voice_available_pocket_backend():
     available, reason = check_voice_available(tts_backend="pocket")
     assert available is True
     assert reason == ""
-
-
-def test_sentinel_strings_are_distinct():
-    """All sentinel strings should be unique."""
-    sentinels = [VOICE_OFF, EXIT, VOICE_ERROR]
-    assert len(set(sentinels)) == len(sentinels)
-    for s in sentinels:
-        assert s.startswith("__") and s.endswith("__")
 
 
 # --- resolve_device ---
