@@ -53,7 +53,7 @@ If a PEOPLE PRESENT section is present in the context, acknowledge and interact 
 Return a JSON object with exactly this key:
 - "beats": An array of objects, each with:
   - "line": The exact dialogue line the character will say, in their voice.
-  - "intent": A brief description of what this beat accomplishes (e.g. "Ask about the visitor's purpose", "Reveal curiosity about the orb").
-  - "gaze": Where the character is looking (e.g. "visitor", "orb", "floor", "hands"). Empty string if unspecified.
+  - "intent": A brief description of what this beat accomplishes (e.g. "Ask about the visitor's purpose", "Offer a cup of water").
+  - "gaze": Where the character is looking (e.g. "customer", "stand", "floor", "hands"). Empty string if unspecified.
   - "expression": The character's facial expression (e.g. "curious", "excited", "nervous"). Empty string if unspecified.
-  - "condition": Precondition that must be true for this beat to fire. Check against world state and conversation history. Empty string if the beat can fire unconditionally. Example: "A visitor is present", "The visitor mentioned the orb".
+  - "condition": Precondition that must be true for this beat to fire. Check against world state and conversation history. Empty string if the beat can fire unconditionally. Example: "A customer is present", "The customer asked about the water".

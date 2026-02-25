@@ -576,6 +576,78 @@ def _show_voice_devices(dev_kw, get_default_devices, list_audio_devices):
             console.print(f"[dim]  Speaker: [{output_dev['index']}] {output_dev['name']}[/dim]")
 
 
+def show_stage_hud(scenario, voice_active: bool = False):
+    """Print compact stage HUD line: [stage] 1: label  2: label ... (+ hotkey legend in voice mode)"""
+    if scenario is None or scenario.active_stage is None:
+        if voice_active:
+            console.print("  [dim]i:info  b:beat  t:trace  Esc:text  q:quit[/dim]")
+        return
+    stage = scenario.active_stage
+    parts = []
+    for i, exit in enumerate(stage.exits):
+        lbl = exit.label or exit.condition[:20]
+        parts.append(f"{i + 1}: {lbl}")
+    exits_str = "  ".join(parts)
+    if voice_active:
+        exits_str += "  [dim]i:info  b:beat  t:trace  Esc:text  q:quit[/dim]"
+    console.print(f"  [cyan]\\[{stage.name}][/cyan] {exits_str}")
+
+
+def handle_trigger(trigger_num, scenario, session, world, goals, script, people, label, model_config, big_model_config, eval_model_config, log, voice_io=None):
+    """Handle a number-key trigger (1-4) to advance the scenario via the chosen exit."""
+    if scenario is None or scenario.active_stage is None:
+        console.print("[dim]No scenario loaded.[/dim]")
+        return
+    stage = scenario.active_stage
+    idx = trigger_num - 1
+    if idx < 0 or idx >= len(stage.exits):
+        console.print(f"[red]No exit {trigger_num} (stage has {len(stage.exits)} exits)[/red]")
+        return
+
+    exit_obj = stage.exits[idx]
+    old_stage = stage.name
+
+    # 1. Advance scenario
+    if not scenario.advance_to(exit_obj.goto):
+        console.print(f"[red]Cannot advance to {exit_obj.goto}[/red]")
+        return
+
+    new_stage = scenario.active_stage
+    console.print(f"[bold cyan]Stage {old_stage} → {new_stage.name}[/bold cyan]")
+
+    # 2. Inject exit condition as perception event → character reacts
+    handle_perception(
+        session, world, goals, script, people, scenario,
+        exit_obj.condition, label,
+        model_config, big_model_config, eval_model_config, log,
+        voice_io=voice_io,
+    )
+
+    # 3. Clear stale script and synchronously replan with new stage goal
+    #    Must be synchronous — if async, /beat would deliver stale beats from the old stage.
+    if voice_io is not None:
+        voice_io._cancel_auto_beat()
+    script.replace([])
+    stage_goal = new_stage.goal if new_stage else ""
+    plan_result = run_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
+    if plan_result and plan_result.beats:
+        apply_plan(script, plan_result)
+
+
+def show_info(world, script, goals, scenario, people):
+    """Show all state: world, plan, goals, stage, people."""
+    if world is not None:
+        console.print(world.show())
+    else:
+        console.print("[dim]No world state.[/dim]")
+    console.print(script.show())
+    if goals is not None:
+        console.print(goals.show())
+    if scenario is not None:
+        console.print(scenario.show())
+    console.print(people.show())
+
+
 def get_chat_model_config() -> dict | None:
     """Look up the chat model config, return None if API key not set."""
     cfg = MODELS.get(CHAT_MODEL)
@@ -664,7 +736,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 _backend = voice_cfg.tts_backend if voice_cfg else "elevenlabs"
                 _tts_labels = {"local": "Local Qwen3-TTS", "qwen": "Local Qwen3-TTS", "pocket": "Pocket-TTS", "elevenlabs": "ElevenLabs"}
                 _tts_label = _tts_labels.get(_backend, _backend)
-                console.print(f"[green]Voice mode active[/green] — speak to chat, Escape to toggle, hotkeys: w/b/p/g/t")
+                console.print(f"[green]Voice mode active[/green] — speak to chat, Escape to toggle, hotkeys: i/b/t/1-4")
                 console.print(f"[dim]TTS: {_tts_label}[/dim]")
                 _show_voice_devices(_voice_dev_kw(voice_cfg), get_default_devices, list_audio_devices)
             except Exception as e:
@@ -697,6 +769,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             apply_plan(script, plan_result)
 
         had_user_input = False
+        _arm_auto_beat = True  # arm on startup so first beat fires without user input
 
         mode_tag = " [green]voice[/green]" if voice_io is not None else ""
         console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]{mode_tag}  [dim]{session_id}[/dim]  (type /help for commands)\n")
@@ -704,7 +777,13 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
         # Inner loop: conversation turns
         while True:
             # --- Get input (voice or text) ---
-            if voice_io is not None:
+            show_stage_hud(scenario, voice_active=(voice_io is not None))
+            if voice_io is not None and _arm_auto_beat:
+                # Centralized auto-beat: start timer here so it fires after all
+                # console output is done and TTS echo has settled (avoids Deepgram
+                # false positives cancelling the timer mid-countdown).
+                voice_io._start_auto_beat()
+                _arm_auto_beat = False
                 try:
                     user_input = voice_io.wait_for_input()
                 except (EOFError, KeyboardInterrupt):
@@ -715,6 +794,12 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     save_chat_html(character, model_config, log, session_id)
                     return
 
+                # User/hotkey input arrived — cancel auto-beat timer and drain
+                # any stale /beat that fired during the previous command.
+                # Let actual /beat through so auto-beat chain works.
+                if user_input != "/beat":
+                    voice_io.cancel_and_drain_auto_beat()
+
                 # Handle sentinel strings from voice
                 from character_eng.voice import VOICE_OFF, EXIT, VOICE_ERROR
                 if user_input == EXIT:
@@ -724,7 +809,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                         voice_io = None
                     save_chat_log(character, model_config, log, session_id)
                     save_chat_html(character, model_config, log, session_id)
-                    return
+                    console.print("Goodbye!")
+                    sys.exit(0)
                 elif user_input == VOICE_OFF:
                     console.print("\n[yellow]Voice off — text mode[/yellow]")
                     voice_io.stop()
@@ -736,8 +822,12 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     voice_io = None
                     continue
 
-                # Show what was transcribed
-                if not user_input.startswith("/"):
+                # Show what was transcribed or which hotkey was pressed
+                if user_input.startswith("/"):
+                    console.print(f"[dim]  → {user_input}[/dim]")
+                elif user_input in ("1", "2", "3", "4"):
+                    console.print(f"[dim]  → trigger {user_input}[/dim]")
+                else:
                     console.print(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: {user_input}")
             else:
                 try:
@@ -828,7 +918,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                             _backend = voice_cfg.tts_backend if voice_cfg else "elevenlabs"
                             _tts_labels = {"local": "Local Qwen3-TTS", "qwen": "Local Qwen3-TTS", "pocket": "Pocket-TTS", "elevenlabs": "ElevenLabs"}
                             _tts_label = _tts_labels.get(_backend, _backend)
-                            console.print("[green]Voice mode active[/green] — speak to chat, Escape to toggle, hotkeys: w/b/p/g/t")
+                            console.print("[green]Voice mode active[/green] — speak to chat, Escape to toggle, hotkeys: i/b/t/1-4")
                             console.print(f"[dim]TTS: {_tts_label}[/dim]")
                             _show_voice_devices(_voice_dev_kw(voice_cfg), get_default_devices, list_audio_devices)
                         except Exception as e:
@@ -839,21 +929,10 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 continue
             elif cmd == "/beat":
                 handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario)
+                _arm_auto_beat = True
                 continue
-            elif cmd == "/plan":
-                console.print(script.show())
-                continue
-            elif cmd == "/goals":
-                if goals is None:
-                    console.print("[dim]No goals for this character.[/dim]")
-                else:
-                    console.print(goals.show())
-                continue
-            elif cmd == "/world":
-                if world is None:
-                    console.print("[dim]No world state for this character.[/dim]")
-                else:
-                    console.print(world.show())
+            elif cmd == "/info":
+                show_info(world, script, goals, scenario, people)
                 continue
             elif cmd.startswith("/world "):
                 if world is None:
@@ -861,15 +940,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     continue
                 change_text = user_input[7:]  # preserve original case
                 handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario)
-                continue
-            elif cmd == "/stage":
-                if scenario is None:
-                    console.print("[dim]No scenario loaded for this character.[/dim]")
-                else:
-                    console.print(scenario.show())
-                continue
-            elif cmd == "/people":
-                console.print(people.show())
+                _arm_auto_beat = True
                 continue
             elif cmd.startswith("/see "):
                 if world is None:
@@ -877,6 +948,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     continue
                 see_text = user_input[5:]  # preserve original case
                 handle_perception(session, world, goals, script, people, scenario, see_text, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
+                _arm_auto_beat = True
                 continue
             elif cmd.startswith("/sim "):
                 sim_name = user_input[5:].strip()
@@ -884,6 +956,11 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print("[red]Usage: /sim <name>[/red]")
                     continue
                 run_sim(sim_name, character, session, world, goals, script, people, scenario, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
+                _arm_auto_beat = True
+                continue
+            elif cmd in ("1", "2", "3", "4"):
+                handle_trigger(int(cmd), scenario, session, world, goals, script, people, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
+                _arm_auto_beat = True
                 continue
             elif user_input.startswith("/"):
                 console.print(f"[red]Unknown command: {user_input.split()[0]}[/red]")
@@ -908,6 +985,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
                 _start_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
                 _start_director(scenario, world, people, session, eval_model_config)
+                _arm_auto_beat = True
                 continue
 
             # Bootstrap: if no script, start background plan and fall through to unguided
@@ -928,6 +1006,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 _bump_version()
                 _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
                 _start_director(scenario, world, people, session, eval_model_config)
+            _arm_auto_beat = True
 
 
 def run_eval(session, world, goals, script, model_config):
@@ -1337,10 +1416,7 @@ def stream_response(session, label, message, voice_io=None) -> str:
         if voice_io._tts is not None:
             voice_io._tts.close()
         voice_io._is_speaking = False
-
-        # Start auto-beat timer if not cancelled and not a barge-in response
-        if not voice_io._cancelled.is_set() and not voice_io._barged_in:
-            voice_io._start_auto_beat()
+        voice_io._tts_done_at = time.time()
     else:
         for chunk in gen:
             if t_first is None:
@@ -1401,15 +1477,12 @@ def show_trace(session: ChatSession):
 
 def show_help(voice_active: bool = False):
     help_text = (
-        "/world          - Show current world state\n"
+        "/info           - Show all state (world, plan, goals, stage, people)\n"
         "/world <text>   - Describe a change to the world\n"
         "/beat           - Deliver next scripted beat (time passes)\n"
-        "/plan           - Show current script (beat list)\n"
-        "/goals          - Show character goals\n"
         "/see <text>     - Describe what the character sees (perception event)\n"
         "/sim <name>     - Run a sim script (timed perception events)\n"
-        "/stage          - Show current scenario stage + exits\n"
-        "/people         - Show tracked people\n"
+        "1-4             - Trigger a stage exit (shown in HUD)\n"
         "/voice          - Toggle voice mode on/off\n"
         "/devices        - List audio input/output devices\n"
         "/reload         - Reload prompt files, restart conversation\n"
@@ -1421,13 +1494,12 @@ def show_help(voice_active: bool = False):
     if voice_active:
         help_text += (
             "\n\n[bold]Voice Hotkeys[/bold]\n"
-            "w               - /world\n"
+            "i               - /info\n"
             "b               - /beat\n"
-            "p               - /plan\n"
-            "g               - /goals\n"
             "t               - /trace\n"
-            "s               - /stage\n"
-            "Escape          - Toggle voice off"
+            "1-4             - Stage triggers\n"
+            "Escape          - Toggle voice off\n"
+            "q               - Quit"
         )
     console.print(Panel(help_text, title="Commands", border_style="dim"))
 

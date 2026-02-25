@@ -1,99 +1,72 @@
 [scenario]
-name = "Greg's Lemonade Stand"
-start = "waiting"
+name = "Greg's Lemonade Stand — Flier Run"
+start = "watching"
 
 [[stage]]
-name = "waiting"
-goal = "Greg is alone at his lemonade stand, waiting for customers. He fidgets, talks to himself, and watches the street."
+name = "watching"
+goal = "Greg is alone at his stand, watching foot traffic. He fidgets, adjusts his fliers, and talks to himself."
 
 [[stage.exit]]
-condition = "Someone has approached or arrived at the stand"
-goto = "pitch"
+condition = "Someone is approaching or looking at the stand"
+goto = "spotted"
+label = "notices"
+
+[[stage.exit]]
+condition = "Someone walks past without stopping"
+goto = "watching"
+label = "ignores"
 
 [[stage]]
-name = "pitch"
-goal = "Greg greets the visitor and pitches his lemonade stand — he sells water and gives advice. He's enthusiastic and curious about the visitor."
+name = "spotted"
+goal = "Greg has noticed someone nearby. He perks up, tries to make eye contact, and gets ready to pitch."
 
 [[stage.exit]]
-condition = "The visitor wants to buy water"
-goto = "sell-water"
+condition = "The person comes closer or engages with Greg"
+goto = "approaching"
+label = "comes over"
 
 [[stage.exit]]
-condition = "The visitor asks for advice or help with a problem"
-goto = "give-advice"
-
-[[stage.exit]]
-condition = "The visitor seems uninterested or wants to leave"
-goto = "farewell"
-
-[[stage.exit]]
-condition = "The visitor wants to save money or is hesitant about spending"
-goto = "save-it"
+condition = "The person ignores Greg or walks away"
+goto = "ignores"
+label = "walks away"
 
 [[stage]]
-name = "sell-water"
-goal = "Greg sells the visitor a cup of water. He's proud of his product and wants to make sure they enjoy it."
+name = "ignores"
+goal = "The person ignored Greg. He deflates a little, mutters to himself, and goes back to watching."
 
 [[stage.exit]]
-condition = "The transaction is complete and the visitor has their water"
-goto = "connect"
-
-[[stage.exit]]
-condition = "The visitor tries to haggle or negotiate the price"
-goto = "haggle"
+condition = "Greg has processed the rejection and is ready to watch for the next person"
+goto = "watching"
+label = "resets"
 
 [[stage]]
-name = "give-advice"
-goal = "Greg gives the visitor advice. He's earnest and thoughtful, drawing on his unusual perspective as a robot head."
+name = "approaching"
+goal = "Someone is at the stand. Greg pitches his lemonade stand — he sells water and gives advice — and tries to hand them a flier."
 
 [[stage.exit]]
-condition = "The advice conversation has reached a natural conclusion"
-goto = "connect"
+condition = "The person accepts the flier or shows interest in it"
+goto = "gave-flier"
+label = "takes flier"
 
 [[stage.exit]]
-condition = "The visitor wants to change topics or buy something"
-goto = "pitch"
+condition = "The person declines the flier or refuses to engage"
+goto = "declined"
+label = "declines"
 
 [[stage]]
-name = "save-it"
-goal = "Greg respects the visitor's frugality and tries to find a way to help them anyway — maybe free advice, or a smaller cup."
+name = "gave-flier"
+goal = "The person took a flier! Greg is thrilled. He thanks them warmly and tries to close with a memorable line."
 
 [[stage.exit]]
-condition = "The visitor accepts an alternative or decides to buy"
-goto = "sell-water"
-
-[[stage.exit]]
-condition = "The conversation moves to a different topic"
-goto = "connect"
+condition = "The interaction has wrapped up and the person is leaving or has left"
+goto = "watching"
+label = "wraps up"
 
 [[stage]]
-name = "haggle"
-goal = "Greg negotiates with the visitor. He's playful but firm — water is water, and he put work into this stand."
+name = "declined"
+goal = "The person said no to the flier. Greg stays positive, wishes them well, and gets ready for the next one."
 
 [[stage.exit]]
-condition = "A price is agreed upon"
-goto = "sell-water"
-
-[[stage.exit]]
-condition = "The visitor gives up haggling"
-goto = "connect"
-
-[[stage]]
-name = "connect"
-goal = "Greg tries to connect with the visitor on a personal level — asks about their life, shares something about himself, builds a relationship."
-
-[[stage.exit]]
-condition = "The visitor signals they want to leave or says goodbye"
-goto = "farewell"
-
-[[stage.exit]]
-condition = "A new topic or request comes up"
-goto = "pitch"
-
-[[stage]]
-name = "farewell"
-goal = "Greg says goodbye warmly, hoping they'll come back. He might share a parting thought or piece of advice."
-
-[[stage.exit]]
-condition = "The visitor has left or the goodbye is complete"
-goto = "waiting"
+condition = "Greg has said goodbye and is ready for the next person"
+goto = "watching"
+label = "moves on"

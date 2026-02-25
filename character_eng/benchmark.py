@@ -65,7 +65,7 @@ def bench_chat(model_config: dict) -> dict:
     client = _make_client(model_config)
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": "Hey Greg, what's that orb?"},
+        {"role": "user", "content": "Hey Greg, what are you selling?"},
     ]
 
     kwargs = dict(
@@ -105,7 +105,7 @@ def bench_reconcile(model_config: dict) -> dict:
         return {"scenario": "reconcile", "ttft_ms": None, "total_ms": 0, "response": "no world state"}
 
     t_start = time.perf_counter()
-    update = reconcile_call(world, ["The orb begins to glow faintly"], model_config)
+    update = reconcile_call(world, ["A gust of wind blows some fliers off the table"], model_config)
     t_total = time.perf_counter() - t_start
 
     result = {
@@ -130,8 +130,8 @@ def bench_eval(model_config: dict) -> dict:
 
     history = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": "Hey Greg, what's that orb?"},
-        {"role": "assistant", "content": "Oh, this? *glances at orb* It's... complicated."},
+        {"role": "user", "content": "Hey Greg, what are you handing out?"},
+        {"role": "assistant", "content": "Fliers! Each one's got a coupon for a free cup of water. Want one?"},
     ]
 
     t_start = time.perf_counter()

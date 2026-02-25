@@ -101,6 +101,14 @@ def test_scenario_script_show_panel():
 # --- load_scenario_script ---
 
 
+def test_stage_exit_label():
+    """StageExit has an optional label field."""
+    exit_with = StageExit("someone arrives", "b", label="arrives")
+    assert exit_with.label == "arrives"
+    exit_without = StageExit("someone arrives", "b")
+    assert exit_without.label == ""
+
+
 def test_load_scenario_script(tmp_path, monkeypatch):
     char_dir = tmp_path / "characters" / "test_char"
     char_dir.mkdir(parents=True)
@@ -116,6 +124,7 @@ goal = "Introduce yourself"
 [[stage.exit]]
 condition = "The visitor said hello"
 goto = "chat"
+label = "says hello"
 
 [[stage]]
 name = "chat"
@@ -134,6 +143,7 @@ goal = "Have a conversation"
     assert len(script.stages["intro"].exits) == 1
     assert script.stages["intro"].exits[0].condition == "The visitor said hello"
     assert script.stages["intro"].exits[0].goto == "chat"
+    assert script.stages["intro"].exits[0].label == "says hello"
 
 
 def test_load_scenario_script_not_found(tmp_path, monkeypatch):
@@ -150,10 +160,13 @@ def test_load_scenario_script_greg():
     """Smoke test: load greg's actual scenario_script.toml."""
     script = load_scenario_script("greg")
     assert script is not None
-    assert script.start == "waiting"
-    assert "waiting" in script.stages
-    assert "pitch" in script.stages
-    assert len(script.stages["waiting"].exits) >= 1
+    assert script.start == "watching"
+    assert "watching" in script.stages
+    assert "spotted" in script.stages
+    assert len(script.stages["watching"].exits) >= 1
+    # Verify labels are parsed
+    first_exit = script.stages["watching"].exits[0]
+    assert first_exit.label != ""
 
 
 # --- director_call (mocked) ---

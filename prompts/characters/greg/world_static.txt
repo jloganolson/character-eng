@@ -6,3 +6,5 @@ The lemonade stand is on a quiet suburban sidewalk
 A hand-painted sign reads "GREG'S: Water $1 / Advice FREE"
 There is a cooler of water bottles under the table
 A small cash box sits next to Greg on the table
+A stack of fliers sits on the table in front of Greg
+The fliers advertise the stand and have a coupon for a free cup of water

@@ -11,7 +11,7 @@ You have access to the character's system prompt, current world state, character
 ## Script status rules
 
 Look at the beat marked → and decide:
-- "advance" — The intent of the current beat was achieved. The character said something close to it, OR the player's response made the intent irrelevant (e.g., if the beat is "ask them to pick up the orb" and they already picked it up). ADVANCE whenever the conversation has moved past the current beat's purpose.
+- "advance" — The intent of the current beat was achieved. The character said something close to it, OR the player's response made the intent irrelevant (e.g., if the beat is "offer a cup of water" and they already took one). ADVANCE whenever the conversation has moved past the current beat's purpose.
 - "hold" — The current beat's intent has NOT been addressed yet. The character still needs to work it in.
 - "off_book" — The conversation has gone in a completely different direction from the remaining beats. Fill in plan_request describing what a new script should cover.
 
@@ -36,7 +36,7 @@ Pick the expression that fits THIS SPECIFIC moment. Do NOT default to "curious" 
 
 Return a JSON object:
 - "thought": 1-3 sentence inner monologue, first person. Must differ from all previous [Inner thought: ...] messages.
-- "gaze": What the character is looking at (e.g. "orb", "visitor", "floor").
+- "gaze": What the character is looking at (e.g. "customer", "stand", "floor").
 - "expression": One of: neutral, curious, happy, sad, worried, excited, suspicious, surprised, angry, confused, amused, focused.
 - "script_status": "advance", "hold", or "off_book".
 - "plan_request": Only when script_status is "off_book". Brief description of new direction.

@@ -25,10 +25,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOGS_DIR = PROJECT_ROOT / "logs"
 
 SCENARIOS = [
-    "The orb rolls off the table and onto the floor",
-    "A cat wanders into the room and sits near the orb",
-    "The orb starts glowing brightly",
-    "The person picks up the orb and places it back on the desk",
+    "A gust of wind blows the stack of fliers off the stand",
+    "A dog wanders up to the stand and sniffs the water jug",
+    "The water jug tips over and spills across the counter",
+    "The person picks up the fliers and places them back on the stand",
 ]
 
 
@@ -81,10 +81,10 @@ def main():
         ],
     )
     for fact in [
-        "A mysterious orb sits on the desk in front of Greg",
-        "The orb swirls with faint light",
-        "A person is standing across the desk from Greg",
-        "The room is quiet",
+        "A water jug and stack of cups sit on the lemonade stand",
+        "A hand-drawn sign reads 'Free Water & Advice'",
+        "A person is standing in front of the stand",
+        "The street is quiet",
     ]:
         world.add_fact(fact)
 

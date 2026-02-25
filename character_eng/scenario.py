@@ -20,6 +20,7 @@ CHARACTERS_DIR = PROMPTS_DIR / "characters"
 class StageExit:
     condition: str
     goto: str
+    label: str = ""
 
 
 @dataclass
@@ -91,6 +92,7 @@ def load_scenario_script(character: str) -> ScenarioScript | None:
             exits.append(StageExit(
                 condition=exit_data.get("condition", ""),
                 goto=exit_data.get("goto", ""),
+                label=exit_data.get("label", ""),
             ))
         stages[sname] = Stage(name=sname, goal=goal, exits=exits)
 

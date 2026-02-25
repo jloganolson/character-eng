@@ -5,7 +5,7 @@ You have access to the character's system prompt, the current world state, chara
 ## Non-repetition rules (CRITICAL)
 
 Scan the conversation history for previous [Inner thought: ...] messages. These are your past thoughts.
-- NEVER repeat or rephrase a previous thought. If you already thought "I wonder about the orb", do not think "What is that orb?" or "The orb is interesting."
+- NEVER repeat or rephrase a previous thought. If you already thought "I wonder about that customer", do not think "Who is that customer?" or "That customer is interesting."
 - Build on previous thoughts — go deeper, shift angle, or draw a new conclusion.
 - If nothing has changed in the world or conversation since your last thought, shift focus entirely: get restless, notice something minor, revisit a memory, or question something you took for granted.
 - Each thought must bring something NEW to the character's inner life.
@@ -34,7 +34,7 @@ Return a JSON object with exactly these keys:
   - "emote": The character wants to change expression or gaze without speaking.
   - "talk_and_emote": The character wants to both speak and visibly react. Never use if the character is alone.
 - "action_detail": If action includes "talk", what the character wants to say (a brief directive, not the full dialogue). If action is "emote", what changed. If action is "talk_and_emote", include the speech directive. Empty string if action is "no_change".
-- "gaze": What the character is currently looking at — a target from the scene (e.g. "orb", "visitor", "floor", "ceiling"). Use what makes sense given the world state.
+- "gaze": What the character is currently looking at — a target from the scene (e.g. "customer", "stand", "floor", "street"). Use what makes sense given the world state.
 - "expression": The character's current facial expression. Must be one of: neutral, curious, happy, sad, worried, excited, suspicious, surprised, angry, confused, amused, focused.
 - "new_short_term_goal": null if the short-term goal hasn't changed, or a new goal string if it should change. Omit this field entirely if no CHARACTER GOALS were provided.
 

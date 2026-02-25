@@ -57,25 +57,25 @@ def _ws_with_dynamic(*facts, **kwargs) -> WorldState:
 
 def test_render_full():
     ws = _ws_with_dynamic(
-        "Orb is on table", "Room is dark",
+        "Fliers are on table", "Street is quiet",
         static=["Greg is a robot head"],
-        events=["The orb began to glow"],
+        events=["A gust of wind blew some fliers away"],
     )
     text = ws.render()
     assert "Permanent facts:" in text
     assert "- Greg is a robot head" in text
     assert "Current state:" in text
-    assert "- Orb is on table" in text
+    assert "- Fliers are on table" in text
     assert "Recent events:" in text
-    assert "- The orb began to glow" in text
+    assert "- A gust of wind blew some fliers away" in text
 
 
 def test_render_with_pending():
-    ws = _ws_with_dynamic("Orb on table")
-    ws.add_pending("The orb falls off the table")
+    ws = _ws_with_dynamic("Fliers on table")
+    ws.add_pending("The fliers blow off the table")
     text = ws.render()
     assert "Pending changes:" in text
-    assert "- The orb falls off the table" in text
+    assert "- The fliers blow off the table" in text
 
 
 # --- add_fact ---
@@ -117,10 +117,10 @@ def test_add_pending_and_clear():
 
 
 def test_render_for_reconcile():
-    ws = _ws_with_dynamic("Orb on table", "Room is dark")
+    ws = _ws_with_dynamic("Fliers on table", "Street is quiet")
     text = ws.render_for_reconcile()
-    assert "f1. Orb on table" in text
-    assert "f2. Room is dark" in text
+    assert "f1. Fliers on table" in text
+    assert "f2. Street is quiet" in text
 
 
 # --- apply_update ---
@@ -155,15 +155,15 @@ def test_apply_update_events():
 
 
 def test_apply_update_combined():
-    ws = _ws_with_dynamic("Orb on table", "Room is dark")
+    ws = _ws_with_dynamic("Fliers on table", "Street is quiet")
     update = WorldUpdate(
         remove_facts=["f1"],
-        add_facts=["Orb is on floor"],
-        events=["The orb rolled off the table"],
+        add_facts=["Fliers on ground"],
+        events=["The fliers blew off the table"],
     )
     ws.apply_update(update)
-    assert list(ws.dynamic.values()) == ["Room is dark", "Orb is on floor"]
-    assert ws.events == ["The orb rolled off the table"]
+    assert list(ws.dynamic.values()) == ["Street is quiet", "Fliers on ground"]
+    assert ws.events == ["The fliers blew off the table"]
 
 
 def test_apply_update_invalid_id_ignored():
@@ -256,14 +256,14 @@ def test_script_render():
 
 def test_script_render_with_gaze_expression():
     s = Script(beats=[
-        Beat("Line 1", "Intent 1", gaze="orb", expression="curious"),
-        Beat("Line 2", "Intent 2", gaze="visitor"),
+        Beat("Line 1", "Intent 1", gaze="stand", expression="curious"),
+        Beat("Line 2", "Intent 2", gaze="customer"),
         Beat("Line 3", "Intent 3", expression="excited"),
         Beat("Line 4", "Intent 4"),
     ])
     text = s.render()
-    assert '→ 0. [Intent 1] "Line 1" (orb, curious)' in text
-    assert '  1. [Intent 2] "Line 2" (visitor)' in text
+    assert '→ 0. [Intent 1] "Line 1" (stand, curious)' in text
+    assert '  1. [Intent 2] "Line 2" (customer)' in text
     assert '  2. [Intent 3] "Line 3" (excited)' in text
     assert '  3. [Intent 4] "Line 4"' in text
     assert '"Line 4" (' not in text
@@ -272,7 +272,7 @@ def test_script_render_with_gaze_expression():
 def test_script_render_with_condition():
     s = Script(beats=[
         Beat("Hey", "Greet", condition="A visitor is present"),
-        Beat("What's that?", "Ask about orb"),
+        Beat("What's that?", "Ask about fliers"),
     ])
     text = s.render()
     assert 'IF: A visitor is present' in text
@@ -295,7 +295,7 @@ def test_load_goals_from_character_txt(tmp_path, monkeypatch):
     char_dir = tmp_path / "characters" / "test_char"
     char_dir.mkdir(parents=True)
     (char_dir / "character.txt").write_text(
-        "You are Test.\n\nLong-term goal: Experience the universe\nShort-term goal: Figure out the orb\n"
+        "You are Test.\n\nLong-term goal: Experience the universe\nShort-term goal: Hand out fliers\n"
     )
 
     monkeypatch.setattr(world_mod, "CHARACTERS_DIR", tmp_path / "characters")
@@ -330,29 +330,29 @@ def test_load_goals_no_character_txt(tmp_path, monkeypatch):
 
 
 def test_format_narrator_message_events_only():
-    update = WorldUpdate(events=["The orb rolled off the table"])
+    update = WorldUpdate(events=["The fliers blew off the table"])
     msg = format_narrator_message(update)
-    assert msg == "[The orb rolled off the table]"
+    assert msg == "[The fliers blew off the table]"
 
 
 def test_format_narrator_message_events_and_facts():
     update = WorldUpdate(
-        add_facts=["Orb is on floor"],
-        events=["The orb fell"],
+        add_facts=["Fliers on ground"],
+        events=["The fliers fell"],
     )
     msg = format_narrator_message(update)
     assert msg.startswith("[")
     assert msg.endswith("]")
-    assert "The orb fell" in msg
-    assert "Orb is on floor" in msg
+    assert "The fliers fell" in msg
+    assert "Fliers on ground" in msg
 
 
 # --- format_pending_narrator ---
 
 
 def test_format_pending_narrator():
-    msg = format_pending_narrator("The orb falls off the table")
-    assert msg == "[The orb falls off the table]"
+    msg = format_pending_narrator("The fliers blow off the table")
+    assert msg == "[The fliers blow off the table]"
 
 
 # --- Mock helper for OpenAI responses ---
@@ -376,19 +376,19 @@ def _mock_openai_response(data: dict):
 def test_reconcile_call_basic(mock_make_client):
     data = {
         "remove_facts": ["f1"],
-        "add_facts": ["Orb is on floor"],
-        "events": ["The orb rolled off the table"],
+        "add_facts": ["Fliers on ground"],
+        "events": ["The fliers blew off the table"],
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    ws = _ws_with_dynamic("Orb is on table", static=["Greg is a robot head"])
-    update = reconcile_call(ws, ["the orb rolls off the table"], TEST_CONFIG)
+    ws = _ws_with_dynamic("Fliers on table", static=["Greg is a robot head"])
+    update = reconcile_call(ws, ["the fliers blow off the table"], TEST_CONFIG)
 
     assert update.remove_facts == ["f1"]
-    assert update.add_facts == ["Orb is on floor"]
-    assert update.events == ["The orb rolled off the table"]
+    assert update.add_facts == ["Fliers on ground"]
+    assert update.events == ["The fliers blew off the table"]
 
     mock_client.chat.completions.create.assert_called_once()
 
@@ -404,7 +404,7 @@ def test_reconcile_call_no_removals(mock_make_client):
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    ws = _ws_with_dynamic("Orb is on table")
+    ws = _ws_with_dynamic("Fliers on table")
     update = reconcile_call(ws, ["a cat walks in"], TEST_CONFIG)
 
     assert update.remove_facts == []
@@ -434,23 +434,23 @@ def test_reconcile_call_empty_state(mock_make_client):
 def test_reconcile_call_multiple_pending(mock_make_client):
     data = {
         "remove_facts": ["f1"],
-        "add_facts": ["Orb on floor", "Orb is glowing"],
-        "events": ["The orb fell and started glowing"],
+        "add_facts": ["Fliers on ground", "Water jug tipped over"],
+        "events": ["The fliers blew away and the jug tipped"],
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    ws = _ws_with_dynamic("Orb is on table")
-    update = reconcile_call(ws, ["the orb falls", "the orb starts glowing"], TEST_CONFIG)
+    ws = _ws_with_dynamic("Fliers on table")
+    update = reconcile_call(ws, ["the fliers blow away", "the water jug tips over"], TEST_CONFIG)
 
     assert update.remove_facts == ["f1"]
     assert len(update.add_facts) == 2
 
     call_args = mock_client.chat.completions.create.call_args
     user_msg = call_args[1]["messages"][1]["content"]
-    assert "the orb falls" in user_msg
-    assert "the orb starts glowing" in user_msg
+    assert "the fliers blow away" in user_msg
+    assert "the water jug tips over" in user_msg
 
 
 @patch("character_eng.world._make_client")
@@ -479,13 +479,13 @@ def test_reconcile_call_ids_in_context(mock_make_client):
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    ws = _ws_with_dynamic("Orb on table", "Room is dark")
+    ws = _ws_with_dynamic("Fliers on table", "Street is quiet")
     reconcile_call(ws, ["test change"], TEST_CONFIG)
 
     call_args = mock_client.chat.completions.create.call_args
     user_msg = call_args[1]["messages"][1]["content"]
-    assert "f1. Orb on table" in user_msg
-    assert "f2. Room is dark" in user_msg
+    assert "f1. Fliers on table" in user_msg
+    assert "f2. Street is quiet" in user_msg
 
 
 @patch("character_eng.world._make_client")
@@ -520,7 +520,7 @@ def test_reconcile_call_with_people_context(mock_make_client):
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    ws = _ws_with_dynamic("Orb on table")
+    ws = _ws_with_dynamic("Fliers on table")
     people = PeopleState()
     p = people.add_person(name="Alice", presence="present")
     p.add_fact("Wearing a hat")
@@ -629,7 +629,7 @@ def test_eval_call_hold(mock_make_client):
 def test_eval_call_advance(mock_make_client):
     data = {
         "thought": "Good, they engaged with my question.",
-        "gaze": "orb",
+        "gaze": "customer",
         "expression": "excited",
         "script_status": "advance",
     }
@@ -637,7 +637,7 @@ def test_eval_call_advance(mock_make_client):
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
 
-    script = Script(beats=[Beat("What's that orb?", "Ask about orb"), Beat("Can I touch it?", "Request to touch")])
+    script = Script(beats=[Beat("Want a flier?", "Offer flier"), Beat("It's got a coupon!", "Pitch coupon")])
     result = eval_call(
         system_prompt="You are Greg.",
         world=None,
@@ -707,7 +707,7 @@ def test_eval_call_script_in_context(mock_make_client):
     """Script is included in the user message when provided."""
     data = {
         "thought": "Following script.",
-        "gaze": "orb",
+        "gaze": "stand",
         "expression": "neutral",
         "script_status": "hold",
     }
@@ -735,7 +735,7 @@ def test_eval_call_goals_in_context(mock_make_client):
     """Goals are included in the user message when provided."""
     data = {
         "thought": "Goal-driven.",
-        "gaze": "orb",
+        "gaze": "stand",
         "expression": "focused",
         "script_status": "hold",
     }
@@ -764,7 +764,7 @@ def test_eval_call_reads_eval_system_txt(mock_make_client, tmp_path, monkeypatch
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     (tmp_path / "eval_system.txt").write_text("You are eval v1.")
 
-    data = {"thought": "hmm", "gaze": "orb", "expression": "neutral", "script_status": "hold"}
+    data = {"thought": "hmm", "gaze": "stand", "expression": "neutral", "script_status": "hold"}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
@@ -781,7 +781,7 @@ def test_eval_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatch
     """Editing eval_system.txt is picked up on the next call without restart."""
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
 
-    data = {"thought": "hmm", "gaze": "orb", "expression": "neutral", "script_status": "hold"}
+    data = {"thought": "hmm", "gaze": "stand", "expression": "neutral", "script_status": "hold"}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
@@ -822,7 +822,7 @@ def test_eval_call_people_in_context(mock_make_client):
 @patch("character_eng.world._make_client")
 def test_eval_call_stage_goal_in_context(mock_make_client):
     """Stage goal is included in the user message when provided."""
-    data = {"thought": "ok", "gaze": "orb", "expression": "neutral", "script_status": "hold"}
+    data = {"thought": "ok", "gaze": "stand", "expression": "neutral", "script_status": "hold"}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
@@ -838,7 +838,7 @@ def test_eval_call_stage_goal_in_context(mock_make_client):
 @patch("character_eng.world._make_client")
 def test_eval_call_no_people_no_stage_goal(mock_make_client):
     """Without people or stage_goal, those sections don't appear."""
-    data = {"thought": "ok", "gaze": "orb", "expression": "neutral", "script_status": "hold"}
+    data = {"thought": "ok", "gaze": "stand", "expression": "neutral", "script_status": "hold"}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
@@ -903,7 +903,7 @@ def test_condition_check_call_condition_in_context(mock_make_client):
     mock_make_client.return_value = mock_client
 
     condition_check_call(
-        condition="The visitor mentioned the orb",
+        condition="The customer asked about the fliers",
         system_prompt="You are Greg.",
         world=None,
         history=[],
@@ -913,7 +913,7 @@ def test_condition_check_call_condition_in_context(mock_make_client):
     call_args = mock_client.chat.completions.create.call_args
     user_msg = call_args[1]["messages"][1]["content"]
     assert "CONDITION TO CHECK" in user_msg
-    assert "The visitor mentioned the orb" in user_msg
+    assert "The customer asked about the fliers" in user_msg
 
 
 @patch("character_eng.world._make_client")
@@ -941,8 +941,8 @@ def test_condition_check_call_reads_condition_system_txt(mock_make_client, tmp_p
 def test_plan_call_basic_beats(mock_make_client):
     data = {
         "beats": [
-            {"line": "Hey, what's that orb?", "intent": "Ask about orb", "gaze": "orb", "expression": "curious"},
-            {"line": "Can I touch it?", "intent": "Request interaction", "gaze": "visitor", "expression": "excited"},
+            {"line": "Want a flier? Got a coupon on it.", "intent": "Offer flier", "gaze": "customer", "expression": "curious"},
+            {"line": "It's for a free cup of water!", "intent": "Pitch coupon", "gaze": "fliers", "expression": "excited"},
         ]
     }
     mock_client = MagicMock()
@@ -954,16 +954,16 @@ def test_plan_call_basic_beats(mock_make_client):
         world=WorldState(static=["Greg is a robot head"]),
         history=[],
         goals=Goals(long_term="Experience the universe"),
-        plan_request="Plan about the orb",
+        plan_request="Get the customer to take a flier",
         plan_model_config=PLAN_CONFIG,
     )
 
     assert len(result.beats) == 2
-    assert result.beats[0].line == "Hey, what's that orb?"
-    assert result.beats[0].gaze == "orb"
+    assert result.beats[0].line == "Want a flier? Got a coupon on it."
+    assert result.beats[0].gaze == "customer"
     assert result.beats[0].expression == "curious"
-    assert result.beats[1].intent == "Request interaction"
-    assert result.beats[1].gaze == "visitor"
+    assert result.beats[1].intent == "Pitch coupon"
+    assert result.beats[1].gaze == "fliers"
     assert result.beats[1].expression == "excited"
 
 
@@ -996,8 +996,8 @@ def test_plan_call_beats_with_condition(mock_make_client):
     """Beats with condition field are parsed correctly."""
     data = {
         "beats": [
-            {"line": "Hey!", "intent": "Greet", "gaze": "visitor", "expression": "excited", "condition": "A visitor is present"},
-            {"line": "What's that?", "intent": "Ask about orb", "condition": ""},
+            {"line": "Hey!", "intent": "Greet", "gaze": "customer", "expression": "excited", "condition": "A customer is present"},
+            {"line": "Want a flier?", "intent": "Offer flier", "condition": ""},
         ]
     }
     mock_client = MagicMock()
@@ -1012,7 +1012,7 @@ def test_plan_call_beats_with_condition(mock_make_client):
     )
 
     assert len(result.beats) == 2
-    assert result.beats[0].condition == "A visitor is present"
+    assert result.beats[0].condition == "A customer is present"
     assert result.beats[1].condition == ""
 
 
@@ -1057,14 +1057,14 @@ def test_plan_call_plan_request_in_context(mock_make_client):
         system_prompt="You are Greg.",
         world=None,
         history=[],
-        plan_request="Focus on the mysterious orb",
+        plan_request="Focus on handing out fliers",
         plan_model_config=PLAN_CONFIG,
     )
 
     call_args = mock_client.chat.completions.create.call_args
     user_msg = call_args[1]["messages"][1]["content"]
     assert "PLAN REQUEST" in user_msg
-    assert "mysterious orb" in user_msg
+    assert "handing out fliers" in user_msg
 
 
 @patch("character_eng.world._make_client")
@@ -1160,9 +1160,9 @@ def test_load_prompt_file_missing_raises(tmp_path, monkeypatch):
 def test_load_beat_guide_substitutes_placeholders(tmp_path, monkeypatch):
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     (tmp_path / "beat_guide.txt").write_text("Intent: {intent}\nLine: {line}")
-    result = load_beat_guide("Ask about the orb", "Hey, what's that glowy thing?")
-    assert "Intent: Ask about the orb" in result
-    assert "Line: Hey, what's that glowy thing?" in result
+    result = load_beat_guide("Offer a flier", "Want a flier? It's got a coupon.")
+    assert "Intent: Offer a flier" in result
+    assert "Line: Want a flier? It's got a coupon." in result
 
 
 def test_load_beat_guide_reads_from_disk_each_call(tmp_path, monkeypatch):

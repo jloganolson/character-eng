@@ -33,16 +33,20 @@ VOICE_ERROR = "__VOICE_ERROR__"
 
 # Key mappings for hotkeys
 _KEY_MAP = {
-    "w": "/world",
+    "i": "/info",
     "b": "/beat",
-    "p": "/plan",
-    "g": "/goals",
     "t": "/trace",
+    "1": "1",
+    "2": "2",
+    "3": "3",
+    "4": "4",
+    "q": EXIT,
     "\x1b": VOICE_OFF,  # Escape
     "\x03": EXIT,  # Ctrl+C
 }
 
 AUTO_BEAT_DELAY = 4.0  # seconds after TTS playback finishes
+ECHO_COOLDOWN = 0.4  # seconds after TTS ends to ignore Deepgram false positives
 
 
 def list_audio_devices() -> list[dict]:
@@ -494,7 +498,17 @@ class DeepgramSTT:
                 self._pending_transcript = ""
                 self._is_speaking = False
                 if text:
+                    sys.stdout.write(f"  \033[2m[dg: utterance-end \"{text[:40]}\"]\033[0m\n")
+                    sys.stdout.flush()
                     self._on_transcript(text)
+                else:
+                    sys.stdout.write("  \033[2m[dg: utterance-end (empty)]\033[0m\n")
+                    sys.stdout.flush()
+            else:
+                if self._is_speaking:
+                    self._is_speaking = False
+                    sys.stdout.write("  \033[2m[dg: utterance-end (no transcript)]\033[0m\n")
+                    sys.stdout.flush()
             return
 
         if msg_type != "Results":
@@ -529,6 +543,8 @@ class DeepgramSTT:
             self._pending_transcript = ""
             self._is_speaking = False
             if text:
+                sys.stdout.write(f"  \033[2m[dg: speech-final \"{text[:40]}\"]\033[0m\n")
+                sys.stdout.flush()
                 self._on_transcript(text)
 
     def _on_error(self, error):
@@ -794,6 +810,7 @@ class VoiceIO:
         self._auto_beat_timer: threading.Timer | None = None
         self._auto_beat_countdown_active = False
         self._mic_mute_during_playback = mic_mute_during_playback
+        self._tts_done_at: float = 0.0  # timestamp when TTS playback finished
 
         # Components (created in start())
         self._speaker: SpeakerStream | None = None
@@ -1066,10 +1083,6 @@ class VoiceIO:
             self._tts.close()
         self._is_speaking = False
 
-        # Start auto-beat timer if not cancelled
-        if not self._cancelled.is_set():
-            self._start_auto_beat()
-
     def speak_text(self, text: str) -> None:
         """One-shot TTS for pre-rendered beats."""
         self._barged_in = False
@@ -1100,9 +1113,7 @@ class VoiceIO:
         if self._tts is not None:
             self._tts.close()
         self._is_speaking = False
-
-        if not self._cancelled.is_set():
-            self._start_auto_beat()
+        self._tts_done_at = time.time()
 
     def cancel_speech(self):
         """Barge-in: cancel current LLM+TTS+speaker, cancel auto-beat."""
@@ -1133,22 +1144,37 @@ class VoiceIO:
     def _on_turn_start(self):
         """Called by DeepgramSTT when user starts speaking (barge-in trigger).
 
-        Always cancels the auto-beat timer (user spoke, so don't auto-advance).
-        Only cancels active speech when _is_speaking is True.
-        Uses \\n prefix (not \\r) to preserve partial response text on the terminal.
+        During active speech (_is_speaking), always triggers barge-in.
+        After TTS finishes, ignores speech-start within ECHO_COOLDOWN to avoid
+        Deepgram false positives from mic echo cancelling the auto-beat.
         """
-        self._cancel_auto_beat()
         if self._is_speaking:
+            # Real barge-in during active TTS playback
+            self._cancel_auto_beat()
             if self._started:
                 sys.stdout.write("\n  [heard — interrupting]\n")
                 sys.stdout.flush()
             self.cancel_speech()
+        elif time.time() - self._tts_done_at < ECHO_COOLDOWN:
+            # Echo cooldown — ignore this speech-start, likely mic feedback
+            if self._started:
+                sys.stdout.write("  \033[2m[dg: speech-start (echo, ignored)]\033[0m\n")
+                sys.stdout.flush()
+        else:
+            # Real speech after cooldown — cancel auto-beat
+            had_auto_beat = self._auto_beat_timer is not None
+            self._cancel_auto_beat()
+            if had_auto_beat and self._started:
+                sys.stdout.write("  \033[2m[auto-beat: cancelled by speech]\033[0m\n")
+                sys.stdout.flush()
 
     def _start_auto_beat(self):
         """Start auto-beat timer — fires /beat after AUTO_BEAT_DELAY seconds."""
         self._cancel_auto_beat()
         self._auto_beat_countdown_active = True
         if self._started:
+            sys.stdout.write(f"  \033[2m[auto-beat: armed {AUTO_BEAT_DELAY:.0f}s]\033[0m\n")
+            sys.stdout.flush()
             threading.Thread(target=self._countdown_loop, daemon=True).start()
         self._auto_beat_timer = threading.Timer(
             AUTO_BEAT_DELAY,
@@ -1164,9 +1190,38 @@ class VoiceIO:
             self._auto_beat_timer.cancel()
             self._auto_beat_timer = None
 
+    def cancel_and_drain_auto_beat(self):
+        """Cancel auto-beat timer and drain any stale /beat from the event queue.
+
+        Call this when user input is received to prevent stale auto-beat
+        commands from firing during or after command processing.
+        """
+        self._cancel_auto_beat()
+        # Drain any /beat entries that the timer already put on the queue
+        drained = 0
+        items = []
+        while not self._event_queue.empty():
+            try:
+                item = self._event_queue.get_nowait()
+                if item == "/beat":
+                    drained += 1
+                else:
+                    items.append(item)
+            except queue.Empty:
+                break
+        # Put back non-beat items
+        for item in items:
+            self._event_queue.put(item)
+        if drained and self._started:
+            sys.stdout.write(f"  \033[2m[auto-beat: drained {drained} stale]\033[0m\n")
+            sys.stdout.flush()
+
     def _fire_auto_beat(self):
         """Auto-beat timer callback — puts /beat on the event queue."""
         self._auto_beat_countdown_active = False
+        if self._started:
+            sys.stdout.write("  \033[2m[auto-beat: fired]\033[0m\n")
+            sys.stdout.flush()
         self._event_queue.put("/beat")
 
     def _countdown_loop(self):

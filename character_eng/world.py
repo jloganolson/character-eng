@@ -43,7 +43,7 @@ class WorldUpdate:
 class Beat:
     line: str  # pre-rendered dialogue line
     intent: str  # what this beat is trying to accomplish
-    gaze: str = ""  # where the character looks (e.g. "orb", "visitor")
+    gaze: str = ""  # where the character looks (e.g. "customer", "stand")
     expression: str = ""  # facial expression (e.g. "curious", "excited")
     condition: str = ""  # natural language precondition (empty = auto-deliver)
 
@@ -378,7 +378,7 @@ def reconcile_call(world: WorldState, pending_changes: list[str], model_config: 
 
 
 def _strip_tag(value: str, tag: str) -> str:
-    """Strip wrapping like '<gaze:orb>' down to just 'orb'."""
+    """Strip wrapping like '<gaze:customer>' down to just 'customer'."""
     m = re.match(rf"<{tag}:(.+?)>", value)
     return m.group(1) if m else value
 

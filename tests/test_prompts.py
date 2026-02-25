@@ -92,7 +92,7 @@ def test_load_prompt_goals_in_character_txt(tmp_path, monkeypatch):
         tmp_path,
         "test_char",
         "Char: {{character}}",
-        **{"character.txt": "I am test character\n\nLong-term goal: Experience the universe\nShort-term goal: Figure out the orb"},
+        **{"character.txt": "I am test character\n\nLong-term goal: Experience the universe\nShort-term goal: Hand out fliers"},
     )
 
     monkeypatch.setattr(prompts_mod, "PROMPTS_DIR", prompts_dir)
@@ -101,7 +101,7 @@ def test_load_prompt_goals_in_character_txt(tmp_path, monkeypatch):
     result = load_prompt("test_char")
 
     assert "Experience the universe" in result
-    assert "Figure out the orb" in result
+    assert "Hand out fliers" in result
     assert "I am test character" in result
 
 

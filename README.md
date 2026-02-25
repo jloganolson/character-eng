@@ -81,21 +81,20 @@ Pick a character from the menu, then chat. The character evaluates each turn in 
 
 | Command | What it does |
 |---------|-------------|
-| `/world` | Show current world state (facts with stable IDs, pending changes, events) |
+| `/info` | Show all state (world, plan, goals, stage, people) in one dump |
 | `/world <text>` | Describe a change — character reacts immediately, reconciler updates state in background |
+| `/beat` | Deliver next scripted beat (time passes) — checks conditions, shows idle line if not met |
 | `/see <text>` | Describe something the character perceives — character reacts, reconciler processes |
 | `/sim <name>` | Replay a sim script with timing (quoted lines = dialogue, unquoted = perception) |
-| `/beat` | Deliver next scripted beat (time passes) — checks conditions, shows idle line if not met |
-| `/plan` | Show current script (beat list with current beat highlighted) |
-| `/stage` | Show current scenario stage and available exits |
-| `/people` | Show tracked people (names, presence, facts) |
-| `/goals` | Show character goals (long-term) |
+| `1`-`4` | Trigger a stage exit by number (shown in the HUD line before each prompt) |
 | `/voice` | Toggle voice mode on/off mid-session |
 | `/devices` | List audio input/output devices |
 | `/reload` | Reload all prompt files from disk (for live editing) |
 | `/trace` | Show system prompt, model, and token usage |
 | `/back` | Return to character select |
 | `/quit` | Exit |
+
+A **stage HUD** line is printed before every input prompt showing the current scenario stage and numbered exits (e.g. `[watching] 1: notices  2: ignores`). Type the number to trigger that exit.
 
 Unknown `/` commands show an error with a `/help` hint.
 
@@ -149,12 +148,11 @@ In voice mode, single keystrokes trigger commands (no Enter needed):
 
 | Key | Command |
 |-----|---------|
-| `w` | `/world` |
+| `i` | `/info` |
 | `b` | `/beat` |
-| `p` | `/plan` |
-| `g` | `/goals` |
 | `t` | `/trace` |
-| `s` | `/stage` |
+| `1`-`4` | Stage triggers |
+| `q` | Quit |
 | `Escape` | Toggle voice off |
 
 ### Audio devices
@@ -207,7 +205,7 @@ Characters live in `prompts/characters/<name>/` with these files:
 | `scenario.txt` | Situation and context |
 | `world_static.txt` | Permanent facts (one per line, optional) |
 | `world_dynamic.txt` | Initial mutable state (one per line, loaded with stable IDs `f1`, `f2`, ...) |
-| `scenario_script.toml` | Branching scenario stages with exit conditions (optional, parsed by director) |
+| `scenario_script.toml` | Branching scenario stages with exit conditions and optional HUD labels (parsed by director + number triggers) |
 | `sims/*.sim.txt` | Sim scripts for `/sim` command — `time_offset \| description` per line (optional) |
 
 `prompts/global_rules.txt` contains rules shared across all characters.
