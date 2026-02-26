@@ -35,7 +35,7 @@ The ReSpeaker only supports 16kHz output. ElevenLabs and the `SpeakerStream` def
 
 ### Validation approach
 
-We built a standalone test suite (`aec_test/`) that doesn't need a human in the loop:
+We built a standalone test suite (`experiments/aec/`) that doesn't need a human in the loop:
 
 1. **dB comparison** (`aec_db_test.py`): Play WAVs through both paths, record from mic, compare RMS levels. Clear 30-40 dB delta = AEC working.
 2. **VAD test** (`aec_vad_test.py`): Play segments through alternating paths, run Silero VAD on the recording. Speech should only be detected during no-AEC segments. Uses 512-sample windows at 16kHz (Silero's required chunk size — not 512ms, which was our first bug).

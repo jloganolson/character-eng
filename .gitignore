@@ -18,6 +18,6 @@ config.toml
 # QA logs
 logs/
 
-# AEC test artifacts (generated WAVs and recordings)
-aec_test/samples/
-aec_test/results/
+# Experiment artifacts (generated WAVs and recordings)
+experiments/*/samples/
+experiments/*/results/

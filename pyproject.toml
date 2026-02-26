@@ -13,6 +13,7 @@ dependencies = [
     "numpy>=1.26",
     "websocket-client>=1.7",
     "pocket-tts>=1.0",
+    "livekit>=1.1.2",
 ]
 
 [project.optional-dependencies]
