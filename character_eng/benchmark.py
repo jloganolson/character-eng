@@ -147,8 +147,6 @@ def bench_eval(model_config: dict) -> dict:
 
     result_dict = {
         "thought": result.thought,
-        "gaze": result.gaze,
-        "expression": result.expression,
         "script_status": result.script_status,
     }
 

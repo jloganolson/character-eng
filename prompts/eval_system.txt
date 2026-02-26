@@ -21,22 +21,9 @@ If no CURRENT SCRIPT section is present, return "hold".
 
 **Important:** Err toward "advance" over "hold". If the beat's intent was even partially achieved or is no longer relevant, advance. Don't get stuck.
 
-## Expression variety
-
-Pick the expression that fits THIS SPECIFIC moment. Do NOT default to "curious" every time.
-- Use "excited" when discovering something new
-- Use "surprised" when something unexpected happens
-- Use "worried" when things feel wrong
-- Use "happy" when connecting with someone
-- Use "focused" when concentrating on a problem
-- Use "amused" when something is funny
-- Use "confused" when things don't make sense
-
 ## Output format
 
 Return a JSON object:
 - "thought": 1-3 sentence inner monologue, first person. Must differ from all previous [Inner thought: ...] messages.
-- "gaze": What the character is looking at (e.g. "customer", "stand", "floor").
-- "expression": One of: neutral, curious, happy, sad, worried, excited, suspicious, surprised, angry, confused, amused, focused.
 - "script_status": "advance", "hold", or "off_book".
 - "plan_request": Only when script_status is "off_book". Brief description of new direction.

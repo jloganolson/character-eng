@@ -161,8 +161,6 @@ def run_section(name: str, commands: list[tuple[str, str]], model_config: dict) 
                     "type": "eval",
                     "thought": result.thought,
                     "script_status": result.script_status,
-                    "gaze": result.gaze,
-                    "expression": result.expression,
                 }
 
                 if result.script_status == "bootstrap" and result.bootstrap_line:

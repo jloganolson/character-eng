@@ -14,5 +14,3 @@ Given the character's system prompt, world state, recent conversation, and a CON
 Return a JSON object with exactly these keys:
 - "met": true if the condition is satisfied, false otherwise.
 - "idle": A short in-character idle line if not met. Empty string if met.
-- "gaze": Where the character is looking during the idle moment (e.g. "stand", "floor", "hands"). Empty string if met.
-- "expression": The character's facial expression during the idle moment (e.g. "bored", "restless", "contemplative"). Empty string if met.

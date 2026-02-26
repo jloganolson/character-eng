@@ -31,7 +31,7 @@ QA scripts accept `--model cerebras-llama|groq-llama|groq-gpt|gemini-3-flash|gem
 ## Architecture
 
 Interactive NPC character chat CLI with two-tier LLM backend (OpenAI-compatible endpoints):
-- **CHAT_MODEL** (small/fast, default `cerebras-llama` 8B) — streaming dialogue
+- **CHAT_MODEL** (small/fast, default `cerebras-llama` 8B) — streaming dialogue, expression post-processing
 - **BIG_MODEL** (big/slow, default `groq-llama` 70B) — eval, planning, reconciliation, direction. Falls back to chat model.
 
 Both configured in `models.py`. No model selection menu — auto-selects on startup.
@@ -42,6 +42,7 @@ Both configured in `models.py`. No model selection menu — auto-selects on star
 - **Scenario director**: TOML-based branching stage graph; director LLM evaluates exit conditions after each turn
 - **Person state**: individual people tracked with scoped fact IDs (`p1f1`, `p1f2`, ...); reconciler handles assignments
 - **Perception**: `/see` for manual events, `/sim` for scripted replay from `.sim.txt` files
+- **Expression post-processing**: After each character response, `expression_call` (CHAT_MODEL) derives gaze target + facial expression from the dialogue. Gaze picks from scene targets (static list, will be SAM3 AABBs); expression is one of 12 emotions. Social gaze modifiers (look down when sad, etc.) are handled downstream in robot control, not by the LLM.
 - **Voice mode**: Deepgram STT + configurable TTS (ElevenLabs, Qwen3-TTS local, Pocket-TTS). WebRTC AEC3 (via LiveKit) keeps mic live during playback for barge-in. All TTS backends share 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`)
 
 ### Modules (17 total)
@@ -52,7 +53,7 @@ Both configured in `models.py`. No model selection menu — auto-selects on star
 | `models.py` | Model config registry, CHAT_MODEL/BIG_MODEL constants |
 | `config.py` | `config.toml` loader → AppConfig/VoiceConfig dataclasses |
 | `prompts.py` | Filesystem template engine, `{{macro}}` substitution |
-| `world.py` | WorldState, Script, Goals, Beat, reconcile/eval/plan/condition LLM calls |
+| `world.py` | WorldState, Script, Goals, Beat, reconcile/eval/plan/condition/expression LLM calls |
 | `person.py` | Person/PeopleState tracking with scoped fact IDs |
 | `scenario.py` | ScenarioScript (TOML stage graph), director_call |
 | `perception.py` | PerceptionEvent, SimScript, `/see` and `/sim` support |
@@ -72,7 +73,7 @@ Four async thread pools (reconcile, eval, plan, director) — each with a lock a
 
 Characters live in `prompts/characters/{name}/` with: `prompt.txt` (template), `character.txt`, `scenario.txt`, optional `world_static.txt`, `world_dynamic.txt`, `scenario_script.toml`, `sims/*.sim.txt`.
 
-System prompts (`prompts/*.txt`) for reconciler, eval, condition, plan, director, and beat_guide are read from disk on every call — edits take effect immediately.
+System prompts (`prompts/*.txt`) for reconciler, eval, condition, plan, director, expression, and beat_guide are read from disk on every call — edits take effect immediately.
 
 ## Configuration
 

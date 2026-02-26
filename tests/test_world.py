@@ -15,6 +15,7 @@ from character_eng.world import (
     _load_prompt_file,
     condition_check_call,
     eval_call,
+    expression_call,
     format_narrator_message,
     format_pending_narrator,
     load_beat_guide,
@@ -252,21 +253,6 @@ def test_script_render():
     text = s.render()
     assert '→ 0. [Intent 1] "Line 1"' in text
     assert '  1. [Intent 2] "Line 2"' in text
-
-
-def test_script_render_with_gaze_expression():
-    s = Script(beats=[
-        Beat("Line 1", "Intent 1", gaze="stand", expression="curious"),
-        Beat("Line 2", "Intent 2", gaze="customer"),
-        Beat("Line 3", "Intent 3", expression="excited"),
-        Beat("Line 4", "Intent 4"),
-    ])
-    text = s.render()
-    assert '→ 0. [Intent 1] "Line 1" (stand, curious)' in text
-    assert '  1. [Intent 2] "Line 2" (customer)' in text
-    assert '  2. [Intent 3] "Line 3" (excited)' in text
-    assert '  3. [Intent 4] "Line 4"' in text
-    assert '"Line 4" (' not in text
 
 
 def test_script_render_with_condition():
@@ -604,8 +590,6 @@ def test_reconcile_call_no_person_updates_key(mock_make_client):
 def test_eval_call_hold(mock_make_client):
     data = {
         "thought": "I should wait for them to respond.",
-        "gaze": "visitor",
-        "expression": "curious",
         "script_status": "hold",
     }
     mock_client = MagicMock()
@@ -621,16 +605,12 @@ def test_eval_call_hold(mock_make_client):
 
     assert result.thought == "I should wait for them to respond."
     assert result.script_status == "hold"
-    assert result.gaze == "visitor"
-    assert result.expression == "curious"
 
 
 @patch("character_eng.world._make_client")
 def test_eval_call_advance(mock_make_client):
     data = {
         "thought": "Good, they engaged with my question.",
-        "gaze": "customer",
-        "expression": "excited",
         "script_status": "advance",
     }
     mock_client = MagicMock()
@@ -653,8 +633,6 @@ def test_eval_call_advance(mock_make_client):
 def test_eval_call_bootstrap(mock_make_client):
     data = {
         "thought": "Someone new is here. I should say hello.",
-        "gaze": "visitor",
-        "expression": "curious",
         "script_status": "bootstrap",
         "bootstrap_line": "Hey there! What brings you to my desk?",
         "bootstrap_intent": "Greet the visitor",
@@ -682,8 +660,6 @@ def test_eval_call_bootstrap(mock_make_client):
 def test_eval_call_off_book(mock_make_client):
     data = {
         "thought": "This conversation went somewhere unexpected.",
-        "gaze": "floor",
-        "expression": "confused",
         "script_status": "off_book",
         "plan_request": "Replan around the new topic of the visitor's pet",
     }
@@ -707,8 +683,6 @@ def test_eval_call_script_in_context(mock_make_client):
     """Script is included in the user message when provided."""
     data = {
         "thought": "Following script.",
-        "gaze": "stand",
-        "expression": "neutral",
         "script_status": "hold",
     }
     mock_client = MagicMock()
@@ -735,8 +709,6 @@ def test_eval_call_goals_in_context(mock_make_client):
     """Goals are included in the user message when provided."""
     data = {
         "thought": "Goal-driven.",
-        "gaze": "stand",
-        "expression": "focused",
         "script_status": "hold",
     }
     mock_client = MagicMock()
@@ -764,7 +736,7 @@ def test_eval_call_reads_eval_system_txt(mock_make_client, tmp_path, monkeypatch
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     (tmp_path / "eval_system.txt").write_text("You are eval v1.")
 
-    data = {"thought": "hmm", "gaze": "stand", "expression": "neutral", "script_status": "hold"}
+    data = {"thought": "hmm", "script_status": "hold"}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
@@ -781,7 +753,7 @@ def test_eval_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatch
     """Editing eval_system.txt is picked up on the next call without restart."""
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
 
-    data = {"thought": "hmm", "gaze": "stand", "expression": "neutral", "script_status": "hold"}
+    data = {"thought": "hmm", "script_status": "hold"}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
@@ -803,7 +775,7 @@ def test_eval_call_picks_up_file_changes(mock_make_client, tmp_path, monkeypatch
 @patch("character_eng.world._make_client")
 def test_eval_call_people_in_context(mock_make_client):
     """People state is included in the user message when provided."""
-    data = {"thought": "ok", "gaze": "visitor", "expression": "neutral", "script_status": "hold"}
+    data = {"thought": "ok", "script_status": "hold"}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
@@ -822,7 +794,7 @@ def test_eval_call_people_in_context(mock_make_client):
 @patch("character_eng.world._make_client")
 def test_eval_call_stage_goal_in_context(mock_make_client):
     """Stage goal is included in the user message when provided."""
-    data = {"thought": "ok", "gaze": "stand", "expression": "neutral", "script_status": "hold"}
+    data = {"thought": "ok", "script_status": "hold"}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
@@ -838,7 +810,7 @@ def test_eval_call_stage_goal_in_context(mock_make_client):
 @patch("character_eng.world._make_client")
 def test_eval_call_no_people_no_stage_goal(mock_make_client):
     """Without people or stage_goal, those sections don't appear."""
-    data = {"thought": "ok", "gaze": "stand", "expression": "neutral", "script_status": "hold"}
+    data = {"thought": "ok", "script_status": "hold"}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
@@ -856,7 +828,7 @@ def test_eval_call_no_people_no_stage_goal(mock_make_client):
 
 @patch("character_eng.world._make_client")
 def test_condition_check_call_met(mock_make_client):
-    data = {"met": True, "idle": "", "gaze": "", "expression": ""}
+    data = {"met": True, "idle": ""}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
@@ -875,7 +847,7 @@ def test_condition_check_call_met(mock_make_client):
 
 @patch("character_eng.world._make_client")
 def test_condition_check_call_not_met(mock_make_client):
-    data = {"met": False, "idle": "*stares at the ceiling*", "gaze": "ceiling", "expression": "bored"}
+    data = {"met": False, "idle": "*stares at the ceiling*"}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
@@ -890,14 +862,12 @@ def test_condition_check_call_not_met(mock_make_client):
 
     assert result.met is False
     assert result.idle == "*stares at the ceiling*"
-    assert result.gaze == "ceiling"
-    assert result.expression == "bored"
 
 
 @patch("character_eng.world._make_client")
 def test_condition_check_call_condition_in_context(mock_make_client):
     """Condition string is included in the user message."""
-    data = {"met": True, "idle": "", "gaze": "", "expression": ""}
+    data = {"met": True, "idle": ""}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
@@ -922,7 +892,7 @@ def test_condition_check_call_reads_condition_system_txt(mock_make_client, tmp_p
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     (tmp_path / "condition_system.txt").write_text("You are condition checker v1.")
 
-    data = {"met": True, "idle": "", "gaze": "", "expression": ""}
+    data = {"met": True, "idle": ""}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client
@@ -941,8 +911,8 @@ def test_condition_check_call_reads_condition_system_txt(mock_make_client, tmp_p
 def test_plan_call_basic_beats(mock_make_client):
     data = {
         "beats": [
-            {"line": "Want a flier? Got a coupon on it.", "intent": "Offer flier", "gaze": "customer", "expression": "curious"},
-            {"line": "It's for a free cup of water!", "intent": "Pitch coupon", "gaze": "fliers", "expression": "excited"},
+            {"line": "Want a flier? Got a coupon on it.", "intent": "Offer flier"},
+            {"line": "It's for a free cup of water!", "intent": "Pitch coupon"},
         ]
     }
     mock_client = MagicMock()
@@ -960,35 +930,7 @@ def test_plan_call_basic_beats(mock_make_client):
 
     assert len(result.beats) == 2
     assert result.beats[0].line == "Want a flier? Got a coupon on it."
-    assert result.beats[0].gaze == "customer"
-    assert result.beats[0].expression == "curious"
     assert result.beats[1].intent == "Pitch coupon"
-    assert result.beats[1].gaze == "fliers"
-    assert result.beats[1].expression == "excited"
-
-
-@patch("character_eng.world._make_client")
-def test_plan_call_beats_without_gaze_expression(mock_make_client):
-    """Beats without gaze/expression default to empty strings."""
-    data = {
-        "beats": [
-            {"line": "Hey there!", "intent": "Greet"},
-        ]
-    }
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
-    mock_make_client.return_value = mock_client
-
-    result = plan_call(
-        system_prompt="You are Greg.",
-        world=None,
-        history=[],
-        plan_model_config=PLAN_CONFIG,
-    )
-
-    assert len(result.beats) == 1
-    assert result.beats[0].gaze == ""
-    assert result.beats[0].expression == ""
 
 
 @patch("character_eng.world._make_client")
@@ -996,7 +938,7 @@ def test_plan_call_beats_with_condition(mock_make_client):
     """Beats with condition field are parsed correctly."""
     data = {
         "beats": [
-            {"line": "Hey!", "intent": "Greet", "gaze": "customer", "expression": "excited", "condition": "A customer is present"},
+            {"line": "Hey!", "intent": "Greet", "condition": "A customer is present"},
             {"line": "Want a flier?", "intent": "Offer flier", "condition": ""},
         ]
     }
@@ -1180,3 +1122,68 @@ def test_load_beat_guide_missing_file_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     with pytest.raises(FileNotFoundError):
         load_beat_guide("intent", "line")
+
+
+# --- expression_call (mocked) ---
+
+
+@patch("character_eng.world._make_client")
+def test_expression_call_basic(mock_make_client):
+    data = {"gaze": "customer", "expression": "happy"}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = expression_call("Hey there, welcome!", TEST_CONFIG)
+
+    assert result.gaze == "customer"
+    assert result.expression == "happy"
+
+
+@patch("character_eng.world._make_client")
+def test_expression_call_default_expression(mock_make_client):
+    """Missing expression defaults to 'neutral'."""
+    data = {"gaze": "stand"}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = expression_call("...", TEST_CONFIG)
+
+    assert result.gaze == "stand"
+    assert result.expression == "neutral"
+
+
+@patch("character_eng.world._make_client")
+def test_expression_call_custom_gaze_targets(mock_make_client):
+    """Custom gaze targets are injected into the prompt."""
+    data = {"gaze": "robot", "expression": "curious"}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = expression_call("Look at that robot!", TEST_CONFIG, gaze_targets=["robot", "table"])
+
+    assert result.gaze == "robot"
+    mock_client.chat.completions.create.assert_called_once()
+    call_args = mock_client.chat.completions.create.call_args
+    system_msg = call_args[1]["messages"][0]["content"]
+    assert "robot, table" in system_msg
+
+
+@patch("character_eng.world._make_client")
+def test_expression_call_reads_expression_system_txt(mock_make_client, tmp_path, monkeypatch):
+    """expression_call reads expression_system.txt from disk."""
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "expression_system.txt").write_text("Expression controller v1. {gaze_targets}")
+
+    data = {"gaze": "person", "expression": "neutral"}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    expression_call("Hello", TEST_CONFIG)
+
+    call_args = mock_client.chat.completions.create.call_args
+    messages = call_args[1]["messages"]
+    assert "Expression controller v1." in messages[0]["content"]

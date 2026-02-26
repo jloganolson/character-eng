@@ -233,18 +233,11 @@ class ConversationDriver:
             return (False, "", {"type": "eval_stale"})
 
         # Inject eval into session
-        parts = [f"[Inner thought: {result.thought}]"]
-        if result.gaze:
-            parts.append(f"[gaze:{result.gaze}]")
-        if result.expression:
-            parts.append(f"[emote:{result.expression}]")
-        self.session.inject_system(" ".join(parts))
+        self.session.inject_system(f"[Inner thought: {result.thought}]")
 
         entry = {
             "type": "eval",
             "thought": result.thought,
-            "gaze": result.gaze,
-            "expression": result.expression,
             "script_status": result.script_status,
         }
         if result.plan_request:
@@ -469,14 +462,6 @@ class ConversationDriver:
             guidance = load_beat_guide(beat.intent, beat.line)
             self.session.inject_system(guidance)
             response = self._collect_response(text)
-            # Inject beat metadata
-            meta_parts = []
-            if beat.gaze:
-                meta_parts.append(f"[gaze:{beat.gaze}]")
-            if beat.expression:
-                meta_parts.append(f"[emote:{beat.expression}]")
-            if meta_parts:
-                self.session.inject_system(" ".join(meta_parts))
         else:
             # No script — LLM generates response
             response = self._collect_response(text)
@@ -574,21 +559,8 @@ class ConversationDriver:
         response = beat.line
         self.session.add_assistant(response)
 
-        # Inject metadata
-        meta_parts = []
-        if beat.gaze:
-            meta_parts.append(f"[gaze:{beat.gaze}]")
-        if beat.expression:
-            meta_parts.append(f"[emote:{beat.expression}]")
-        if meta_parts:
-            self.session.inject_system(" ".join(meta_parts))
-
         entry["response"] = response
         entry["intent"] = beat.intent
-        if beat.gaze:
-            entry["gaze"] = beat.gaze
-        if beat.expression:
-            entry["expression"] = beat.expression
 
         # Advance
         self.script.advance()
@@ -1165,8 +1137,6 @@ def generate_html_report(
                     f'<details class="eval-details"><summary>eval: {_esc(e.get("script_status", "?"))}</summary>'
                     f'<div class="eval-body">'
                     f'<div><b>thought:</b> {_esc(e.get("thought", ""))}</div>'
-                    f'<div><b>gaze:</b> {_esc(e.get("gaze", ""))}</div>'
-                    f'<div><b>expression:</b> {_esc(e.get("expression", ""))}</div>'
                     f'<div><b>status:</b> {_esc(e.get("script_status", ""))}</div>'
                 )
                 if e.get("plan_request"):
