@@ -15,6 +15,7 @@ from rich.text import Text
 from character_eng.chat import ChatSession
 from character_eng.config import load_config
 from character_eng.models import BIG_MODEL, CHAT_MODEL, MODELS
+from character_eng.utils import ts as _ts
 from character_eng.perception import PerceptionEvent, load_sim_script, process_perception
 from character_eng.person import PeopleState
 from character_eng.prompts import list_characters, load_prompt
@@ -198,7 +199,7 @@ def _check_eval(session, script, log):
     _eval_thread = None
 
     if _eval_version != _context_version:
-        console.print("[dim](eval result discarded — stale)[/dim]")
+        console.print(f"[dim]({_ts()} eval result discarded — stale)[/dim]")
         return (False, "")
 
     display_eval(result)
@@ -208,10 +209,10 @@ def _check_eval(session, script, log):
     if result.script_status == "advance":
         script.advance()
         if script.current_beat:
-            console.print(f"[magenta]  next beat:  [{script.current_beat.intent}][/magenta]")
+            console.print(f"[magenta]  {_ts()} next beat:  [{script.current_beat.intent}][/magenta]")
             return (False, "")
         else:
-            console.print("[dim]  script complete, replanning...[/dim]")
+            console.print(f"[dim]  {_ts()} script complete, replanning...[/dim]")
             return (True, "")
     elif result.script_status == "off_book" and result.plan_request:
         return (True, result.plan_request)
@@ -270,7 +271,7 @@ def _check_plan(script):
     _plan_thread = None
 
     if _plan_version != _context_version:
-        console.print("[dim](plan result discarded — stale)[/dim]")
+        console.print(f"[dim]({_ts()} plan result discarded — stale)[/dim]")
         return
 
     if result.beats:
@@ -319,7 +320,7 @@ def _check_director(scenario, script, session, world, goals, people, big_model_c
     _director_thread = None
 
     if _director_version != _context_version:
-        console.print("[dim](director result discarded — stale)[/dim]")
+        console.print(f"[dim]({_ts()} director result discarded — stale)[/dim]")
         return False
 
     if result.status == "advance" and result.exit_index >= 0 and scenario is not None:
@@ -328,16 +329,16 @@ def _check_director(scenario, script, session, world, goals, people, big_model_c
             exit_obj = stage.exits[result.exit_index]
             if scenario.advance_to(exit_obj.goto):
                 new_stage = scenario.active_stage
-                console.print(f"[cyan]  director: {result.thought}[/cyan]")
+                console.print(f"[cyan]  {_ts()} director: {result.thought}[/cyan]")
                 if new_stage:
-                    console.print(f"[bold cyan]Stage → {new_stage.name}: {new_stage.goal}[/bold cyan]")
+                    console.print(f"[bold cyan]{_ts()} Stage → {new_stage.name}: {new_stage.goal}[/bold cyan]")
                     # Trigger replanning with new stage goal
                     stage_goal = new_stage.goal if new_stage else ""
                     _start_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
                 return True
     else:
         if result.thought:
-            console.print(f"[dim]  director: {result.thought}[/dim]")
+            console.print(f"[dim]  {_ts()} director: {result.thought}[/dim]")
 
     return False
 
@@ -835,11 +836,11 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
                 # Show what was transcribed or which hotkey was pressed
                 if user_input.startswith("/"):
-                    console.print(f"[dim]  → {user_input}[/dim]")
+                    console.print(f"[dim]  {_ts()} → {user_input}[/dim]")
                 elif user_input in ("1", "2", "3", "4"):
-                    console.print(f"[dim]  → trigger {user_input}[/dim]")
+                    console.print(f"[dim]  {_ts()} → trigger {user_input}[/dim]")
                 else:
-                    console.print(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: {user_input}")
+                    console.print(f"[bold blue]You[/bold blue] [dim]{session_id} {_ts()}[/dim]: {user_input}")
             else:
                 try:
                     user_input = console.input(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: ").strip()
@@ -1030,7 +1031,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
 def run_eval(session, world, goals, script, model_config):
     """Run eval_call synchronously, return EvalResult or None on error."""
-    console.print("[dim]Evaluating...[/dim]")
+    console.print(f"[dim]{_ts()} Evaluating...[/dim]")
     try:
         return eval_call(
             system_prompt=session.system_prompt,
@@ -1050,7 +1051,7 @@ def run_plan(session, world, goals, plan_request, big_model_config, people=None,
     if big_model_config is None:
         console.print("[dim]Planner unavailable, skipping.[/dim]")
         return None
-    console.print("[dim]Planning...[/dim]")
+    console.print(f"[dim]{_ts()} Planning...[/dim]")
     try:
         return plan_call(
             system_prompt=session.system_prompt,
@@ -1069,10 +1070,10 @@ def run_plan(session, world, goals, plan_request, big_model_config, people=None,
 
 def display_eval(result):
     """Display all eval fields."""
-    console.print(f"[dim]  thought:    {result.thought}[/dim]")
-    console.print(f"[dim]  status:     {result.script_status}[/dim]")
+    console.print(f"[dim]  {_ts()} thought:    {result.thought}[/dim]")
+    console.print(f"[dim]  {_ts()} status:     {result.script_status}[/dim]")
     if result.plan_request:
-        console.print(f"[dim]  plan_req:   {result.plan_request}[/dim]")
+        console.print(f"[dim]  {_ts()} plan_req:   {result.plan_request}[/dim]")
 
 
 def eval_to_dict(result):
@@ -1118,7 +1119,7 @@ def run_expression(session, model_config, line=None):
         gaze_label = result.gaze
         if result.gaze_type == "glance":
             gaze_label += " (glance)"
-        console.print(f"  gaze: {gaze_label}  expression: {result.expression}")
+        console.print(f"  {_ts()} gaze: {gaze_label}  expression: {result.expression}")
 
     parts = []
     if result.gaze:
@@ -1136,7 +1137,7 @@ def run_expression(session, model_config, line=None):
 
 def deliver_beat(session, beat, label, voice_io=None):
     """Deliver a pre-rendered beat as the character's response. Returns the beat line."""
-    npc_name = Text(f"{label}: ", style="bold magenta")
+    npc_name = Text(f"{_ts()} {label}: ", style="bold magenta")
     console.print(npc_name, end="")
     console.print(beat.line)
     console.print()
@@ -1171,7 +1172,7 @@ def stream_guided_beat(session, beat, label, user_input, voice_io=None, expr_mod
 def apply_plan(script, plan_result):
     """Replace script beats, display summary."""
     script.replace(plan_result.beats)
-    console.print(f"[magenta]Script loaded ({len(plan_result.beats)} beats):[/magenta]")
+    console.print(f"[magenta]{_ts()} Script loaded ({len(plan_result.beats)} beats):[/magenta]")
     for i, beat in enumerate(plan_result.beats):
         marker = "→" if i == 0 else " "
         console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"[/magenta]")
@@ -1195,7 +1196,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
 
     # 2. If beat has a condition, check it (synchronous — gates delivery)
     if beat.condition:
-        console.print(f"[dim]Checking condition: {beat.condition}[/dim]")
+        console.print(f"[dim]{_ts()} Checking condition: {beat.condition}[/dim]")
         try:
             cond_result = condition_check_call(
                 condition=beat.condition,
@@ -1251,10 +1252,10 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
     stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
     script.advance()
     if script.current_beat:
-        console.print(f"[magenta]  next beat:  [{script.current_beat.intent}][/magenta]")
+        console.print(f"[magenta]  {_ts()} next beat:  [{script.current_beat.intent}][/magenta]")
     else:
         # Script exhausted — background replan
-        console.print("[dim]  script complete, replanning...[/dim]")
+        console.print(f"[dim]  {_ts()} script complete, replanning...[/dim]")
         _start_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
 
     # 7. Background eval + director
@@ -1395,7 +1396,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
     stream_response._last_expr for the caller to pick up.
     """
     stream_response._last_expr = None
-    npc_name = Text(f"{label}: ", style="bold magenta")
+    npc_name = Text(f"{_ts()} {label}: ", style="bold magenta")
     console.print(npc_name, end="")
     full_response = []
     t_start = time.time()
@@ -1421,14 +1422,15 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
 
         t_llm_done = time.time()
 
-        # Fire expression as soon as LLM is done (overlaps with TTS playback)
+        # Signal end of text input — must happen before expression call
+        # so TTS can start generating while expression runs in parallel
+        if not voice_io._cancelled.is_set() and voice_io._tts is not None:
+            voice_io._tts.flush()
+
+        # Fire expression after flush (overlaps with TTS generation + playback)
         if expr_model_config is not None and full_response:
             line_text = "".join(full_response)
             stream_response._last_expr = run_expression(session, expr_model_config, line=line_text)
-
-        # Signal end of text input
-        if not voice_io._cancelled.is_set() and voice_io._tts is not None:
-            voice_io._tts.flush()
 
         # Wait for ElevenLabs to finish generating
         if not voice_io._cancelled.is_set() and voice_io._tts is not None:
@@ -1580,7 +1582,7 @@ def run_smoke():
     if scenario:
         console.print(f"[dim]Scenario: {scenario.name} (stage: {scenario.current_stage})[/dim]")
 
-    console.print("[dim]Planning...[/dim]")
+    console.print(f"[dim]{_ts()} Planning...[/dim]")
     plan_result = run_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
     if plan_result and plan_result.beats:
         apply_plan(script, plan_result)

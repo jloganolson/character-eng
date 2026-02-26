@@ -7,7 +7,7 @@ from pathlib import Path
 
 from rich.panel import Panel
 
-from character_eng.world import _load_prompt_file, _make_client
+from character_eng.world import _load_prompt_file, _llm_call
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 CHARACTERS_DIR = PROMPTS_DIR / "characters"
@@ -150,9 +150,9 @@ def director_call(
 
     user_message = "\n".join(context_parts)
 
-    client = _make_client(model_config)
-    response = client.chat.completions.create(
-        model=model_config["model"],
+    response = _llm_call(
+        model_config,
+        label="director",
         messages=[
             {"role": "system", "content": _load_prompt_file("director_system.txt")},
             {"role": "user", "content": user_message},

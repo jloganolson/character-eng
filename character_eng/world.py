@@ -7,8 +7,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from openai import OpenAI
+from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
+
+from character_eng.models import MODELS, get_fallback_chain
+from character_eng.utils import ts as _ts
+
+_console = Console()
 
 load_dotenv()
 
@@ -304,6 +310,44 @@ def _make_client(model_config: dict) -> OpenAI:
     )
 
 
+def _llm_call(model_config: dict, label: str = "", **create_kwargs):
+    """Make an LLM call with automatic fallback on provider failure.
+
+    Looks up the fallback chain for the given model_config and tries each
+    provider in order. Only falls back on connection/server errors, not on
+    content or auth errors.
+    """
+    # Find model key to get fallback chain
+    chain = [model_config]
+    for key, cfg in MODELS.items():
+        if cfg is model_config:
+            chain = get_fallback_chain(key)
+            break
+
+    tag = f" ({label})" if label else ""
+
+    last_err = None
+    for i, cfg in enumerate(chain):
+        if i == 0:
+            _console.print(f"[dim]  {_ts()} → {cfg['name']}{tag}[/dim]")
+        else:
+            _console.print(f"[yellow]  {_ts()} → fallback: {cfg['name']}{tag}[/yellow]")
+        try:
+            client = _make_client(cfg)
+            return client.chat.completions.create(
+                model=cfg["model"], **create_kwargs
+            )
+        except Exception as e:
+            # Don't fallback on auth errors
+            status = getattr(e, "status_code", None)
+            if status and 400 <= status < 500:
+                raise
+            last_err = e
+            _console.print(f"[red]  → {cfg['name']} failed: {e}[/red]")
+
+    raise last_err
+
+
 # --- Reconcile LLM call ---
 
 
@@ -336,9 +380,9 @@ def reconcile_call(world: WorldState, pending_changes: list[str], model_config: 
 
     user_message = "\n".join(lines)
 
-    client = _make_client(model_config)
-    response = client.chat.completions.create(
-        model=model_config["model"],
+    response = _llm_call(
+        model_config,
+        label="reconcile",
         messages=[
             {"role": "system", "content": _load_prompt_file("reconcile_system.txt")},
             {"role": "user", "content": user_message},
@@ -420,9 +464,9 @@ def eval_call(
 
     user_message = "\n".join(context_parts)
 
-    client = _make_client(model_config)
-    response = client.chat.completions.create(
-        model=model_config["model"],
+    response = _llm_call(
+        model_config,
+        label="eval",
         messages=[
             {"role": "system", "content": _load_prompt_file("eval_system.txt")},
             {"role": "user", "content": user_message},
@@ -475,9 +519,9 @@ def condition_check_call(
 
     user_message = "\n".join(context_parts)
 
-    client = _make_client(model_config)
-    response = client.chat.completions.create(
-        model=model_config["model"],
+    response = _llm_call(
+        model_config,
+        label="condition",
         messages=[
             {"role": "system", "content": _load_prompt_file("condition_system.txt")},
             {"role": "user", "content": user_message},
@@ -548,9 +592,9 @@ def plan_call(
 
     user_message = "\n".join(context_parts)
 
-    client = _make_client(plan_model_config)
-    response = client.chat.completions.create(
-        model=plan_model_config["model"],
+    response = _llm_call(
+        plan_model_config,
+        label="plan",
         messages=[
             {"role": "system", "content": _load_prompt_file("plan_system.txt")},
             {"role": "user", "content": user_message},
@@ -590,9 +634,9 @@ def expression_call(
         "{gaze_targets}", ", ".join(targets)
     )
 
-    client = _make_client(model_config)
-    response = client.chat.completions.create(
-        model=model_config["model"],
+    response = _llm_call(
+        model_config,
+        label="expression",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": last_line},

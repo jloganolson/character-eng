@@ -9,6 +9,15 @@ MODELS = {
         "base_url": "https://api.cerebras.ai/v1",
         "api_key_env": "CEREBRAS_API_KEY",
         "stream_usage": False,
+        "fallback": "groq-llama-8b",
+    },
+    "groq-llama-8b": {
+        "name": "Llama 3.1 8B (Groq)",
+        "model": "llama-3.1-8b-instant",
+        "base_url": "https://api.groq.com/openai/v1",
+        "api_key_env": "GROQ_API_KEY",
+        "stream_usage": False,
+        "hidden": True,
     },
     "groq-llama": {
         "name": "Llama 3.3 70B (Groq)",
@@ -79,3 +88,16 @@ BIG_MODEL = "groq-llama"        # big/slow    — eval, plan, reconcile
 
 # Legacy alias used by QA scripts
 DEFAULT_MODEL = CHAT_MODEL
+
+
+def get_fallback_chain(model_key: str) -> list[dict]:
+    """Return [primary_config, fallback_config, ...] for a model key."""
+    chain = []
+    seen = set()
+    key = model_key
+    while key and key not in seen:
+        seen.add(key)
+        cfg = MODELS[key]
+        chain.append(cfg)
+        key = cfg.get("fallback")
+    return chain

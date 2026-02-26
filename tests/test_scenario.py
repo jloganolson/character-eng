@@ -172,7 +172,7 @@ def test_load_scenario_script_greg():
 # --- director_call (mocked) ---
 
 
-@patch("character_eng.scenario._make_client")
+@patch("character_eng.world._make_client")
 def test_director_call_hold(mock_make_client, tmp_path, monkeypatch):
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     (tmp_path / "director_system.txt").write_text("You are director.")
@@ -194,7 +194,7 @@ def test_director_call_hold(mock_make_client, tmp_path, monkeypatch):
     assert result.exit_index == -1
 
 
-@patch("character_eng.scenario._make_client")
+@patch("character_eng.world._make_client")
 def test_director_call_advance(mock_make_client, tmp_path, monkeypatch):
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     (tmp_path / "director_system.txt").write_text("You are director.")
@@ -219,7 +219,7 @@ def test_director_call_advance(mock_make_client, tmp_path, monkeypatch):
     assert result.exit_index == 0
 
 
-@patch("character_eng.scenario._make_client")
+@patch("character_eng.world._make_client")
 def test_director_call_context_includes_exits(mock_make_client, tmp_path, monkeypatch):
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     (tmp_path / "director_system.txt").write_text("You are director.")
@@ -246,7 +246,7 @@ def test_director_call_context_includes_exits(mock_make_client, tmp_path, monkey
     assert "→ b" in user_msg
 
 
-@patch("character_eng.scenario._make_client")
+@patch("character_eng.world._make_client")
 def test_director_call_context_includes_people(mock_make_client, tmp_path, monkeypatch):
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     (tmp_path / "director_system.txt").write_text("You are director.")
@@ -274,7 +274,7 @@ def test_director_call_context_includes_people(mock_make_client, tmp_path, monke
     assert "Alice" in user_msg
 
 
-@patch("character_eng.scenario._make_client")
+@patch("character_eng.world._make_client")
 def test_director_call_reads_prompt_file(mock_make_client, tmp_path, monkeypatch):
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     (tmp_path / "director_system.txt").write_text("Director v1")
