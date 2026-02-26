@@ -21,8 +21,6 @@ from character_eng.prompts import list_characters, load_prompt
 from character_eng.qa_personas import _action_badge, _esc, annotation_assets
 from character_eng.scenario import DirectorResult, load_scenario_script, director_call
 from character_eng.world import (
-    Beat,
-    ConditionResult,
     EvalResult,
     Goals,
     PlanResult,
@@ -30,6 +28,7 @@ from character_eng.world import (
     WorldUpdate,
     condition_check_call,
     eval_call,
+    expression_call,
     format_pending_narrator,
     load_beat_guide,
     load_goals,
@@ -413,6 +412,20 @@ def save_chat_html(character: str, model_config: dict, log: list[dict], session_
         if response:
             resp_html = f'<div class="npc-response">{_esc(response)}</div>'
 
+        # Expression metadata (gaze/expression from post-processing)
+        expr_gaze = entry.get("gaze", "")
+        expr_gaze_type = entry.get("gaze_type", "hold")
+        expr_expression = entry.get("expression", "")
+        if expr_gaze or expr_expression:
+            gaze_display = _esc(expr_gaze)
+            if expr_gaze_type == "glance":
+                gaze_display += " (glance)"
+            resp_html += (
+                f'<div class="eval-details" style="margin-top:0.2em;font-size:0.85em;color:#8b949e;">'
+                f'gaze: {gaze_display} &middot; expression: {_esc(expr_expression)}'
+                f'</div>'
+            )
+
         # Extras from preceding eval/reconcile entries
         extras_html = ""
         for ex in pending_extras:
@@ -422,8 +435,6 @@ def save_chat_html(character: str, model_config: dict, log: list[dict], session_
                     f'<details class="eval-details"><summary>eval: {_esc(ex.get("script_status", "?"))}</summary>'
                     f'<div class="eval-body">'
                     f'<div><b>thought:</b> {_esc(ex.get("thought", ""))}</div>'
-                    f'<div><b>gaze:</b> {_esc(ex.get("gaze", ""))}</div>'
-                    f'<div><b>expression:</b> {_esc(ex.get("expression", ""))}</div>'
                     f'<div><b>status:</b> {_esc(ex.get("script_status", ""))}</div>'
                 )
                 if ex.get("plan_request"):
@@ -979,8 +990,14 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             # First user input: natural LLM response, then background eval + replan
             if not had_user_input:
                 had_user_input = True
-                response = stream_response(session, label, user_input, voice_io=voice_io)
-                log.append({"type": "send", "input": user_input, "response": response})
+                response = stream_response(session, label, user_input, voice_io=voice_io, expr_model_config=model_config)
+                expr = stream_response._last_expr
+                entry = {"type": "send", "input": user_input, "response": response}
+                if expr:
+                    entry["gaze"] = expr.gaze
+                    entry["gaze_type"] = expr.gaze_type
+                    entry["expression"] = expr.expression
+                log.append(entry)
                 _bump_version()
                 _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
                 _start_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
@@ -994,18 +1011,20 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
             if script.current_beat is not None:
                 # Normal path: LLM-guided beat delivery — reacts to user while serving intent
-                response = stream_guided_beat(session, script.current_beat, label, user_input, voice_io=voice_io)
-                log.append({"type": "send", "input": user_input, "response": response})
-                _bump_version()
-                _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
-                _start_director(scenario, world, people, session, eval_model_config)
+                response = stream_guided_beat(session, script.current_beat, label, user_input, voice_io=voice_io, expr_model_config=model_config)
             else:
                 # No script available (planner unavailable/failed) — LLM generates response
-                response = stream_response(session, label, user_input, voice_io=voice_io)
-                log.append({"type": "send", "input": user_input, "response": response})
-                _bump_version()
-                _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
-                _start_director(scenario, world, people, session, eval_model_config)
+                response = stream_response(session, label, user_input, voice_io=voice_io, expr_model_config=model_config)
+            expr = stream_response._last_expr
+            entry = {"type": "send", "input": user_input, "response": response}
+            if expr:
+                entry["gaze"] = expr.gaze
+                entry["gaze_type"] = expr.gaze_type
+                entry["expression"] = expr.expression
+            log.append(entry)
+            _bump_version()
+            _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
+            _start_director(scenario, world, people, session, eval_model_config)
             _arm_auto_beat = True
 
 
@@ -1051,8 +1070,6 @@ def run_plan(session, world, goals, plan_request, big_model_config, people=None,
 def display_eval(result):
     """Display all eval fields."""
     console.print(f"[dim]  thought:    {result.thought}[/dim]")
-    console.print(f"[dim]  gaze:       {result.gaze}[/dim]")
-    console.print(f"[dim]  expression: {result.expression}[/dim]")
     console.print(f"[dim]  status:     {result.script_status}[/dim]")
     if result.plan_request:
         console.print(f"[dim]  plan_req:   {result.plan_request}[/dim]")
@@ -1062,8 +1079,6 @@ def eval_to_dict(result):
     """Convert EvalResult to dict for logging."""
     d = {
         "thought": result.thought,
-        "gaze": result.gaze,
-        "expression": result.expression,
         "script_status": result.script_status,
     }
     if result.bootstrap_line:
@@ -1076,12 +1091,47 @@ def eval_to_dict(result):
 
 def inject_eval(session, result):
     """Inject eval result into session history so future evals can build on it."""
-    parts = [f"[Inner thought: {result.thought}]"]
+    session.inject_system(f"[Inner thought: {result.thought}]")
+
+
+def run_expression(session, model_config, line=None):
+    """Run expression_call on a character line. Display + inject + return for logging.
+
+    If line is None, scans session history for the last assistant message.
+    """
+    if line is None:
+        history = session.get_history()
+        for msg in reversed(history):
+            if msg["role"] == "assistant":
+                line = msg["content"]
+                break
+    if not line:
+        return None
+
+    try:
+        result = expression_call(line, model_config)
+    except Exception as e:
+        console.print(f"[dim]  expression error: {e}[/dim]")
+        return None
+
+    if result.gaze or result.expression:
+        gaze_label = result.gaze
+        if result.gaze_type == "glance":
+            gaze_label += " (glance)"
+        console.print(f"  gaze: {gaze_label}  expression: {result.expression}")
+
+    parts = []
     if result.gaze:
-        parts.append(f"[gaze:{result.gaze}]")
+        if result.gaze_type == "glance":
+            parts.append(f"[glance:{result.gaze}]")
+        else:
+            parts.append(f"[gaze:{result.gaze}]")
     if result.expression:
         parts.append(f"[emote:{result.expression}]")
-    session.inject_system(" ".join(parts))
+    if parts:
+        session.inject_system(" ".join(parts))
+
+    return result
 
 
 def deliver_beat(session, beat, label, voice_io=None):
@@ -1103,39 +1153,19 @@ def deliver_beat(session, beat, label, voice_io=None):
     return beat.line
 
 
-def stream_guided_beat(session, beat, label, user_input, voice_io=None) -> str:
+def stream_guided_beat(session, beat, label, user_input, voice_io=None, expr_model_config=None) -> str:
     """Use the beat's intent to guide an LLM response that reacts to user input.
 
     Injects beat guidance as a system message, then streams a real LLM response.
     The LLM sees the intent and example line, but generates its own dialogue that
     acknowledges what the user said. Returns the full response text.
     """
-    # Display beat metadata (gaze/expression) before delivery
-    if beat.gaze or beat.expression:
-        parts = []
-        if beat.gaze:
-            parts.append(f"gaze:{beat.gaze}")
-        if beat.expression:
-            parts.append(f"emote:{beat.expression}")
-        console.print(f"[dim]  {', '.join(parts)}[/dim]")
-
     # Inject beat guidance so the LLM knows the intent
     guidance = load_beat_guide(beat.intent, beat.line)
     session.inject_system(guidance)
 
     # Stream a real LLM response guided by the beat intent
-    response = stream_response(session, label, user_input, voice_io=voice_io)
-
-    # Inject beat gaze/expression metadata after response
-    meta_parts = []
-    if beat.gaze:
-        meta_parts.append(f"[gaze:{beat.gaze}]")
-    if beat.expression:
-        meta_parts.append(f"[emote:{beat.expression}]")
-    if meta_parts:
-        session.inject_system(" ".join(meta_parts))
-
-    return response
+    return stream_response(session, label, user_input, voice_io=voice_io, expr_model_config=expr_model_config)
 
 
 def apply_plan(script, plan_result):
@@ -1144,15 +1174,7 @@ def apply_plan(script, plan_result):
     console.print(f"[magenta]Script loaded ({len(plan_result.beats)} beats):[/magenta]")
     for i, beat in enumerate(plan_result.beats):
         marker = "→" if i == 0 else " "
-        extras = ""
-        if beat.gaze or beat.expression:
-            parts = []
-            if beat.gaze:
-                parts.append(beat.gaze)
-            if beat.expression:
-                parts.append(beat.expression)
-            extras = f" ({', '.join(parts)})"
-        console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"{extras}[/magenta]")
+        console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"[/magenta]")
 
 
 def handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=None, people=None, scenario=None):
@@ -1206,38 +1228,26 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
                             idle_text = idle_text[:spoken] + " \u2014"
                 session.add_assistant(idle_text)
                 entry["idle"] = idle_text
-            if cond_result.gaze:
-                console.print(f"[dim]  gaze:       {cond_result.gaze}[/dim]")
-                entry["gaze"] = cond_result.gaze
-            if cond_result.expression:
-                console.print(f"[dim]  expression: {cond_result.expression}[/dim]")
-                entry["expression"] = cond_result.expression
+                expr = run_expression(session, model_config)
+                if expr:
+                    entry["gaze"] = expr.gaze
+                    entry["gaze_type"] = expr.gaze_type
+                    entry["expression"] = expr.expression
             log.append(entry)
             return
 
-    # 3. Display beat gaze/expression
-    if beat.gaze or beat.expression:
-        parts = []
-        if beat.gaze:
-            parts.append(f"gaze:{beat.gaze}")
-        if beat.expression:
-            parts.append(f"emote:{beat.expression}")
-        console.print(f"[dim]  {', '.join(parts)}[/dim]")
-
-    # 4. Deliver the beat
+    # 3. Deliver the beat
     response = deliver_beat(session, beat, label, voice_io=voice_io)
     entry["response"] = response
 
-    # 5. Inject beat metadata
-    meta_parts = []
-    if beat.gaze:
-        meta_parts.append(f"[gaze:{beat.gaze}]")
-    if beat.expression:
-        meta_parts.append(f"[emote:{beat.expression}]")
-    if meta_parts:
-        session.inject_system(" ".join(meta_parts))
+    # 4. Expression post-processing
+    expr = run_expression(session, model_config)
+    if expr:
+        entry["gaze"] = expr.gaze
+        entry["gaze_type"] = expr.gaze_type
+        entry["expression"] = expr.expression
 
-    # 6. Advance
+    # 5. Advance
     stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
     script.advance()
     if script.current_beat:
@@ -1266,7 +1276,8 @@ def handle_world_change(session, world, goals, script, change_text, label, model
     session.inject_system(narrator_msg)
 
     # Character reacts (no synchronous eval — narrator injection provides enough context)
-    response = stream_response(session, label, "[React to what just happened.]", voice_io=voice_io)
+    response = stream_response(session, label, "[React to what just happened.]", voice_io=voice_io, expr_model_config=model_config)
+    expr = stream_response._last_expr
 
     entry = {
         "type": "world",
@@ -1274,6 +1285,10 @@ def handle_world_change(session, world, goals, script, change_text, label, model
         "narrator": narrator_msg,
         "response": response,
     }
+    if expr:
+        entry["gaze"] = expr.gaze
+        entry["gaze_type"] = expr.gaze_type
+        entry["expression"] = expr.expression
     log.append(entry)
 
     # Start background reconciliation
@@ -1295,7 +1310,8 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
     session.inject_system(narrator_msg)
 
     # Character reacts
-    response = stream_response(session, label, "[React to what you just noticed.]", voice_io=voice_io)
+    response = stream_response(session, label, "[React to what you just noticed.]", voice_io=voice_io, expr_model_config=model_config)
+    expr = stream_response._last_expr
 
     entry = {
         "type": "see",
@@ -1303,6 +1319,10 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
         "narrator": narrator_msg,
         "response": response,
     }
+    if expr:
+        entry["gaze"] = expr.gaze
+        entry["gaze_type"] = expr.gaze_type
+        entry["expression"] = expr.expression
     log.append(entry)
 
     # Start background reconciliation + eval + director
@@ -1348,8 +1368,14 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
             # Quoted line → user message
             text = desc.strip('"')
             console.print(f"[bold blue]You[/bold blue]: {text}")
-            response = stream_response(session, label, text, voice_io=voice_io)
-            log.append({"type": "send", "input": text, "response": response})
+            response = stream_response(session, label, text, voice_io=voice_io, expr_model_config=model_config)
+            expr = stream_response._last_expr
+            entry = {"type": "send", "input": text, "response": response}
+            if expr:
+                entry["gaze"] = expr.gaze
+                entry["gaze_type"] = expr.gaze_type
+                entry["expression"] = expr.expression
+            log.append(entry)
             _bump_version()
             _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
             _start_director(scenario, world, people, session, eval_model_config)
@@ -1360,11 +1386,15 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
     console.print(f"[cyan]Sim: complete[/cyan]")
 
 
-def stream_response(session, label, message, voice_io=None) -> str:
+def stream_response(session, label, message, voice_io=None, expr_model_config=None) -> str:
     """Send a message and stream the response. Returns full response text.
 
     When voice_io is provided, also feeds chunks to TTS and checks for barge-in.
+    When expr_model_config is provided, fires expression_call as soon as LLM
+    streaming finishes (overlaps with TTS playback). Result stored on
+    stream_response._last_expr for the caller to pick up.
     """
+    stream_response._last_expr = None
     npc_name = Text(f"{label}: ", style="bold magenta")
     console.print(npc_name, end="")
     full_response = []
@@ -1390,6 +1420,11 @@ def stream_response(session, label, message, voice_io=None) -> str:
             voice_io._tts.send_text(chunk)
 
         t_llm_done = time.time()
+
+        # Fire expression as soon as LLM is done (overlaps with TTS playback)
+        if expr_model_config is not None and full_response:
+            line_text = "".join(full_response)
+            stream_response._last_expr = run_expression(session, expr_model_config, line=line_text)
 
         # Signal end of text input
         if not voice_io._cancelled.is_set() and voice_io._tts is not None:
@@ -1423,6 +1458,11 @@ def stream_response(session, label, message, voice_io=None) -> str:
                 t_first = time.time()
             full_response.append(chunk)
             console.print(chunk, end="", highlight=False)
+
+        # Fire expression after LLM streaming (no TTS to overlap with, but still before timing print)
+        if expr_model_config is not None and full_response:
+            line_text = "".join(full_response)
+            stream_response._last_expr = run_expression(session, expr_model_config, line=line_text)
 
     # Close generator to trigger chat.py's finally block (records partial response)
     gen.close()

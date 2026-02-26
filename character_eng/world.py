@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -43,8 +42,6 @@ class WorldUpdate:
 class Beat:
     line: str  # pre-rendered dialogue line
     intent: str  # what this beat is trying to accomplish
-    gaze: str = ""  # where the character looks (e.g. "customer", "stand")
-    expression: str = ""  # facial expression (e.g. "curious", "excited")
     condition: str = ""  # natural language precondition (empty = auto-deliver)
 
 
@@ -52,8 +49,6 @@ class Beat:
 class ConditionResult:
     met: bool
     idle: str = ""  # in-character idle line when not met
-    gaze: str = ""
-    expression: str = ""
 
 
 @dataclass
@@ -83,16 +78,8 @@ class Script:
         lines: list[str] = []
         for i, beat in enumerate(self.beats):
             marker = "→" if i == self._index else " "
-            extras = ""
-            if beat.gaze or beat.expression:
-                parts = []
-                if beat.gaze:
-                    parts.append(beat.gaze)
-                if beat.expression:
-                    parts.append(beat.expression)
-                extras = f" ({', '.join(parts)})"
             cond = f" IF: {beat.condition}" if beat.condition else ""
-            lines.append(f"{marker} {i}. [{beat.intent}] \"{beat.line}\"{extras}{cond}")
+            lines.append(f"{marker} {i}. [{beat.intent}] \"{beat.line}\"{cond}")
         return "\n".join(lines)
 
     def show(self) -> Panel:
@@ -103,12 +90,17 @@ class Script:
 @dataclass
 class EvalResult:
     thought: str
-    gaze: str
-    expression: str
     script_status: str  # "advance" | "hold" | "off_book" | "bootstrap"
     bootstrap_line: str = ""
     bootstrap_intent: str = ""
     plan_request: str = ""
+
+
+@dataclass
+class ExpressionResult:
+    gaze: str = ""
+    gaze_type: str = "hold"  # "hold" (steady) or "glance" (brief look then return)
+    expression: str = ""
 
 
 @dataclass
@@ -377,12 +369,6 @@ def reconcile_call(world: WorldState, pending_changes: list[str], model_config: 
     )
 
 
-def _strip_tag(value: str, tag: str) -> str:
-    """Strip wrapping like '<gaze:customer>' down to just 'customer'."""
-    m = re.match(rf"<{tag}:(.+?)>", value)
-    return m.group(1) if m else value
-
-
 # --- Eval LLM call ---
 
 
@@ -449,8 +435,6 @@ def eval_call(
 
     return EvalResult(
         thought=data.get("thought", ""),
-        gaze=_strip_tag(data.get("gaze", ""), "gaze"),
-        expression=_strip_tag(data.get("expression", "neutral"), "emote"),
         script_status=data.get("script_status", "hold"),
         bootstrap_line=data.get("bootstrap_line", ""),
         bootstrap_intent=data.get("bootstrap_intent", ""),
@@ -507,8 +491,6 @@ def condition_check_call(
     return ConditionResult(
         met=bool(data.get("met", False)),
         idle=data.get("idle", ""),
-        gaze=_strip_tag(data.get("gaze", ""), "gaze"),
-        expression=_strip_tag(data.get("expression", "neutral"), "emote"),
     )
 
 
@@ -585,9 +567,46 @@ def plan_call(
             beats.append(Beat(
                 line=b["line"],
                 intent=b["intent"],
-                gaze=b.get("gaze", ""),
-                expression=b.get("expression", ""),
                 condition=b.get("condition", ""),
             ))
 
     return PlanResult(beats=beats)
+
+
+# --- Expression post-processing LLM call ---
+
+
+DEFAULT_GAZE_TARGETS = ["person", "fliers", "stand"]
+
+
+def expression_call(
+    last_line: str,
+    model_config: dict,
+    gaze_targets: list[str] | None = None,
+) -> ExpressionResult:
+    """Derive gaze target and facial expression from the character's latest dialogue."""
+    targets = gaze_targets or DEFAULT_GAZE_TARGETS
+    system_prompt = _load_prompt_file("expression_system.txt").replace(
+        "{gaze_targets}", ", ".join(targets)
+    )
+
+    client = _make_client(model_config)
+    response = client.chat.completions.create(
+        model=model_config["model"],
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": last_line},
+        ],
+        temperature=0.3,
+        response_format={"type": "json_object"},
+    )
+
+    data = json.loads(response.choices[0].message.content)
+    gaze_type = data.get("gaze_type", "hold")
+    if gaze_type not in ("hold", "glance"):
+        gaze_type = "hold"
+    return ExpressionResult(
+        gaze=data.get("gaze", ""),
+        gaze_type=gaze_type,
+        expression=data.get("expression", "neutral"),
+    )
