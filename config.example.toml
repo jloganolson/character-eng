@@ -15,9 +15,10 @@
 # Start in voice mode by default (same as --voice flag).
 # enabled = false
 
-# Mic muting during TTS playback (echo suppression).
-# Set to false if your mic has hardware AEC (e.g. reSpeaker XVF3800).
-# mic_mute_during_playback = true
+# Acoustic echo cancellation (WebRTC AEC3 via LiveKit).
+# Keeps mic live during robot speech, enabling barge-in.
+# Set to false to fall back to mic-muting during playback.
+# aec = true
 
 # TTS backend: "elevenlabs" (cloud), "qwen" (Qwen3-TTS, in-process GPU),
 #              "pocket" (Pocket-TTS server), or "local" (alias for qwen).

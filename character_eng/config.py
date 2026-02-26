@@ -12,7 +12,7 @@ class VoiceConfig:
     input_device: int | str | None = None
     output_device: int | str | None = None
     enabled: bool = False
-    mic_mute_during_playback: bool = True  # False for devices with hardware AEC
+    aec: bool = True  # WebRTC AEC3 echo cancellation; False to fall back to mic-muting
     tts_backend: str = "elevenlabs"  # "elevenlabs", "qwen", "pocket", or "local" (alias for qwen)
     ref_audio: str = ""  # path to reference audio WAV for voice cloning
     ref_text: str = ""  # transcript of ref_audio for qwen ICL mode (higher quality cloning)
@@ -40,7 +40,7 @@ def load_config() -> AppConfig:
         input_device=voice_data.get("input_device"),
         output_device=voice_data.get("output_device"),
         enabled=voice_data.get("enabled", False),
-        mic_mute_during_playback=voice_data.get("mic_mute_during_playback", True),
+        aec=voice_data.get("aec", True),
         tts_backend=voice_data.get("tts_backend", "elevenlabs"),
         ref_audio=voice_data.get("ref_audio", ""),
         ref_text=voice_data.get("ref_text", ""),

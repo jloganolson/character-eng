@@ -166,6 +166,27 @@ def test_speaker_flush_preserves_counters():
     assert speaker._bytes_enqueued == enqueued_before
 
 
+def test_speaker_on_output_callback():
+    """on_output should be called with played PCM bytes after each callback."""
+    played_chunks = []
+    speaker = SpeakerStream(on_output=played_chunks.append)
+    frame_bytes = 4800
+    speaker.enqueue(b"\x42" * frame_bytes)
+
+    outdata = bytearray(frame_bytes)
+    speaker._callback(outdata, 2400, None, None)
+    assert len(played_chunks) == 1
+    assert played_chunks[0] == bytes(outdata)
+
+
+def test_speaker_on_output_not_called_when_none():
+    """No error when on_output is None (default)."""
+    speaker = SpeakerStream()
+    speaker.enqueue(b"\x42" * 4800)
+    outdata = bytearray(4800)
+    speaker._callback(outdata, 2400, None, None)  # should not raise
+
+
 # --- DeepgramSTT ---
 
 
@@ -356,15 +377,51 @@ def test_voice_io_auto_beat_timer_cancel():
     assert voice._event_queue.empty()
 
 
-def test_voice_io_barge_in_guard_when_speaking():
-    """_on_turn_start should call cancel_speech when _is_speaking is True."""
-    voice = VoiceIO()
+def test_voice_io_barge_in_guard_when_speaking_no_aec():
+    """_on_turn_start should cancel speech when speaking (legacy, no AEC)."""
+    voice = VoiceIO(aec=False)
     voice._speaker = MagicMock()
     voice._tts = MagicMock()
     voice._is_speaking = True
 
     voice._on_turn_start()
     assert voice._cancelled.is_set()
+
+
+def test_voice_io_turn_start_ignored_during_playback_with_aec():
+    """_on_turn_start should NOT cancel speech when AEC is active (too sensitive)."""
+    voice = VoiceIO(aec=True)
+    voice._aec = MagicMock()
+    voice._speaker = MagicMock()
+    voice._tts = MagicMock()
+    voice._is_speaking = True
+
+    voice._on_turn_start()
+    assert not voice._cancelled.is_set()
+
+
+def test_voice_io_transcript_triggers_barge_in_with_aec():
+    """_on_transcript should cancel speech when AEC is active and speaking."""
+    voice = VoiceIO(aec=True)
+    voice._aec = MagicMock()
+    voice._speaker = MagicMock()
+    voice._tts = MagicMock()
+    voice._is_speaking = True
+
+    voice._on_transcript("hello")
+    assert voice._cancelled.is_set()
+    assert voice._event_queue.get(timeout=0.1) == "hello"
+
+
+def test_voice_io_transcript_no_barge_in_when_not_speaking():
+    """_on_transcript should just queue text when not speaking."""
+    voice = VoiceIO(aec=True)
+    voice._aec = MagicMock()
+    voice._is_speaking = False
+
+    voice._on_transcript("hello")
+    assert not voice._cancelled.is_set()
+    assert voice._event_queue.get(timeout=0.1) == "hello"
 
 
 def test_voice_io_barge_in_guard_when_not_speaking():
@@ -378,9 +435,9 @@ def test_voice_io_barge_in_guard_when_not_speaking():
     assert not voice._cancelled.is_set()
 
 
-def test_voice_io_mic_muted_while_speaking():
-    """_on_mic_audio should not forward to STT when _is_speaking is True."""
-    voice = VoiceIO()
+def test_voice_io_mic_muted_while_speaking_no_aec():
+    """_on_mic_audio should not forward to STT when speaking and AEC is off."""
+    voice = VoiceIO(aec=False)
     voice._stt = MagicMock()
     voice._is_speaking = True
 
@@ -388,9 +445,9 @@ def test_voice_io_mic_muted_while_speaking():
     voice._stt.send_audio.assert_not_called()
 
 
-def test_voice_io_mic_active_when_not_speaking():
-    """_on_mic_audio should forward to STT when _is_speaking is False."""
-    voice = VoiceIO()
+def test_voice_io_mic_active_when_not_speaking_no_aec():
+    """_on_mic_audio should forward to STT when not speaking and AEC is off."""
+    voice = VoiceIO(aec=False)
     voice._stt = MagicMock()
     voice._is_speaking = False
 
@@ -398,14 +455,19 @@ def test_voice_io_mic_active_when_not_speaking():
     voice._stt.send_audio.assert_called_once_with(b"\x00" * 100)
 
 
-def test_voice_io_mic_not_muted_when_flag_disabled():
-    """_on_mic_audio should forward even while speaking when mic_mute_during_playback is False."""
-    voice = VoiceIO(mic_mute_during_playback=False)
+def test_voice_io_mic_routes_through_aec():
+    """_on_mic_audio should process through AEC when AEC is active."""
+    voice = VoiceIO(aec=True)
     voice._stt = MagicMock()
     voice._is_speaking = True
 
+    mock_aec = MagicMock()
+    mock_aec.process_capture.return_value = b"\x01" * 50
+    voice._aec = mock_aec
+
     voice._on_mic_audio(b"\x00" * 100)
-    voice._stt.send_audio.assert_called_once_with(b"\x00" * 100)
+    mock_aec.process_capture.assert_called_once_with(b"\x00" * 100)
+    voice._stt.send_audio.assert_called_once_with(b"\x01" * 50)
 
 
 def test_voice_io_cancel_speech_sets_barged_in():

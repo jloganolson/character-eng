@@ -42,9 +42,9 @@ Both configured in `models.py`. No model selection menu — auto-selects on star
 - **Scenario director**: TOML-based branching stage graph; director LLM evaluates exit conditions after each turn
 - **Person state**: individual people tracked with scoped fact IDs (`p1f1`, `p1f2`, ...); reconciler handles assignments
 - **Perception**: `/see` for manual events, `/sim` for scripted replay from `.sim.txt` files
-- **Voice mode**: Deepgram STT + configurable TTS (ElevenLabs, Qwen3-TTS local, Pocket-TTS). All TTS backends share 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`)
+- **Voice mode**: Deepgram STT + configurable TTS (ElevenLabs, Qwen3-TTS local, Pocket-TTS). WebRTC AEC3 (via LiveKit) keeps mic live during playback for barge-in. All TTS backends share 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`)
 
-### Modules (16 total)
+### Modules (17 total)
 | Module | Purpose |
 |--------|---------|
 | `__main__.py` | TUI entry point, command dispatch, background thread orchestration |
@@ -56,6 +56,7 @@ Both configured in `models.py`. No model selection menu — auto-selects on star
 | `person.py` | Person/PeopleState tracking with scoped fact IDs |
 | `scenario.py` | ScenarioScript (TOML stage graph), director_call |
 | `perception.py` | PerceptionEvent, SimScript, `/see` and `/sim` support |
+| `aec.py` | LiveKitAEC (WebRTC AEC3) + resample_to_16k helper |
 | `voice.py` | VoiceIO orchestrator, MicStream, SpeakerStream, DeepgramSTT, ElevenLabsTTS, KeyListener |
 | `local_tts.py` | Qwen3-TTS local GPU TTS (drop-in ElevenLabs replacement) |
 | `pocket_tts.py` | Pocket-TTS streaming HTTP client |

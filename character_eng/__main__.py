@@ -539,8 +539,8 @@ def _create_voice_io(voice_cfg, VoiceIO_cls):
     """Create a VoiceIO instance from voice config."""
     kw = _voice_dev_kw(voice_cfg)
     if voice_cfg is not None:
-        if not voice_cfg.mic_mute_during_playback:
-            kw["mic_mute_during_playback"] = False
+        if not voice_cfg.aec:
+            kw["aec"] = False
         kw["tts_backend"] = voice_cfg.tts_backend
         kw["ref_audio"] = voice_cfg.ref_audio
         kw["ref_text"] = voice_cfg.ref_text

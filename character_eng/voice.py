@@ -46,7 +46,6 @@ _KEY_MAP = {
 }
 
 AUTO_BEAT_DELAY = 4.0  # seconds after TTS playback finishes
-ECHO_COOLDOWN = 0.4  # seconds after TTS ends to ignore Deepgram false positives
 
 
 def list_audio_devices() -> list[dict]:
@@ -252,8 +251,9 @@ class SpeakerStream:
     CHANNELS = 1
     DTYPE = "int16"
 
-    def __init__(self, device: int | None = None):
+    def __init__(self, device: int | None = None, on_output: Callable[[bytes], None] | None = None):
         self._device = device
+        self._on_output = on_output
         self._buffer = bytearray()
         self._lock = threading.Lock()
         self._stream = None
@@ -286,6 +286,9 @@ class SpeakerStream:
                 outdata[available:] = b'\x00' * (len(outdata) - available)
                 if available == 0:
                     self._done_event.set()
+        # Report played audio at speaker's actual rate (for AEC reference)
+        if self._on_output is not None:
+            self._on_output(bytes(outdata))
 
     def enqueue(self, pcm: bytes):
         """Add PCM audio bytes to the playback buffer. Resamples if needed."""
@@ -487,6 +490,8 @@ class DeepgramSTT:
             msg_type = getattr(message, "type", "")
 
         if msg_type == "SpeechStarted":
+            sys.stdout.write(f"  \033[2m[dg: speech-started{' (already)' if self._is_speaking else ''}]\033[0m\n")
+            sys.stdout.flush()
             if not self._is_speaking:
                 self._is_speaking = True
                 self._on_turn_start()
@@ -537,6 +542,9 @@ class DeepgramSTT:
 
         if transcript and is_final:
             self._pending_transcript = transcript
+            if not speech_final:
+                sys.stdout.write(f"  \033[2m[dg: is-final \"{transcript[:40]}\"]\033[0m\n")
+                sys.stdout.flush()
 
         if speech_final and self._pending_transcript:
             text = self._pending_transcript.strip()
@@ -794,7 +802,7 @@ class VoiceIO:
         voice_id: str = "",
         input_device: int | None = None,
         output_device: int | None = None,
-        mic_mute_during_playback: bool = True,
+        aec: bool = True,
         tts_backend: str = "elevenlabs",
         ref_audio: str = "",
         ref_text: str = "",
@@ -809,8 +817,8 @@ class VoiceIO:
         self._barged_in = False
         self._auto_beat_timer: threading.Timer | None = None
         self._auto_beat_countdown_active = False
-        self._mic_mute_during_playback = mic_mute_during_playback
-        self._tts_done_at: float = 0.0  # timestamp when TTS playback finished
+        self._aec_enabled = aec
+        self._aec = None  # LiveKitAEC, created in start() if enabled
 
         # Components (created in start())
         self._speaker: SpeakerStream | None = None
@@ -838,7 +846,22 @@ class VoiceIO:
         self._input_device = resolve_device(self._input_device, "input")
         self._output_device = resolve_device(self._output_device, "output")
 
-        self._speaker = SpeakerStream(device=self._output_device)
+        # Set up AEC if enabled — speaker reports played audio for echo reference
+        on_output = None
+        if self._aec_enabled:
+            from character_eng.aec import LiveKitAEC, resample_to_16k
+
+            self._aec = LiveKitAEC(stream_delay_ms=0)
+
+            def _feed_aec(played_bytes: bytes):
+                """Resample speaker output to 16kHz and feed AEC reference."""
+                if self._aec is not None:
+                    pcm_16k = resample_to_16k(played_bytes, self._speaker._actual_rate)
+                    self._aec.feed_playback(pcm_16k)
+
+            on_output = _feed_aec
+
+        self._speaker = SpeakerStream(device=self._output_device, on_output=on_output)
         self._speaker.start()
 
         if self._tts_backend in ("local", "qwen"):
@@ -1009,6 +1032,9 @@ class VoiceIO:
         if self._keys is not None:
             self._keys.stop()
             self._keys = None
+        if self._aec is not None:
+            self._aec.close()
+            self._aec = None
 
         self._stop_pocket_server()
 
@@ -1113,7 +1139,6 @@ class VoiceIO:
         if self._tts is not None:
             self._tts.close()
         self._is_speaking = False
-        self._tts_done_at = time.time()
 
     def cancel_speech(self):
         """Barge-in: cancel current LLM+TTS+speaker, cancel auto-beat."""
@@ -1127,41 +1152,59 @@ class VoiceIO:
             self._speaker.flush()
 
     def _on_mic_audio(self, data: bytes):
-        """Forward mic audio to STT, unless muted during TTS playback (echo suppression).
+        """Forward mic audio to STT, processing through AEC if enabled.
 
-        When mic_mute_during_playback is False (e.g. device has hardware AEC),
-        audio is always forwarded, enabling voice barge-in during playback.
+        With AEC on: mic stays live always, audio cleaned via AEC before STT.
+        With AEC off: mic muted during playback (legacy echo suppression).
         """
-        if self._mic_mute_during_playback and self._is_speaking:
-            return
-        if self._stt is not None:
-            self._stt.send_audio(data)
+        if self._aec is not None:
+            cleaned = self._aec.process_capture(data)
+            if self._stt is not None and len(cleaned) > 0:
+                self._stt.send_audio(cleaned)
+        else:
+            # Legacy: mute mic during playback
+            if self._is_speaking:
+                return
+            if self._stt is not None:
+                self._stt.send_audio(data)
 
     def _on_transcript(self, text: str):
-        """Called by DeepgramSTT when a complete utterance is detected."""
+        """Called by DeepgramSTT when a complete utterance is detected.
+
+        With AEC, barge-in triggers here (on real transcript) instead of on
+        SpeechStarted, since AEC residual can cause false VAD triggers.
+        """
+        if self._aec is not None and self._is_speaking:
+            self._cancel_auto_beat()
+            if self._started:
+                sys.stdout.write(f"\n  [barge-in: transcript while speaking]\n")
+                sys.stdout.flush()
+            self.cancel_speech()
         self._event_queue.put(text)
 
     def _on_turn_start(self):
-        """Called by DeepgramSTT when user starts speaking (barge-in trigger).
+        """Called by DeepgramSTT when user starts speaking (SpeechStarted VAD).
 
-        During active speech (_is_speaking), always triggers barge-in.
-        After TTS finishes, ignores speech-start within ECHO_COOLDOWN to avoid
-        Deepgram false positives from mic echo cancelling the auto-beat.
+        With AEC: ignored during playback (too sensitive to residual echo).
+        Barge-in is handled in _on_transcript() instead.
+        Without AEC: triggers barge-in during playback (legacy behavior).
         """
         if self._is_speaking:
-            # Real barge-in during active TTS playback
+            if self._aec is not None:
+                # AEC mode: ignore SpeechStarted during playback — barge-in
+                # only triggers on real transcript in _on_transcript()
+                if self._started:
+                    sys.stdout.write("  \033[2m[aec: ignoring speech-started during playback]\033[0m\n")
+                    sys.stdout.flush()
+                return
+            # Legacy: barge-in on SpeechStarted
             self._cancel_auto_beat()
             if self._started:
-                sys.stdout.write("\n  [heard — interrupting]\n")
+                sys.stdout.write("\n  [barge-in: speech-started while speaking]\n")
                 sys.stdout.flush()
             self.cancel_speech()
-        elif time.time() - self._tts_done_at < ECHO_COOLDOWN:
-            # Echo cooldown — ignore this speech-start, likely mic feedback
-            if self._started:
-                sys.stdout.write("  \033[2m[dg: speech-start (echo, ignored)]\033[0m\n")
-                sys.stdout.flush()
         else:
-            # Real speech after cooldown — cancel auto-beat
+            # Real speech — cancel auto-beat
             had_auto_beat = self._auto_beat_timer is not None
             self._cancel_auto_beat()
             if had_auto_beat and self._started:
@@ -1225,20 +1268,20 @@ class VoiceIO:
         self._event_queue.put("/beat")
 
     def _countdown_loop(self):
-        """Print auto-beat countdown dots to stdout. Clears line on cancel or fire."""
+        """Print auto-beat countdown dots to stdout."""
         sys.stdout.write("  auto-beat ")
         sys.stdout.flush()
         for _ in range(int(AUTO_BEAT_DELAY)):
             if not self._auto_beat_countdown_active:
-                sys.stdout.write("\r\033[K")
+                sys.stdout.write("\n")
                 sys.stdout.flush()
                 return
             time.sleep(1.0)
             if not self._auto_beat_countdown_active:
-                sys.stdout.write("\r\033[K")
+                sys.stdout.write("\n")
                 sys.stdout.flush()
                 return
             sys.stdout.write(".")
             sys.stdout.flush()
-        sys.stdout.write("\r\033[K")
+        sys.stdout.write("\n")
         sys.stdout.flush()
