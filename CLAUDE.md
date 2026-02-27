@@ -30,30 +30,30 @@ QA scripts accept `--model cerebras-llama|groq-llama|groq-gpt|gemini-3-flash|gem
 
 ## Architecture
 
-Interactive NPC character chat CLI with two-tier LLM backend (OpenAI-compatible endpoints):
-- **CHAT_MODEL** (small/fast, default `cerebras-llama` 8B) — streaming dialogue, expression post-processing
-- **BIG_MODEL** (big/slow, default `groq-llama` 70B) — eval, planning, reconciliation, direction. Falls back to chat model.
+Interactive NPC character chat CLI with single-tier 8B LLM backend (OpenAI-compatible endpoints):
+- **CHAT_MODEL** (small/fast, default `groq-llama-8b` 8B) — all LLM calls: streaming dialogue, expression, eval, director, planning, reconciliation
+- **BIG_MODEL** (kept for API compat, no longer required) — `get_big_model_config()` still exists but nothing depends on 70B
 
-Both configured in `models.py`. No model selection menu — auto-selects on startup.
+Configured in `models.py`. No model selection menu — auto-selects on startup.
 
 ### Core systems
-- **Two-speed world updates**: fast path stores pending changes + character reacts immediately; slow path (background reconciler) reconciles into structured state with stable fact IDs (`f1`, `f2`, ...)
-- **Two-speed planning**: fast eval (every turn) tracks script progress; slow planner generates multi-beat scripts
-- **Scenario director**: TOML-based branching stage graph; director LLM evaluates exit conditions after each turn
+- **Two-speed world updates**: fast path stores pending changes + character reacts immediately; slow path (background reconciler, 8B) reconciles into structured state with stable fact IDs (`f1`, `f2`, ...)
+- **Parallel post-response microservices**: `script_check_call` + `thought_call` + `director_call` run concurrently via `ThreadPoolExecutor` after each response (~350ms total vs ~1050ms sequential). Expression also parallelized for `/beat` path.
+- **Single-beat planning**: `single_beat_call` (8B) generates one beat at a time synchronously — no background plan thread, no stale discard. Called at boot, after script completion, and on off-book events.
 - **Person state**: individual people tracked with scoped fact IDs (`p1f1`, `p1f2`, ...); reconciler handles assignments
 - **Perception**: `/see` for manual events, `/sim` for scripted replay from `.sim.txt` files
-- **Expression post-processing**: After each character response, `expression_call` (CHAT_MODEL) derives gaze target + facial expression from the dialogue. Gaze picks from scene targets (static list, will be SAM3 AABBs); expression is one of 12 emotions. Social gaze modifiers (look down when sad, etc.) are handled downstream in robot control, not by the LLM.
+- **Expression post-processing**: After each character response, `expression_call` (8B) derives gaze target + facial expression from the dialogue. Gaze picks from scene targets (static list, will be SAM3 AABBs); expression is one of 12 emotions. Social gaze modifiers handled downstream in robot control, not by the LLM.
 - **Voice mode**: Deepgram STT + configurable TTS (ElevenLabs, Qwen3-TTS local, Pocket-TTS). WebRTC AEC3 (via LiveKit) keeps mic live during playback for barge-in. All TTS backends share 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`)
 
 ### Modules (17 total)
 | Module | Purpose |
 |--------|---------|
-| `__main__.py` | TUI entry point, command dispatch, background thread orchestration |
+| `__main__.py` | TUI entry point, command dispatch, parallel microservice orchestration |
 | `chat.py` | ChatSession — OpenAI client wrapper, message history, streaming |
 | `models.py` | Model config registry, CHAT_MODEL/BIG_MODEL constants |
 | `config.py` | `config.toml` loader → AppConfig/VoiceConfig dataclasses |
 | `prompts.py` | Filesystem template engine, `{{macro}}` substitution |
-| `world.py` | WorldState, Script, Goals, Beat, reconcile/eval/plan/condition/expression LLM calls |
+| `world.py` | WorldState, Script, Goals, Beat, reconcile/eval/plan/single_beat/condition/expression/script_check/thought LLM calls |
 | `person.py` | Person/PeopleState tracking with scoped fact IDs |
 | `scenario.py` | ScenarioScript (TOML stage graph), director_call |
 | `perception.py` | PerceptionEvent, SimScript, `/see` and `/sim` support |
@@ -66,8 +66,11 @@ Both configured in `models.py`. No model selection menu — auto-selects on star
 | `qa_personas.py` | 7-persona parallel stress test with HTML report |
 | `open_report.py` | HTTP server for HTML reports with annotation save |
 
+### Post-response microservices (parallel, 8B)
+After each character response, `run_post_response` fires three 8B calls concurrently via `ThreadPoolExecutor`: `script_check_call` + `thought_call` (eval), `director_call` (stage transitions). For `/beat`, `expression_call` is also included in the parallel batch. ~350ms total instead of ~1050ms sequential. Results are immediate — no stale discard needed.
+
 ### Background threading
-Four async thread pools (reconcile, eval, plan, director) — each with a lock and version-based stale discard via `_context_version`. Only boot plan and `/beat` initial replan are synchronous.
+Only reconcile uses a background thread. Planning is fully synchronous via `single_beat_call` (8B, ~350ms).
 
 ## Prompt system
 

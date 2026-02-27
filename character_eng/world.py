@@ -58,6 +58,19 @@ class ConditionResult:
 
 
 @dataclass
+class ScriptCheckResult:
+    """Result from the focused script status classification (8B microservice)."""
+    status: str  # "advance", "hold", or "off_book"
+    plan_request: str = ""
+
+
+@dataclass
+class ThoughtResult:
+    """Result from the inner monologue call (8B microservice)."""
+    thought: str = ""
+
+
+@dataclass
 class Script:
     beats: list[Beat] = field(default_factory=list)
     _index: int = field(default=0, repr=False)
@@ -486,6 +499,126 @@ def eval_call(
     )
 
 
+# --- Script check LLM call (8B microservice) ---
+
+_SCRIPT_CHECK_SYSTEM = """You are a script tracker for an interactive fiction character.
+
+Your ONLY job: decide whether the current beat's intent has been accomplished.
+
+## Input
+
+You'll receive the current beat's INTENT and LINE, plus recent conversation.
+
+## Decision
+
+- "advance" — The intent was achieved. The character said something that accomplishes it, OR the user's response made it irrelevant. If the beat's intent was to ASK a question, receiving any answer (yes, no, or otherwise) means the intent is accomplished. If the intent is even PARTIALLY done or no longer needed, advance.
+- "hold" — The intent has NOT been addressed yet.
+- "off_book" — The user explicitly rejected, dismissed, or redirected away from this topic (e.g., "I don't care about that", "let's talk about something else"). Fill in "plan_request" with what the new direction should cover.
+
+**Bias toward "advance".** If in doubt between advance and hold, pick advance.
+
+## Output
+
+Return a JSON object:
+- "status": "advance", "hold", or "off_book"
+- "plan_request": Only when status is "off_book". Brief description of new direction. Empty string otherwise."""
+
+
+def script_check_call(
+    beat: Beat,
+    history: list[dict],
+    model_config: dict,
+    world: WorldState | None = None,
+    recent_n: int = 6,
+) -> ScriptCheckResult:
+    """Focused script status classification. Minimal context, no monologue. 8B-friendly."""
+    parts: list[str] = []
+
+    parts.append("=== CURRENT BEAT ===")
+    parts.append(f"Intent: {beat.intent}")
+    parts.append(f"Example line: {beat.line}")
+
+    if world and world.dynamic:
+        parts.append("\n=== WORLD STATE ===")
+        for text in world.dynamic.values():
+            parts.append(f"- {text}")
+
+    recent = history[-recent_n:] if len(history) > recent_n else history
+    if recent:
+        parts.append("\n=== RECENT CONVERSATION ===")
+        for msg in recent:
+            role = msg["role"].upper()
+            content = msg["content"]
+            if len(content) > 200:
+                content = content[:200] + "..."
+            parts.append(f"{role}: {content}")
+
+    user_message = "\n".join(parts)
+
+    response = _llm_call(
+        model_config,
+        label="script_check",
+        messages=[
+            {"role": "system", "content": _SCRIPT_CHECK_SYSTEM},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=0.2,
+        response_format={"type": "json_object"},
+    )
+
+    data = json.loads(response.choices[0].message.content)
+
+    return ScriptCheckResult(
+        status=data.get("status", "hold"),
+        plan_request=data.get("plan_request", ""),
+    )
+
+
+# --- Thought LLM call (8B microservice) ---
+
+
+def thought_call(
+    system_prompt: str,
+    history: list[dict],
+    model_config: dict,
+    recent_n: int = 6,
+) -> ThoughtResult:
+    """Generate a brief inner monologue for the character. 8B-friendly."""
+    recent = history[-recent_n:] if len(history) > recent_n else history
+    parts: list[str] = []
+    if recent:
+        for msg in recent:
+            role = msg["role"].upper()
+            content = msg["content"]
+            if len(content) > 200:
+                content = content[:200] + "..."
+            parts.append(f"{role}: {content}")
+
+    user_message = "\n".join(parts)
+
+    response = _llm_call(
+        model_config,
+        label="thought",
+        messages=[
+            {"role": "system", "content": (
+                "You are the inner voice of a character in an interactive fiction.\n\n"
+                f"Character:\n{system_prompt[:500]}\n\n"
+                "Given the recent conversation, write 1-2 sentences of what the character "
+                "is thinking RIGHT NOW. First person. Be specific and emotional, not generic. "
+                "React to what just happened.\n\n"
+                'Return a JSON object: {"thought": "..."}'
+            )},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=0.7,
+        response_format={"type": "json_object"},
+    )
+
+    data = json.loads(response.choices[0].message.content)
+
+    return ThoughtResult(thought=data.get("thought", ""))
+
+
 # --- Condition check LLM call ---
 
 
@@ -597,6 +730,114 @@ def plan_call(
         label="plan",
         messages=[
             {"role": "system", "content": _load_prompt_file("plan_system.txt")},
+            {"role": "user", "content": user_message},
+        ],
+        temperature=0.7,
+        response_format={"type": "json_object"},
+    )
+
+    data = json.loads(response.choices[0].message.content)
+
+    beats = []
+    for b in data.get("beats", []):
+        if isinstance(b, dict) and "line" in b and "intent" in b:
+            beats.append(Beat(
+                line=b["line"],
+                intent=b["intent"],
+                condition=b.get("condition", ""),
+            ))
+
+    return PlanResult(beats=beats)
+
+
+# --- Single-beat planning (8B) ---
+
+
+_SINGLE_BEAT_SYSTEM = """You are a conversation planner for a character in an interactive fiction.
+
+Generate EXACTLY ONE conversation beat — the next thing the character should say or do.
+
+## Rules
+
+- Read the WORLD STATE and CONVERSATION carefully. Plan for the character's CURRENT situation.
+- Write dialogue in the character's authentic voice — match their personality and speech patterns.
+- The intent should be a short, achievable conversational move (one clause).
+- The line should be 1-2 sentences in the character's voice.
+- Only set a condition if the beat genuinely requires something to be true first. Most beats need no condition.
+
+## Stage goal
+
+If a CURRENT STAGE GOAL is present, the beat should advance that goal naturally.
+
+## People
+
+If a PEOPLE PRESENT section is present, the beat should acknowledge and interact with them.
+
+## Output format
+
+Return a JSON object with exactly this key:
+- "beats": An array with EXACTLY ONE object containing:
+  - "line": The dialogue line in the character's voice.
+  - "intent": Brief description of what this beat accomplishes.
+  - "condition": Precondition (empty string if none needed)."""
+
+
+def single_beat_call(
+    system_prompt: str,
+    world: WorldState | None,
+    history: list[dict],
+    goals: Goals | None = None,
+    model_config: dict | None = None,
+    plan_request: str = "",
+    people=None,
+    stage_goal: str = "",
+    recent_n: int = 6,
+) -> PlanResult:
+    """Generate a single beat using 8B. Returns PlanResult with 0-1 beats."""
+    if model_config is None:
+        return PlanResult()
+
+    context_parts: list[str] = []
+
+    context_parts.append("=== CHARACTER SYSTEM PROMPT ===")
+    context_parts.append(system_prompt)
+
+    if world:
+        context_parts.append("\n=== WORLD STATE ===")
+        context_parts.append(world.render())
+
+    if people is not None:
+        people_text = people.render()
+        if people_text:
+            context_parts.append("\n=== PEOPLE PRESENT ===")
+            context_parts.append(people_text)
+
+    if goals:
+        context_parts.append("\n=== CHARACTER GOALS ===")
+        context_parts.append(goals.render())
+
+    if stage_goal:
+        context_parts.append("\n=== CURRENT STAGE GOAL ===")
+        context_parts.append(stage_goal)
+
+    recent = history[-recent_n:] if len(history) > recent_n else history
+    if recent:
+        context_parts.append("\n=== RECENT CONVERSATION ===")
+        for msg in recent:
+            role = msg["role"].upper()
+            context_parts.append(f"{role}: {msg['content']}")
+
+    if plan_request:
+        context_parts.append("\n=== PLAN REQUEST ===")
+        context_parts.append(plan_request)
+
+    user_message = "\n".join(context_parts)
+
+    response = _llm_call(
+        model_config,
+        label="plan_single",
+        messages=[
+            {"role": "system", "content": _SINGLE_BEAT_SYSTEM},
             {"role": "user", "content": user_message},
         ],
         temperature=0.7,

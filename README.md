@@ -1,8 +1,8 @@
 # Character Engine
 
-Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Optional **voice mode** (Deepgram STT + ElevenLabs TTS) lets you speak to characters and hear them respond. Characters have personalities, world state that evolves during conversation, and a two-speed script system — a fast eval (every turn, non-blocking) tracks progress through premeditated dialogue beats, while a slow planner generates multi-beat conversation scripts. Eval and plan run in background threads so the user can keep chatting without waiting. During conversation, beats use LLM-guided delivery: the beat's intent guides the LLM to respond naturally to the user while serving the beat's purpose (no verbatim pasting). The `/beat` command (autonomous time-passing) still uses verbatim delivery for TTS pre-rendering. After each character response, a lightweight expression post-processor (CHAT_MODEL) derives gaze target and facial expression from the dialogue for robot control.
+Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Optional **voice mode** (Deepgram STT + ElevenLabs TTS) lets you speak to characters and hear them respond. Characters have personalities, world state that evolves during conversation, and a script system driven entirely by 8B microservices — post-response calls (eval + director) fire in parallel for ~350ms total instead of ~1050ms sequential. A single-beat 8B planner generates one beat at a time synchronously, eliminating background plan threads entirely. During conversation, beats use LLM-guided delivery: the beat's intent guides the LLM to respond naturally to the user while serving the beat's purpose (no verbatim pasting). The `/beat` command (autonomous time-passing) still uses verbatim delivery for TTS pre-rendering. After each character response, lightweight 8B microservices derive gaze/expression, evaluate script progress, and check scenario exit conditions — all running concurrently for immediate effect.
 
-**Scenario director**: Characters can have a branching scenario script (TOML) defining stages with goals and exit conditions. A director LLM runs after each turn to evaluate whether the conversation has met an exit condition, advancing the scenario to the next stage and triggering replanning.
+**Scenario director**: Characters can have a branching scenario script (TOML) defining stages with goals and exit conditions. A director microservice (8B, synchronous) evaluates exit conditions after each response with immediate effect — no background delay.
 
 **Person tracking**: Individual people are tracked alongside world state with scoped fact IDs (`p1f1`, `p1f2`, ...). The reconciler LLM handles person-fact assignments — no heuristic matching needed.
 
@@ -36,7 +36,7 @@ DEEPGRAM_API_KEY=your_key_here
 ELEVENLABS_API_KEY=your_key_here
 ```
 
-If multiple keys are set, you'll choose a model at startup. If only one is set, it's auto-selected. The planner and reconciler require `GEMINI_API_KEY` — if not set, the script system runs in eval-only mode and the reconciler falls back to the chat model. Background eval uses `GROQ_API_KEY` for faster thinking via Groq Llama 70B — if not set, falls back to the chat model.
+If multiple keys are set, you'll choose a model at startup. If only one is set, it's auto-selected. All LLM calls (chat, eval, plan, reconcile) use the 8B chat model — no separate big model needed.
 
 ### Configuration (optional)
 
@@ -77,7 +77,7 @@ uv run -m character_eng --voice  # voice mode (speak to chat, hear responses)
 uv run -m character_eng --smoke  # smoke test (auto greg, scripted inputs, exit)
 ```
 
-Pick a character from the menu, then chat. The character evaluates each turn in the background, tracks a script of dialogue beats, and adapts naturally. In-session commands:
+Pick a character from the menu, then chat. After each response, synchronous microservices evaluate script progress and check scenario exits with immediate effect. In-session commands:
 
 | Command | What it does |
 |---------|-------------|
@@ -102,7 +102,7 @@ Unknown `/` commands show an error with a `/help` hint.
 
 Each conversation turn follows one of two paths:
 
-**Beat exists (conversation turn)**: The beat's intent and example line are injected as guidance, then the LLM generates a response that reacts to the user's input while serving the beat's purpose. This means the character acknowledges what the user said instead of barreling through a script. After delivery, a background eval (using Groq Llama 70B for speed) decides: `advance` (move to next beat), `hold` (stay on current beat), or `off_book` (conversation diverged, trigger replanning). The eval runs asynchronously — results are applied at the start of the next turn, and stale results are discarded if the user typed again before the eval finished. The eval also detects user pushback — if the user explicitly rejects or redirects away from the current topic, the eval goes `off_book` to follow the user's interest rather than forcing the script.
+**Beat exists (conversation turn)**: The beat's intent and example line are injected as guidance, then the LLM generates a response that reacts to the user's input while serving the beat's purpose. This means the character acknowledges what the user said instead of barreling through a script. After delivery, a synchronous eval microservice (8B) decides: `advance` (move to next beat), `hold` (stay on current beat), or `off_book` (conversation diverged, trigger replanning). The eval fires immediately after each response — no background delay, no stale discard needed. The eval is split into two focused calls: `script_check_call` (classification only — did the beat's intent get accomplished?) and `thought_call` (brief inner monologue). This split lets the small model focus on classification without creative generation drowning out the signal. The eval also detects user pushback — if the user explicitly rejects or redirects away from the current topic, the eval goes `off_book` to follow the user's interest rather than forcing the script.
 
 **Beat exists (`/beat` command)**: The pre-rendered beat line is pasted verbatim — no LLM call needed. This is for autonomous time-passing and enables TTS pre-rendering. Beats can have conditions (natural language preconditions) — if a condition isn't met, the character shows an in-character idle line instead.
 
@@ -114,7 +114,7 @@ World changes (`/world <text>`) use a two-speed system:
 
 **Fast path** (immediate, no LLM): The change is stored as pending, a narrator message is injected into the conversation, and the character reacts via LLM streaming. This happens instantly.
 
-**Slow path** (background thread): A reconciler LLM (using `BIG_MODEL` if available, otherwise the chat model) processes all pending changes against ID-tagged dynamic facts, producing structured mutations (add/remove facts by stable ID, events). Results are applied at the start of the next turn with a "Reconciled" diff panel. Multiple `/world` commands before reconciliation accumulate — the next reconcile batch processes all.
+**Slow path** (background thread): A reconciler LLM (8B) processes all pending changes against ID-tagged dynamic facts, producing structured mutations (add/remove facts by stable ID, events). Results are applied at the start of the next turn with a "Reconciled" diff panel. Multiple `/world` commands before reconciliation accumulate — the next reconcile batch processes all.
 
 ## Voice mode
 
@@ -217,13 +217,13 @@ System-level prompts are also editable files in `prompts/`:
 | File | Purpose |
 |------|---------|
 | `reconcile_system.txt` | System prompt for the world-state reconciler LLM (processes pending changes using stable fact IDs, including person-scoped IDs) |
-| `eval_system.txt` | System prompt for the character eval LLM (script tracking + inner monologue) |
+| `eval_system.txt` | System prompt for the thought microservice (inner monologue generation) |
 | `condition_system.txt` | System prompt for the condition checker LLM (gates beat delivery) |
 | `plan_system.txt` | System prompt for the conversation planner LLM (beat generation with conditions, stage-goal and people aware) |
-| `director_system.txt` | System prompt for the scenario director LLM (evaluates stage exit conditions) |
+| `director_system.txt` | System prompt for the director microservice (evaluates stage exit conditions, 8B sync) |
 | `beat_guide.txt` | Template for beat guidance injected before LLM-guided delivery (`{intent}` and `{line}` placeholders) |
 
-**Live editing works** — edit any character prompt file in your editor, then type `/reload` in the chat to pick up changes without restarting. The conversation resets but you keep your place in the character menu. Reconciler, eval, and plan system prompts are re-read on every call, so edits take effect immediately without `/reload`.
+**Live editing works** — edit any character prompt file in your editor, then type `/reload` in the chat to pick up changes without restarting. The conversation resets but you keep your place in the character menu. Reconciler, eval, plan, and director system prompts are re-read on every call, so edits take effect immediately without `/reload`.
 
 ### Adding a new character
 
@@ -283,11 +283,11 @@ uv run -m character_eng.open_report logs/some_report.html  # specific file
 uv run -m character_eng.open_report --test                 # generate + serve a spoofed test report
 ```
 
-`test_plan.md` defines the QA chat scenarios in a human-editable format — add new test sections without touching code. Supports `send:`, `world:`, `script:` (load beats for eval tracking), `beat` (run eval), and `expect:` commands including `eval_status:<status>` to assert eval outcomes.
+`test_plan.md` defines the QA chat scenarios in a human-editable format — add new test sections without touching code. Supports `send:`, `world:`, `script:` (load beats for eval tracking), `beat` (run eval), and `expect:` commands including `eval_status:<status>` to assert eval outcomes. Eval now runs synchronously via split microservices (script_check + thought) so results are immediate.
 
 ### Persona QA
 
-Automated "subjective" testing — 7 LLM-driven personas chat with the character in parallel, exercising the full async loop (background eval/plan/reconcile/director). Produces an HTML report for human review.
+Automated "subjective" testing — 7 LLM-driven personas chat with the character in parallel, exercising the full loop (parallel eval/director microservices + background reconcile). Produces an HTML report for human review.
 
 | Persona | Type | Turns | Behavior |
 |---------|------|-------|----------|
@@ -299,11 +299,11 @@ Automated "subjective" testing — 7 LLM-driven personas chat with the character
 | Interrupter | Hybrid | 12 | Alternates message→beat→message→beat — tests script interruption |
 | Scene Observer | LLM | 15 | Perception tester — mix of `/see` and messages, simulates approach/interact/leave |
 
-Each persona runs in its own `ConversationDriver` with fully isolated threading state (locks, result slots, context version, people state, scenario script). The HTML report shows per-persona conversation cards with action type badges, character responses, eval details in collapsible sections, and stale discard markers.
+Each persona runs in its own `ConversationDriver` with fully isolated state (locks, result slots, context version, people state, scenario script). The HTML report shows per-persona conversation cards with action type badges, character responses, eval details in collapsible sections.
 
 ## Benchmarking
 
-Measure real-world latency across all available models for the three LLM call patterns: streaming chat, structured JSON reconcile calls, and structured JSON eval calls.
+Measure real-world latency across all available models for LLM call patterns: streaming chat and structured JSON reconcile calls.
 
 ```bash
 # Benchmark all available models (3 runs per scenario)

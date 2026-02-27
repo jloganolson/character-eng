@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -26,6 +27,8 @@ from character_eng.world import (
     Goals,
     PlanResult,
     Script,
+    ScriptCheckResult,
+    ThoughtResult,
     WorldUpdate,
     condition_check_call,
     eval_call,
@@ -36,6 +39,9 @@ from character_eng.world import (
     load_world_state,
     plan_call,
     reconcile_call,
+    script_check_call,
+    single_beat_call,
+    thought_call,
 )
 
 console = Console()
@@ -46,24 +52,6 @@ LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 _reconcile_lock = threading.Lock()
 _reconcile_result: WorldUpdate | None = None
 _reconcile_thread: threading.Thread | None = None
-
-# --- Background eval threading ---
-_eval_lock = threading.Lock()
-_eval_result: EvalResult | None = None
-_eval_thread: threading.Thread | None = None
-_eval_version: int = 0
-
-# --- Background plan threading ---
-_plan_lock = threading.Lock()
-_plan_result: PlanResult | None = None
-_plan_thread: threading.Thread | None = None
-_plan_version: int = 0
-
-# --- Background director threading ---
-_director_lock = threading.Lock()
-_director_result: DirectorResult | None = None
-_director_thread: threading.Thread | None = None
-_director_version: int = 0
 
 # --- Context version counter (main thread only) ---
 _context_version: int = 0
@@ -86,14 +74,14 @@ def _run_reconcile(world: "WorldState", pending: list[str], model_config: dict, 
         console.print(f"[red]Background reconcile error: {e}[/red]")
 
 
-def _start_reconcile(world, model_config, big_model_config, people=None):
+def _start_reconcile(world, model_config, big_model_config=None, people=None):
     """Drain pending changes and spawn background reconcile thread."""
     global _reconcile_thread
     pending = world.clear_pending()
     if not pending:
         return
-    # Use plan model if available, fall back to chat model
-    cfg = big_model_config if big_model_config else model_config
+    # 8B handles reconcile (86% vs 88% at 70B, experiment 5)
+    cfg = model_config
     _reconcile_thread = threading.Thread(
         target=_run_reconcile, args=(world, pending, cfg, people), daemon=True
     )
@@ -149,64 +137,51 @@ def _check_reconcile(world, log, people=None):
     })
 
 
-# --- Background eval functions ---
+# --- Sync eval microservices (8B) ---
 
-def _run_eval(system_prompt, world, history, model_config, goals, script, people=None, stage_goal=""):
-    """Background thread target for eval."""
-    global _eval_result
+def run_eval_sync(session, world, script, model_config, log, people=None, stage_goal=""):
+    """Run script_check + thought synchronously on chat model. Returns (needs_plan, plan_request).
+
+    Replaces the old background eval thread. Both calls use 8B for speed.
+    """
+    # Script check: advance/hold/off_book classification
+    beat = script.current_beat if script else None
+    if beat is None:
+        return (False, "")
+
     try:
-        result = eval_call(
-            system_prompt=system_prompt,
-            world=world,
-            history=history,
+        check = script_check_call(
+            beat=beat,
+            history=session.get_history(),
             model_config=model_config,
-            goals=goals,
-            script=script,
-            people=people,
-            stage_goal=stage_goal,
+            world=world,
         )
-        with _eval_lock:
-            _eval_result = result
     except Exception as e:
-        console.print(f"[red]Background eval error: {e}[/red]")
+        console.print(f"[dim]  script_check error: {e}[/dim]")
+        return (False, "")
 
+    # Thought: inner monologue
+    try:
+        tresult = thought_call(
+            system_prompt=session.system_prompt,
+            history=session.get_history(),
+            model_config=model_config,
+        )
+    except Exception as e:
+        console.print(f"[dim]  thought error: {e}[/dim]")
+        tresult = ThoughtResult(thought="")
 
-def _start_eval(session, world, goals, script, model_config, people=None, stage_goal=""):
-    """Kick off background eval. Skips if one is already in flight."""
-    global _eval_thread, _eval_version
-    if _eval_thread is not None and _eval_thread.is_alive():
-        return
-    _eval_version = _context_version
-    _eval_thread = threading.Thread(
-        target=_run_eval,
-        args=(session.system_prompt, world, session.get_history(), model_config, goals, script, people, stage_goal),
-        daemon=True,
+    # Build an EvalResult-compatible representation for display/logging
+    eval_compat = EvalResult(
+        thought=tresult.thought,
+        script_status=check.status,
+        plan_request=check.plan_request,
     )
-    _eval_thread.start()
+    display_eval(eval_compat)
+    inject_eval(session, eval_compat)
+    log.append({"type": "eval", **eval_to_dict(eval_compat)})
 
-
-def _check_eval(session, script, log):
-    """Check if background eval is ready. Apply if not stale.
-    Returns (needs_plan, plan_request) tuple."""
-    global _eval_result, _eval_thread
-    with _eval_lock:
-        result = _eval_result
-        _eval_result = None
-
-    if result is None:
-        return (False, "")
-
-    _eval_thread = None
-
-    if _eval_version != _context_version:
-        console.print(f"[dim]({_ts()} eval result discarded — stale)[/dim]")
-        return (False, "")
-
-    display_eval(result)
-    inject_eval(session, result)
-    log.append({"type": "eval", **eval_to_dict(result)})
-
-    if result.script_status == "advance":
+    if check.status == "advance":
         script.advance()
         if script.current_beat:
             console.print(f"[magenta]  {_ts()} next beat:  [{script.current_beat.intent}][/magenta]")
@@ -214,116 +189,142 @@ def _check_eval(session, script, log):
         else:
             console.print(f"[dim]  {_ts()} script complete, replanning...[/dim]")
             return (True, "")
-    elif result.script_status == "off_book" and result.plan_request:
-        return (True, result.plan_request)
+    elif check.status == "off_book" and check.plan_request:
+        return (True, check.plan_request)
 
     return (False, "")
 
 
-# --- Background plan functions ---
+# --- Parallel post-response microservices ---
 
-def _run_plan_bg(system_prompt, world, history, goals, plan_request, big_model_config, people=None, stage_goal=""):
-    """Background thread target for plan."""
-    global _plan_result
-    try:
-        result = plan_call(
-            system_prompt=system_prompt,
-            world=world,
-            history=history,
-            goals=goals,
-            plan_request=plan_request,
-            plan_model_config=big_model_config,
-            people=people,
-            stage_goal=stage_goal,
+def run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal="", expression_line=None):
+    """Run eval (script_check + thought) and director in parallel. Returns (needs_plan, plan_request, expr_result).
+
+    When expression_line is provided, also runs expression_call in the parallel batch.
+    ~350ms total instead of ~1050ms sequential.
+    """
+    beat = script.current_beat if script else None
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        # Fire all LLM calls concurrently
+        fut_check = pool.submit(script_check_call, beat=beat, history=session.get_history(),
+                                model_config=model_config, world=world) if beat else None
+        fut_thought = pool.submit(thought_call, system_prompt=session.system_prompt,
+                                  history=session.get_history(), model_config=model_config) if beat else None
+        fut_director = pool.submit(director_call, scenario=scenario, world=world, people=people,
+                                   history=session.get_history(), model_config=model_config) if scenario else None
+        fut_expr = pool.submit(expression_call, expression_line, model_config) if expression_line else None
+
+        # Gather results
+        check = None
+        tresult = ThoughtResult()
+        dir_result = None
+        expr_result = None
+
+        if fut_check:
+            try:
+                check = fut_check.result()
+            except Exception as e:
+                console.print(f"[dim]  script_check error: {e}[/dim]")
+
+        if fut_thought:
+            try:
+                tresult = fut_thought.result()
+            except Exception as e:
+                console.print(f"[dim]  thought error: {e}[/dim]")
+
+        if fut_director:
+            try:
+                dir_result = fut_director.result()
+            except Exception as e:
+                console.print(f"[dim]  director error: {e}[/dim]")
+
+        if fut_expr:
+            try:
+                expr_result = fut_expr.result()
+            except Exception as e:
+                console.print(f"[dim]  expression error: {e}[/dim]")
+
+    # Display + inject expression result
+    if expr_result and (expr_result.gaze or expr_result.expression):
+        gaze_label = expr_result.gaze
+        if expr_result.gaze_type == "glance":
+            gaze_label += " (glance)"
+        console.print(f"  {_ts()} gaze: {gaze_label}  expression: {expr_result.expression}")
+        parts = []
+        if expr_result.gaze:
+            if expr_result.gaze_type == "glance":
+                parts.append(f"[glance:{expr_result.gaze}]")
+            else:
+                parts.append(f"[gaze:{expr_result.gaze}]")
+        if expr_result.expression:
+            parts.append(f"[emote:{expr_result.expression}]")
+        if parts:
+            session.inject_system(" ".join(parts))
+
+    # Process eval result
+    needs_plan = False
+    plan_request = ""
+    if check is not None:
+        eval_compat = EvalResult(
+            thought=tresult.thought,
+            script_status=check.status,
+            plan_request=check.plan_request,
         )
-        with _plan_lock:
-            _plan_result = result
-    except Exception as e:
-        console.print(f"[red]Background plan error: {e}[/red]")
+        display_eval(eval_compat)
+        inject_eval(session, eval_compat)
+        log.append({"type": "eval", **eval_to_dict(eval_compat)})
+
+        if check.status == "advance":
+            script.advance()
+            if script.current_beat:
+                console.print(f"[magenta]  {_ts()} next beat:  [{script.current_beat.intent}][/magenta]")
+            else:
+                console.print(f"[dim]  {_ts()} script complete, replanning...[/dim]")
+                needs_plan = True
+        elif check.status == "off_book" and check.plan_request:
+            needs_plan = True
+            plan_request = check.plan_request
+
+    # Process director result
+    if dir_result is not None:
+        if dir_result.status == "advance" and dir_result.exit_index >= 0:
+            if scenario and scenario.active_stage:
+                stage = scenario.active_stage
+                if 0 <= dir_result.exit_index < len(stage.exits):
+                    exit_obj = stage.exits[dir_result.exit_index]
+                    if scenario.advance_to(exit_obj.goto):
+                        new_stage = scenario.active_stage
+                        console.print(f"[cyan]  {_ts()} director: {dir_result.thought}[/cyan]")
+                        if new_stage:
+                            console.print(f"[bold cyan]{_ts()} Stage → {new_stage.name}: {new_stage.goal}[/bold cyan]")
+                            result = single_beat_call(
+                                system_prompt=session.system_prompt, world=world,
+                                history=session.get_history(), goals=goals, model_config=model_config,
+                                people=people, stage_goal=new_stage.goal,
+                            )
+                            if result.beats:
+                                apply_plan(script, result)
+        else:
+            if dir_result.thought:
+                console.print(f"[dim]  {_ts()} director: {dir_result.thought}[/dim]")
+
+    return needs_plan, plan_request, expr_result
 
 
-def _start_plan(session, world, goals, plan_request, big_model_config, people=None, stage_goal=""):
-    """Kick off background plan. Skips if planner unavailable or one already in flight."""
-    global _plan_thread, _plan_version
-    if big_model_config is None:
-        return
-    if _plan_thread is not None and _plan_thread.is_alive():
-        return
-    _plan_version = _context_version
-    _plan_thread = threading.Thread(
-        target=_run_plan_bg,
-        args=(session.system_prompt, world, session.get_history(), goals, plan_request, big_model_config, people, stage_goal),
-        daemon=True,
-    )
-    _plan_thread.start()
+# --- Sync director (8B microservice) ---
 
-
-def _check_plan(script):
-    """Check if background plan is ready. Apply if not stale."""
-    global _plan_result, _plan_thread
-    with _plan_lock:
-        result = _plan_result
-        _plan_result = None
-
-    if result is None:
-        return
-
-    _plan_thread = None
-
-    if _plan_version != _context_version:
-        console.print(f"[dim]({_ts()} plan result discarded — stale)[/dim]")
-        return
-
-    if result.beats:
-        apply_plan(script, result)
-
-
-# --- Background director functions ---
-
-def _run_director(scenario, world, people, history, model_config):
-    """Background thread target for director."""
-    global _director_result
-    try:
-        result = director_call(scenario, world, people, history, model_config)
-        with _director_lock:
-            _director_result = result
-    except Exception as e:
-        console.print(f"[red]Background director error: {e}[/red]")
-
-
-def _start_director(scenario, world, people, session, model_config):
-    """Kick off background director. Skips if one is already in flight or no scenario."""
-    global _director_thread, _director_version
+def run_director_sync(scenario, world, people, session, model_config, script, goals, big_model_config=None):
+    """Run director synchronously on the chat model. Returns whether a stage transition occurred."""
     if scenario is None:
-        return
-    if _director_thread is not None and _director_thread.is_alive():
-        return
-    _director_version = _context_version
-    _director_thread = threading.Thread(
-        target=_run_director,
-        args=(scenario, world, people, session.get_history(), model_config),
-        daemon=True,
-    )
-    _director_thread.start()
-
-
-def _check_director(scenario, script, session, world, goals, people, big_model_config):
-    """Check if background director result is ready. Returns whether a stage transition occurred."""
-    global _director_result, _director_thread
-    with _director_lock:
-        result = _director_result
-        _director_result = None
-
-    if result is None:
+        return False
+    try:
+        result = director_call(scenario, world, people, session.get_history(), model_config)
+    except Exception as e:
+        console.print(f"[dim]  director error: {e}[/dim]")
         return False
 
-    _director_thread = None
-
-    if _director_version != _context_version:
-        console.print(f"[dim]({_ts()} director result discarded — stale)[/dim]")
-        return False
-
-    if result.status == "advance" and result.exit_index >= 0 and scenario is not None:
+    if result.status == "advance" and result.exit_index >= 0:
         stage = scenario.active_stage
         if stage and 0 <= result.exit_index < len(stage.exits):
             exit_obj = stage.exits[result.exit_index]
@@ -332,9 +333,13 @@ def _check_director(scenario, script, session, world, goals, people, big_model_c
                 console.print(f"[cyan]  {_ts()} director: {result.thought}[/cyan]")
                 if new_stage:
                     console.print(f"[bold cyan]{_ts()} Stage → {new_stage.name}: {new_stage.goal}[/bold cyan]")
-                    # Trigger replanning with new stage goal
-                    stage_goal = new_stage.goal if new_stage else ""
-                    _start_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
+                    plan_result = single_beat_call(
+                        system_prompt=session.system_prompt, world=world,
+                        history=session.get_history(), goals=goals, model_config=model_config,
+                        people=people, stage_goal=new_stage.goal,
+                    )
+                    if plan_result.beats:
+                        apply_plan(script, plan_result)
                 return True
     else:
         if result.thought:
@@ -641,7 +646,7 @@ def handle_trigger(trigger_num, scenario, session, world, goals, script, people,
         voice_io._cancel_auto_beat()
     script.replace([])
     stage_goal = new_stage.goal if new_stage else ""
-    plan_result = run_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
+    plan_result = run_plan(session, world, goals, "", model_config, people=people, stage_goal=stage_goal)
     if plan_result and plan_result.beats:
         apply_plan(script, plan_result)
 
@@ -725,16 +730,9 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
     label = character.replace("_", " ").title()
     session_id = uuid.uuid4().hex[:8]
     log: list[dict] = []
-    big_model_config = get_big_model_config()
-
-    # Big model handles eval, plan, and reconcile; falls back to chat model
-    eval_model_config = big_model_config if big_model_config else model_config
-
-    if big_model_config:
-        big_label = MODELS[BIG_MODEL]["name"]
-        console.print(f"[dim]Big model: {big_label} (eval + plan + reconcile)[/dim]")
-    else:
-        console.print(f"[dim]Big model: unavailable (no {MODELS.get(BIG_MODEL, {}).get('api_key_env', 'API key')} set), using chat model[/dim]")
+    # All LLM calls now use 8B chat model (parallel microservices, single-beat planning)
+    big_model_config = get_big_model_config()  # kept for API compat
+    eval_model_config = model_config  # kept for API compat
 
     # --- Voice setup ---
     voice_io = None
@@ -775,8 +773,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
         # Get stage goal for planner context
         stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
 
-        # Generate initial script at boot (synchronous)
-        plan_result = run_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
+        # Generate initial script at boot (synchronous, 8B single-beat)
+        plan_result = run_plan(session, world, goals, "", model_config, people=people, stage_goal=stage_goal)
         if plan_result and plan_result.beats:
             apply_plan(script, plan_result)
 
@@ -861,14 +859,6 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
             if world is not None:
                 _check_reconcile(world, log, people=people)
-
-            needs_plan, plan_request = _check_eval(session, script, log)
-            if needs_plan:
-                _start_plan(session, world, goals, plan_request, big_model_config, people=people, stage_goal=stage_goal)
-
-            _check_director(scenario, script, session, world, goals, people, big_model_config)
-
-            _check_plan(script)
 
             # --- Command dispatch ---
             cmd = user_input.lower()
@@ -988,7 +978,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
             # --- Turn flow ---
 
-            # First user input: natural LLM response, then background eval + replan
+            # First user input: natural LLM response, then parallel eval + replan
             if not had_user_input:
                 had_user_input = True
                 response = stream_response(session, label, user_input, voice_io=voice_io, expr_model_config=model_config)
@@ -1000,15 +990,27 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     entry["expression"] = expr.expression
                 log.append(entry)
                 _bump_version()
-                _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
-                _start_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
-                _start_director(scenario, world, people, session, eval_model_config)
+                needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal)
+                # Always replan after first user input
+                result = single_beat_call(
+                    system_prompt=session.system_prompt, world=world,
+                    history=session.get_history(), goals=goals, model_config=model_config,
+                    plan_request=plan_request, people=people, stage_goal=stage_goal,
+                )
+                if result.beats:
+                    apply_plan(script, result)
                 _arm_auto_beat = True
                 continue
 
-            # Bootstrap: if no script, start background plan and fall through to unguided
+            # Bootstrap: if no script, plan synchronously before responding
             if script.is_empty():
-                _start_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
+                result = single_beat_call(
+                    system_prompt=session.system_prompt, world=world,
+                    history=session.get_history(), goals=goals, model_config=model_config,
+                    people=people, stage_goal=stage_goal,
+                )
+                if result.beats:
+                    apply_plan(script, result)
 
             if script.current_beat is not None:
                 # Normal path: LLM-guided beat delivery — reacts to user while serving intent
@@ -1024,8 +1026,15 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 entry["expression"] = expr.expression
             log.append(entry)
             _bump_version()
-            _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
-            _start_director(scenario, world, people, session, eval_model_config)
+            needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal)
+            if needs_plan:
+                result = single_beat_call(
+                    system_prompt=session.system_prompt, world=world,
+                    history=session.get_history(), goals=goals, model_config=model_config,
+                    plan_request=plan_request, people=people, stage_goal=stage_goal,
+                )
+                if result.beats:
+                    apply_plan(script, result)
             _arm_auto_beat = True
 
 
@@ -1046,20 +1055,20 @@ def run_eval(session, world, goals, script, model_config):
         return None
 
 
-def run_plan(session, world, goals, plan_request, big_model_config, people=None, stage_goal=""):
-    """Run plan_call synchronously, return PlanResult or None on error."""
-    if big_model_config is None:
+def run_plan(session, world, goals, plan_request, model_config, people=None, stage_goal=""):
+    """Run single_beat_call synchronously, return PlanResult or None on error."""
+    if model_config is None:
         console.print("[dim]Planner unavailable, skipping.[/dim]")
         return None
     console.print(f"[dim]{_ts()} Planning...[/dim]")
     try:
-        return plan_call(
+        return single_beat_call(
             system_prompt=session.system_prompt,
             world=world,
             history=session.get_history(),
             goals=goals,
+            model_config=model_config,
             plan_request=plan_request,
-            plan_model_config=big_model_config,
             people=people,
             stage_goal=stage_goal,
         )
@@ -1184,7 +1193,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
 
     # 1. If no current beat, replan (synchronous — user explicitly asked for a beat)
     if script.current_beat is None:
-        plan_result = run_plan(session, world, goals, "", big_model_config)
+        plan_result = run_plan(session, world, goals, "", model_config)
         if plan_result and plan_result.beats:
             apply_plan(script, plan_result)
         if script.current_beat is None:
@@ -1241,27 +1250,34 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
     response = deliver_beat(session, beat, label, voice_io=voice_io)
     entry["response"] = response
 
-    # 4. Expression post-processing
-    expr = run_expression(session, model_config)
-    if expr:
-        entry["gaze"] = expr.gaze
-        entry["gaze_type"] = expr.gaze_type
-        entry["expression"] = expr.expression
-
-    # 5. Advance
+    # 4. Advance
     stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
     script.advance()
     if script.current_beat:
         console.print(f"[magenta]  {_ts()} next beat:  [{script.current_beat.intent}][/magenta]")
     else:
-        # Script exhausted — background replan
-        console.print(f"[dim]  {_ts()} script complete, replanning...[/dim]")
-        _start_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
+        console.print(f"[dim]  {_ts()} script complete[/dim]")
 
-    # 7. Background eval + director
+    # 5. Parallel: expression + eval + director
     _bump_version()
-    _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
-    _start_director(scenario, world, people, session, eval_model_config)
+    needs_plan, plan_request, expr = run_post_response(
+        session, world, script, model_config, log, scenario, people, goals, stage_goal,
+        expression_line=response,
+    )
+    if expr:
+        entry["gaze"] = expr.gaze
+        entry["gaze_type"] = expr.gaze_type
+        entry["expression"] = expr.expression
+
+    # 6. Replan if needed (script complete or off_book)
+    if needs_plan or not script.current_beat:
+        result = single_beat_call(
+            system_prompt=session.system_prompt, world=world,
+            history=session.get_history(), goals=goals, model_config=model_config,
+            plan_request=plan_request, people=people, stage_goal=stage_goal,
+        )
+        if result.beats:
+            apply_plan(script, result)
 
     log.append(entry)
 
@@ -1294,12 +1310,19 @@ def handle_world_change(session, world, goals, script, change_text, label, model
 
     # Start background reconciliation
     stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
-    _start_reconcile(world, model_config, big_model_config, people=people)
+    _start_reconcile(world, model_config, people=people)
 
-    # Background eval + director
+    # Parallel eval + director
     _bump_version()
-    _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
-    _start_director(scenario, world, people, session, eval_model_config)
+    needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal)
+    if needs_plan:
+        result = single_beat_call(
+            system_prompt=session.system_prompt, world=world,
+            history=session.get_history(), goals=goals, model_config=model_config,
+            plan_request=plan_request, people=people, stage_goal=stage_goal,
+        )
+        if result.beats:
+            apply_plan(script, result)
 
 
 def handle_perception(session, world, goals, script, people, scenario, see_text, label, model_config, big_model_config, eval_model_config, log, voice_io=None):
@@ -1326,12 +1349,19 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
         entry["expression"] = expr.expression
     log.append(entry)
 
-    # Start background reconciliation + eval + director
+    # Start background reconciliation + parallel eval + director
     stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
-    _start_reconcile(world, model_config, big_model_config, people=people)
+    _start_reconcile(world, model_config, people=people)
     _bump_version()
-    _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
-    _start_director(scenario, world, people, session, eval_model_config)
+    needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal)
+    if needs_plan:
+        result = single_beat_call(
+            system_prompt=session.system_prompt, world=world,
+            history=session.get_history(), goals=goals, model_config=model_config,
+            plan_request=plan_request, people=people, stage_goal=stage_goal,
+        )
+        if result.beats:
+            apply_plan(script, result)
 
 
 def run_sim(sim_name, character, session, world, goals, script, people, scenario, label, model_config, big_model_config, eval_model_config, log, voice_io=None):
@@ -1356,11 +1386,6 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
         stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
         if world is not None:
             _check_reconcile(world, log, people=people)
-        needs_plan, plan_request = _check_eval(session, script, log)
-        if needs_plan:
-            _start_plan(session, world, goals, plan_request, big_model_config, people=people, stage_goal=stage_goal)
-        _check_director(scenario, script, session, world, goals, people, big_model_config)
-        _check_plan(script)
 
         console.print(f"[cyan]Sim: event {i + 1}/{len(sim.events)}[/cyan]")
 
@@ -1378,8 +1403,15 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
                 entry["expression"] = expr.expression
             log.append(entry)
             _bump_version()
-            _start_eval(session, world, goals, script, eval_model_config, people=people, stage_goal=stage_goal)
-            _start_director(scenario, world, people, session, eval_model_config)
+            needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal)
+            if needs_plan:
+                result = single_beat_call(
+                    system_prompt=session.system_prompt, world=world,
+                    history=session.get_history(), goals=goals, model_config=model_config,
+                    plan_request=plan_request, people=people, stage_goal=stage_goal,
+                )
+                if result.beats:
+                    apply_plan(script, result)
         else:
             # Unquoted → perception event
             handle_perception(session, world, goals, script, people, scenario, desc, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
@@ -1561,13 +1593,11 @@ def run_smoke():
 
     character = "greg"
     label = character.replace("_", " ").title()
-    big_model_config = get_big_model_config()
-    eval_model_config = big_model_config if big_model_config else model_config
+    big_model_config = get_big_model_config()  # kept for API compat
+    eval_model_config = model_config  # kept for API compat
     log: list[dict] = []
 
     console.print(f"[dim]Chat: {model_config['name']}[/dim]")
-    if big_model_config:
-        console.print(f"[dim]Big model: {MODELS[BIG_MODEL]['name']}[/dim]")
 
     # --- Startup: load everything ---
     world = load_world_state(character)
@@ -1583,7 +1613,7 @@ def run_smoke():
         console.print(f"[dim]Scenario: {scenario.name} (stage: {scenario.current_stage})[/dim]")
 
     console.print(f"[dim]{_ts()} Planning...[/dim]")
-    plan_result = run_plan(session, world, goals, "", big_model_config, people=people, stage_goal=stage_goal)
+    plan_result = run_plan(session, world, goals, "", model_config, people=people, stage_goal=stage_goal)
     if plan_result and plan_result.beats:
         apply_plan(script, plan_result)
         console.print(f"[dim]Got {len(script.beats)} beats[/dim]")
