@@ -197,13 +197,14 @@ def run_eval_sync(session, world, script, model_config, log, people=None, stage_
 
 # --- Parallel post-response microservices ---
 
-def run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal="", expression_line=None):
+def run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal="", expression_line=None, vision_mgr=None):
     """Run eval (script_check + thought) and director in parallel. Returns (needs_plan, plan_request, expr_result).
 
     When expression_line is provided, also runs expression_call in the parallel batch.
     ~350ms total instead of ~1050ms sequential.
     """
     beat = script.current_beat if script else None
+    gaze_targets = vision_mgr.get_gaze_targets() if vision_mgr else None
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         # Fire all LLM calls concurrently
@@ -213,7 +214,7 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
                                   history=session.get_history(), model_config=model_config) if beat else None
         fut_director = pool.submit(director_call, scenario=scenario, world=world, people=people,
                                    history=session.get_history(), model_config=model_config) if scenario else None
-        fut_expr = pool.submit(expression_call, expression_line, model_config) if expression_line else None
+        fut_expr = pool.submit(expression_call, expression_line, model_config, gaze_targets) if expression_line else None
 
         # Gather results
         check = None
@@ -610,7 +611,7 @@ def show_stage_hud(scenario, voice_active: bool = False):
     console.print(f"  [cyan]\\[{stage.name}][/cyan] {exits_str}")
 
 
-def handle_trigger(trigger_num, scenario, session, world, goals, script, people, label, model_config, big_model_config, eval_model_config, log, voice_io=None):
+def handle_trigger(trigger_num, scenario, session, world, goals, script, people, label, model_config, big_model_config, eval_model_config, log, voice_io=None, vision_mgr=None):
     """Handle a number-key trigger (1-4) to advance the scenario via the chosen exit."""
     if scenario is None or scenario.active_stage is None:
         console.print("[dim]No scenario loaded.[/dim]")
@@ -637,7 +638,7 @@ def handle_trigger(trigger_num, scenario, session, world, goals, script, people,
         session, world, goals, script, people, scenario,
         exit_obj.condition, label,
         model_config, big_model_config, eval_model_config, log,
-        voice_io=voice_io,
+        voice_io=voice_io, vision_mgr=vision_mgr,
     )
 
     # 3. Clear stale script and synchronously replan with new stage goal
@@ -649,6 +650,14 @@ def handle_trigger(trigger_num, scenario, session, world, goals, script, people,
     plan_result = run_plan(session, world, goals, "", model_config, people=people, stage_goal=stage_goal)
     if plan_result and plan_result.beats:
         apply_plan(script, plan_result)
+
+    # Update visual focus for new stage
+    if vision_mgr is not None:
+        vision_mgr.update_context(beat=script.current_beat, stage_goal=stage_goal)
+        vision_mgr.update_focus(
+            beat=script.current_beat, stage_goal=stage_goal, thought="",
+            world=world, people=people, model_config=model_config,
+        )
 
 
 def show_info(world, script, goals, scenario, people):
@@ -725,7 +734,8 @@ def get_big_model_config():
     return cfg
 
 
-def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voice_cfg=None):
+def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voice_cfg=None,
+              vision_mode: bool = False, vision_cfg=None):
     """Run the chat loop for a character. Returns on /back or Ctrl+C."""
     label = character.replace("_", " ").title()
     session_id = uuid.uuid4().hex[:8]
@@ -733,6 +743,15 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
     # All LLM calls now use 8B chat model (parallel microservices, single-beat planning)
     big_model_config = get_big_model_config()  # kept for API compat
     eval_model_config = model_config  # kept for API compat
+
+    # --- Vision setup ---
+    vision_mgr = None
+    if vision_mode and vision_cfg:
+        from character_eng.vision.manager import VisionManager
+        vision_mgr = VisionManager(
+            service_url=vision_cfg.service_url,
+            min_interval=vision_cfg.synthesis_min_interval,
+        )
 
     # --- Voice setup ---
     voice_io = None
@@ -772,6 +791,17 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
         # Get stage goal for planner context
         stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
+
+        # Start vision manager (after people setup)
+        if vision_mgr is not None:
+            vision_mgr.start(model_config, world=world, people=people)
+            vision_mgr.update_context(stage_goal=stage_goal)
+            console.print("[green]Vision active[/green]")
+            # Initial focus
+            vision_mgr.update_focus(
+                beat=None, stage_goal=stage_goal, thought="",
+                world=world, people=people, model_config=model_config,
+            )
 
         # Generate initial script at boot (synchronous, 8B single-beat)
         plan_result = run_plan(session, world, goals, "", model_config, people=people, stage_goal=stage_goal)
@@ -860,6 +890,14 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             if world is not None:
                 _check_reconcile(world, log, people=people)
 
+            # Drain vision events
+            if vision_mgr is not None:
+                for event in vision_mgr.drain_events():
+                    _, narrator_msg = process_perception(event, people, world)
+                    console.print(f"[dim]{narrator_msg}[/dim]")
+                    session.inject_system(narrator_msg)
+                vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal)
+
             # --- Command dispatch ---
             cmd = user_input.lower()
             if cmd == "/quit":
@@ -879,6 +917,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 return
             elif cmd == "/reload":
                 console.print("[yellow]Reloading prompts...[/yellow]")
+                if vision_mgr is not None:
+                    vision_mgr.stop()
                 log.append({"type": "reload"})
                 break  # break inner loop, outer loop reloads
             elif cmd == "/trace":
@@ -929,8 +969,21 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     else:
                         console.print(f"[red]Voice unavailable: {reason}[/red]")
                 continue
+            elif cmd == "/vision":
+                if vision_mgr is not None:
+                    ctx_text = vision_mgr.context.render_for_prompt()
+                    if ctx_text:
+                        console.print(Panel(ctx_text, title="Vision Context", border_style="cyan"))
+                    else:
+                        console.print("[dim]No visual data yet.[/dim]")
+                    targets = vision_mgr.get_gaze_targets()
+                    if targets:
+                        console.print(f"[dim]Gaze targets: {', '.join(targets)}[/dim]")
+                else:
+                    console.print("[dim]Vision not active. Use --vision flag.[/dim]")
+                continue
             elif cmd == "/beat":
-                handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario)
+                handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario, vision_mgr=vision_mgr)
                 _arm_auto_beat = True
                 continue
             elif cmd == "/info":
@@ -941,7 +994,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print("[dim]No world state for this character.[/dim]")
                     continue
                 change_text = user_input[7:]  # preserve original case
-                handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario)
+                handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario, vision_mgr=vision_mgr)
                 _arm_auto_beat = True
                 continue
             elif cmd.startswith("/see "):
@@ -949,7 +1002,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print("[dim]No world state for this character.[/dim]")
                     continue
                 see_text = user_input[5:]  # preserve original case
-                handle_perception(session, world, goals, script, people, scenario, see_text, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
+                handle_perception(session, world, goals, script, people, scenario, see_text, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, vision_mgr=vision_mgr)
                 _arm_auto_beat = True
                 continue
             elif cmd.startswith("/sim "):
@@ -957,11 +1010,11 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 if not sim_name:
                     console.print("[red]Usage: /sim <name>[/red]")
                     continue
-                run_sim(sim_name, character, session, world, goals, script, people, scenario, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
+                run_sim(sim_name, character, session, world, goals, script, people, scenario, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, vision_mgr=vision_mgr)
                 _arm_auto_beat = True
                 continue
             elif cmd in ("1", "2", "3", "4"):
-                handle_trigger(int(cmd), scenario, session, world, goals, script, people, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
+                handle_trigger(int(cmd), scenario, session, world, goals, script, people, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, vision_mgr=vision_mgr)
                 _arm_auto_beat = True
                 continue
             elif user_input.startswith("/"):
@@ -990,7 +1043,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     entry["expression"] = expr.expression
                 log.append(entry)
                 _bump_version()
-                needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal)
+                needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
                 # Always replan after first user input
                 result = single_beat_call(
                     system_prompt=session.system_prompt, world=world,
@@ -1026,7 +1079,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 entry["expression"] = expr.expression
             log.append(entry)
             _bump_version()
-            needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal)
+            needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
             if needs_plan:
                 result = single_beat_call(
                     system_prompt=session.system_prompt, world=world,
@@ -1187,7 +1240,7 @@ def apply_plan(script, plan_result):
         console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"[/magenta]")
 
 
-def handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=None, people=None, scenario=None):
+def handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=None, people=None, scenario=None, vision_mgr=None):
     """Process a /beat command — condition-gated beat delivery (time passes)."""
     entry = {"type": "beat"}
 
@@ -1262,7 +1315,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
     _bump_version()
     needs_plan, plan_request, expr = run_post_response(
         session, world, script, model_config, log, scenario, people, goals, stage_goal,
-        expression_line=response,
+        expression_line=response, vision_mgr=vision_mgr,
     )
     if expr:
         entry["gaze"] = expr.gaze
@@ -1282,7 +1335,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
     log.append(entry)
 
 
-def handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=None, people=None, scenario=None):
+def handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=None, people=None, scenario=None, vision_mgr=None):
     """Process a /world <description> command. Fast path: immediate reaction, background reconcile."""
     # Store as pending
     world.add_pending(change_text)
@@ -1314,7 +1367,7 @@ def handle_world_change(session, world, goals, script, change_text, label, model
 
     # Parallel eval + director
     _bump_version()
-    needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal)
+    needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
     if needs_plan:
         result = single_beat_call(
             system_prompt=session.system_prompt, world=world,
@@ -1325,7 +1378,7 @@ def handle_world_change(session, world, goals, script, change_text, label, model
             apply_plan(script, result)
 
 
-def handle_perception(session, world, goals, script, people, scenario, see_text, label, model_config, big_model_config, eval_model_config, log, voice_io=None):
+def handle_perception(session, world, goals, script, people, scenario, see_text, label, model_config, big_model_config, eval_model_config, log, voice_io=None, vision_mgr=None):
     """Process a /see <text> command. Perception event: narrator injection, character reaction, background reconcile+eval+director."""
     event = PerceptionEvent(description=see_text, source="manual")
     _, narrator_msg = process_perception(event, people, world)
@@ -1353,7 +1406,7 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
     stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
     _start_reconcile(world, model_config, people=people)
     _bump_version()
-    needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal)
+    needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
     if needs_plan:
         result = single_beat_call(
             system_prompt=session.system_prompt, world=world,
@@ -1364,7 +1417,7 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
             apply_plan(script, result)
 
 
-def run_sim(sim_name, character, session, world, goals, script, people, scenario, label, model_config, big_model_config, eval_model_config, log, voice_io=None):
+def run_sim(sim_name, character, session, world, goals, script, people, scenario, label, model_config, big_model_config, eval_model_config, log, voice_io=None, vision_mgr=None):
     """Run a sim script — replay perception events and dialogue with timing."""
     try:
         sim = load_sim_script(character, sim_name)
@@ -1403,7 +1456,7 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
                 entry["expression"] = expr.expression
             log.append(entry)
             _bump_version()
-            needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal)
+            needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
             if needs_plan:
                 result = single_beat_call(
                     system_prompt=session.system_prompt, world=world,
@@ -1414,7 +1467,7 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
                     apply_plan(script, result)
         else:
             # Unquoted → perception event
-            handle_perception(session, world, goals, script, people, scenario, desc, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io)
+            handle_perception(session, world, goals, script, people, scenario, desc, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, vision_mgr=vision_mgr)
 
     console.print(f"[cyan]Sim: complete[/cyan]")
 
@@ -1557,6 +1610,7 @@ def show_help(voice_active: bool = False):
         "/see <text>     - Describe what the character sees (perception event)\n"
         "/sim <name>     - Run a sim script (timed perception events)\n"
         "1-4             - Trigger a stage exit (shown in HUD)\n"
+        "/vision         - Show current visual context and gaze targets\n"
         "/voice          - Toggle voice mode on/off\n"
         "/devices        - List audio input/output devices\n"
         "/reload         - Reload prompt files, restart conversation\n"
@@ -1653,9 +1707,52 @@ def run_smoke():
     return 0
 
 
+def _launch_vision_service(vision_cfg) -> "subprocess.Popen | None":
+    """Auto-launch vision service if not running. Returns subprocess or None."""
+    import subprocess as _sp
+    from character_eng.vision.client import VisionClient
+
+    client = VisionClient(vision_cfg.service_url)
+    if client.health():
+        console.print(f"[dim]Vision service already running at {vision_cfg.service_url}[/dim]")
+        return None
+
+    if not vision_cfg.auto_launch:
+        console.print(f"[yellow]Vision service not running at {vision_cfg.service_url} (auto_launch=false)[/yellow]")
+        return None
+
+    services_dir = Path(__file__).resolve().parent.parent / "services" / "vision"
+    if not (services_dir / "app.py").exists():
+        console.print("[red]Vision service not found at services/vision/app.py[/red]")
+        return None
+
+    console.print(f"[dim]Starting vision service on port {vision_cfg.service_port}...[/dim]")
+    proc = _sp.Popen(
+        ["uv", "run", "--project", str(services_dir), "python", str(services_dir / "app.py"),
+         "--port", str(vision_cfg.service_port), "--auto-start-trackers"],
+        stdout=_sp.DEVNULL,
+        stderr=_sp.DEVNULL,
+    )
+
+    # Wait for health check
+    for _ in range(60):
+        if client.health():
+            console.print(f"[green]Vision service ready at {vision_cfg.service_url}[/green]")
+            return proc
+        if proc.poll() is not None:
+            console.print("[red]Vision service process died during startup[/red]")
+            return None
+        time.sleep(1)
+
+    console.print("[red]Vision service did not start within 60s[/red]")
+    proc.kill()
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="NPC Character Chat")
     parser.add_argument("--voice", action="store_true", help="Start in voice mode (Deepgram STT + ElevenLabs TTS)")
+    parser.add_argument("--vision", action="store_true", help="Enable vision (auto-starts vision service)")
     parser.add_argument("--smoke", action="store_true", help="Run smoke test (auto greg, scripted inputs, exit)")
     args = parser.parse_args()
 
@@ -1666,6 +1763,8 @@ def main():
 
     # --voice flag overrides config; config.voice.enabled is the default
     voice_mode = args.voice or cfg.voice.enabled
+    # --vision flag overrides config; config.vision.enabled is the default
+    vision_mode = args.vision or cfg.vision.enabled
 
     console.print(Panel("[bold]NPC Character Chat[/bold]", border_style="green"))
     model_config = get_chat_model_config()
@@ -1674,12 +1773,25 @@ def main():
         console.print(f"[red]Chat model unavailable — set {chat_cfg.get('api_key_env', 'API key')} in .env[/red]")
         return
     console.print(f"[dim]Chat: {model_config['name']}[/dim]")
-    while True:
-        character = pick_character()
-        if character is None:
-            console.print("Goodbye!")
-            break
-        chat_loop(character, model_config, voice_mode=voice_mode, voice_cfg=cfg.voice)
+
+    # Auto-launch vision service
+    vision_proc = None
+    if vision_mode:
+        vision_proc = _launch_vision_service(cfg.vision)
+
+    try:
+        while True:
+            character = pick_character()
+            if character is None:
+                console.print("Goodbye!")
+                break
+            chat_loop(character, model_config, voice_mode=voice_mode, voice_cfg=cfg.voice,
+                       vision_mode=vision_mode, vision_cfg=cfg.vision)
+    finally:
+        if vision_proc is not None:
+            console.print("[dim]Stopping vision service...[/dim]")
+            vision_proc.kill()
+            vision_proc.wait(timeout=5)
 
 
 if __name__ == "__main__":

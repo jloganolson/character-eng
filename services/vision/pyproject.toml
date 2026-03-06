@@ -1,0 +1,70 @@
+[project]
+name = "character-eng-vision"
+version = "0.1.0"
+description = "Vision service for character-eng (SAM3, InsightFace, ReID, VLM)"
+requires-python = ">=3.11"
+dependencies = [
+    "flask",
+    "torch>=2.9,<2.10",
+    "transformers>=5.0",
+    "accelerate",
+    "opencv-python>=4.10",
+    "pillow>=10.0",
+    "sam3 @ git+https://github.com/facebookresearch/sam3.git",
+    "torchvision",
+    "setuptools<81",
+    "decord",
+    "pycocotools",
+    "num2words",
+    "einops",
+    "openai",
+    "insightface>=0.7",
+    "onnxruntime-gpu",
+    "pydantic>=2.0",
+    "torchreid>=0.2.5",
+
+    "gdown>=5.2.1",
+    "tensorboard>=2.20.0",
+    "ml-dtypes>=0.5.0",
+]
+
+[project.optional-dependencies]
+jetson = [
+    "flask",
+    "transformers>=5.0",
+    "accelerate",
+    "opencv-python>=4.10",
+    "pillow>=10.0",
+    "sam3 @ git+https://github.com/facebookresearch/sam3.git",
+    "setuptools<81",
+    "decord",
+    "pycocotools",
+    "num2words",
+    "einops",
+    "openai",
+    "insightface>=0.7",
+    "pydantic>=2.0",
+    "torchreid>=0.2.5",
+    "gdown>=5.2.1",
+    "tensorboard>=2.20.0",
+    "ml-dtypes>=0.5.0",
+]
+
+[tool.uv]
+index-strategy = "unsafe-best-match"
+# sam3 has overly strict pins: numpy<2, huggingface-hub<1.0
+# Override both — sam3 works fine with numpy 2.x and huggingface-hub 1.x
+override-dependencies = [
+    "numpy>=2.1",
+    "huggingface-hub>=1.3",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+

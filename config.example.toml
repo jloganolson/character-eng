@@ -45,3 +45,17 @@
 # tts_server_url = "http://localhost:8003"
 # ref_audio = "/path/to/reference.wav"   # WAV for voice cloning (optional)
 # pocket_voice = "voices/greg.safetensors"  # voice file for pocket-tts serve --voice (default)
+
+[vision]
+# Enable vision by default (same as --vision flag).
+# enabled = false
+
+# Vision service URL. The service runs in services/vision/ with its own venv.
+# service_url = "http://localhost:7860"
+# service_port = 7860
+
+# Auto-launch vision service if not running (same pattern as vLLM auto-launch).
+# auto_launch = true
+
+# Min seconds between vision synthesis cycles (poll + LLM distillation).
+# synthesis_min_interval = 0.75

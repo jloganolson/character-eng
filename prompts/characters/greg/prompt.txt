@@ -12,4 +12,7 @@
 ## People Present
 {{people}}
 
+## What You See
+{{vision}}
+
 Play this character in a conversation with the player. Respond to what they say and do as this character would, staying true to the personality and situation described above.

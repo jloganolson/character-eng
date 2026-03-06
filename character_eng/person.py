@@ -59,6 +59,13 @@ class PeopleState:
         self.people[pid] = person
         return person
 
+    def get_or_create(self, name: str) -> str:
+        """Find person by name or create a new one. Returns person_id."""
+        person = self.find_by_name(name)
+        if person is not None:
+            return person.person_id
+        return self.add_person(name=name, presence="present").person_id
+
     def find_by_name(self, name: str) -> Person | None:
         for person in self.people.values():
             if person.name and person.name.lower() == name.lower():

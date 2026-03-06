@@ -23,8 +23,18 @@ class VoiceConfig:
 
 
 @dataclass
+class VisionConfig:
+    enabled: bool = False
+    service_url: str = "http://localhost:7860"
+    service_port: int = 7860
+    auto_launch: bool = True
+    synthesis_min_interval: float = 0.75
+
+
+@dataclass
 class AppConfig:
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
 
 
 def load_config() -> AppConfig:
@@ -49,4 +59,14 @@ def load_config() -> AppConfig:
         tts_server_url=voice_data.get("tts_server_url", ""),
         pocket_voice=voice_data.get("pocket_voice", "voices/greg.safetensors"),
     )
-    return AppConfig(voice=voice)
+
+    vision_data = data.get("vision", {})
+    vision = VisionConfig(
+        enabled=vision_data.get("enabled", False),
+        service_url=vision_data.get("service_url", "http://localhost:7860"),
+        service_port=vision_data.get("service_port", 7860),
+        auto_launch=vision_data.get("auto_launch", True),
+        synthesis_min_interval=vision_data.get("synthesis_min_interval", 0.75),
+    )
+
+    return AppConfig(voice=voice, vision=vision)

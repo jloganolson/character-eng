@@ -72,9 +72,11 @@ The app works without `config.toml` — all settings have defaults. The `--voice
 ## Run
 
 ```bash
-uv run -m character_eng          # text mode
-uv run -m character_eng --voice  # voice mode (speak to chat, hear responses)
-uv run -m character_eng --smoke  # smoke test (auto greg, scripted inputs, exit)
+uv run -m character_eng                  # text mode
+uv run -m character_eng --voice          # voice mode (speak to chat, hear responses)
+uv run -m character_eng --vision         # vision mode (live camera + visual intelligence)
+uv run -m character_eng --voice --vision # voice + vision
+uv run -m character_eng --smoke          # smoke test (auto greg, scripted inputs, exit)
 ```
 
 Pick a character from the menu, then chat. After each response, synchronous microservices evaluate script progress and check scenario exits with immediate effect. In-session commands:
@@ -87,6 +89,7 @@ Pick a character from the menu, then chat. After each response, synchronous micr
 | `/see <text>` | Describe something the character perceives — character reacts, reconciler processes |
 | `/sim <name>` | Replay a sim script with timing (quoted lines = dialogue, unquoted = perception) |
 | `1`-`4` | Trigger a stage exit by number (shown in the HUD line before each prompt) |
+| `/vision` | Show current visual context and gaze targets (requires `--vision`) |
 | `/voice` | Toggle voice mode on/off mid-session |
 | `/devices` | List audio input/output devices |
 | `/reload` | Reload all prompt files from disk (for live editing) |
@@ -196,13 +199,66 @@ Run `uv run -m character_eng.qa_voice` to verify connectivity (no mic needed).
 
 If voice deps or keys are missing, the app falls back to text mode gracefully.
 
+## Vision mode
+
+Vision mode adds live visual intelligence from a webcam. The character can see people approaching, track their identities, detect objects, and ask VLM questions about what's in frame.
+
+**Architecture**: Vision runs as a standalone service (`services/vision/`) with its own Python venv and heavy GPU dependencies (torch, SAM3, InsightFace, torchreid). This avoids dependency conflicts entirely. character-eng gets a thin HTTP client — zero new deps added to the main app.
+
+### Setup
+
+```bash
+# Install vision service deps (first time only)
+cd services/vision && uv sync && cd ../..
+
+# Start vLLM for the VLM model (if using VLM questions)
+# Uses ~6GB VRAM for LFM2-VL-3B
+cd services/vision && ./start.sh && cd ../..
+
+# Or just run character-eng with --vision (auto-starts the service)
+uv run -m character_eng --vision
+```
+
+### Configuration
+
+Add a `[vision]` section to `config.toml`:
+
+```toml
+[vision]
+enabled = true                       # same as --vision flag
+service_url = "http://localhost:7860" # vision service URL
+service_port = 7860
+auto_launch = true                   # auto-start if not running
+synthesis_min_interval = 0.75        # seconds between synthesis cycles
+```
+
+### How it works
+
+1. **Vision service** (separate process, ~10.5GB VRAM) captures camera, runs face tracking (InsightFace), person tracking (SAM3 + ReID), and VLM questions
+2. **VisionManager** (background thread in character-eng) polls `/snapshot` every 750ms, runs `vision_synthesis_call` (8B via Groq) to distill raw visual data into perception events
+3. **Perception events** flow through the existing `process_perception()` pipeline — same as `/see` commands but automatic
+4. **Gaze targets** update dynamically from detected people/objects instead of static defaults
+5. **Visual focus** (`visual_focus_call`, 8B) generates context-driven VLM questions based on the character's current beat/stage intent
+
+### GPU budget (~10.5GB on RTX 4090)
+
+| Component | VRAM |
+|-----------|------|
+| SAM3 | ~3.4GB |
+| InsightFace buffalo_s | ~0.8GB |
+| ReID ResNet50 | ~0.25GB |
+| LFM2-VL-3B (vLLM) | ~6GB |
+| **Total** | **~10.5GB** |
+
+character-eng process: zero GPU usage (text LLM via Groq).
+
 ## Editing prompts
 
 Characters live in `prompts/characters/<name>/` with these files:
 
 | File | Purpose |
 |------|---------|
-| `prompt.txt` | Main template — uses `{{global_rules}}`, `{{character}}`, `{{scenario}}`, `{{world}}`, `{{people}}` macros |
+| `prompt.txt` | Main template — uses `{{global_rules}}`, `{{character}}`, `{{scenario}}`, `{{world}}`, `{{people}}`, `{{vision}}` macros |
 | `character.txt` | Personality, voice, and goals (optional `Long-term goal:` line) |
 | `scenario.txt` | Situation and context |
 | `world_static.txt` | Permanent facts (one per line, optional) |
