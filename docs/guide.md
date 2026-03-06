@@ -84,7 +84,17 @@ prompts/
 
 ## Creating a Character
 
-### 1. Create the directory
+### Quick start — scaffolding script
+
+```bash
+./scripts/new_character.sh yourchar
+```
+
+This creates the full directory with template files. Edit them to customize.
+
+### Manual setup
+
+#### 1. Create the directory
 
 ```bash
 mkdir -p prompts/characters/yourchar/sims

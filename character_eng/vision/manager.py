@@ -39,6 +39,8 @@ class VisionManager:
         # Recent event dedup: normalized text -> timestamp
         self._recent_events: dict[str, float] = {}
         self._event_cooldown = 15.0  # seconds before a similar event can fire again
+        # Rolling event history for synthesis context (raw text, last N events)
+        self._event_history: collections.deque[str] = collections.deque(maxlen=10)
 
     def start(self, model_config: dict, world=None, people=None) -> None:
         if self._running:
@@ -125,6 +127,8 @@ class VisionManager:
         # 3. Vision synthesis
         if self._model_config is None:
             return
+        # Build previous synthesis with full event history for better dedup
+        prev = SynthesisResult(events=list(self._event_history))
         result = vision_synthesis_call(
             visual_context=self._context,
             world=self._world,
@@ -132,9 +136,8 @@ class VisionManager:
             beat=self._beat,
             stage_goal=self._stage_goal,
             model_config=self._model_config,
-            previous_synthesis=self._prev_synthesis,
+            previous_synthesis=prev,
         )
-        self._prev_synthesis = result
 
         # 4. Push events (with dedup)
         now = time.time()
@@ -145,6 +148,7 @@ class VisionManager:
             key = self._normalize_event(event_text)
             if key not in self._recent_events:
                 self._recent_events[key] = now
+                self._event_history.append(event_text)
                 self._events.append(PerceptionEvent(description=event_text, source="visual"))
 
     @staticmethod
