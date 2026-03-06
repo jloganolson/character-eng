@@ -1,0 +1,158 @@
+{
+  "loop": false,
+  "snapshots": [
+    {
+      "at": 0.0,
+      "faces": [],
+      "persons": [],
+      "objects": [
+        {"label": "lemonade stand", "bbox": [200, 300, 400, 250], "confidence": 0.95},
+        {"label": "cooler", "bbox": [250, 400, 100, 80], "confidence": 0.9},
+        {"label": "sign", "bbox": [350, 280, 120, 60], "confidence": 0.88}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "No people are visible. The scene shows a lemonade stand with a cooler and sign.", "elapsed": 0.4, "slot_type": "constant"}
+      ]
+    },
+    {
+      "at": 3.0,
+      "faces": [
+        {"identity": "Person 1", "bbox": [580, 120, 60, 75], "age": 28, "gender": "F", "confidence": 0.7, "gaze_direction": "toward stand", "looking_at_camera": false}
+      ],
+      "persons": [
+        {"identity": "Person 1", "bbox": [550, 100, 120, 320], "confidence": 0.75}
+      ],
+      "objects": [
+        {"label": "lemonade stand", "bbox": [200, 300, 400, 250], "confidence": 0.95},
+        {"label": "cooler", "bbox": [250, 400, 100, 80], "confidence": 0.9},
+        {"label": "sign", "bbox": [350, 280, 120, 60], "confidence": 0.88}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "One person is visible in the distance, walking toward the stand.", "elapsed": 0.5, "slot_type": "constant"}
+      ]
+    },
+    {
+      "at": 5.0,
+      "faces": [
+        {"identity": "Person 1", "bbox": [420, 130, 70, 85], "age": 28, "gender": "F", "confidence": 0.85, "gaze_direction": "at sign", "looking_at_camera": false}
+      ],
+      "persons": [
+        {"identity": "Person 1", "bbox": [390, 100, 140, 350], "confidence": 0.88}
+      ],
+      "objects": [
+        {"label": "lemonade stand", "bbox": [200, 300, 400, 250], "confidence": 0.95},
+        {"label": "cooler", "bbox": [250, 400, 100, 80], "confidence": 0.9},
+        {"label": "sign", "bbox": [350, 280, 120, 60], "confidence": 0.88}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "One person is standing near the stand, reading the sign.", "elapsed": 0.45, "slot_type": "constant"},
+        {"question": "What is the person doing?", "answer": "The person has slowed down and is reading the sign on the lemonade stand.", "elapsed": 0.5, "slot_type": "ephemeral"}
+      ]
+    },
+    {
+      "at": 7.0,
+      "faces": [
+        {"identity": "Person 1", "bbox": [340, 140, 80, 95], "age": 28, "gender": "F", "confidence": 0.92, "gaze_direction": "at camera", "looking_at_camera": true}
+      ],
+      "persons": [
+        {"identity": "Person 1", "bbox": [300, 100, 160, 380], "confidence": 0.93}
+      ],
+      "objects": [
+        {"label": "lemonade stand", "bbox": [200, 300, 400, 250], "confidence": 0.95},
+        {"label": "cooler", "bbox": [250, 400, 100, 80], "confidence": 0.9},
+        {"label": "sign", "bbox": [350, 280, 120, 60], "confidence": 0.88}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "One person is at the stand, looking directly at the camera.", "elapsed": 0.4, "slot_type": "constant"},
+        {"question": "What is the person doing?", "answer": "The person has stepped up to the table and is looking at the operator, making eye contact.", "elapsed": 0.5, "slot_type": "ephemeral"}
+      ]
+    },
+    {
+      "at": 13.0,
+      "faces": [
+        {"identity": "Person 1", "bbox": [330, 140, 85, 100], "age": 28, "gender": "F", "confidence": 0.95, "gaze_direction": "at camera", "looking_at_camera": true}
+      ],
+      "persons": [
+        {"identity": "Person 1", "bbox": [290, 100, 170, 390], "confidence": 0.95}
+      ],
+      "objects": [
+        {"label": "lemonade stand", "bbox": [200, 300, 400, 250], "confidence": 0.95},
+        {"label": "cooler", "bbox": [250, 400, 100, 80], "confidence": 0.9},
+        {"label": "dollar bill", "bbox": [380, 350, 60, 30], "confidence": 0.72},
+        {"label": "sign", "bbox": [350, 280, 120, 60], "confidence": 0.88}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "One person standing at the stand.", "elapsed": 0.35, "slot_type": "constant"},
+        {"question": "What is the person holding?", "answer": "The person is holding out a dollar bill.", "elapsed": 0.5, "slot_type": "ephemeral"}
+      ]
+    },
+    {
+      "at": 18.0,
+      "faces": [
+        {"identity": "Person 1", "bbox": [330, 140, 85, 100], "age": 28, "gender": "F", "confidence": 0.95, "gaze_direction": "down at cup", "looking_at_camera": false}
+      ],
+      "persons": [
+        {"identity": "Person 1", "bbox": [290, 100, 170, 390], "confidence": 0.95}
+      ],
+      "objects": [
+        {"label": "lemonade stand", "bbox": [200, 300, 400, 250], "confidence": 0.95},
+        {"label": "cooler", "bbox": [250, 400, 100, 80], "confidence": 0.9},
+        {"label": "cup", "bbox": [370, 320, 40, 50], "confidence": 0.85},
+        {"label": "sign", "bbox": [350, 280, 120, 60], "confidence": 0.88}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "One person at the stand, drinking water.", "elapsed": 0.35, "slot_type": "constant"},
+        {"question": "What is the person doing?", "answer": "The person is taking a sip from a cup of water.", "elapsed": 0.45, "slot_type": "ephemeral"}
+      ]
+    },
+    {
+      "at": 36.0,
+      "faces": [
+        {"identity": "Person 1", "bbox": [330, 140, 85, 100], "age": 28, "gender": "F", "confidence": 0.93, "gaze_direction": "at camera", "looking_at_camera": true}
+      ],
+      "persons": [
+        {"identity": "Person 1", "bbox": [290, 100, 170, 390], "confidence": 0.93}
+      ],
+      "objects": [
+        {"label": "lemonade stand", "bbox": [200, 300, 400, 250], "confidence": 0.95},
+        {"label": "cooler", "bbox": [250, 400, 100, 80], "confidence": 0.9},
+        {"label": "empty cup", "bbox": [400, 420, 40, 50], "confidence": 0.8},
+        {"label": "sign", "bbox": [350, 280, 120, 60], "confidence": 0.88}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "One person at the stand, finishing up.", "elapsed": 0.35, "slot_type": "constant"},
+        {"question": "What is the person doing?", "answer": "The person has set their empty cup down on the table.", "elapsed": 0.4, "slot_type": "ephemeral"}
+      ]
+    },
+    {
+      "at": 40.0,
+      "faces": [
+        {"identity": "Person 1", "bbox": [560, 130, 55, 70], "age": 28, "gender": "F", "confidence": 0.65, "gaze_direction": "away", "looking_at_camera": false}
+      ],
+      "persons": [
+        {"identity": "Person 1", "bbox": [530, 100, 110, 310], "confidence": 0.6}
+      ],
+      "objects": [
+        {"label": "lemonade stand", "bbox": [200, 300, 400, 250], "confidence": 0.95},
+        {"label": "cooler", "bbox": [250, 400, 100, 80], "confidence": 0.9},
+        {"label": "sign", "bbox": [350, 280, 120, 60], "confidence": 0.88}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "One person walking away from the stand.", "elapsed": 0.35, "slot_type": "constant"}
+      ]
+    },
+    {
+      "at": 45.0,
+      "faces": [],
+      "persons": [],
+      "objects": [
+        {"label": "lemonade stand", "bbox": [200, 300, 400, 250], "confidence": 0.95},
+        {"label": "cooler", "bbox": [250, 400, 100, 80], "confidence": 0.9},
+        {"label": "sign", "bbox": [350, 280, 120, 60], "confidence": 0.88}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "No people are visible. The stand is empty.", "elapsed": 0.35, "slot_type": "constant"}
+      ]
+    }
+  ]
+}

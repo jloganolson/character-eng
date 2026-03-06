@@ -76,6 +76,7 @@ uv run -m character_eng                  # text mode
 uv run -m character_eng --voice          # voice mode (speak to chat, hear responses)
 uv run -m character_eng --vision         # vision mode (live camera + visual intelligence)
 uv run -m character_eng --voice --vision # voice + vision
+uv run -m character_eng --vision-mock walkup.json  # vision with mock replay (no camera)
 uv run -m character_eng --smoke          # smoke test (auto greg, scripted inputs, exit)
 ```
 
@@ -232,6 +233,20 @@ auto_launch = true                   # auto-start if not running
 synthesis_min_interval = 0.75        # seconds between synthesis cycles
 ```
 
+### Mock vision (no camera)
+
+Test the vision system without a camera or GPU using pre-recorded visual replays:
+
+```bash
+# Use a built-in replay (looks in services/vision/replays/)
+uv run -m character_eng --vision-mock walkup.json
+
+# Use a custom replay file
+uv run -m character_eng --vision-mock /path/to/replay.json
+```
+
+Replay files are JSON with timestamped snapshots. See `services/vision/replays/` for examples. The mock server serves the same endpoints as the real vision service — the app can't tell the difference.
+
 ### How it works
 
 1. **Vision service** (separate process, ~10.5GB VRAM) captures camera, runs face tracking (InsightFace), person tracking (SAM3 + ReID), and VLM questions
@@ -283,14 +298,12 @@ System-level prompts are also editable files in `prompts/`:
 
 ### Adding a new character
 
-Create a directory under `prompts/characters/` with at least a `prompt.txt`. No code changes needed. Example:
+Create a directory under `prompts/characters/` with at least a `prompt.txt`. No code changes needed. Two characters are included:
 
-```
-prompts/characters/my_npc/
-  prompt.txt
-  character.txt
-  scenario.txt
-```
+- **Greg** (`greg/`) — Robot head at a lemonade stand. 6-stage scenario, walkup sim script.
+- **Mara** (`mara/`) — Fortune teller at a carnival booth. 5-stage scenario, curious visitor sim script.
+
+See **[docs/guide.md](docs/guide.md)** for a detailed guide on creating characters, writing scenarios, tuning prompts, and testing — designed for creative collaborators who may not be familiar with the codebase.
 
 ## Local models
 

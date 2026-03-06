@@ -11,6 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 uv run -m character_eng              # Run the app
 uv run -m character_eng --vision     # Run with vision (auto-starts vision service)
+uv run -m character_eng --vision-mock walkup.json  # Vision with mock replay (no camera)
 uv run pytest                        # Unit tests (+ e2e smoke when API keys set)
 uv run -m character_eng --smoke      # E2e smoke test (real LLM calls)
 uv run -m character_eng.qa_world     # World reconciler integration test
@@ -100,6 +101,7 @@ User settings in `config.toml` (gitignored). See `config.example.toml`. App work
 ## Characters
 
 - **Greg** (`prompts/characters/greg/`) — Robot head at a lemonade stand. Scenario script with 6 stages. Walkup sim script.
+- **Mara** (`prompts/characters/mara/`) — Fortune teller at a carnival booth. Scenario script with 5 stages. Curious visitor sim script.
 
 ## In-chat commands
 

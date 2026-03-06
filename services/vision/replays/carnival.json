@@ -1,0 +1,121 @@
+{
+  "loop": false,
+  "snapshots": [
+    {
+      "at": 0.0,
+      "faces": [],
+      "persons": [],
+      "objects": [
+        {"label": "crystal ball", "bbox": [280, 350, 60, 60], "confidence": 0.9},
+        {"label": "tarot cards", "bbox": [180, 380, 100, 50], "confidence": 0.85},
+        {"label": "tip jar", "bbox": [420, 370, 40, 50], "confidence": 0.8},
+        {"label": "sign", "bbox": [100, 100, 200, 80], "confidence": 0.92}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "No people are visible. The booth is empty with cards and a crystal ball on the table.", "elapsed": 0.4, "slot_type": "constant"}
+      ]
+    },
+    {
+      "at": 3.0,
+      "faces": [
+        {"identity": "Person 1", "bbox": [500, 150, 55, 70], "age": 24, "gender": "F", "confidence": 0.7, "gaze_direction": "at sign", "looking_at_camera": false}
+      ],
+      "persons": [
+        {"identity": "Person 1", "bbox": [470, 130, 100, 280], "confidence": 0.72}
+      ],
+      "objects": [
+        {"label": "crystal ball", "bbox": [280, 350, 60, 60], "confidence": 0.9},
+        {"label": "tarot cards", "bbox": [180, 380, 100, 50], "confidence": 0.85},
+        {"label": "sign", "bbox": [100, 100, 200, 80], "confidence": 0.92}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "One person is standing near the booth, reading the sign.", "elapsed": 0.45, "slot_type": "constant"}
+      ]
+    },
+    {
+      "at": 6.0,
+      "faces": [
+        {"identity": "Person 1", "bbox": [400, 160, 65, 80], "age": 24, "gender": "F", "confidence": 0.85, "gaze_direction": "at crystal ball", "looking_at_camera": false}
+      ],
+      "persons": [
+        {"identity": "Person 1", "bbox": [370, 140, 130, 310], "confidence": 0.87}
+      ],
+      "objects": [
+        {"label": "crystal ball", "bbox": [280, 350, 60, 60], "confidence": 0.9},
+        {"label": "tarot cards", "bbox": [180, 380, 100, 50], "confidence": 0.85},
+        {"label": "sign", "bbox": [100, 100, 200, 80], "confidence": 0.92}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "One person standing closer to the booth, looking at the crystal ball.", "elapsed": 0.4, "slot_type": "constant"},
+        {"question": "What is the person doing?", "answer": "The person is peering curiously at the crystal ball on the table.", "elapsed": 0.5, "slot_type": "ephemeral"}
+      ]
+    },
+    {
+      "at": 11.0,
+      "faces": [
+        {"identity": "Person 1", "bbox": [340, 170, 75, 90], "age": 24, "gender": "F", "confidence": 0.93, "gaze_direction": "at camera", "looking_at_camera": true}
+      ],
+      "persons": [
+        {"identity": "Person 1", "bbox": [300, 150, 150, 340], "confidence": 0.94}
+      ],
+      "objects": [
+        {"label": "crystal ball", "bbox": [280, 350, 60, 60], "confidence": 0.9},
+        {"label": "tarot cards", "bbox": [180, 380, 100, 50], "confidence": 0.85},
+        {"label": "sign", "bbox": [100, 100, 200, 80], "confidence": 0.92}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "One person seated at the table, making eye contact.", "elapsed": 0.35, "slot_type": "constant"},
+        {"question": "What is the person doing?", "answer": "The person has sat down at the table and is looking directly at the camera, appearing ready for a reading.", "elapsed": 0.5, "slot_type": "ephemeral"}
+      ]
+    },
+    {
+      "at": 35.0,
+      "faces": [
+        {"identity": "Person 1", "bbox": [340, 170, 75, 90], "age": 24, "gender": "F", "confidence": 0.92, "gaze_direction": "at camera", "looking_at_camera": true}
+      ],
+      "persons": [
+        {"identity": "Person 1", "bbox": [300, 150, 150, 340], "confidence": 0.93}
+      ],
+      "objects": [
+        {"label": "crystal ball", "bbox": [280, 350, 60, 60], "confidence": 0.9},
+        {"label": "tarot cards", "bbox": [180, 380, 100, 50], "confidence": 0.85},
+        {"label": "money", "bbox": [400, 380, 50, 25], "confidence": 0.75},
+        {"label": "tip jar", "bbox": [420, 370, 40, 50], "confidence": 0.8}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "One person at the table, looking grateful.", "elapsed": 0.35, "slot_type": "constant"},
+        {"question": "What is the person doing?", "answer": "The person has placed money on the table and put a tip in the jar.", "elapsed": 0.45, "slot_type": "ephemeral"}
+      ]
+    },
+    {
+      "at": 40.0,
+      "faces": [
+        {"identity": "Person 1", "bbox": [500, 160, 50, 65], "age": 24, "gender": "F", "confidence": 0.65, "gaze_direction": "away", "looking_at_camera": false}
+      ],
+      "persons": [
+        {"identity": "Person 1", "bbox": [475, 140, 95, 260], "confidence": 0.6}
+      ],
+      "objects": [
+        {"label": "crystal ball", "bbox": [280, 350, 60, 60], "confidence": 0.9},
+        {"label": "tarot cards", "bbox": [180, 380, 100, 50], "confidence": 0.85},
+        {"label": "tip jar", "bbox": [420, 370, 40, 50], "confidence": 0.8}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "One person walking away from the booth.", "elapsed": 0.35, "slot_type": "constant"}
+      ]
+    },
+    {
+      "at": 45.0,
+      "faces": [],
+      "persons": [],
+      "objects": [
+        {"label": "crystal ball", "bbox": [280, 350, 60, 60], "confidence": 0.9},
+        {"label": "tarot cards", "bbox": [180, 380, 100, 50], "confidence": 0.85},
+        {"label": "tip jar", "bbox": [420, 370, 40, 50], "confidence": 0.82}
+      ],
+      "vlm_answers": [
+        {"question": "How many people are visible?", "answer": "No one is at the booth.", "elapsed": 0.3, "slot_type": "constant"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+[scenario]
+name = "Mystic Mara — Carnival Reading"
+start = "idle"
+
+[[stage]]
+name = "idle"
+goal = "Mara is alone at her booth, trying to attract customers. She gazes into the crystal ball, shuffles cards dramatically, and calls out to passersby."
+
+[[stage.exit]]
+condition = "Someone shows interest or approaches the booth"
+goto = "hook"
+label = "curious"
+
+[[stage.exit]]
+condition = "Someone walks past without stopping"
+goto = "idle"
+label = "ignored"
+
+[[stage]]
+name = "hook"
+goal = "Someone is nearby. Mara draws them in with intrigue — a mysterious observation, a teasing question. She wants them to sit down."
+
+[[stage.exit]]
+condition = "The person sits down or agrees to a reading"
+goto = "reading"
+label = "sits down"
+
+[[stage.exit]]
+condition = "The person declines or starts to walk away"
+goto = "last_chance"
+label = "hesitates"
+
+[[stage]]
+name = "last_chance"
+goal = "They're about to leave. Mara makes one last intriguing remark — something specific she 'senses' about them. Not pushy, just irresistible."
+
+[[stage.exit]]
+condition = "The person comes back or sits down"
+goto = "reading"
+label = "returns"
+
+[[stage.exit]]
+condition = "The person leaves for good"
+goto = "idle"
+label = "gone"
+
+[[stage]]
+name = "reading"
+goal = "Mara performs a reading. She asks perceptive questions disguised as mystical observation, interprets cards, and gives genuine insight wrapped in dramatic flair."
+
+[[stage.exit]]
+condition = "The reading feels complete — insight delivered, person seems moved or satisfied"
+goto = "close"
+label = "reading done"
+
+[[stage]]
+name = "close"
+goal = "Mara wraps up warmly. She leaves them with a memorable parting thought, mentions the tip jar, and thanks them for visiting."
+
+[[stage.exit]]
+condition = "The person leaves or the goodbye is complete"
+goto = "idle"
+label = "departs"

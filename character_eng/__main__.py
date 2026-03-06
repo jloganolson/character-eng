@@ -1707,6 +1707,46 @@ def run_smoke():
     return 0
 
 
+def _launch_mock_vision(replay_file: str, vision_cfg) -> "subprocess.Popen | None":
+    """Launch mock vision server with a replay JSON file."""
+    import subprocess as _sp
+    from character_eng.vision.client import VisionClient
+
+    client = VisionClient(vision_cfg.service_url)
+    if client.health():
+        console.print(f"[dim]Vision service already running at {vision_cfg.service_url}[/dim]")
+        return None
+
+    replay_path = Path(replay_file)
+    if not replay_path.exists():
+        # Try relative to services/vision/replays/
+        replay_path = Path(__file__).resolve().parent.parent / "services" / "vision" / "replays" / replay_file
+    if not replay_path.exists():
+        console.print(f"[red]Replay file not found: {replay_file}[/red]")
+        return None
+
+    mock_script = Path(__file__).resolve().parent.parent / "services" / "vision" / "mock_server.py"
+    console.print(f"[dim]Starting mock vision server with {replay_path.name}...[/dim]")
+    proc = _sp.Popen(
+        ["python3", str(mock_script), str(replay_path), "--port", str(vision_cfg.service_port)],
+        stdout=_sp.DEVNULL,
+        stderr=_sp.DEVNULL,
+    )
+
+    for _ in range(10):
+        if client.health():
+            console.print(f"[green]Mock vision server ready ({replay_path.name})[/green]")
+            return proc
+        if proc.poll() is not None:
+            console.print("[red]Mock vision server died during startup[/red]")
+            return None
+        time.sleep(0.5)
+
+    console.print("[red]Mock vision server did not start within 5s[/red]")
+    proc.kill()
+    return None
+
+
 def _launch_vision_service(vision_cfg) -> "subprocess.Popen | None":
     """Auto-launch vision service if not running. Returns subprocess or None."""
     import subprocess as _sp
@@ -1753,6 +1793,7 @@ def main():
     parser = argparse.ArgumentParser(description="NPC Character Chat")
     parser.add_argument("--voice", action="store_true", help="Start in voice mode (Deepgram STT + ElevenLabs TTS)")
     parser.add_argument("--vision", action="store_true", help="Enable vision (auto-starts vision service)")
+    parser.add_argument("--vision-mock", metavar="REPLAY", help="Enable vision with mock server using a replay JSON file")
     parser.add_argument("--smoke", action="store_true", help="Run smoke test (auto greg, scripted inputs, exit)")
     args = parser.parse_args()
 
@@ -1763,8 +1804,8 @@ def main():
 
     # --voice flag overrides config; config.voice.enabled is the default
     voice_mode = args.voice or cfg.voice.enabled
-    # --vision flag overrides config; config.vision.enabled is the default
-    vision_mode = args.vision or cfg.vision.enabled
+    # --vision or --vision-mock overrides config; config.vision.enabled is the default
+    vision_mode = args.vision or args.vision_mock or cfg.vision.enabled
 
     console.print(Panel("[bold]NPC Character Chat[/bold]", border_style="green"))
     model_config = get_chat_model_config()
@@ -1774,10 +1815,13 @@ def main():
         return
     console.print(f"[dim]Chat: {model_config['name']}[/dim]")
 
-    # Auto-launch vision service
+    # Auto-launch vision service (real or mock)
     vision_proc = None
     if vision_mode:
-        vision_proc = _launch_vision_service(cfg.vision)
+        if args.vision_mock:
+            vision_proc = _launch_mock_vision(args.vision_mock, cfg.vision)
+        else:
+            vision_proc = _launch_vision_service(cfg.vision)
 
     try:
         while True:
