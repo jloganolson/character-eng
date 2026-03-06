@@ -283,6 +283,9 @@ Run it:
 ```bash
 # In-app:
 /sim test
+
+# From the CLI (non-interactive, runs and exits):
+uv run -m character_eng --character yourchar --sim test
 ```
 
 The engine replays events at their time offsets. Quoted lines become user dialogue; unquoted lines become `[narrator events]` that the character reacts to.

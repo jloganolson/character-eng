@@ -77,6 +77,8 @@ uv run -m character_eng --voice          # voice mode (speak to chat, hear respo
 uv run -m character_eng --vision         # vision mode (live camera + visual intelligence)
 uv run -m character_eng --voice --vision # voice + vision
 uv run -m character_eng --vision-mock walkup.json  # vision with mock replay (no camera)
+uv run -m character_eng --character mara           # auto-select character (skip menu)
+uv run -m character_eng --character mara --sim curious  # run sim non-interactively
 uv run -m character_eng --smoke          # smoke test (auto greg, scripted inputs, exit)
 ```
 

@@ -735,7 +735,7 @@ def get_big_model_config():
 
 
 def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voice_cfg=None,
-              vision_mode: bool = False, vision_cfg=None):
+              vision_mode: bool = False, vision_cfg=None, auto_sim: str | None = None):
     """Run the chat loop for a character. Returns on /back or Ctrl+C."""
     label = character.replace("_", " ").title()
     session_id = uuid.uuid4().hex[:8]
@@ -813,6 +813,14 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
         mode_tag = " [green]voice[/green]" if voice_io is not None else ""
         console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]{mode_tag}  [dim]{session_id}[/dim]  (type /help for commands)\n")
+
+        # Auto-sim: run sim script then exit
+        if auto_sim:
+            run_sim(auto_sim, character, session, world, goals, script, people, scenario, label,
+                    model_config, big_model_config, eval_model_config, log, vision_mgr=vision_mgr)
+            save_chat_log(character, model_config, log, session_id)
+            save_chat_html(character, model_config, log, session_id)
+            return
 
         # Inner loop: conversation turns
         while True:
@@ -1794,6 +1802,8 @@ def main():
     parser.add_argument("--voice", action="store_true", help="Start in voice mode (Deepgram STT + ElevenLabs TTS)")
     parser.add_argument("--vision", action="store_true", help="Enable vision (auto-starts vision service)")
     parser.add_argument("--vision-mock", metavar="REPLAY", help="Enable vision with mock server using a replay JSON file")
+    parser.add_argument("--character", metavar="NAME", help="Auto-select character (skip menu)")
+    parser.add_argument("--sim", metavar="NAME", help="Run a sim script non-interactively then exit")
     parser.add_argument("--smoke", action="store_true", help="Run smoke test (auto greg, scripted inputs, exit)")
     args = parser.parse_args()
 
@@ -1825,12 +1835,18 @@ def main():
 
     try:
         while True:
-            character = pick_character()
+            if args.character:
+                character = args.character
+            else:
+                character = pick_character()
             if character is None:
                 console.print("Goodbye!")
                 break
             chat_loop(character, model_config, voice_mode=voice_mode, voice_cfg=cfg.voice,
-                       vision_mode=vision_mode, vision_cfg=cfg.vision)
+                       vision_mode=vision_mode, vision_cfg=cfg.vision,
+                       auto_sim=args.sim)
+            if args.sim or args.character:
+                break  # non-interactive: run once and exit
     finally:
         if vision_proc is not None:
             console.print("[dim]Stopping vision service...[/dim]")

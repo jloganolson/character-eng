@@ -12,6 +12,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 uv run -m character_eng              # Run the app
 uv run -m character_eng --vision     # Run with vision (auto-starts vision service)
 uv run -m character_eng --vision-mock walkup.json  # Vision with mock replay (no camera)
+uv run -m character_eng --character mara           # Auto-select character
+uv run -m character_eng --character mara --sim curious  # Run sim non-interactively
 uv run pytest                        # Unit tests (+ e2e smoke when API keys set)
 uv run -m character_eng --smoke      # E2e smoke test (real LLM calls)
 uv run -m character_eng.qa_world     # World reconciler integration test
