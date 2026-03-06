@@ -168,3 +168,75 @@ def test_person_get_or_create():
     # Different name creates new person
     pid3 = ps.get_or_create("Person 2")
     assert pid3 == "p2"
+
+
+def test_vision_manager_event_dedup():
+    from character_eng.vision.manager import VisionManager
+
+    mgr = VisionManager()
+
+    # Normalize strips articles and common verbs
+    assert mgr._normalize_event("A person is standing at the stand") == "person standing at stand"
+    assert mgr._normalize_event("The person is standing at the stand") == "person standing at stand"
+    assert mgr._normalize_event("A person is now standing at the stand") == "person standing at stand"
+
+    # Different events normalize differently
+    assert mgr._normalize_event("Person walks away") != mgr._normalize_event("Person sits down")
+
+
+def test_vision_manager_people_resolution():
+    from character_eng.person import PeopleState
+    from character_eng.vision.manager import VisionManager
+
+    mgr = VisionManager()
+    mgr._people = PeopleState()
+
+    snap = RawVisualSnapshot(
+        persons=[PersonObservation(identity="Person 1", bbox=(0, 0, 100, 200))],
+    )
+    mgr._resolve_people(snap)
+
+    # Should create person and emit arrival event
+    assert "Person 1" in mgr._known_persons
+    assert len(mgr._events) == 1
+    assert "appeared" in mgr._events[0].description
+    assert mgr._people.get_or_create("Person 1") == "p1"
+
+    # Same person again — no new event
+    mgr._resolve_people(snap)
+    assert len(mgr._events) == 1
+
+    # Person disappears
+    empty_snap = RawVisualSnapshot()
+    mgr._resolve_people(empty_snap)
+    assert len(mgr._events) == 2
+    assert "no longer visible" in mgr._events[1].description
+
+
+def test_mara_character_loads():
+    """Verify the Mara character loads correctly."""
+    from character_eng.prompts import load_prompt
+    from character_eng.world import load_world_state, load_goals
+    from character_eng.scenario import load_scenario_script
+    from character_eng.perception import load_sim_script
+    from character_eng.person import PeopleState
+
+    world = load_world_state("mara")
+    assert len(world.static) == 10
+    assert len(world.dynamic) == 6
+
+    goals = load_goals("mara")
+    assert "see themselves" in goals.long_term.lower() or "insight" in goals.long_term.lower()
+
+    scenario = load_scenario_script("mara")
+    assert scenario is not None
+    assert scenario.name == "Mystic Mara — Carnival Reading"
+    assert len(scenario.stages) == 5
+    assert scenario.current_stage == "idle"
+
+    prompt = load_prompt("mara", world_state=world, people_state=PeopleState())
+    assert "Mara" in prompt
+    assert "fortune" in prompt.lower() or "carnival" in prompt.lower()
+
+    sim = load_sim_script("mara", "curious")
+    assert len(sim.events) == 15

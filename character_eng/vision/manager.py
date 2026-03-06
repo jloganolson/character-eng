@@ -36,6 +36,9 @@ class VisionManager:
         # People resolver state: visual identity -> people_state person_id
         self._visual_to_person: dict[str, str] = {}
         self._known_persons: set[str] = set()  # visual identities we've seen
+        # Recent event dedup: normalized text -> timestamp
+        self._recent_events: dict[str, float] = {}
+        self._event_cooldown = 15.0  # seconds before a similar event can fire again
 
     def start(self, model_config: dict, world=None, people=None) -> None:
         if self._running:
@@ -133,9 +136,25 @@ class VisionManager:
         )
         self._prev_synthesis = result
 
-        # 4. Push events
+        # 4. Push events (with dedup)
+        now = time.time()
+        # Expire old entries
+        self._recent_events = {k: v for k, v in self._recent_events.items()
+                               if now - v < self._event_cooldown}
         for event_text in result.events:
-            self._events.append(PerceptionEvent(description=event_text, source="visual"))
+            key = self._normalize_event(event_text)
+            if key not in self._recent_events:
+                self._recent_events[key] = now
+                self._events.append(PerceptionEvent(description=event_text, source="visual"))
+
+    @staticmethod
+    def _normalize_event(text: str) -> str:
+        """Normalize event text for dedup. Strips articles, lowercases, collapses whitespace."""
+        import re
+        t = text.lower().strip()
+        t = re.sub(r'\b(a|an|the|is|are|now|still|just|has|have)\b', '', t)
+        t = re.sub(r'\s+', ' ', t).strip()
+        return t
 
     def _resolve_people(self, snapshot: RawVisualSnapshot) -> None:
         """Map visual identities to PeopleState, emit presence-change events."""
