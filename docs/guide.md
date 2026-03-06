@@ -444,8 +444,17 @@ uv run -m character_eng.qa_world
 # Interactive test
 uv run -m character_eng
 
+# Auto-select character (skip menu)
+uv run -m character_eng --character mara
+
+# Run sim non-interactively (runs and exits)
+uv run -m character_eng --character mara --sim curious
+
 # Vision mock test
 uv run -m character_eng --vision-mock walkup.json
+
+# Combined: sim + vision mock (full automated demo)
+uv run -m character_eng --character greg --sim walkup --vision-mock walkup.json
 
 # Persona stress test (7 parallel personas, HTML report)
 uv run -m character_eng.qa_personas --character greg --turns 10 --open
@@ -500,3 +509,67 @@ uv run -m character_eng --vision
 ### Vision replay `.json` — timestamped snapshots
 - `snapshots[].at` = seconds from start
 - Each snapshot has `faces`, `persons`, `objects`, `vlm_answers`
+
+---
+
+## Authoring Vision Replays
+
+Vision replay files simulate what a camera would see. They live in `services/vision/replays/`.
+
+### Snapshot anatomy
+
+Each snapshot represents the visual state at a point in time:
+
+```json
+{
+  "at": 5.0,
+  "faces": [
+    {
+      "identity": "Person 1",
+      "bbox": [x, y, width, height],
+      "age": 28,
+      "gender": "F",
+      "confidence": 0.9,
+      "gaze_direction": "at camera",
+      "looking_at_camera": true
+    }
+  ],
+  "persons": [
+    {
+      "identity": "Person 1",
+      "bbox": [x, y, width, height],
+      "confidence": 0.9
+    }
+  ],
+  "objects": [
+    {"label": "cup", "bbox": [x, y, w, h], "confidence": 0.85}
+  ],
+  "vlm_answers": [
+    {
+      "question": "What is the person doing?",
+      "answer": "The person is drinking from a cup.",
+      "elapsed": 0.4,
+      "slot_type": "constant"
+    }
+  ]
+}
+```
+
+### Tips for realistic replays
+
+- **People approach gradually**: Start with empty `faces`/`persons`, then add them with low confidence at the edge of frame, increasing confidence and shifting bbox toward center as they approach.
+- **Gaze matters**: Use `"gaze_direction": "away"` when approaching, `"at camera"` when engaged.
+- **Objects appear/disappear**: Add objects when they become relevant (dollar bill when someone pays, cup when they're drinking).
+- **VLM answers add context**: The synthesis LLM reads these to understand what's happening. Make them descriptive.
+- **End clean**: Remove people and objects when the interaction ends, returning to the static scene.
+- **Use `"loop": true`** for background ambience (people walking by repeatedly).
+
+### Pair with sim scripts
+
+For the richest testing, combine a vision replay with a sim script:
+
+```bash
+uv run -m character_eng --character greg --sim walkup --vision-mock walkup.json
+```
+
+The sim provides dialogue and narrator events. The vision replay provides visual perception. Together they create a full automated scenario.
