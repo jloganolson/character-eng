@@ -1813,7 +1813,8 @@ def main():
     cfg = load_config()
 
     # --voice flag overrides config; config.voice.enabled is the default
-    voice_mode = args.voice or cfg.voice.enabled
+    # --sim forces text mode (voice doesn't make sense for non-interactive runs)
+    voice_mode = False if args.sim else (args.voice or cfg.voice.enabled)
     # --vision or --vision-mock overrides config; config.vision.enabled is the default
     vision_mode = args.vision or args.vision_mock or cfg.vision.enabled
 
