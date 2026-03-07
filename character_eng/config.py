@@ -32,9 +32,16 @@ class VisionConfig:
 
 
 @dataclass
+class DashboardConfig:
+    enabled: bool = True
+    port: int = 7862
+
+
+@dataclass
 class AppConfig:
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
+    dashboard: DashboardConfig = field(default_factory=DashboardConfig)
 
 
 def load_config() -> AppConfig:
@@ -69,4 +76,10 @@ def load_config() -> AppConfig:
         synthesis_min_interval=vision_data.get("synthesis_min_interval", 0.75),
     )
 
-    return AppConfig(voice=voice, vision=vision)
+    dashboard_data = data.get("dashboard", {})
+    dashboard = DashboardConfig(
+        enabled=dashboard_data.get("enabled", True),
+        port=dashboard_data.get("port", 7862),
+    )
+
+    return AppConfig(voice=voice, vision=vision, dashboard=dashboard)

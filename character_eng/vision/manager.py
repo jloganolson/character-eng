@@ -41,13 +41,18 @@ class VisionManager:
         self._event_cooldown = 15.0  # seconds before a similar event can fire again
         # Rolling event history for synthesis context (raw text, last N events)
         self._event_history: collections.deque[str] = collections.deque(maxlen=10)
+        # Dashboard integration
+        self._collector = None
+        self._last_dashboard_push = 0.0
 
-    def start(self, model_config: dict, world=None, people=None) -> None:
+    def start(self, model_config: dict, world=None, people=None, collector=None) -> None:
         if self._running:
             return
         self._model_config = model_config
         self._world = world
         self._people = people
+        if collector is not None:
+            self._collector = collector
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -139,8 +144,17 @@ class VisionManager:
             previous_synthesis=prev,
         )
 
-        # 4. Push events (with dedup)
+        # 3b. Push vision snapshot to dashboard (every 5s)
         now = time.time()
+        if self._collector and now - self._last_dashboard_push > 5.0:
+            self._last_dashboard_push = now
+            self._collector.push("vision_snapshot", {
+                "faces": len(snapshot.faces),
+                "persons": len(snapshot.persons),
+                "vlm_answers": [a.answer for a in snapshot.vlm_answers] if snapshot.vlm_answers else [],
+            })
+
+        # 4. Push events (with dedup)
         # Expire old entries
         self._recent_events = {k: v for k, v in self._recent_events.items()
                                if now - v < self._event_cooldown}

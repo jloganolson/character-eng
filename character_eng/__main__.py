@@ -48,6 +48,58 @@ console = Console()
 
 LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 
+# --- Dashboard ---
+_collector = None  # set in chat_loop / main when dashboard is active
+_dashboard_input_queue = None
+
+
+def _push(event_type: str, data: dict) -> None:
+    """Push an event to the dashboard collector (no-op if dashboard is off)."""
+    if _collector is not None:
+        _collector.push(event_type, data)
+
+
+def _get_input(session_id: str) -> str:
+    """Get user input from console or dashboard queue.
+
+    When dashboard is active, starts a thread to read stdin so that both
+    stdin and the dashboard input queue can be polled.
+    """
+    import queue as _queue
+
+    if _dashboard_input_queue is None:
+        return console.input(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: ").strip()
+
+    # Both sources feed a merge queue
+    merge_q: _queue.Queue = _queue.Queue()
+
+    def _stdin_reader():
+        try:
+            line = console.input(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: ").strip()
+            merge_q.put(("stdin", line))
+        except (EOFError, KeyboardInterrupt) as e:
+            merge_q.put(("error", e))
+
+    reader = threading.Thread(target=_stdin_reader, daemon=True)
+    reader.start()
+
+    while True:
+        # Check dashboard queue
+        try:
+            text = _dashboard_input_queue.get(timeout=0.1)
+            console.print(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: {text}")
+            return text
+        except _queue.Empty:
+            pass
+        # Check stdin
+        try:
+            source, value = merge_q.get_nowait()
+            if source == "error":
+                raise value
+            return value
+        except _queue.Empty:
+            pass
+
 # --- Background reconciliation threading ---
 _reconcile_lock = threading.Lock()
 _reconcile_result: WorldUpdate | None = None
@@ -135,6 +187,22 @@ def _check_reconcile(world, log, people=None):
         "add_facts": result.add_facts,
         "events": result.events,
     })
+
+    _push("reconcile", {
+        "remove_facts": result.remove_facts,
+        "add_facts": result.add_facts,
+        "events": result.events,
+    })
+    _push("world_state", {
+        "static_facts": [{"id": "", "text": s} for s in (world.static or [])],
+        "dynamic_facts": [{"id": k, "text": v} for k, v in (world.dynamic or {}).items()],
+        "pending": list(world.pending),
+    })
+    if people is not None:
+        _push("people_state", {"people": [
+            {"id": p.person_id, "name": p.name, "facts": [{"id": k, "text": v} for k, v in p.facts.items()]}
+            for p in people.people.values()
+        ]})
 
 
 # --- Sync eval microservices (8B) ---
@@ -252,6 +320,10 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
         if expr_result.gaze_type == "glance":
             gaze_label += " (glance)"
         console.print(f"  {_ts()} gaze: {gaze_label}  expression: {expr_result.expression}")
+        _push("expression", {
+            "gaze": expr_result.gaze, "gaze_type": expr_result.gaze_type,
+            "expression": expr_result.expression,
+        })
         parts = []
         if expr_result.gaze:
             if expr_result.gaze_type == "glance":
@@ -275,13 +347,19 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
         display_eval(eval_compat)
         inject_eval(session, eval_compat)
         log.append({"type": "eval", **eval_to_dict(eval_compat)})
+        _push("eval", {
+            "thought": tresult.thought, "script_status": check.status,
+            "plan_request": check.plan_request,
+        })
 
         if check.status == "advance":
             script.advance()
             if script.current_beat:
                 console.print(f"[magenta]  {_ts()} next beat:  [{script.current_beat.intent}][/magenta]")
+                _push("beat_advance", {"next_intent": script.current_beat.intent})
             else:
                 console.print(f"[dim]  {_ts()} script complete, replanning...[/dim]")
+                _push("beat_advance", {"script_complete": True})
                 needs_plan = True
         elif check.status == "off_book" and check.plan_request:
             needs_plan = True
@@ -297,8 +375,17 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
                     if scenario.advance_to(exit_obj.goto):
                         new_stage = scenario.active_stage
                         console.print(f"[cyan]  {_ts()} director: {dir_result.thought}[/cyan]")
+                        _push("director", {
+                            "thought": dir_result.thought, "status": "advance",
+                            "exit_index": dir_result.exit_index,
+                            "new_stage": new_stage.name if new_stage else None,
+                        })
                         if new_stage:
                             console.print(f"[bold cyan]{_ts()} Stage → {new_stage.name}: {new_stage.goal}[/bold cyan]")
+                            _push("stage_change", {
+                                "old_stage": stage.name, "new_stage": new_stage.name,
+                                "new_goal": new_stage.goal,
+                            })
                             result = single_beat_call(
                                 system_prompt=session.system_prompt, world=world,
                                 history=session.get_history(), goals=goals, model_config=model_config,
@@ -309,6 +396,10 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
         else:
             if dir_result.thought:
                 console.print(f"[dim]  {_ts()} director: {dir_result.thought}[/dim]")
+            _push("director", {
+                "thought": dir_result.thought or "", "status": dir_result.status or "hold",
+                "exit_index": dir_result.exit_index,
+            })
 
     return needs_plan, plan_request, expr_result
 
@@ -632,6 +723,10 @@ def handle_trigger(trigger_num, scenario, session, world, goals, script, people,
 
     new_stage = scenario.active_stage
     console.print(f"[bold cyan]Stage {old_stage} → {new_stage.name}[/bold cyan]")
+    _push("stage_change", {
+        "old_stage": old_stage, "new_stage": new_stage.name,
+        "new_goal": new_stage.goal if new_stage else "",
+    })
 
     # 2. Inject exit condition as perception event → character reacts
     handle_perception(
@@ -794,7 +889,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
         # Start vision manager (after people setup)
         if vision_mgr is not None:
-            vision_mgr.start(model_config, world=world, people=people)
+            vision_mgr.start(model_config, world=world, people=people, collector=_collector)
             vision_mgr.update_context(stage_goal=stage_goal)
             console.print("[green]Vision active[/green]")
             # Initial focus
@@ -813,6 +908,25 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
         mode_tag = " [green]voice[/green]" if voice_io is not None else ""
         console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]{mode_tag}  [dim]{session_id}[/dim]  (type /help for commands)\n")
+
+        model_key = next((k for k, v in MODELS.items() if v is model_config), "unknown")
+        _push("session_start", {
+            "character": label, "model": model_key, "session_id": session_id,
+            "stage": scenario.active_stage.name if scenario and scenario.active_stage else "",
+            "goal": stage_goal,
+        })
+        # Push initial world/people/stage state
+        if world is not None:
+            _push("world_state", {
+                "static_facts": [{"id": "", "text": s} for s in (world.static or [])],
+                "dynamic_facts": [{"id": k, "text": v} for k, v in (world.dynamic or {}).items()],
+                "pending": [],
+            })
+        if scenario and scenario.active_stage:
+            _push("stage_change", {
+                "old_stage": "", "new_stage": scenario.active_stage.name,
+                "new_goal": scenario.active_stage.goal,
+            })
 
         # Auto-sim: run sim script then exit
         if auto_sim:
@@ -879,7 +993,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print(f"[bold blue]You[/bold blue] [dim]{session_id} {_ts()}[/dim]: {user_input}")
             else:
                 try:
-                    user_input = console.input(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: ").strip()
+                    user_input = _get_input(session_id)
                 except (EOFError, KeyboardInterrupt):
                     console.print()
                     if voice_io is not None:
@@ -904,6 +1018,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     _, narrator_msg = process_perception(event, people, world)
                     console.print(f"[dim]{narrator_msg}[/dim]")
                     session.inject_system(narrator_msg)
+                    _push("perception", {"source": event.source, "description": event.description})
                 vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal)
 
             # --- Command dispatch ---
@@ -912,6 +1027,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 if voice_io is not None:
                     voice_io.stop()
                     voice_io = None
+                _push("session_end", {"total_turns": len([e for e in log if e.get("type") in ("send", "beat", "world", "see")])})
                 save_chat_log(character, model_config, log, session_id)
                 save_chat_html(character, model_config, log, session_id)
                 console.print("Goodbye!")
@@ -920,6 +1036,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 if voice_io is not None:
                     voice_io.stop()
                     voice_io = None
+                _push("session_end", {"total_turns": len([e for e in log if e.get("type") in ("send", "beat", "world", "see")])})
                 save_chat_log(character, model_config, log, session_id)
                 save_chat_html(character, model_config, log, session_id)
                 return
@@ -1038,6 +1155,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 )
 
             # --- Turn flow ---
+            _push("turn_start", {"input_type": "send", "input_text": user_input})
 
             # First user input: natural LLM response, then parallel eval + replan
             if not had_user_input:
@@ -1190,6 +1308,10 @@ def run_expression(session, model_config, line=None):
         if result.gaze_type == "glance":
             gaze_label += " (glance)"
         console.print(f"  {_ts()} gaze: {gaze_label}  expression: {result.expression}")
+        _push("expression", {
+            "gaze": result.gaze, "gaze_type": result.gaze_type,
+            "expression": result.expression,
+        })
 
     parts = []
     if result.gaze:
@@ -1211,6 +1333,8 @@ def deliver_beat(session, beat, label, voice_io=None):
     console.print(npc_name, end="")
     console.print(beat.line)
     console.print()
+    _push("response_chunk", {"text": beat.line})
+    _push("response_done", {"full_text": beat.line, "ttft_ms": 0, "total_ms": 0})
     if voice_io is not None:
         voice_io.speak_text(beat.line)
         if voice_io._barged_in:
@@ -1246,10 +1370,12 @@ def apply_plan(script, plan_result):
     for i, beat in enumerate(plan_result.beats):
         marker = "→" if i == 0 else " "
         console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"[/magenta]")
+    _push("plan", {"beats": [{"intent": b.intent, "line": b.line} for b in plan_result.beats]})
 
 
 def handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=None, people=None, scenario=None, vision_mgr=None):
     """Process a /beat command — condition-gated beat delivery (time passes)."""
+    _push("turn_start", {"input_type": "beat", "input_text": ""})
     entry = {"type": "beat"}
 
     # 1. If no current beat, replan (synchronous — user explicitly asked for a beat)
@@ -1345,6 +1471,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
 
 def handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=None, people=None, scenario=None, vision_mgr=None):
     """Process a /world <description> command. Fast path: immediate reaction, background reconcile."""
+    _push("turn_start", {"input_type": "world", "input_text": change_text})
     # Store as pending
     world.add_pending(change_text)
 
@@ -1388,6 +1515,7 @@ def handle_world_change(session, world, goals, script, change_text, label, model
 
 def handle_perception(session, world, goals, script, people, scenario, see_text, label, model_config, big_model_config, eval_model_config, log, voice_io=None, vision_mgr=None):
     """Process a /see <text> command. Perception event: narrator injection, character reaction, background reconcile+eval+director."""
+    _push("turn_start", {"input_type": "see", "input_text": see_text})
     event = PerceptionEvent(description=see_text, source="manual")
     _, narrator_msg = process_perception(event, people, world)
 
@@ -1511,6 +1639,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
                 t_first = time.time()
             full_response.append(chunk)
             console.print(chunk, end="", highlight=False)
+            _push("response_chunk", {"text": chunk})
             voice_io._tts.send_text(chunk)
 
         t_llm_done = time.time()
@@ -1553,6 +1682,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
                 t_first = time.time()
             full_response.append(chunk)
             console.print(chunk, end="", highlight=False)
+            _push("response_chunk", {"text": chunk})
 
         # Fire expression after LLM streaming (no TTS to overlap with, but still before timing print)
         if expr_model_config is not None and full_response:
@@ -1585,9 +1715,11 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
         first_audio_ms = int((t_first_audio - t_start) * 1000) if t_first_audio else 0
         spoken_ms = int((t_end - t_start) * 1000)
         console.print(f"\n[dim]  {ttft_ms}ms TTFT · {llm_ms}ms LLM · {first_audio_ms}ms first audio · {spoken_ms}ms spoken[/dim]\n")
+        _push("response_done", {"full_text": response_text, "ttft_ms": ttft_ms, "total_ms": spoken_ms})
     else:
         total_ms = int((t_end - t_start) * 1000)
         console.print(f"\n[dim]  {ttft_ms}ms TTFT · {total_ms}ms total[/dim]\n")
+        _push("response_done", {"full_text": response_text, "ttft_ms": ttft_ms, "total_ms": total_ms})
     return response_text
 
 
@@ -1805,6 +1937,7 @@ def main():
     parser.add_argument("--character", metavar="NAME", help="Auto-select character (skip menu)")
     parser.add_argument("--sim", metavar="NAME", help="Run a sim script non-interactively then exit")
     parser.add_argument("--smoke", action="store_true", help="Run smoke test (auto greg, scripted inputs, exit)")
+    parser.add_argument("--no-dashboard", action="store_true", help="Disable the HTML dashboard")
     args = parser.parse_args()
 
     if args.smoke:
@@ -1817,6 +1950,21 @@ def main():
     voice_mode = False if args.sim else (args.voice or cfg.voice.enabled)
     # --vision or --vision-mock overrides config; config.vision.enabled is the default
     vision_mode = args.vision or args.vision_mock or cfg.vision.enabled
+
+    # --- Dashboard setup ---
+    global _collector, _dashboard_input_queue
+    dashboard_enabled = cfg.dashboard.enabled and not args.no_dashboard and not args.smoke
+    if dashboard_enabled:
+        import queue as _queue
+        from character_eng.dashboard.events import DashboardEventCollector
+        from character_eng.dashboard.server import start_dashboard
+        from character_eng.open_report import open_in_browser
+        _collector = DashboardEventCollector()
+        _dashboard_input_queue = _queue.Queue()
+        _, dash_port = start_dashboard(_collector, _dashboard_input_queue, port=cfg.dashboard.port)
+        dash_url = f"http://127.0.0.1:{dash_port}/"
+        console.print(f"[bold green]Dashboard:[/bold green] {dash_url}")
+        open_in_browser(dash_url)
 
     console.print(Panel("[bold]NPC Character Chat[/bold]", border_style="green"))
     model_config = get_chat_model_config()

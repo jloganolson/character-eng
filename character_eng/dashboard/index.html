@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Character Dashboard</title>
+<style>
+  :root {
+    /* Gruvbox Dark */
+    --bg: #282828;
+    --bg-alt: #1d2021;
+    --panel: #3c3836;
+    --panel-hover: #504945;
+    --border: #504945;
+    --text: #ebdbb2;
+    --text-dim: #928374;
+    --user: #83a598;
+    --npc: #b8bb26;
+    --beat: #d3869b;
+    --narrator: #fabd2f;
+    --error: #fb4934;
+    --advance: #8ec07c;
+    --hold: #928374;
+    --blue: #458588;
+    --cyan: #689d6a;
+  }
+  :root.light {
+    /* Gruvbox Light */
+    --bg: #fbf1c7;
+    --bg-alt: #f2e5bc;
+    --panel: #ebdbb2;
+    --panel-hover: #d5c4a1;
+    --border: #d5c4a1;
+    --text: #3c3836;
+    --text-dim: #928374;
+    --user: #076678;
+    --npc: #79740e;
+    --beat: #8f3f71;
+    --narrator: #b57614;
+    --error: #cc241d;
+    --advance: #427b58;
+    --hold: #928374;
+    --blue: #458588;
+    --cyan: #689d6a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Consolas', monospace;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  /* Header */
+  #header {
+    display: flex;
+    align-items: center;
+    gap: 1.5em;
+    padding: 0.5em 1em;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.85em;
+    flex-shrink: 0;
+  }
+  #header .label { color: var(--text-dim); }
+  #header .value { font-weight: 600; }
+  #header .character { color: var(--npc); font-size: 1.1em; }
+  #header .stage { color: var(--narrator); }
+  #theme-toggle {
+    margin-left: auto;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text);
+    cursor: pointer;
+    padding: 0.2em 0.5em;
+    border-radius: 4px;
+    font-size: 1em;
+  }
+  /* Main layout */
+  #main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+  /* Conversation timeline */
+  #timeline {
+    flex: 7;
+    overflow-y: auto;
+    padding: 0.5em 1em;
+    scroll-behavior: smooth;
+  }
+  #timeline::-webkit-scrollbar { width: 6px; }
+  #timeline::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .turn {
+    margin-bottom: 0.8em;
+    padding: 0.5em 0.8em;
+    border-left: 3px solid transparent;
+    border-radius: 0 4px 4px 0;
+  }
+  .turn-user { border-left-color: var(--user); }
+  .turn-beat { border-left-color: var(--beat); }
+  .turn-world, .turn-see { border-left-color: var(--narrator); }
+  .turn-perception { border-left-color: var(--narrator); }
+  .turn-label {
+    font-size: 0.75em;
+    color: var(--text-dim);
+    margin-bottom: 0.2em;
+  }
+  .turn-input {
+    margin-bottom: 0.3em;
+  }
+  .turn-input.user-text { color: var(--user); }
+  .turn-input.beat-text { color: var(--beat); font-style: italic; }
+  .turn-input.world-text { color: var(--narrator); font-style: italic; }
+  .turn-input.perception-text { color: var(--narrator); font-size: 0.9em; }
+  .turn-response {
+    color: var(--npc);
+    padding: 0.3em 0.6em;
+    background: var(--bg-alt);
+    border-radius: 4px;
+    margin-top: 0.2em;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .turn-response .cursor {
+    display: inline-block;
+    width: 0.5em;
+    height: 1em;
+    background: var(--npc);
+    animation: blink 1s step-end infinite;
+    vertical-align: text-bottom;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  .turn-meta {
+    font-size: 0.78em;
+    color: var(--text-dim);
+    margin-top: 0.3em;
+  }
+  .turn-meta details { margin-top: 0.15em; }
+  .turn-meta summary { cursor: pointer; }
+  .turn-meta .eval-body {
+    padding: 0.3em 0.5em;
+    background: var(--bg-alt);
+    border-radius: 4px;
+    margin-top: 0.2em;
+    font-size: 0.95em;
+  }
+  .meta-tag {
+    display: inline-block;
+    padding: 0 0.4em;
+    border-radius: 3px;
+    font-size: 0.85em;
+    margin-right: 0.3em;
+  }
+  .meta-tag.advance { background: var(--advance); color: var(--bg); }
+  .meta-tag.hold { background: var(--hold); color: var(--bg); }
+  .meta-tag.off_book { background: var(--narrator); color: var(--bg); }
+  /* Sidebar */
+  #sidebar {
+    flex: 3;
+    overflow-y: auto;
+    padding: 0.5em;
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5em;
+  }
+  .sidebar-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5em 0.7em;
+  }
+  .sidebar-panel h3 {
+    font-size: 0.8em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.4em;
+  }
+  .sidebar-panel .content {
+    font-size: 0.82em;
+    line-height: 1.5;
+  }
+  .fact { margin: 0.1em 0; }
+  .fact-add { color: var(--advance); }
+  .fact-id { color: var(--text-dim); }
+  .person-entry { margin: 0.2em 0; }
+  .person-name { color: var(--user); font-weight: 600; }
+  #vision-panel img {
+    width: 100%;
+    border-radius: 4px;
+    margin-bottom: 0.3em;
+  }
+  #vision-meta { font-size: 0.8em; color: var(--text-dim); }
+  /* Beat list in stage panel */
+  .beat-list { margin-top: 0.3em; }
+  .beat-item { margin: 0.1em 0; font-size: 0.85em; }
+  .beat-item.current { color: var(--beat); font-weight: 600; }
+  .beat-item.done { color: var(--text-dim); text-decoration: line-through; }
+  /* Footer */
+  #footer {
+    display: flex;
+    align-items: center;
+    gap: 1em;
+    padding: 0.4em 1em;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    font-size: 0.8em;
+    flex-shrink: 0;
+  }
+  #footer .stat { color: var(--text-dim); }
+  #footer .stat b { color: var(--text); }
+  /* Input bar */
+  #input-bar {
+    display: flex;
+    gap: 0.5em;
+    padding: 0.4em 1em;
+    background: var(--bg-alt);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  #chat-input {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.4em 0.7em;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.9em;
+    outline: none;
+  }
+  #chat-input:focus { border-color: var(--user); }
+  #chat-input::placeholder { color: var(--text-dim); }
+  #send-btn {
+    background: var(--blue);
+    color: var(--text);
+    border: none;
+    padding: 0.4em 1em;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.9em;
+  }
+  .hotkey-hints {
+    font-size: 0.8em;
+    color: var(--text-dim);
+    padding: 0 0.5em;
+    display: flex;
+    align-items: center;
+    gap: 0.8em;
+  }
+  .hotkey-hints kbd {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    padding: 0 0.3em;
+    border-radius: 2px;
+    font-size: 0.9em;
+  }
+  /* Scroll lock */
+  #scroll-lock {
+    position: fixed;
+    bottom: 5em;
+    right: 1.5em;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 0.3em 0.6em;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8em;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 10;
+  }
+  #scroll-lock.visible { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <span class="character" id="h-character">--</span>
+  <span><span class="label">model:</span> <span class="value" id="h-model">--</span></span>
+  <span><span class="label">session:</span> <span class="value" id="h-session">--</span></span>
+  <span><span class="label">stage:</span> <span class="value stage" id="h-stage">--</span></span>
+  <span><span class="label">uptime:</span> <span class="value" id="h-uptime">0s</span></span>
+  <button id="theme-toggle" title="Toggle light/dark">&#9789;</button>
+</div>
+
+<div id="main">
+  <div id="timeline"></div>
+  <div id="sidebar">
+    <div class="sidebar-panel" id="vision-panel" style="display:none;">
+      <h3>Vision</h3>
+      <div class="content">
+        <img id="vision-feed" alt="Vision feed">
+        <div id="vision-meta"></div>
+      </div>
+    </div>
+    <div class="sidebar-panel" id="world-panel">
+      <h3>World State</h3>
+      <div class="content" id="world-content"><span class="fact" style="color:var(--text-dim)">No world state yet</span></div>
+    </div>
+    <div class="sidebar-panel" id="stage-panel">
+      <h3>Stage</h3>
+      <div class="content" id="stage-content">--</div>
+    </div>
+    <div class="sidebar-panel" id="plan-panel" style="display:none;">
+      <h3>Script</h3>
+      <div class="content" id="plan-content"></div>
+    </div>
+    <div class="sidebar-panel" id="people-panel">
+      <h3>People</h3>
+      <div class="content" id="people-content"><span style="color:var(--text-dim)">No people tracked</span></div>
+    </div>
+  </div>
+</div>
+
+<div id="footer">
+  <span class="stat" id="f-ttft"></span>
+  <span class="stat" id="f-eval"></span>
+  <span class="stat" id="f-turns">Turns: <b>0</b></span>
+</div>
+
+<div id="input-bar">
+  <input type="text" id="chat-input" placeholder="Type a message... (Enter to send)" autocomplete="off">
+  <button id="send-btn">Send</button>
+  <div class="hotkey-hints">
+    <span><kbd>B</kbd>=beat</span>
+    <span><kbd>1-4</kbd>=triggers</span>
+    <span><kbd>I</kbd>=info</span>
+  </div>
+</div>
+
+<div id="scroll-lock">&#x2193; New messages</div>
+
+<script>
+(function() {
+  // State
+  let sessionStart = null;
+  let turnCount = 0;
+  let autoScroll = true;
+  let currentTurnEl = null;
+  let currentResponseEl = null;
+
+  const timeline = document.getElementById('timeline');
+  const scrollLock = document.getElementById('scroll-lock');
+  const chatInput = document.getElementById('chat-input');
+  const sendBtn = document.getElementById('send-btn');
+
+  // Theme
+  const themeBtn = document.getElementById('theme-toggle');
+  function setTheme(light) {
+    document.documentElement.classList.toggle('light', light);
+    themeBtn.textContent = light ? '\u2600' : '\u263D';
+    localStorage.setItem('dashboard-theme', light ? 'light' : 'dark');
+  }
+  themeBtn.addEventListener('click', () => {
+    setTheme(!document.documentElement.classList.contains('light'));
+  });
+  if (localStorage.getItem('dashboard-theme') === 'light') setTheme(true);
+
+  // Auto-scroll
+  timeline.addEventListener('scroll', () => {
+    const atBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 50;
+    autoScroll = atBottom;
+    scrollLock.classList.toggle('visible', !atBottom);
+  });
+  scrollLock.addEventListener('click', () => {
+    timeline.scrollTop = timeline.scrollHeight;
+    autoScroll = true;
+    scrollLock.classList.remove('visible');
+  });
+  function scrollToBottom() {
+    if (autoScroll) timeline.scrollTop = timeline.scrollHeight;
+  }
+
+  // Uptime ticker
+  setInterval(() => {
+    if (!sessionStart) return;
+    const s = Math.floor((Date.now() / 1000) - sessionStart);
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    document.getElementById('h-uptime').textContent = m > 0 ? `${m}m${sec}s` : `${sec}s`;
+  }, 1000);
+
+  // Input handling
+  function sendInput(text) {
+    if (!text.trim()) return;
+    fetch('/send', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text: text.trim()})
+    });
+    chatInput.value = '';
+  }
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      sendInput(chatInput.value);
+    }
+  });
+  sendBtn.addEventListener('click', () => sendInput(chatInput.value));
+
+  // Global hotkeys (only when input not focused)
+  document.addEventListener('keydown', (e) => {
+    if (document.activeElement === chatInput) return;
+    switch(e.key) {
+      case 'b': sendInput('/beat'); break;
+      case 'i': sendInput('/info'); break;
+      case 't': sendInput('/trace'); break;
+      case 'q': sendInput('/quit'); break;
+      case '1': case '2': case '3': case '4': sendInput(e.key); break;
+    }
+  });
+
+  // Escape HTML
+  function esc(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  // Event handlers
+  const handlers = {
+    session_start(data) {
+      sessionStart = Date.now() / 1000;
+      document.getElementById('h-character').textContent = data.character || '--';
+      document.getElementById('h-model').textContent = data.model || '--';
+      document.getElementById('h-session').textContent = data.session_id || '--';
+      if (data.stage) document.getElementById('h-stage').textContent = data.stage;
+      document.title = `${data.character || 'Character'} Dashboard`;
+    },
+
+    turn_start(data) {
+      turnCount++;
+      document.getElementById('f-turns').innerHTML = `Turns: <b>${turnCount}</b>`;
+
+      const div = document.createElement('div');
+      const cls = data.input_type === 'beat' ? 'turn-beat'
+                : data.input_type === 'world' || data.input_type === 'see' ? 'turn-world'
+                : 'turn-user';
+      div.className = `turn ${cls}`;
+
+      let label = '';
+      let inputCls = 'user-text';
+      let inputText = esc(data.input_text || '');
+      if (data.input_type === 'beat') {
+        label = '/beat';
+        inputCls = 'beat-text';
+        inputText = '/beat';
+      } else if (data.input_type === 'world') {
+        label = '/world';
+        inputCls = 'world-text';
+      } else if (data.input_type === 'see') {
+        label = '/see';
+        inputCls = 'world-text';
+      } else {
+        label = 'You';
+      }
+
+      div.innerHTML = `<div class="turn-label">${esc(label)}</div>
+        <div class="turn-input ${inputCls}">${inputText}</div>
+        <div class="turn-response"><span class="cursor"></span></div>
+        <div class="turn-meta"></div>`;
+
+      timeline.appendChild(div);
+      currentTurnEl = div;
+      currentResponseEl = div.querySelector('.turn-response');
+      scrollToBottom();
+    },
+
+    response_chunk(data) {
+      if (!currentResponseEl) return;
+      // Remove cursor, append text
+      const cursor = currentResponseEl.querySelector('.cursor');
+      const textNode = document.createTextNode(data.text);
+      if (cursor) {
+        currentResponseEl.insertBefore(textNode, cursor);
+      } else {
+        currentResponseEl.appendChild(textNode);
+      }
+      scrollToBottom();
+    },
+
+    response_done(data) {
+      if (!currentResponseEl) return;
+      // Remove cursor
+      const cursor = currentResponseEl.querySelector('.cursor');
+      if (cursor) cursor.remove();
+      // Update timing
+      const ttft = data.ttft_ms || 0;
+      const total = data.total_ms || 0;
+      document.getElementById('f-ttft').innerHTML = `TTFT: <b>${ttft}ms</b> | Total: <b>${total}ms</b>`;
+      scrollToBottom();
+    },
+
+    expression(data) {
+      if (!currentTurnEl) return;
+      const meta = currentTurnEl.querySelector('.turn-meta');
+      let gazeLabel = esc(data.gaze || '');
+      if (data.gaze_type === 'glance') gazeLabel += ' (glance)';
+      const html = `<div>gaze: ${gazeLabel} &middot; expression: ${esc(data.expression || '')}</div>`;
+      meta.insertAdjacentHTML('beforeend', html);
+    },
+
+    eval(data) {
+      if (!currentTurnEl) return;
+      const meta = currentTurnEl.querySelector('.turn-meta');
+      const statusCls = data.script_status || 'hold';
+      let html = `<details><summary>
+        <span class="meta-tag ${esc(statusCls)}">${esc(data.script_status || '?')}</span>
+        eval</summary><div class="eval-body">
+        <div><b>thought:</b> ${esc(data.thought || '')}</div>`;
+      if (data.plan_request) {
+        html += `<div><b>plan_request:</b> ${esc(data.plan_request)}</div>`;
+      }
+      html += '</div></details>';
+      meta.insertAdjacentHTML('beforeend', html);
+      document.getElementById('f-eval').innerHTML = `Eval: <b>${esc(data.script_status || '?')}</b>`;
+    },
+
+    director(data) {
+      if (!currentTurnEl) return;
+      const meta = currentTurnEl.querySelector('.turn-meta');
+      let html = `<details><summary>director: ${esc(data.status || 'hold')}</summary>
+        <div class="eval-body"><div><b>thought:</b> ${esc(data.thought || '')}</div>`;
+      if (data.new_stage) {
+        html += `<div><b>new stage:</b> ${esc(data.new_stage)}</div>`;
+      }
+      html += '</div></details>';
+      meta.insertAdjacentHTML('beforeend', html);
+    },
+
+    reconcile(data) {
+      if (!currentTurnEl) return;
+      const meta = currentTurnEl.querySelector('.turn-meta');
+      let items = '';
+      if (data.remove_facts && data.remove_facts.length) {
+        items += data.remove_facts.map(f => `<div style="color:var(--error)">- ${esc(f)}</div>`).join('');
+      }
+      if (data.add_facts && data.add_facts.length) {
+        items += data.add_facts.map(f => `<div style="color:var(--advance)">+ ${esc(f)}</div>`).join('');
+      }
+      if (items) {
+        meta.insertAdjacentHTML('beforeend',
+          `<details><summary>reconcile</summary><div class="eval-body">${items}</div></details>`);
+      }
+    },
+
+    world_state(data) {
+      const el = document.getElementById('world-content');
+      let html = '';
+      if (data.static_facts && data.static_facts.length) {
+        html += data.static_facts.map(f => `<div class="fact"><span class="fact-id">${esc(f.id || '')}</span> ${esc(f.text || f)}</div>`).join('');
+      }
+      if (data.dynamic_facts && data.dynamic_facts.length) {
+        html += data.dynamic_facts.map(f => `<div class="fact"><span class="fact-id">${esc(f.id || '')}</span> ${esc(f.text || f)}</div>`).join('');
+      }
+      if (data.pending && data.pending.length) {
+        html += data.pending.map(f => `<div class="fact fact-add">~ ${esc(f)}</div>`).join('');
+      }
+      el.innerHTML = html || '<span style="color:var(--text-dim)">Empty</span>';
+    },
+
+    people_state(data) {
+      const el = document.getElementById('people-content');
+      if (!data.people || !data.people.length) {
+        el.innerHTML = '<span style="color:var(--text-dim)">No people tracked</span>';
+        return;
+      }
+      el.innerHTML = data.people.map(p => {
+        let facts = '';
+        if (p.facts && p.facts.length) {
+          facts = p.facts.map(f => `<div class="fact" style="padding-left:1em"><span class="fact-id">${esc(f.id || '')}</span> ${esc(f.text || f)}</div>`).join('');
+        }
+        return `<div class="person-entry"><span class="person-name">${esc(p.name || p.id)}</span> <span style="color:var(--text-dim)">${esc(p.id)}</span>${facts}</div>`;
+      }).join('');
+    },
+
+    stage_change(data) {
+      document.getElementById('h-stage').textContent = data.new_stage || '--';
+      const el = document.getElementById('stage-content');
+      let html = `<div><b>${esc(data.new_stage || '--')}</b></div>`;
+      if (data.new_goal) html += `<div style="color:var(--text-dim)">${esc(data.new_goal)}</div>`;
+      el.innerHTML = html;
+
+      // Insert a stage-change marker in the timeline
+      const marker = document.createElement('div');
+      marker.className = 'turn';
+      marker.style.borderLeftColor = 'var(--cyan)';
+      marker.style.color = 'var(--cyan)';
+      marker.style.fontWeight = '600';
+      marker.innerHTML = `Stage &rarr; ${esc(data.new_stage || '?')}${data.new_goal ? ': ' + esc(data.new_goal) : ''}`;
+      timeline.appendChild(marker);
+      scrollToBottom();
+    },
+
+    plan(data) {
+      const panel = document.getElementById('plan-panel');
+      const el = document.getElementById('plan-content');
+      if (!data.beats || !data.beats.length) {
+        panel.style.display = 'none';
+        return;
+      }
+      panel.style.display = '';
+      el.innerHTML = '<div class="beat-list">' +
+        data.beats.map((b, i) => {
+          const cls = i === 0 ? 'beat-item current' : 'beat-item';
+          return `<div class="${cls}">${i}. [${esc(b.intent)}]</div>`;
+        }).join('') + '</div>';
+    },
+
+    beat_advance(data) {
+      // Update plan panel: mark completed beats
+      if (data.next_intent) {
+        // Re-highlight in plan panel
+        const items = document.querySelectorAll('#plan-content .beat-item');
+        items.forEach(item => {
+          item.classList.remove('current');
+          if (item.textContent.includes(data.next_intent)) {
+            item.classList.add('current');
+          }
+        });
+      }
+    },
+
+    perception(data) {
+      const div = document.createElement('div');
+      div.className = 'turn turn-perception';
+      div.innerHTML = `<div class="turn-label">${esc(data.source || 'perception')}</div>
+        <div class="turn-input perception-text">${esc(data.description || '')}</div>`;
+      timeline.appendChild(div);
+      scrollToBottom();
+    },
+
+    vision_snapshot(data) {
+      const panel = document.getElementById('vision-panel');
+      panel.style.display = '';
+      const meta = document.getElementById('vision-meta');
+      let html = '';
+      if (data.faces !== undefined) html += `Faces: ${data.faces} `;
+      if (data.persons !== undefined) html += `People: ${data.persons} `;
+      if (data.vlm_answers && data.vlm_answers.length) {
+        html += '<br>' + data.vlm_answers.map(a => esc(a)).join('<br>');
+      }
+      meta.innerHTML = html;
+    },
+
+    session_end(data) {
+      const div = document.createElement('div');
+      div.className = 'turn';
+      div.style.color = 'var(--text-dim)';
+      div.style.fontStyle = 'italic';
+      div.innerHTML = `Session ended. ${data.total_turns || 0} turns, ${data.duration_s || 0}s`;
+      timeline.appendChild(div);
+      scrollToBottom();
+    }
+  };
+
+  function handleEvent(event) {
+    const handler = handlers[event.type];
+    if (handler) handler(event.data);
+  }
+
+  // Catch up on page load
+  fetch('/state')
+    .then(r => r.json())
+    .then(events => { events.forEach(handleEvent); })
+    .catch(() => {});
+
+  // SSE stream
+  const es = new EventSource('/events');
+  es.onmessage = (e) => {
+    try {
+      handleEvent(JSON.parse(e.data));
+    } catch (err) {
+      console.error('SSE parse error:', err);
+    }
+  };
+  es.onerror = () => {
+    // EventSource will auto-reconnect
+  };
+
+  // Vision feed: try to load MJPEG from vision service
+  const visionFeed = document.getElementById('vision-feed');
+  visionFeed.onerror = () => { visionFeed.style.display = 'none'; };
+  visionFeed.src = 'http://localhost:7860/video_feed';
+})();
+</script>
+</body>
+</html>

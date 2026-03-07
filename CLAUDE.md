@@ -9,7 +9,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-uv run -m character_eng              # Run the app
+uv run -m character_eng              # Run the app (dashboard auto-opens at :7862)
+uv run -m character_eng --no-dashboard  # Run without dashboard
 uv run -m character_eng --vision     # Run with vision (auto-starts vision service)
 uv run -m character_eng --vision-mock walkup.json  # Vision with mock replay (no camera)
 uv run -m character_eng --character mara           # Auto-select character
@@ -53,14 +54,15 @@ Configured in `models.py`. No model selection menu — auto-selects on startup.
 - **Expression post-processing**: After each character response, `expression_call` (8B) derives gaze target + facial expression from the dialogue. Gaze picks from scene targets (static list, or live vision targets when `--vision` is active); expression is one of 12 emotions. Social gaze modifiers handled downstream in robot control, not by the LLM.
 - **Vision mode** (`--vision`): Live visual intelligence via standalone vision service (`services/vision/`). Camera capture, face tracking (InsightFace), person tracking (SAM3 + torchreid ReID), VLM questioning (LFM2-VL-3B via vLLM). Vision service has its own venv/deps — zero conflict with main app. character-eng polls via HTTP, runs synthesis LLM call (8B) to distill visual data into perception events, and feeds dynamic gaze targets to expression system.
 - **Voice mode**: Deepgram STT + configurable TTS (ElevenLabs, Qwen3-TTS local, Pocket-TTS). WebRTC AEC3 (via LiveKit) keeps mic live during playback for barge-in. All TTS backends share 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`)
+- **Dashboard** (`--no-dashboard` to disable): Real-time HTML dashboard at `:7862` showing conversation timeline, world state, stage/script, people, expression/eval metadata, and timing. Served via stdlib `ThreadingHTTPServer` as a daemon thread. SSE for live updates, `/state` for reconnect catchup, `POST /send` for browser input. Gruvbox dark/light theme. No new dependencies. `index.html` is editable — refresh browser to see changes.
 
-### Modules (22 total)
+### Modules (25 total)
 | Module | Purpose |
 |--------|---------|
 | `__main__.py` | TUI entry point, command dispatch, parallel microservice orchestration |
 | `chat.py` | ChatSession — OpenAI client wrapper, message history, streaming |
 | `models.py` | Model config registry, CHAT_MODEL/BIG_MODEL constants |
-| `config.py` | `config.toml` loader → AppConfig/VoiceConfig/VisionConfig dataclasses |
+| `config.py` | `config.toml` loader → AppConfig/VoiceConfig/VisionConfig/DashboardConfig dataclasses |
 | `prompts.py` | Filesystem template engine, `{{macro}}` substitution (incl. `{{vision}}`) |
 | `world.py` | WorldState, Script, Goals, Beat, reconcile/eval/plan/single_beat/condition/expression/script_check/thought LLM calls |
 | `person.py` | Person/PeopleState tracking with scoped fact IDs |
@@ -80,12 +82,15 @@ Configured in `models.py`. No model selection menu — auto-selects on startup.
 | `vision/synthesis.py` | `vision_synthesis_call` — distills raw visual data into perception events (8B) |
 | `vision/focus.py` | `visual_focus_call` — generates constant/ephemeral VLM questions and SAM targets (8B) |
 | `vision/manager.py` | VisionManager — orchestrates polling, synthesis, focus, people resolution |
+| `dashboard/__init__.py` | Dashboard package |
+| `dashboard/events.py` | DashboardEventCollector — thread-safe event collection with SSE fan-out |
+| `dashboard/server.py` | ThreadingHTTPServer — serves index.html, SSE /events, /state, POST /send |
 
 ### Post-response microservices (parallel, 8B)
 After each character response, `run_post_response` fires three 8B calls concurrently via `ThreadPoolExecutor`: `script_check_call` + `thought_call` (eval), `director_call` (stage transitions). For `/beat`, `expression_call` is also included in the parallel batch. ~350ms total instead of ~1050ms sequential. Results are immediate — no stale discard needed.
 
 ### Background threading
-Only reconcile uses a background thread. Planning is fully synchronous via `single_beat_call` (8B, ~350ms). When `--vision` is active, VisionManager runs a continuous background thread (poll + synthesis, min 750ms between cycles).
+Only reconcile uses a background thread. Planning is fully synchronous via `single_beat_call` (8B, ~350ms). When `--vision` is active, VisionManager runs a continuous background thread (poll + synthesis, min 750ms between cycles). Dashboard HTTP server runs as a daemon thread (`ThreadingHTTPServer`).
 
 ### Vision service (`services/vision/`)
 Standalone Flask service with its own `pyproject.toml` and `.venv`. Runs camera capture, InsightFace face tracking, SAM3 + torchreid person tracking, and VLM questioning. Exposes `/snapshot`, `/set_questions`, `/set_sam_targets`, `/health` endpoints. Auto-launched by `--vision` flag. Debug UI at `:7860`. ~10.5GB VRAM (SAM3 3.4GB + InsightFace 0.8GB + ReID 0.25GB + LFM2-VL-3B 6GB).
@@ -115,7 +120,7 @@ Voice hotkeys: `i`=info, `b`=beat, `t`=trace, `1-4`=triggers, `q`=quit, `Escape`
 
 Three layers, fast to slow:
 
-**Unit tests** (`uv run pytest`) — Mocked, no API calls. Pre-push hook. Test files: `test_smoke`, `test_e2e`, `test_chat`, `test_prompts`, `test_serve`, `test_local_tts`, `test_voice`, `test_pocket_tts`, `test_person`, `test_scenario`, `test_perception`, `test_world`, `test_vision`.
+**Unit tests** (`uv run pytest`) — Mocked, no API calls. Pre-push hook. Test files: `test_smoke`, `test_e2e`, `test_chat`, `test_prompts`, `test_serve`, `test_local_tts`, `test_voice`, `test_pocket_tts`, `test_person`, `test_scenario`, `test_perception`, `test_world`, `test_vision`, `test_dashboard`.
 
 **Integration QA** — Hit real LLMs. `qa_world` (4 reconcile scenarios), `qa_chat` (parses `test_plan.md`), `qa_voice` (API connectivity), `qa_personas` (7 parallel personas, HTML report).
 

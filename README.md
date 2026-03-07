@@ -72,7 +72,8 @@ The app works without `config.toml` — all settings have defaults. The `--voice
 ## Run
 
 ```bash
-uv run -m character_eng                  # text mode
+uv run -m character_eng                  # text mode (dashboard auto-opens at :7862)
+uv run -m character_eng --no-dashboard   # text mode without dashboard
 uv run -m character_eng --voice          # voice mode (speak to chat, hear responses)
 uv run -m character_eng --vision         # vision mode (live camera + visual intelligence)
 uv run -m character_eng --voice --vision # voice + vision
@@ -268,6 +269,30 @@ Replay files are JSON with timestamped snapshots. See `services/vision/replays/`
 | **Total** | **~10.5GB** |
 
 character-eng process: zero GPU usage (text LLM via Groq).
+
+## Dashboard
+
+A real-time HTML dashboard opens automatically alongside the CLI at `http://localhost:7862`. It shows everything happening in the session live:
+
+- **Conversation timeline** — streaming responses with gaze/expression metadata, eval status, director decisions
+- **World state** — static + dynamic facts with stable IDs, pending changes
+- **Stage/script** — current scenario stage, goal, and beat script with current beat highlighted
+- **People** — tracked people with scoped facts
+- **Vision** — MJPEG feed + face/person counts when `--vision` is active
+- **Timing** — TTFT, total response time, eval status in footer
+- **Input** — text input bar and hotkeys (B=beat, 1-4=triggers, I=info) for when not using voice
+
+The dashboard uses SSE for live streaming and `/state` for reconnect catchup — refresh the browser at any time to see the full session. Uses Gruvbox dark/light theme (toggle in header). No new dependencies (stdlib `http.server` + `threading`).
+
+The HTML/CSS/JS is a single editable file (`character_eng/dashboard/index.html`) — edit and refresh the browser to see changes without restarting.
+
+Disable with `--no-dashboard` or set `enabled = false` in `[dashboard]` config:
+
+```toml
+[dashboard]
+enabled = true
+port = 7862
+```
 
 ## Editing prompts
 

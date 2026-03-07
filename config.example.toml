@@ -59,3 +59,10 @@
 
 # Min seconds between vision synthesis cycles (poll + LLM distillation).
 # synthesis_min_interval = 0.75
+
+[dashboard]
+# Real-time HTML dashboard. Opens in browser alongside the CLI.
+# enabled = true
+
+# HTTP port for the dashboard server.
+# port = 7862
