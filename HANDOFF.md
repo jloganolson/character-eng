@@ -98,6 +98,102 @@ Result at end of session:
 
 There are many unrelated modified/untracked files on this branch from earlier work. The commits above are the reliable ones to reason from for the QA/viewer/runtime path.
 
+## Dirty Tree Triage
+
+The remaining uncommitted files are not one coherent change. Treat them as three separate buckets.
+
+### 1. Keep Soon
+
+These look aligned with the current local-first roadmap and are likely worth stabilizing and committing after review:
+
+- `character_eng/person.py`
+- `character_eng/qa_chat.py`
+- `character_eng/qa_world.py`
+- `character_eng/scenario.py`
+- `prompts/reconcile_system.txt`
+- `prompts/global_rules.txt`
+- `prompts/characters/greg/character.txt`
+- `tests/test_e2e.py`
+- `tests/test_world.py`
+- `tests/test_perception.py`
+- `scripts/validate.sh`
+- `scripts/vision_smoke.sh`
+- `character_eng/dashboard/system_map.html`
+
+Why these look current:
+
+- They support the local core path, QA strictness, scenario control, and review tooling.
+- They match the direction already validated in tonight's committed work.
+
+### 2. Keep But Redesign / Re-validate
+
+These look real, but incomplete or partially superseded. They should not be trusted as “done” without another focused pass:
+
+- `character_eng/bridge.py`
+- `character_eng/browser_voice.py`
+- `character_eng/dashboard/index.html`
+- `character_eng/dashboard/server.py`
+- `character_eng/config.py`
+- `config.example.toml`
+- `tests/test_dashboard.py`
+- `tests/test_bridge.py`
+- `tests/test_config.py`
+- `tests/test_runtime_controls.py`
+- `Dockerfile`
+- `.dockerignore`
+- `.github/workflows/deploy.yml`
+- `deploy/runpod.py`
+- `deploy/runpod.toml`
+- `CLAUDE.md`
+
+Why these need caution:
+
+- This is mostly the browser/remote-dev stack.
+- Some of it is useful and likely correct in direction.
+- Earlier review found gaps like dead fallback paths, incomplete SSE/live update behavior, and deploy/test coupling that was not fully hardened.
+
+### 3. Drop / Ignore / Do Not Commit
+
+These are local artifacts or likely stale planning residue:
+
+- `.claude/`
+- `services/vision/app.log`
+- `services/vision/vllm.log`
+- `vision_plan.md`
+
+These should not shape the roadmap unless deliberately mined for notes.
+
+## Recommended Burndown Order
+
+Tomorrow’s work should not start by “finishing everything in the dirty tree.” It should proceed in this order:
+
+1. Local core path
+   Files: `qa_chat.py`, `qa_world.py`, `person.py`, `scenario.py`, prompt files, related tests.
+   Goal: lock down the real local Greg + vision route first.
+
+2. Local dashboard/runtime visibility
+   Files: `dashboard/index.html`, `dashboard/server.py`, `config.py`, `system_map.html`.
+   Goal: make local model state, pause/reset, and thread controls fully trustworthy.
+
+3. Browser/remote bridge
+   Files: `bridge.py`, `browser_voice.py`, deploy stack, related tests.
+   Goal: either finish it properly or explicitly defer it.
+
+4. Deploy automation
+   Files: `Dockerfile`, workflow, RunPod helpers.
+   Goal: only after local behavior and browser behavior are actually stable.
+
+## Practical Recommendation
+
+Push the branch if you want tonight’s committed QA/viewer work safely remote. The dirty worktree will not be pushed unless it is committed.
+
+Tomorrow, the first agent should:
+
+1. Read this file.
+2. Read `tomorrow-prompt.md`.
+3. Review the latest committed QA/viewer commits, not the whole dirty tree at once.
+4. Convert the “Keep Soon” bucket into one or two focused commits before touching the bridge/deploy stack again.
+
 # Browser Bridge Handoff — 2026-03-06
 
 ## What Was Done Today
