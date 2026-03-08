@@ -1,6 +1,13 @@
 """Tests for vision module dataclasses and client."""
 
+import threading
 import json
+import socket
+import subprocess
+import sys
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 from character_eng.vision.context import (
     FaceObservation,
@@ -11,6 +18,12 @@ from character_eng.vision.context import (
     VLMAnswer,
 )
 from character_eng.vision.client import VisionClient
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 def test_raw_visual_snapshot_from_json():
@@ -141,6 +154,66 @@ def test_vision_client_init():
     assert client.base_url == "http://localhost:9999"
     # Health check should return False for non-existent server
     assert client.health() is False
+
+
+def test_vision_client_capture_frame_jpeg():
+    payload = b"fake-jpeg-bytes"
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if not self.path.startswith("/frame.jpg"):
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format, *args):
+            pass
+
+    port = _free_port()
+    server = HTTPServer(("127.0.0.1", port), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = VisionClient(f"http://127.0.0.1:{port}")
+        assert client.capture_frame_jpeg() == payload
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_mock_vision_server_contract():
+    root = Path(__file__).resolve().parent.parent
+    replay = root / "services" / "vision" / "replays" / "walkup.json"
+    script = root / "services" / "vision" / "mock_server.py"
+    port = _free_port()
+    proc = subprocess.Popen(
+        [sys.executable, str(script), str(replay), "--port", str(port)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    client = VisionClient(f"http://127.0.0.1:{port}")
+    try:
+        for _ in range(20):
+            if client.health():
+                break
+            if proc.poll() is not None:
+                raise AssertionError("mock vision server exited during startup")
+            time.sleep(0.1)
+        else:
+            raise AssertionError("mock vision server did not become healthy")
+
+        snapshot = client.snapshot()
+        assert snapshot is not None
+        client.set_questions(["How many people are visible?"], ["What is the person doing?"])
+        client.set_sam_targets(["person"], ["cup"])
+    finally:
+        proc.kill()
+        proc.wait(timeout=5)
 
 
 def test_config_vision():

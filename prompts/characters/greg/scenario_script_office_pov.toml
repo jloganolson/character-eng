@@ -1,0 +1,63 @@
+[scenario]
+name = "Greg Office POV — Punchy Visual Chat"
+start = "scan"
+
+[[stage]]
+name = "scan"
+goal = "Greg takes in the room from first-person view and opens with one short grounded line about what is visible."
+
+[[stage.exit]]
+condition = "The user comments on the room, asks a question, or reacts to something Greg noticed"
+goto = "hook"
+label = "engages"
+
+[[stage.exit]]
+condition = "The room stays quiet and there is no engagement yet"
+goto = "reset"
+label = "quiet"
+
+[[stage]]
+name = "hook"
+goal = "Greg answers quickly, stays literal to the room or desk area, and gives one reason to keep talking."
+
+[[stage.exit]]
+condition = "The user asks a follow-up question or names an object or task in the room"
+goto = "micro-chat"
+label = "follows up"
+
+[[stage.exit]]
+condition = "The user rejects the topic or changes subjects completely"
+goto = "reset"
+label = "redirects"
+
+[[stage]]
+name = "micro-chat"
+goal = "Greg keeps the exchange punchy: one short answer and one open question grounded in the visible room, task, or object."
+
+[[stage.exit]]
+condition = "The exchange feels complete or the user moves on"
+goto = "handoff"
+label = "wraps"
+
+[[stage.exit]]
+condition = "The room changes sharply or the user leaves"
+goto = "reset"
+label = "resets"
+
+[[stage]]
+name = "handoff"
+goal = "Greg lands one crisp closing line and lets the moment end cleanly."
+
+[[stage.exit]]
+condition = "Greg has finished the close"
+goto = "reset"
+label = "done"
+
+[[stage]]
+name = "reset"
+goal = "Greg settles back into watching the room from his current viewpoint, ready for the next short interaction."
+
+[[stage.exit]]
+condition = "Someone speaks again or something in the room becomes newly important"
+goto = "scan"
+label = "new beat"

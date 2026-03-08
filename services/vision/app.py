@@ -90,6 +90,11 @@ class WebcamCapture:
             self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
             self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
 
+    def inject(self, frame: np.ndarray) -> None:
+        """Inject a frame from an external source (browser camera)."""
+        with self._lock:
+            self._frame = frame
+
     def release(self) -> None:
         self._running = False
         if self._thread is not None:
@@ -273,6 +278,14 @@ def _memory_status() -> dict:
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
 cam = WebcamCapture()
+
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return response
 
 
 @app.route("/")
@@ -951,6 +964,38 @@ def health():
     return json.dumps({"status": "ok", "timestamp": time.time()})
 
 
+@app.route("/inject_frame", methods=["POST"])
+def inject_frame():
+    """Inject a JPEG frame from browser camera (--no-camera mode)."""
+    jpeg_bytes = request.data
+    frame = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if frame is not None:
+        cam.inject(frame)
+    return json.dumps({"ok": True})
+
+
+@app.route("/frame.jpg")
+def frame_jpeg():
+    """Return the latest frame as a single JPEG image."""
+    frame = cam.get_frame()
+    if frame is None:
+        return Response("no frame available", status=503, mimetype="text/plain")
+    annotated = request.args.get("annotated", "0") == "1"
+    max_width = int(request.args.get("max_width", "0") or "0")
+    if annotated:
+        if pt is not None and pt.enabled:
+            frame = pt.annotate_frame(frame)
+        if ft is not None and ft.enabled:
+            frame = ft.annotate_frame(frame)
+    if max_width > 0 and frame.shape[1] > max_width:
+        scale = max_width / float(frame.shape[1])
+        frame = cv2.resize(frame, (int(frame.shape[1] * scale), int(frame.shape[0] * scale)))
+    ok, jpeg = cv2.imencode(".jpg", frame)
+    if not ok:
+        return Response("failed to encode frame", status=500, mimetype="text/plain")
+    return Response(jpeg.tobytes(), mimetype="image/jpeg")
+
+
 @app.route("/snapshot")
 def snapshot():
     """Return current visual state as structured JSON."""
@@ -1067,6 +1112,10 @@ if __name__ == "__main__":
         "--capture-resolution", default=None,
         help="Camera capture resolution, e.g. 1280x720",
     )
+    parser.add_argument(
+        "--no-camera", action="store_true",
+        help="Skip camera capture (frames injected via /inject_frame)",
+    )
     args = parser.parse_args()
 
     # Device / dtype
@@ -1116,10 +1165,13 @@ if __name__ == "__main__":
 
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
-    # Start camera
-    if _capture_resolution:
-        cam._resolution = _capture_resolution
-    cam.start()
+    # Start camera (skip if --no-camera, frames come via /inject_frame)
+    if not args.no_camera:
+        if _capture_resolution:
+            cam._resolution = _capture_resolution
+        cam.start()
+    else:
+        print("Camera disabled (--no-camera). Frames via /inject_frame.", flush=True)
 
     # Create tracker instances (but don't enable by default)
     try:

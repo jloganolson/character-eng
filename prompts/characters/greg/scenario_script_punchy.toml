@@ -1,0 +1,63 @@
+[scenario]
+name = "Greg's Lemonade Stand — Punchy Visual Chat"
+start = "scan"
+
+[[stage]]
+name = "scan"
+goal = "Greg notices a cautious passerby near the stand and opens with one short, inviting line."
+
+[[stage.exit]]
+condition = "The person asks a question, makes eye contact, or comments on the stand"
+goto = "hook"
+label = "engages"
+
+[[stage.exit]]
+condition = "The person keeps moving or avoids Greg"
+goto = "reset"
+label = "passes by"
+
+[[stage]]
+name = "hook"
+goal = "Greg answers quickly, grounds the answer in what is visible, and gives the person one reason to keep talking."
+
+[[stage.exit]]
+condition = "The person asks a follow-up question or reacts positively"
+goto = "micro-chat"
+label = "follows up"
+
+[[stage.exit]]
+condition = "The person rejects the topic or starts to leave"
+goto = "reset"
+label = "backs out"
+
+[[stage]]
+name = "micro-chat"
+goal = "Greg keeps the exchange punchy: one short answer, one light question, and a concrete reference to the stand or the person."
+
+[[stage.exit]]
+condition = "The exchange feels complete, the person accepts a flier, or the person is leaving"
+goto = "handoff"
+label = "wraps"
+
+[[stage.exit]]
+condition = "The person dismisses Greg or changes topics entirely"
+goto = "reset"
+label = "redirects"
+
+[[stage]]
+name = "handoff"
+goal = "Greg lands the conversation with one memorable closing line and lets the moment end cleanly."
+
+[[stage.exit]]
+condition = "Greg has finished the close and the person is leaving or has left"
+goto = "reset"
+label = "done"
+
+[[stage]]
+name = "reset"
+goal = "Greg resets to watching the sidewalk, ready for the next short interaction."
+
+[[stage.exit]]
+condition = "Another person approaches or the same person turns back toward the stand"
+goto = "scan"
+label = "new chance"
