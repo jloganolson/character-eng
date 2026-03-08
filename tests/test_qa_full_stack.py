@@ -117,6 +117,7 @@ def test_write_report_includes_dashboard_trace(tmp_path: Path):
     assert "Event Detail" in body
     assert "Input Context" in body
     assert "Chronology" in body
+    assert "Assistant first token" in body
     assert "+0.000s" in body
     assert "vision_poll" in body
 

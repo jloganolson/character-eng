@@ -64,9 +64,21 @@ def report_url(tmp_path: Path) -> str:
                 "data": {"ttft_ms": 210, "total_ms": 980},
             },
             {
-                "type": "assistant_tts",
-                "timestamp": 2.1,
+                "type": "assistant_tts_first_audio",
+                "timestamp": 1.95,
                 "seq": 3,
+                "data": {"first_audio_ms": 120},
+            },
+            {
+                "type": "assistant_tts_done",
+                "timestamp": 2.1,
+                "seq": 4,
+                "data": {"synth_ms": 360},
+            },
+            {
+                "type": "assistant_audio_clip",
+                "timestamp": 2.1,
+                "seq": 5,
                 "data": {"audio_ms": 820},
             },
         ],
@@ -103,10 +115,10 @@ def test_report_interactions_in_browser(browser_page: Page, report_url: str):
     expect(page.locator("h1")).to_have_text("Full Stack QA Trace Report")
     expect(page.locator("#detail-type")).to_have_text("vision_poll")
 
-    response_card = page.locator(".stream-card", has_text="Assistant done")
+    response_card = page.locator(".stream-card", has_text="Assistant text done")
     response_card.get_by_role("button", name="Note").click()
     expect(page.locator("#detail-type")).to_have_text("response_done")
-    expect(page.locator("#detail-label")).to_contain_text("Assistant done")
+    expect(page.locator("#detail-label")).to_contain_text("Assistant text done")
     assert page.locator("#detail-related button").count() >= 1
 
     page.locator("#detail-note").fill("Keep this kind of timing tight.")
@@ -118,6 +130,19 @@ def test_report_interactions_in_browser(browser_page: Page, report_url: str):
     expect(page.locator(".page-shell")).to_have_class(
         re.compile(r"\bcompact-mode\b")
     )
+    compact_metrics = response_card.evaluate(
+        """node => {
+            const style = window.getComputedStyle(node);
+            return {
+                height: parseFloat(style.height),
+                noteDisplay: window.getComputedStyle(node.querySelector('.note-inline')).display,
+            };
+        }"""
+    )
+    assert compact_metrics["height"] <= 24
+    assert compact_metrics["noteDisplay"] == "none"
+    response_card.click()
+    expect(page.locator("#detail-type")).to_have_text("response_done")
 
     page.locator("#show-chronology").uncheck()
     expect(page.locator("#detail-chronology")).to_have_class(

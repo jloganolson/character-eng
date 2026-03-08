@@ -194,6 +194,7 @@ TIMELINE_LANES = {
     "perception_injected": "world",
     "stt_result": "stt",
     "user_turn_start": "chat",
+    "response_ttft": "chat",
     "response_chunk": "chat",
     "response_done": "chat",
     "expression": "expression",
@@ -202,7 +203,9 @@ TIMELINE_LANES = {
     "director": "director",
     "stage_change": "director",
     "plan": "planner",
-    "assistant_tts": "tts",
+    "assistant_tts_first_audio": "tts",
+    "assistant_tts_done": "tts",
+    "assistant_audio_clip": "tts",
 }
 LANE_ORDER = ["vision", "stt", "chat", "expression", "eval", "director", "planner", "tts", "world", "session", "script", "other"]
 
@@ -238,6 +241,14 @@ class TurnRecord:
     response_ttft_ms: int = 0
     response_total_ms: int = 0
     trace_events: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class SynthesisResult:
+    pcm: bytes
+    synth_ms: int
+    first_audio_ms: int
+    audio_ms: int
 
 
 class TraceRecorder:
@@ -444,8 +455,12 @@ def _wait_for_vision_models(client: VisionClient, *, timeout: float = 35.0) -> d
 class PCMCollector:
     def __init__(self):
         self.parts: list[bytes] = []
+        self._start = time.perf_counter()
+        self.first_chunk_at: float | None = None
 
     def __call__(self, data: bytes) -> None:
+        if self.first_chunk_at is None:
+            self.first_chunk_at = time.perf_counter()
         self.parts.append(bytes(data))
 
     @property
@@ -453,7 +468,7 @@ class PCMCollector:
         return b"".join(self.parts)
 
 
-def synthesize_pocket_pcm(text: str, server_url: str, voice_path: str = "") -> bytes:
+def synthesize_pocket_pcm(text: str, server_url: str, voice_path: str = "") -> SynthesisResult:
     collector = PCMCollector()
     tts = PocketTTS(
         on_audio=collector,
@@ -465,7 +480,15 @@ def synthesize_pocket_pcm(text: str, server_url: str, voice_path: str = "") -> b
     if not tts.wait_for_done(timeout=60.0):
         raise RuntimeError("Pocket-TTS synthesis timed out")
     tts.close()
-    return collector.pcm
+    synth_ms = int((time.perf_counter() - collector._start) * 1000)
+    first_audio_ms = int((collector.first_chunk_at - collector._start) * 1000) if collector.first_chunk_at else 0
+    audio_ms = int(len(collector.pcm) / 2 / 24000 * 1000)
+    return SynthesisResult(
+        pcm=collector.pcm,
+        synth_ms=synth_ms,
+        first_audio_ms=first_audio_ms,
+        audio_ms=audio_ms,
+    )
 
 
 def transcribe_pcm_deepgram(pcm_24k: bytes) -> str:
@@ -929,12 +952,14 @@ def _timeline_event_label(event: dict) -> str:
         return f"STT: {data.get('transcript', '')}"
     if event_type == "user_turn_start":
         return f"User line submitted: {data.get('text', '')}"
+    if event_type == "response_ttft":
+        return f"Assistant first token: {data.get('ttft_ms', 0)}ms"
     if event_type == "response_chunk":
         count = data.get("count", 1)
         duration_ms = data.get("duration_ms", 0)
         return f"Assistant stream ({count} chunks, {duration_ms}ms)"
     if event_type == "response_done":
-        return f"Assistant done: {data.get('ttft_ms', 0)}ms TTFT, {data.get('total_ms', 0)}ms total"
+        return f"Assistant text done: {data.get('total_ms', 0)}ms total"
     if event_type == "expression":
         return f"Expression: {data.get('expression', '')} / gaze {data.get('gaze', '')}"
     if event_type == "eval":
@@ -948,8 +973,12 @@ def _timeline_event_label(event: dict) -> str:
     if event_type == "plan":
         beats = data.get("beats", [])
         return f"Plan loaded: {len(beats)} beats"
-    if event_type == "assistant_tts":
-        return f"Assistant audio ready: {data.get('audio_ms', 0)}ms"
+    if event_type == "assistant_tts_first_audio":
+        return f"Assistant first audio: {data.get('first_audio_ms', 0)}ms"
+    if event_type == "assistant_tts_done":
+        return f"Assistant TTS done: {data.get('synth_ms', 0)}ms synth"
+    if event_type == "assistant_audio_clip":
+        return f"Assistant clip duration: {data.get('audio_ms', 0)}ms"
     if event_type == "session_start":
         return f"Session start: {data.get('character', '')} / {data.get('model', '')}"
     return json.dumps(data, ensure_ascii=True)
@@ -980,9 +1009,12 @@ def _related_event_keys(events: list[dict], index: int) -> list[str]:
     current_type = current.get("type", "")
     current_lane = TIMELINE_LANES.get(current_type, "other")
     preferred = {
+        "response_ttft": {"stt_result", "user_turn_start", "vision_snapshot_read", "scene_eval", "world_seed", "plan"},
         "response_chunk": {"stt_result", "user_turn_start", "vision_snapshot_read", "scene_eval", "world_seed", "plan"},
         "response_done": {"stt_result", "user_turn_start", "vision_snapshot_read", "scene_eval", "world_seed", "plan"},
-        "assistant_tts": {"response_done", "response_chunk"},
+        "assistant_tts_first_audio": {"response_done", "response_chunk", "response_ttft"},
+        "assistant_tts_done": {"assistant_tts_first_audio", "response_done", "response_chunk", "response_ttft"},
+        "assistant_audio_clip": {"assistant_tts_done", "assistant_tts_first_audio", "response_done"},
         "expression": {"response_done", "response_chunk"},
         "eval": {"response_done", "response_chunk"},
         "director": {"response_done", "eval", "beat_advance"},
@@ -1076,17 +1108,33 @@ def _build_action_timeline(events: list[dict]) -> tuple[list[str], float]:
 
 def _flatten_session_events(turns: list[TurnRecord], session_events: list[dict] | None = None) -> list[dict]:
     if session_events is not None:
-        return sorted(
-            [dict(event) for event in session_events],
-            key=lambda event: (event.get("timestamp", 0.0), event.get("seq", 0)),
-        )
-    flat: list[dict] = []
-    for idx, turn in enumerate(turns, start=1):
-        for event in turn.trace_events:
-            item = dict(event)
-            item.setdefault("turn", idx)
-            flat.append(item)
-    return sorted(flat, key=lambda event: (event.get("timestamp", 0.0), event.get("seq", 0)))
+        base_events = [dict(event) for event in session_events]
+    else:
+        base_events = []
+        for idx, turn in enumerate(turns, start=1):
+            for event in turn.trace_events:
+                item = dict(event)
+                item.setdefault("turn", idx)
+                base_events.append(item)
+
+    expanded: list[dict] = []
+    for event in base_events:
+        expanded.append(event)
+        if event.get("type") == "response_done":
+            data = event.get("data", {})
+            ttft_ms = int(data.get("ttft_ms", 0))
+            total_ms = int(data.get("total_ms", 0))
+            if ttft_ms > 0 and total_ms >= ttft_ms:
+                start_ts = event.get("timestamp", 0.0) - (total_ms / 1000.0)
+                ttft_ts = start_ts + (ttft_ms / 1000.0)
+                expanded.append({
+                    "type": "response_ttft",
+                    "timestamp": ttft_ts,
+                    "seq": event.get("seq", 0),
+                    "turn": event.get("turn"),
+                    "data": {"ttft_ms": ttft_ms},
+                })
+    return sorted(expanded, key=lambda event: (event.get("timestamp", 0.0), event.get("seq", 0), event.get("type", "")))
 
 
 def _build_thread_lanes(events: list[dict]) -> tuple[list[str], list[str]]:
@@ -1242,6 +1290,7 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
 
             cards.append(
                 f"<article class='stream-card lane-{html.escape(lane)}' data-base-left='{left}' data-base-top='{top}' "
+                f"data-row='{row}' "
                 f"data-event-key='{note_key}' "
                 f"data-base-width='{width}' data-base-height='{height}' "
                 f"title='{hover_title}' style='left:{left}px;top:{top}px;width:{width}px;height:{height}px' onclick='selectEvent(\"{note_key}\")'>"
@@ -1254,7 +1303,7 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
         lane_sections.append(
             f"<section class='stream-lane' data-stream-lane='{html.escape(lane)}'>"
             f"<div class='stream-lane-label'>{html.escape(lane)}</div>"
-            f"<div class='stream-lane-track' data-base-width='{track_width}' data-base-height='{max(120, lane_row_height)}' style='width:{track_width}px;height:{max(120, lane_row_height)}px'>{''.join(cards)}</div>"
+            f"<div class='stream-lane-track' data-base-width='{track_width}' data-base-height='{max(120, lane_row_height)}' data-row-count='{max(1, len(track_ends))}' style='width:{track_width}px;height:{max(120, lane_row_height)}px'>{''.join(cards)}</div>"
             "</section>"
         )
 
@@ -1297,12 +1346,16 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         "*{box-sizing:border-box;}"
         "body{font-family:IBM Plex Sans,system-ui,sans-serif;background:#081018;color:#e7eef7;margin:0;padding:24px 24px 96px;}"
         ".page-shell{width:min(100%,1800px);margin:0 auto;}"
-        ".page-shell.compact-mode .stream-card{padding:7px 8px 8px 8px;border-radius:10px;}"
-        ".page-shell.compact-mode .stream-card-detail,.page-shell.compact-mode .vision-meta,.page-shell.compact-mode .note-inline{display:none;}"
-        ".page-shell.compact-mode .stream-card-head{margin-bottom:4px;font-size:.71rem;}"
-        ".page-shell.compact-mode .stream-card-label{font-size:.84rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}"
-        ".page-shell.compact-mode .vision-strip{gap:4px;}"
-        ".page-shell.compact-mode .vision-strip img{max-height:72px;object-fit:cover;}"
+        ".page-shell.compact-mode .stream-wrap{padding:12px 14px;margin-bottom:16px;}"
+        ".page-shell.compact-mode .stream-card{padding:2px 8px;border-radius:7px;box-shadow:none;display:flex;align-items:center;gap:8px;}"
+        ".page-shell.compact-mode .stream-card-detail,.page-shell.compact-mode .vision-meta,.page-shell.compact-mode .note-inline,.page-shell.compact-mode .vision-strip,.page-shell.compact-mode .stream-type{display:none;}"
+        ".page-shell.compact-mode .stream-card-head{margin:0;font-size:.68rem;min-width:58px;flex:0 0 auto;}"
+        ".page-shell.compact-mode .stream-time{white-space:nowrap;}"
+        ".page-shell.compact-mode .stream-card-label{font-size:.74rem;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;}"
+        ".page-shell.compact-mode .stream-lane{padding:6px 0;}"
+        ".page-shell.compact-mode .stream-lane-label{padding-top:4px;font-size:.72rem;}"
+        ".page-shell.compact-mode .stream-ruler{height:22px;}"
+        ".page-shell.compact-mode .ruler-tick span{top:2px;font-size:.68rem;}"
         "h1{margin-bottom:8px;}p{line-height:1.5;}code{background:#101720;padding:2px 6px;border-radius:6px;}"
         "#annotation-toolbar{position:sticky;top:0;z-index:10;background:rgba(8,16,24,.96);backdrop-filter:blur(12px);border:1px solid #253244;border-radius:14px;padding:12px 14px;display:flex;gap:12px;align-items:center;margin:0 0 20px 0;}"
         "#annotation-toolbar .count{color:#9fb3c8;}#annotation-toolbar .count b{color:#7ee787;}"
@@ -1455,9 +1508,9 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         + "function highlightContext(selected){document.querySelectorAll('.stream-card').forEach((card)=>{card.classList.toggle('selected',card.dataset.eventKey===selected);card.classList.toggle('context',false);});document.querySelectorAll('.chronology-row').forEach((row)=>{const active=row.dataset.chronoKey===selected;row.classList.toggle('selected',active);if(active){row.scrollIntoView({block:'nearest'});}});const event=EVENT_INDEX[String(selected)];if(!event)return;(event.related_keys||[]).forEach((key)=>{const card=document.querySelector('.stream-card[data-event-key=\"'+key+'\"]');if(card)card.classList.add('context');});}"
         + "function selectEvent(key){const event=EVENT_INDEX[String(key)];if(!event)return;selectedEventKey=String(key);highlightContext(selectedEventKey);document.getElementById('detail-empty').style.display='none';document.getElementById('detail-body').style.display='block';document.getElementById('detail-time').textContent='+'+Number(event.timestamp||0).toFixed(2)+'s';document.getElementById('detail-type').textContent=event.type;document.getElementById('detail-lane').textContent=event.lane;document.getElementById('detail-seq').textContent='seq '+String(event.seq||0);document.getElementById('detail-label').textContent=event.label||'';document.getElementById('detail-detail').textContent=event.detail||'No compact detail';document.getElementById('detail-payload').textContent=event.payload||'{}';renderRelated(event.related_keys||[]);const note=annotations.get(String(key))||'';const field=document.getElementById('detail-note');field.value=note;const card=document.querySelector('.stream-card[data-event-key=\"'+key+'\"]');if(card){card.scrollIntoView({block:'nearest',inline:'center'});}}"
         + "function openNote(domEvent,key){if(domEvent){domEvent.stopPropagation();}selectEvent(String(key));const field=document.getElementById('detail-note');if(field){field.focus();field.setSelectionRange(field.value.length,field.value.length);}}"
-        + "function applyDensity(){const shell=document.querySelector('.page-shell');const compact=document.getElementById('density-mode').value==='compact';shell.classList.toggle('compact-mode',compact);}"
+        + "function applyDensity(){const shell=document.querySelector('.page-shell');const compact=document.getElementById('density-mode').value==='compact';shell.classList.toggle('compact-mode',compact);applyLayout();}"
         + "function syncChronologyVisibility(){const show=document.getElementById('show-chronology').checked;document.getElementById('detail-chronology').classList.toggle('hidden',!show);}"
-        + "function applyLayout(){const zoom=Number(document.getElementById('time-zoom').value||1);const rowScale=Number(document.getElementById('row-scale').value||1);document.documentElement.style.setProperty('--time-zoom',zoom);document.documentElement.style.setProperty('--row-scale',rowScale);document.getElementById('time-zoom-value').textContent=zoom.toFixed(2)+'x';document.getElementById('row-scale-value').textContent=rowScale.toFixed(2)+'x';document.querySelectorAll('.ruler-tick').forEach((tick)=>{const baseLeft=Number(tick.dataset.baseLeft||0);tick.style.left=(baseLeft*zoom)+'px';});document.querySelectorAll('.stream-lane-track').forEach((track)=>{const baseWidth=Number(track.dataset.baseWidth||0);const baseHeight=Number(track.dataset.baseHeight||120);track.style.width=(baseWidth*zoom)+'px';track.style.height=(Math.max(120,baseHeight*rowScale))+'px';});document.querySelectorAll('.stream-card').forEach((card)=>{const baseLeft=Number(card.dataset.baseLeft||0);const baseTop=Number(card.dataset.baseTop||0);const baseWidth=Number(card.dataset.baseWidth||320);const baseHeight=Number(card.dataset.baseHeight||120);card.style.left=(baseLeft*zoom)+'px';card.style.top=(baseTop*rowScale)+'px';card.style.width=(baseWidth*zoom)+'px';card.style.height=(baseHeight*rowScale)+'px';});}"
+        + "function applyLayout(){const zoom=Number(document.getElementById('time-zoom').value||1);const rowScale=Number(document.getElementById('row-scale').value||1);const compact=document.getElementById('density-mode').value==='compact';const compactHeight=22;const compactGap=4;document.documentElement.style.setProperty('--time-zoom',zoom);document.documentElement.style.setProperty('--row-scale',rowScale);document.getElementById('time-zoom-value').textContent=zoom.toFixed(2)+'x';document.getElementById('row-scale-value').textContent=rowScale.toFixed(2)+'x';document.querySelectorAll('.ruler-tick').forEach((tick)=>{const baseLeft=Number(tick.dataset.baseLeft||0);tick.style.left=(baseLeft*zoom)+'px';});document.querySelectorAll('.stream-lane-track').forEach((track)=>{const baseWidth=Number(track.dataset.baseWidth||0);const baseHeight=Number(track.dataset.baseHeight||120);const rowCount=Number(track.dataset.rowCount||1);track.style.width=(baseWidth*zoom)+'px';track.style.height=compact?(Math.max(34,rowCount*(compactHeight+compactGap)+10)+'px'):(Math.max(120,baseHeight*rowScale)+'px');});document.querySelectorAll('.stream-card').forEach((card)=>{const baseLeft=Number(card.dataset.baseLeft||0);const baseTop=Number(card.dataset.baseTop||0);const baseWidth=Number(card.dataset.baseWidth||320);const baseHeight=Number(card.dataset.baseHeight||120);const row=Number(card.dataset.row||0);card.style.left=(baseLeft*zoom)+'px';if(compact){card.style.top=(6+row*(compactHeight+compactGap))+'px';card.style.width=(Math.max(96,baseWidth*0.42*zoom))+'px';card.style.height=compactHeight+'px';}else{card.style.top=(baseTop*rowScale)+'px';card.style.width=(baseWidth*zoom)+'px';card.style.height=(baseHeight*rowScale)+'px';}});}"
         + "function syncLaneVisibility(){LANES.forEach((lane)=>{const hidden=hiddenLanes.has(lane);document.querySelectorAll('[data-stream-lane=\"'+lane+'\"]').forEach((el)=>el.classList.toggle('is-hidden',hidden));document.querySelectorAll('[data-lane-row=\"'+lane+'\"]').forEach((el)=>el.classList.toggle('is-hidden',hidden));document.querySelectorAll('[data-lane-card=\"'+lane+'\"]').forEach((el)=>el.classList.toggle('is-hidden',hidden));document.querySelectorAll('[data-lane-toggle=\"'+lane+'\"]').forEach((el)=>{el.classList.toggle('active',!hidden);el.classList.toggle('inactive',hidden);});});}"
         + "function toggleLane(lane){if(hiddenLanes.has(lane)){hiddenLanes.delete(lane);}else{hiddenLanes.add(lane);}syncLaneVisibility();}"
         + "function resetView(){document.getElementById('time-zoom').value='1';document.getElementById('row-scale').value='1';document.getElementById('density-mode').value='expanded';document.getElementById('show-chronology').checked=true;hiddenLanes.clear();applyLayout();applyDensity();syncChronologyVisibility();syncLaneVisibility();}"
@@ -1689,8 +1742,8 @@ def main() -> None:
             else:
                 user_line = evaluation.user_line or spec["fallback_user_line"]
             turn.scripted_user_line = user_line
-            user_pcm = synthesize_pocket_pcm(user_line, args.pocket_server_url, args.pocket_voice)
-            stt_text = transcribe_pcm_deepgram(user_pcm)
+            user_synth = synthesize_pocket_pcm(user_line, args.pocket_server_url, args.pocket_voice)
+            stt_text = transcribe_pcm_deepgram(user_synth.pcm)
             turn.stt_transcript = stt_text
             synthetic_trace_events.append(session_recorder.add(
                 "stt_result",
@@ -1724,11 +1777,24 @@ def main() -> None:
             turn.response_word_count = len(response.split())
             turn.response_ok, turn.response_note = _response_note(response)
 
-            assistant_pcm = synthesize_pocket_pcm(response, args.pocket_server_url, args.pocket_voice)
-            turn.assistant_audio_ms = int(len(assistant_pcm) / 2 / 24000 * 1000)
+            tts_wall_start = time.time()
+            assistant_synth = synthesize_pocket_pcm(response, args.pocket_server_url, args.pocket_voice)
+            turn.assistant_audio_ms = assistant_synth.audio_ms
+            if assistant_synth.first_audio_ms > 0:
+                synthetic_trace_events.append(session_recorder.add(
+                    "assistant_tts_first_audio",
+                    {"first_audio_ms": assistant_synth.first_audio_ms, "text": response},
+                    timestamp=tts_wall_start + (assistant_synth.first_audio_ms / 1000.0),
+                ))
             synthetic_trace_events.append(session_recorder.add(
-                "assistant_tts",
-                {"audio_ms": turn.assistant_audio_ms},
+                "assistant_tts_done",
+                {"synth_ms": assistant_synth.synth_ms, "text": response},
+                timestamp=tts_wall_start + (assistant_synth.synth_ms / 1000.0),
+            ))
+            synthetic_trace_events.append(session_recorder.add(
+                "assistant_audio_clip",
+                {"audio_ms": assistant_synth.audio_ms, "text": response},
+                timestamp=tts_wall_start + (assistant_synth.synth_ms / 1000.0),
             ))
 
             _check_reconcile(world, log, people=people)
