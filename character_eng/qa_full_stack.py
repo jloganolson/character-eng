@@ -1028,7 +1028,7 @@ def _build_thread_lanes(events: list[dict]) -> tuple[list[str], list[str]]:
         if not lane_events:
             continue
         summary_cards.append(
-            f"<div class='summary-card'><div class='summary-kicker'>{html.escape(lane)}</div>"
+            f"<div class='summary-card' data-lane-card='{html.escape(lane)}'><div class='summary-kicker'>{html.escape(lane)}</div>"
             f"<div class='summary-value'>{len(lane_events)}</div><div class='summary-note'>events</div></div>"
         )
         dots: list[str] = []
@@ -1042,7 +1042,7 @@ def _build_thread_lanes(events: list[dict]) -> tuple[list[str], list[str]]:
                 f"title='Turn {turn} · +{rel:.3f}s · {html.escape(label)}'></div>"
             )
         rows.append(
-            "<div class='lane-row'>"
+            f"<div class='lane-row' data-lane-row='{html.escape(lane)}'>"
             f"<div class='lane-name'>{html.escape(lane)}</div>"
             f"<div class='lane-track'>{''.join(dots)}</div>"
             f"<div class='lane-count'>{len(lane_events)}</div>"
@@ -1078,7 +1078,7 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
     for second in range(whole_seconds + 1):
         left = label_width + second * px_per_sec
         ruler_ticks.append(
-            f"<div class='ruler-tick' style='left:{left}px'><span>{second:.0f}s</span></div>"
+            f"<div class='ruler-tick' data-base-left='{left}' style='left:{left}px'><span>{second:.0f}s</span></div>"
         )
 
     by_lane: dict[str, list[dict]] = {}
@@ -1150,7 +1150,9 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
                 )
 
             cards.append(
-                f"<article class='stream-card lane-{html.escape(lane)}' style='left:{left}px;top:{top}px;width:{width}px;height:{height}px'>"
+                f"<article class='stream-card lane-{html.escape(lane)}' data-base-left='{left}' data-base-top='{top}' "
+                f"data-base-width='{width}' data-base-height='{height}' "
+                f"style='left:{left}px;top:{top}px;width:{width}px;height:{height}px'>"
                 f"<div class='stream-card-head'><span class='stream-time'>+{rel:0.2f}s</span><span class='stream-type'>{html.escape(event_type)}</span></div>"
                 f"{body_html}"
                 f"<button class='note-btn note-inline' data-note-key='{note_key}' onclick='toggleAnnotation(\"{note_key}\")'>Note</button>"
@@ -1161,9 +1163,9 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
             )
 
         lane_sections.append(
-            "<section class='stream-lane'>"
+            f"<section class='stream-lane' data-stream-lane='{html.escape(lane)}'>"
             f"<div class='stream-lane-label'>{html.escape(lane)}</div>"
-            f"<div class='stream-lane-track' style='width:{track_width}px;height:{max(120, lane_row_height)}px'>{''.join(cards)}</div>"
+            f"<div class='stream-lane-track' data-base-width='{track_width}' data-base-height='{max(120, lane_row_height)}' style='width:{track_width}px;height:{max(120, lane_row_height)}px'>{''.join(cards)}</div>"
             "</section>"
         )
 
@@ -1192,13 +1194,20 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
     stream_board_html, annotation_events = _build_stream_board(session_trace)
     avg_ttft = int(sum(turn.response_ttft_ms for turn in turns) / max(1, len(turns)))
     avg_total = int(sum(turn.response_total_ms for turn in turns) / max(1, len(turns)))
+    lane_toggle_html = "".join(
+        f"<button class='lane-toggle active' type='button' data-lane-toggle='{html.escape(lane)}' onclick='toggleLane(\"{html.escape(lane)}\")'>{html.escape(lane)}</button>"
+        for lane in LANE_ORDER
+    )
 
     html_path.write_text(
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         "<title>Full Stack QA Trace</title>"
         "<style>"
-        "body{font-family:IBM Plex Sans,system-ui,sans-serif;background:#081018;color:#e7eef7;max-width:980px;margin:0 auto;padding:24px 24px 96px;}"
+        ":root{--time-zoom:1;--row-scale:1;--sidebar-width:150px;}"
+        "*{box-sizing:border-box;}"
+        "body{font-family:IBM Plex Sans,system-ui,sans-serif;background:#081018;color:#e7eef7;margin:0;padding:24px 24px 96px;}"
+        ".page-shell{width:min(100%,1800px);margin:0 auto;}"
         "h1{margin-bottom:8px;}p{line-height:1.5;}code{background:#101720;padding:2px 6px;border-radius:6px;}"
         "#annotation-toolbar{position:sticky;top:0;z-index:10;background:rgba(8,16,24,.96);backdrop-filter:blur(12px);border:1px solid #253244;border-radius:14px;padding:12px 14px;display:flex;gap:12px;align-items:center;margin:0 0 20px 0;}"
         "#annotation-toolbar .count{color:#9fb3c8;}#annotation-toolbar .count b{color:#7ee787;}"
@@ -1207,28 +1216,42 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         "#done-btn{display:none;background:#30363d;color:#e7eef7;}#save-flash{color:#7ee787;font-weight:600;opacity:0;transition:opacity .25s;}"
         "#save-flash.show{opacity:1;}.save-path{color:#8b949e;font-size:.85em;margin-left:auto;}"
         ".note-btn.has-note{background:#238636;}.annotation-box.open{display:block;}"
+        ".view-controls{position:sticky;top:74px;z-index:9;background:rgba(12,20,29,.94);backdrop-filter:blur(12px);border:1px solid #253244;border-radius:16px;padding:14px 16px;display:grid;grid-template-columns:repeat(3,minmax(200px,auto)) 1fr;gap:14px;align-items:end;margin:0 0 22px 0;}"
+        ".control-block{display:grid;gap:6px;}"
+        ".control-block label{font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9fb3c8;}"
+        ".control-inline{display:flex;gap:10px;align-items:center;}"
+        ".control-inline output{font-family:IBM Plex Mono,monospace;color:#f4b942;min-width:48px;}"
+        ".control-inline input[type='range']{width:100%;}"
+        ".control-inline button{border:none;border-radius:8px;padding:0.5em 0.85em;cursor:pointer;background:#30363d;color:#e7eef7;font:inherit;font-weight:600;}"
+        ".lane-toggle-grid{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;}"
+        ".lane-toggle{border:1px solid #253244;border-radius:999px;background:#081018;color:#c9d1d9;padding:0.45em 0.85em;cursor:pointer;font:inherit;font-size:.82rem;text-transform:uppercase;letter-spacing:.04em;}"
+        ".lane-toggle.active{background:#1f6feb22;color:#79c0ff;border-color:#1f6feb66;}"
+        ".lane-toggle.inactive{opacity:.45;}"
         ".summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:18px 0 24px 0;}"
         ".summary-card{background:#101720;border:1px solid #253244;border-radius:16px;padding:14px 16px;}"
+        ".summary-card.is-hidden{opacity:.35;}"
         ".summary-kicker{font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:#9fb3c8;}"
         ".summary-value{font-size:1.5rem;font-weight:700;color:#f4b942;margin-top:4px;}"
         ".summary-note{margin-top:4px;color:#9fb3c8;font-size:.85rem;}"
         ".lane-wrap{background:#101720;border:1px solid #253244;border-radius:16px;padding:18px;margin:18px 0 24px 0;}"
         ".lane-grid{display:grid;gap:10px;margin-top:12px;}"
         ".lane-row{display:grid;grid-template-columns:92px 1fr 42px;gap:12px;align-items:center;}"
+        ".lane-row.is-hidden{display:none;}"
         ".lane-name{font-size:.82rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#c9d1d9;}"
         ".lane-track{position:relative;height:26px;background:#081018;border:1px solid #1d2a3a;border-radius:999px;overflow:hidden;}"
         ".lane-dot{position:absolute;top:50%;width:10px;height:10px;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 2px #081018;}"
         ".lane-count{font-family:IBM Plex Mono,monospace;font-size:.82rem;color:#9fb3c8;text-align:right;}"
         ".lane-dot.lane-session{background:#79c0ff;}.lane-dot.lane-vision{background:#7ee787;}.lane-dot.lane-world{background:#d2a8ff;}.lane-dot.lane-stt{background:#e3b341;}.lane-dot.lane-chat{background:#ffa198;}.lane-dot.lane-expression{background:#ffb3ad;}.lane-dot.lane-eval{background:#8ddb8c;}.lane-dot.lane-script{background:#f2cc60;}.lane-dot.lane-director{background:#c297ff;}.lane-dot.lane-planner{background:#7dd3fc;}.lane-dot.lane-tts{background:#f5a6d3;}.lane-dot.lane-other{background:#c9d1d9;}"
-        ".stream-wrap{background:#101720;border:1px solid #253244;border-radius:16px;padding:18px;margin:18px 0 24px 0;}"
-        ".stream-scroll{overflow-x:auto;padding-bottom:8px;}"
-        ".stream-ruler{position:relative;height:28px;margin-left:0;border-bottom:1px solid #253244;}"
+        ".stream-wrap{background:#101720;border:1px solid #253244;border-radius:16px;padding:18px;margin:18px 0 24px 0;overflow:hidden;}"
+        ".stream-scroll{overflow:auto;padding-bottom:8px;max-width:100%;}"
+        ".stream-ruler{position:sticky;top:0;z-index:4;height:28px;margin-left:0;border-bottom:1px solid #253244;background:#101720;}"
         ".ruler-tick{position:absolute;top:0;bottom:0;width:1px;background:#253244;}"
         ".ruler-tick span{position:absolute;top:4px;left:4px;font-family:IBM Plex Mono,monospace;font-size:.78rem;color:#9fb3c8;}"
-        ".stream-lane{display:grid;grid-template-columns:108px 1fr;gap:12px;padding:12px 0;border-bottom:1px solid #1d2a3a;}"
+        ".stream-lane{display:grid;grid-template-columns:var(--sidebar-width) 1fr;gap:12px;padding:12px 0;border-bottom:1px solid #1d2a3a;align-items:start;}"
+        ".stream-lane.is-hidden{display:none;}"
         ".stream-lane:last-child{border-bottom:none;}"
-        ".stream-lane-label{font-size:.82rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#c9d1d9;padding-top:10px;}"
-        ".stream-lane-track{position:relative;background:linear-gradient(180deg,rgba(8,16,24,.8),rgba(8,16,24,.4));border:1px solid #1d2a3a;border-radius:18px;}"
+        ".stream-lane-label{position:sticky;left:0;z-index:3;align-self:stretch;font-size:.82rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#c9d1d9;padding:12px 10px 0 0;background:linear-gradient(90deg,#101720 0%,#101720 78%,rgba(16,23,32,0) 100%);}"
+        ".stream-lane-track{position:relative;background:linear-gradient(180deg,rgba(8,16,24,.8),rgba(8,16,24,.4));border:1px solid #1d2a3a;border-radius:18px;min-height:120px;}"
         ".stream-card{position:absolute;background:#0c141d;border:1px solid #253244;border-radius:14px;padding:10px 10px 12px 10px;overflow:hidden;box-shadow:0 10px 24px rgba(0,0,0,.24);}"
         ".stream-card-head{display:flex;justify-content:space-between;gap:8px;font-family:IBM Plex Mono,monospace;font-size:.76rem;color:#9fb3c8;margin-bottom:6px;}"
         ".stream-card-label{font-size:.92rem;line-height:1.35;}"
@@ -1249,9 +1272,10 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         ".timeline-type{font-size:.82rem;font-weight:700;color:#f4b942;text-transform:uppercase;letter-spacing:.04em;}"
         ".timeline-label{margin-top:2px;}.timeline-detail{margin-top:4px;color:#9fb3c8;font-family:IBM Plex Mono,monospace;font-size:.8rem;white-space:pre-wrap;word-break:break-word;}"
         ".timeline-empty{color:#9fb3c8;padding:8px 0;}"
-        "@media (max-width: 860px){.timeline-row{grid-template-columns:1fr;}.timeline-lane,.timeline-turn,.timeline-abs,.timeline-time{justify-self:start;}}"
+        "@media (max-width: 1080px){.view-controls{grid-template-columns:1fr;}.lane-toggle-grid{justify-content:flex-start;}}"
+        "@media (max-width: 860px){body{padding:16px 12px 72px;}.stream-lane{grid-template-columns:1fr;}.stream-lane-label{position:static;padding:0;background:none;}.timeline-row{grid-template-columns:1fr;}.timeline-lane,.timeline-turn,.timeline-abs,.timeline-time{justify-self:start;}}"
         "</style>"
-        "</head><body>"
+        "</head><body><div class='page-shell'>"
         "<h1>Full Stack QA Trace Report</h1>"
         "<p>Stream-centric QA artifact with vision thumbnails, overlay thumbnails, live chat traces, and interwoven subsystem lanes.</p>"
         f"<div id='annotation-toolbar'>"
@@ -1261,6 +1285,12 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         "<span id='save-flash'></span>"
         f"<span class='save-path'>Save to: <code>logs/annotated/{html.escape(report_name)}.annotations.json</code></span>"
         "</div>"
+        "<section class='view-controls'>"
+        "<div class='control-block'><label for='time-zoom'>Time Zoom</label><div class='control-inline'><input id='time-zoom' type='range' min='0.6' max='2.4' step='0.05' value='1'><output id='time-zoom-value'>1.00x</output></div></div>"
+        "<div class='control-block'><label for='row-scale'>Row Scale</label><div class='control-inline'><input id='row-scale' type='range' min='0.75' max='1.8' step='0.05' value='1'><output id='row-scale-value'>1.00x</output></div></div>"
+        "<div class='control-block'><label>View</label><div class='control-inline'><button type='button' onclick='resetView()'>Reset View</button></div></div>"
+        f"<div class='lane-toggle-grid'>{lane_toggle_html}</div>"
+        "</section>"
         "<section class='summary-grid'>"
         f"<div class='summary-card'><div class='summary-kicker'>Turns</div><div class='summary-value'>{len(turns)}</div><div class='summary-note'>assistant turns</div></div>"
         f"<div class='summary-card'><div class='summary-kicker'>Trace Window</div><div class='summary-value'>{total_duration:0.2f}s</div><div class='summary-note'>captured session time</div></div>"
@@ -1278,16 +1308,26 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         + "<script>"
         + f"const REPORT_NAME = {json.dumps(report_name)};"
         + f"const MODEL_KEY = {json.dumps(json_path.stem)};"
+        + f"const LANES = {json.dumps(LANE_ORDER)};"
         + f"const EVENTS = {json.dumps(annotation_events)};"
         + "const annotations = new Map();"
+        + "const hiddenLanes = new Set();"
         + "let lastSavedPath = '';"
         + "function flashSaved(text, sticky=false){const el=document.getElementById('save-flash');el.textContent=text;el.classList.add('show');if(!sticky){setTimeout(()=>el.classList.remove('show'),2200);}}"
         + "function toggleAnnotation(turn){const area=document.getElementById('ann-'+turn);if(!area)return;const open=area.classList.toggle('open');area.style.display=open?'block':'none';if(open){area.querySelector('textarea').focus();}}"
         + "function updateAnnotation(turn,text){const key=String(turn);const btn=document.querySelector('[data-note-key=\"'+key+'\"]');if(text.trim()){annotations.set(key,text.trim());if(btn)btn.classList.add('has-note');}else{annotations.delete(key);if(btn)btn.classList.remove('has-note');}document.getElementById('note-count').textContent=annotations.size;document.getElementById('export-btn').disabled=annotations.size===0;}"
+        + "function applyLayout(){const zoom=Number(document.getElementById('time-zoom').value||1);const rowScale=Number(document.getElementById('row-scale').value||1);document.documentElement.style.setProperty('--time-zoom',zoom);document.documentElement.style.setProperty('--row-scale',rowScale);document.getElementById('time-zoom-value').textContent=zoom.toFixed(2)+'x';document.getElementById('row-scale-value').textContent=rowScale.toFixed(2)+'x';document.querySelectorAll('.ruler-tick').forEach((tick)=>{const baseLeft=Number(tick.dataset.baseLeft||0);tick.style.left=(baseLeft*zoom)+'px';});document.querySelectorAll('.stream-lane-track').forEach((track)=>{const baseWidth=Number(track.dataset.baseWidth||0);const baseHeight=Number(track.dataset.baseHeight||120);track.style.width=(baseWidth*zoom)+'px';track.style.height=(Math.max(120,baseHeight*rowScale))+'px';});document.querySelectorAll('.stream-card').forEach((card)=>{const baseLeft=Number(card.dataset.baseLeft||0);const baseTop=Number(card.dataset.baseTop||0);const baseWidth=Number(card.dataset.baseWidth||320);const baseHeight=Number(card.dataset.baseHeight||120);card.style.left=(baseLeft*zoom)+'px';card.style.top=(baseTop*rowScale)+'px';card.style.width=(baseWidth*zoom)+'px';card.style.height=(baseHeight*rowScale)+'px';});}"
+        + "function syncLaneVisibility(){LANES.forEach((lane)=>{const hidden=hiddenLanes.has(lane);document.querySelectorAll('[data-stream-lane=\"'+lane+'\"]').forEach((el)=>el.classList.toggle('is-hidden',hidden));document.querySelectorAll('[data-lane-row=\"'+lane+'\"]').forEach((el)=>el.classList.toggle('is-hidden',hidden));document.querySelectorAll('[data-lane-card=\"'+lane+'\"]').forEach((el)=>el.classList.toggle('is-hidden',hidden));document.querySelectorAll('[data-lane-toggle=\"'+lane+'\"]').forEach((el)=>{el.classList.toggle('active',!hidden);el.classList.toggle('inactive',hidden);});});}"
+        + "function toggleLane(lane){if(hiddenLanes.has(lane)){hiddenLanes.delete(lane);}else{hiddenLanes.add(lane);}syncLaneVisibility();}"
+        + "function resetView(){document.getElementById('time-zoom').value='1';document.getElementById('row-scale').value='1';hiddenLanes.clear();applyLayout();syncLaneVisibility();}"
         + "async function exportAnnotations(){if(annotations.size===0)return;const notes=[];annotations.forEach((note,key)=>notes.push({key,note}));const events=EVENTS.map(event=>{const entry={...event};const note=annotations.get(String(event.key));if(note)entry.note=note;return entry;});const data={report:REPORT_NAME,model:MODEL_KEY,notes,events};const jsonText=JSON.stringify(data,null,2);const filename=REPORT_NAME+'.annotations.json';if(location.protocol==='http:'||location.protocol==='https:'){try{const resp=await fetch('/save-annotations',{method:'POST',headers:{'Content-Type':'application/json'},body:jsonText});const result=await resp.json();if(result.ok){lastSavedPath=result.path;navigator.clipboard.writeText(result.path).catch(()=>{});flashSaved('Saved - path copied to clipboard');const doneBtn=document.getElementById('done-btn');if(doneBtn)doneBtn.style.display='inline-block';return;}}catch(e){}}const blob=new Blob([jsonText],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);flashSaved('Downloaded - save to logs/annotated/');}"
         + "function shutdownServer(){fetch('/shutdown',{method:'POST'}).then(()=>{document.title=document.title+' (server stopped)';flashSaved(lastSavedPath?'Server stopped - export saved to '+lastSavedPath:'Server stopped - you can close this tab',true);}).catch(()=>{});}"
+        + "document.getElementById('time-zoom').addEventListener('input',applyLayout);"
+        + "document.getElementById('row-scale').addEventListener('input',applyLayout);"
+        + "applyLayout();"
+        + "syncLaneVisibility();"
         + "</script>"
-        + "</body></html>"
+        + "</div></body></html>"
     )
 
 
