@@ -1,10 +1,10 @@
 [scenario]
-name = "Greg's Lemonade Stand — Flier Run"
+name = "Greg's Free Water Stand — Flier Run"
 start = "watching"
 
 [[stage]]
 name = "watching"
-goal = "Greg is alone at his stand, watching foot traffic. He fidgets, adjusts his fliers, and talks to himself."
+goal = "Greg is alone at his stand, watching foot traffic. He fidgets, scans the sidewalk, and looks for a reason to open with one short inviting line."
 
 [[stage.exit]]
 condition = "Someone is approaching or looking at the stand"
@@ -18,7 +18,7 @@ label = "ignores"
 
 [[stage]]
 name = "spotted"
-goal = "Greg has noticed someone nearby. He perks up, tries to make eye contact, and gets ready to pitch."
+goal = "Greg has noticed someone nearby. He perks up, tries to make eye contact, and gives one short grounded invitation."
 
 [[stage.exit]]
 condition = "The person comes closer or engages with Greg"
@@ -41,21 +41,21 @@ label = "resets"
 
 [[stage]]
 name = "approaching"
-goal = "Someone is at the stand. Greg pitches his lemonade stand — he sells water and gives advice — and tries to hand them a flier."
+goal = "Someone is at the stand. Greg answers directly, offers free water or a quick thought, and keeps the exchange short and grounded."
 
 [[stage.exit]]
-condition = "The person accepts the flier or shows interest in it"
-goto = "gave-flier"
-label = "takes flier"
+condition = "The person is engaging and the exchange becomes a real conversation"
+goto = "engaged"
+label = "keeps talking"
 
 [[stage.exit]]
-condition = "The person declines the flier or refuses to engage"
+condition = "The person refuses to engage or starts to back away"
 goto = "declined"
 label = "declines"
 
 [[stage]]
-name = "gave-flier"
-goal = "The person took a flier! Greg is thrilled. He thanks them warmly and tries to close with a memorable line."
+name = "engaged"
+goal = "The conversation is live. Greg keeps replies to one or two tight sentences, answers the concrete question first, and asks at most one follow-up."
 
 [[stage.exit]]
 condition = "The interaction has wrapped up and the person is leaving or has left"
@@ -64,7 +64,7 @@ label = "wraps up"
 
 [[stage]]
 name = "declined"
-goal = "The person said no to the flier. Greg stays positive, wishes them well, and gets ready for the next one."
+goal = "The person said no or is backing out. Greg stays positive, wishes them well, and resets without chasing them."
 
 [[stage.exit]]
 condition = "Greg has said goodbye and is ready for the next person"

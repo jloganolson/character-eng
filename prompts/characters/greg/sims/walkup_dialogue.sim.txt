@@ -1,0 +1,10 @@
+# Dialogue-only walkup sim for use with vision replay/mock input.
+# Visual events come from services/vision/replays/walkup.json.
+
+7.0 | "Hey, is this your stand?"
+10.0 | "So the water's actually free?"
+15.0 | "What's the catch?"
+20.0 | "So what kind of advice do you give?"
+25.0 | "I've been thinking about switching careers. Any thoughts?"
+33.0 | "Thanks, that actually helps"
+38.0 | "Well, I should get going. Thanks Greg!"

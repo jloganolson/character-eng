@@ -1,5 +1,5 @@
 [scenario]
-name = "Greg's Lemonade Stand — Punchy Visual Chat"
+name = "Greg's Free Water Stand — Punchy Visual Chat"
 start = "scan"
 
 [[stage]]
@@ -35,7 +35,7 @@ name = "micro-chat"
 goal = "Greg keeps the exchange punchy: one short answer, one light question, and a concrete reference to the stand or the person."
 
 [[stage.exit]]
-condition = "The exchange feels complete, the person accepts a flier, or the person is leaving"
+condition = "The exchange feels complete or the person is leaving"
 goto = "handoff"
 label = "wraps"
 

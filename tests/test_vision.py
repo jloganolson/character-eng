@@ -286,6 +286,93 @@ def test_vision_manager_people_resolution():
     assert "no longer visible" in mgr._events[1].description
 
 
+def test_vision_manager_update_focus_pushes_dashboard_event(monkeypatch):
+    from character_eng.vision.focus import VisualFocusResult
+    from character_eng.vision.manager import VisionManager
+    from character_eng.dashboard.events import DashboardEventCollector
+
+    collector = DashboardEventCollector()
+    mgr = VisionManager()
+    mgr._collector = collector
+
+    pushed_questions = {}
+    pushed_targets = {}
+
+    monkeypatch.setattr(
+        "character_eng.vision.manager.visual_focus_call",
+        lambda *args, **kwargs: VisualFocusResult(
+            constant_questions=["Who is here?"],
+            ephemeral_questions=["Are they holding a bottle?"],
+            constant_sam_targets=["person"],
+            ephemeral_sam_targets=["bottle"],
+        ),
+    )
+    monkeypatch.setattr(mgr._client, "set_questions", lambda constant, ephemeral: pushed_questions.update({
+        "constant": list(constant),
+        "ephemeral": list(ephemeral),
+    }))
+    monkeypatch.setattr(mgr._client, "set_sam_targets", lambda constant, ephemeral: pushed_targets.update({
+        "constant": list(constant),
+        "ephemeral": list(ephemeral),
+    }))
+
+    mgr.update_focus(
+        beat=None,
+        stage_goal="Notice the bottle.",
+        thought="Look for obvious props.",
+        world=None,
+        people=None,
+        model_config={},
+    )
+
+    assert pushed_questions["constant"] == ["Who is here?"]
+    assert pushed_questions["ephemeral"] == ["Are they holding a bottle?"]
+    assert pushed_targets["constant"] == ["person"]
+    assert pushed_targets["ephemeral"] == ["bottle"]
+    event = collector.get_all()[-1]
+    assert event["type"] == "vision_focus"
+    assert event["data"]["ephemeral_sam_targets"] == ["bottle"]
+
+
+def test_vision_manager_dashboard_snapshot_includes_objects_and_focus(monkeypatch):
+    from character_eng.vision.focus import VisualFocusResult
+    from character_eng.vision.manager import VisionManager
+    from character_eng.dashboard.events import DashboardEventCollector
+
+    collector = DashboardEventCollector()
+    mgr = VisionManager()
+    mgr._collector = collector
+    mgr._model_config = {"name": "test"}
+    mgr._last_dashboard_push = 0.0
+    mgr._last_focus = VisualFocusResult(
+        constant_questions=["Who is here?"],
+        ephemeral_questions=["Are they holding a bottle?"],
+        constant_sam_targets=["person"],
+        ephemeral_sam_targets=["bottle"],
+    )
+
+    snapshot = RawVisualSnapshot(
+        persons=[PersonObservation(identity="Person 1", bbox=(0, 0, 100, 200))],
+        objects=[ObjectDetection(label="bottle"), ObjectDetection(label="chair")],
+        vlm_answers=[VLMAnswer(question="Who is here?", answer="One person near a chair", slot_type="constant")],
+    )
+
+    monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)
+    monkeypatch.setattr(
+        "character_eng.vision.manager.vision_synthesis_call",
+        lambda **kwargs: type("Synth", (), {"events": []})(),
+    )
+
+    mgr._tick()
+
+    event = collector.get_all()[-1]
+    assert event["type"] == "vision_snapshot"
+    assert event["data"]["objects"] == 2
+    assert event["data"]["object_labels"] == ["bottle", "chair"]
+    assert event["data"]["vlm_answers"][0]["question"] == "Who is here?"
+    assert event["data"]["focus"]["ephemeral_questions"] == ["Are they holding a bottle?"]
+
+
 def test_mara_character_loads():
     """Verify the Mara character loads correctly."""
     from character_eng.prompts import load_prompt

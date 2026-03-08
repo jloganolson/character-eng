@@ -1102,6 +1102,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
         scenario = load_scenario_script(character)
         system_prompt = load_prompt(character, world_state=world, people_state=people)
         session = ChatSession(system_prompt, model_config)
+        _inject_runtime_turn_guardrails(session)
         script = Script()
 
         if scenario:
@@ -1911,6 +1912,30 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
     console.print(f"[cyan]Sim: complete[/cyan]")
 
 
+def _inject_runtime_turn_guardrails(session, user_input: str = "") -> None:
+    system_prompt = getattr(session, "system_prompt", "")
+    parts = [
+        "Turn guardrails:",
+        "- Keep the spoken reply to one short sentence, or two short sentences max.",
+        "- Prefer 8-16 words. Do not exceed about 22 words unless the user explicitly asks for detail.",
+        "- Answer the user's most concrete question first.",
+    ]
+    if "You are Greg" in system_prompt or "GREG'S: FREE WATER / FREE ADVICE" in system_prompt:
+        parts.extend([
+            "- Greg is not making a sale. Do not mention prices, money, loans, upsells, premium options, or needing business.",
+            "- The water and the advice are free. If asked about price or the catch, say plainly that there is no catch.",
+            "- Flyers are optional background props, not the point of the interaction.",
+            "- Do not tell the user to take a flier unless they explicitly ask about the flier first.",
+            "- Do not invent flavors, specials, hidden deals, or business pressure.",
+        ])
+        lowered = user_input.lower()
+        if any(token in lowered for token in ("price", "cost", "free", "catch", "how much")):
+            parts.append("- For this turn, answer plainly: free water, free advice, no catch.")
+        if any(token in lowered for token in ("i should get going", "got to go", "gotta go", "i should go", "goodbye", "bye", "see you")):
+            parts.append("- The user is leaving. Give one warm goodbye line, no follow-up question, and do not try to keep them there.")
+    session.inject_system("\n".join(parts))
+
+
 def stream_response(session, label, message, voice_io=None, expr_model_config=None) -> str:
     """Send a message and stream the response. Returns full response text.
 
@@ -1920,6 +1945,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
     stream_response._last_expr for the caller to pick up.
     """
     stream_response._last_expr = None
+    _inject_runtime_turn_guardrails(session, message)
     npc_name = Text(f"{_ts()} {label}: ", style="bold magenta")
     console.print(npc_name, end="")
     full_response = []
@@ -2114,6 +2140,7 @@ def run_smoke():
     scenario = load_scenario_script(character)
     system_prompt = load_prompt(character, world_state=world, people_state=people)
     session = ChatSession(system_prompt, model_config)
+    _inject_runtime_turn_guardrails(session)
     script = Script()
 
     stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""

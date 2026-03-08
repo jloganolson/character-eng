@@ -110,6 +110,27 @@ def test_write_report_includes_dashboard_trace(tmp_path: Path):
                 "seq": 3,
                 "data": {"text": "Free water. Free advice. Interested?"},
             },
+            {
+                "type": "eval",
+                "timestamp": 0.75,
+                "seq": 4,
+                "turn": 1,
+                "data": {"script_status": "advance", "thought": "Keep it short."},
+            },
+            {
+                "type": "plan",
+                "timestamp": 0.82,
+                "seq": 5,
+                "turn": 1,
+                "data": {"beats": [{"intent": "hook"}]},
+            },
+            {
+                "type": "reconcile",
+                "timestamp": 0.9,
+                "seq": 6,
+                "turn": 1,
+                "data": {"add_facts": ["The user wants a cup of water."], "remove_facts": [], "events": ["The user leaned in."]},
+            },
         ],
         prompt_traces=[
             {
@@ -146,6 +167,8 @@ def test_write_report_includes_dashboard_trace(tmp_path: Path):
     assert "reply-track-bar" in body
     assert "+0.000s" in body
     assert "vision_poll" in body
+    assert "Post-response:" in body
+    assert "World update:" in body
 
 
 def test_ground_live_evaluation_falls_back_for_stand_drift():

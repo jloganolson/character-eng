@@ -168,14 +168,22 @@ def test_runtime_panel_interactions_in_browser(
     collector.push("response_chunk", {"text": "Want one?"})
     collector.push("response_done", {"full_text": "Free water. Want one?", "ttft_ms": 190, "total_ms": 780})
     collector.push("eval", {"script_status": "advance", "thought": "Keep it tight."})
+    collector.push("vision_focus", {
+        "stage_goal": "Notice props near the table.",
+        "constant_questions": ["Who is here?"],
+        "ephemeral_questions": ["Is there a bottle visible?"],
+        "constant_sam_targets": ["person"],
+        "ephemeral_sam_targets": ["bottle"],
+    })
     collector.push("vision_snapshot", {
         "faces": 0,
         "persons": 1,
-        "vlm_answers": ["One person is standing near the table."],
+        "objects": 1,
+        "vlm_answers": [{"question": "Is there a bottle visible?", "answer": "Yes, a water bottle is on the table."}],
         "object_labels": ["water bottle"],
     })
 
-    expect(page.locator(".stream-card")).to_have_count(6)
+    expect(page.locator(".stream-card")).to_have_count(7)
     reply_card = page.locator(".stream-card").filter(has_text="Free water. Want one?").first
     reply_card.click()
     expect(page.locator("#detail-type")).to_have_text("assistant_reply")
@@ -187,13 +195,17 @@ def test_runtime_panel_interactions_in_browser(
 
     page.locator("#stream-density").select_option("compact")
     reply_card.click()
-    expect(page.locator(".stream-card.compact")).to_have_count(6)
+    expect(page.locator(".stream-card.compact")).to_have_count(7)
     expect(page.locator("#detail-type")).to_have_text("assistant_reply")
 
     page.locator("button[data-lane-toggle='vision']").click()
     expect(page.locator("[data-stream-lane='vision']")).to_have_class(re.compile(r"\bhidden\b"))
     page.locator("button[data-lane-toggle='vision']").click()
     expect(page.locator("[data-stream-lane='vision']")).not_to_have_class(re.compile(r"\bhidden\b"))
+    vision_card = page.locator(".stream-card").filter(has_text="water bottle").first
+    vision_card.click()
+    expect(page.locator("#detail-type")).to_have_text("vision_snapshot")
+    expect(page.locator("#detail-payload")).to_contain_text("\"question\": \"Is there a bottle visible?\"")
 
     collector.push(
         "runtime_controls",

@@ -1,10 +1,10 @@
 [scenario]
-name = "Greg's Lemonade Stand"
+name = "Greg's Free Water Stand"
 start = "waiting"
 
 [[stage]]
 name = "waiting"
-goal = "Greg is alone at his lemonade stand, waiting for customers. He fidgets, talks to himself, and watches the street."
+goal = "Greg is alone at his stand, waiting for someone to stop by. He fidgets, talks to himself, and looks for a reason to open with one short inviting line."
 
 [[stage.exit]]
 condition = "Someone has approached or arrived at the stand"
@@ -12,11 +12,11 @@ goto = "pitch"
 
 [[stage]]
 name = "pitch"
-goal = "Greg greets the visitor and pitches his lemonade stand — he sells water and gives advice. He's enthusiastic and curious about the visitor."
+goal = "Greg greets the visitor, offers free water and free advice, and answers their first concrete question directly."
 
 [[stage.exit]]
-condition = "The visitor wants to buy water"
-goto = "sell-water"
+condition = "The visitor wants some water or reaches for the water"
+goto = "share-water"
 
 [[stage.exit]]
 condition = "The visitor asks for advice or help with a problem"
@@ -26,21 +26,13 @@ goto = "give-advice"
 condition = "The visitor seems uninterested or wants to leave"
 goto = "farewell"
 
-[[stage.exit]]
-condition = "The visitor wants to save money or is hesitant about spending"
-goto = "save-it"
-
 [[stage]]
-name = "sell-water"
-goal = "Greg sells the visitor a cup of water. He's proud of his product and wants to make sure they enjoy it."
+name = "share-water"
+goal = "Greg shares a free water with the visitor. He's glad they stopped and keeps the moment simple and welcoming."
 
 [[stage.exit]]
-condition = "The transaction is complete and the visitor has their water"
+condition = "The visitor has the water or the water moment is complete"
 goto = "connect"
-
-[[stage.exit]]
-condition = "The visitor tries to haggle or negotiate the price"
-goto = "haggle"
 
 [[stage]]
 name = "give-advice"
@@ -55,32 +47,8 @@ condition = "The visitor wants to change topics or buy something"
 goto = "pitch"
 
 [[stage]]
-name = "save-it"
-goal = "Greg respects the visitor's frugality and tries to find a way to help them anyway — maybe free advice, or a smaller cup."
-
-[[stage.exit]]
-condition = "The visitor accepts an alternative or decides to buy"
-goto = "sell-water"
-
-[[stage.exit]]
-condition = "The conversation moves to a different topic"
-goto = "connect"
-
-[[stage]]
-name = "haggle"
-goal = "Greg negotiates with the visitor. He's playful but firm — water is water, and he put work into this stand."
-
-[[stage.exit]]
-condition = "A price is agreed upon"
-goto = "sell-water"
-
-[[stage.exit]]
-condition = "The visitor gives up haggling"
-goto = "connect"
-
-[[stage]]
 name = "connect"
-goal = "Greg tries to connect with the visitor on a personal level — asks about their life, shares something about himself, builds a relationship."
+goal = "Greg keeps the conversation punchy and personal: answer, one grounded follow-up, then let the moment breathe."
 
 [[stage.exit]]
 condition = "The visitor signals they want to leave or says goodbye"
@@ -92,7 +60,7 @@ goto = "pitch"
 
 [[stage]]
 name = "farewell"
-goal = "Greg says goodbye warmly, hoping they'll come back. He might share a parting thought or piece of advice."
+goal = "Greg says goodbye warmly, lands one clean closing line, and lets the person go."
 
 [[stage.exit]]
 condition = "The visitor has left or the goodbye is complete"

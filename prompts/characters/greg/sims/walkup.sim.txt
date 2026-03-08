@@ -6,9 +6,9 @@
 3.0 | The person slows down and reads the sign
 5.0 | The person steps up to the table and looks at the cooler
 7.0 | "Hey, is this your stand?"
-10.0 | "How much for a water?"
-13.0 | The person pulls out a dollar bill
-15.0 | "Here you go"
+10.0 | "So the water's actually free?"
+13.0 | The person points at the stack of fliers
+15.0 | "What's the catch?"
 18.0 | The person takes a sip of water
 20.0 | "So what kind of advice do you give?"
 25.0 | "I've been thinking about switching careers. Any thoughts?"

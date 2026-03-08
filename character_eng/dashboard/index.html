@@ -1060,6 +1060,14 @@
         if (data.people_count) bits.push(`${data.people_count} people`);
         return bits.length ? bits.join(" · ") : "World update";
       }
+      case "vision_focus": {
+        const bits = [];
+        if (data.constant_questions && data.constant_questions.length) bits.push(`${data.constant_questions.length} constant q`);
+        if (data.ephemeral_questions && data.ephemeral_questions.length) bits.push(`${data.ephemeral_questions.length} ephemeral q`);
+        if (data.constant_sam_targets && data.constant_sam_targets.length) bits.push(`${data.constant_sam_targets.length} constant sam`);
+        if (data.ephemeral_sam_targets && data.ephemeral_sam_targets.length) bits.push(`${data.ephemeral_sam_targets.length} ephemeral sam`);
+        return bits.length ? bits.join(" · ") : "Vision focus";
+      }
       case "expression":
         return `${data.expression || "expression"} · ${data.gaze || "gaze"}`;
       case "eval":
@@ -1105,6 +1113,12 @@
           data.faces != null ? `faces ${data.faces}` : "",
           data.persons != null ? `people ${data.persons}` : "",
           data.object_labels && data.object_labels.length ? `objects ${data.object_labels.join(", ")}` : ""
+        ].filter(Boolean).join(" · ");
+      case "vision_focus":
+        return [
+          data.stage_goal || "",
+          data.ephemeral_questions && data.ephemeral_questions.length ? `ask: ${data.ephemeral_questions.join(", ")}` : "",
+          data.ephemeral_sam_targets && data.ephemeral_sam_targets.length ? `track: ${data.ephemeral_sam_targets.join(", ")}` : ""
         ].filter(Boolean).join(" · ");
       case "post_response":
         return [
@@ -1284,6 +1298,78 @@
     return `<div class="reply-markers">${markers.map((marker) => `<span class="reply-marker">${esc(marker)}</span>`).join("")}</div>`;
   }
 
+  function renderVisionAnswers(answers) {
+    if (!answers || !answers.length) return "";
+    return `<div class="reply-markers">${answers.slice(0, 3).map((answer) => {
+      const label = typeof answer === "string"
+        ? answer
+        : `${answer.question || "vision"}: ${answer.answer || ""}`;
+      return `<span class="reply-marker">${esc(label)}</span>`;
+    }).join("")}</div>`;
+  }
+
+  function renderCardBody(event) {
+    if (event.type === "assistant_reply") {
+      return `
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${renderReplyMarkers(event)}
+      `;
+    }
+    if (event.type === "post_response") {
+      const chips = [
+        event.data.script_status ? `eval ${event.data.script_status}` : "",
+        event.data.director_status ? `director ${event.data.director_status}` : "",
+        event.data.plan_beats ? `${event.data.plan_beats} beats` : "",
+        event.data.next_intent ? `next ${event.data.next_intent}` : "",
+        event.data.new_stage ? `stage ${event.data.new_stage}` : ""
+      ].filter(Boolean);
+      return `
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+      `;
+    }
+    if (event.type === "world_update") {
+      const chips = [
+        event.data.add_count || event.data.remove_count || event.data.event_count ? `+${event.data.add_count || 0} -${event.data.remove_count || 0} ~${event.data.event_count || 0}` : "",
+        event.data.fact_count ? `${event.data.fact_count} facts` : "",
+        event.data.people_count ? `${event.data.people_count} people` : ""
+      ].filter(Boolean);
+      return `
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+      `;
+    }
+    if (event.type === "vision_snapshot") {
+      const objectText = event.data.object_labels && event.data.object_labels.length
+        ? event.data.object_labels.slice(0, 4).join(", ")
+        : "none";
+      return `
+        <div class="stream-card-label">${esc(event.label)}</div>
+        <div class="stream-card-detail">objects: ${esc(objectText)}</div>
+        ${renderVisionAnswers(event.data.vlm_answers)}
+      `;
+    }
+    if (event.type === "vision_focus") {
+      const chips = [
+        ...(event.data.constant_questions || []).slice(0, 2).map((item) => `Q ${item}`),
+        ...(event.data.ephemeral_questions || []).slice(0, 2).map((item) => `q ${item}`),
+        ...(event.data.ephemeral_sam_targets || []).slice(0, 2).map((item) => `sam ${item}`)
+      ];
+      return `
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+      `;
+    }
+    return `
+      <div class="stream-card-label">${esc(event.label)}</div>
+      ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+    `;
+  }
+
   function renderLaneToggles() {
     laneToggleGrid.innerHTML = laneOrder.map((lane) => {
       const inactive = hiddenLanes.has(lane) ? " inactive" : "";
@@ -1357,9 +1443,7 @@
               <span class="stream-card-type">${esc(event.type)}</span>
               <span class="stream-card-time">+${relativeTime(event.timestamp).toFixed(2)}s</span>
             </div>
-            <div class="stream-card-label">${esc(event.label)}</div>
-            ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
-            ${renderReplyMarkers(event)}
+            ${renderCardBody(event)}
           </article>`
         );
       });
@@ -1655,11 +1739,19 @@
       let html = "";
       if (data.faces !== undefined) html += `Faces: ${data.faces} `;
       if (data.persons !== undefined) html += `People: ${data.persons} `;
+      if (data.objects !== undefined) html += `Objects: ${data.objects} `;
       if (data.vlm_answers && data.vlm_answers.length) {
-        html += "<br>" + data.vlm_answers.map((answer) => esc(answer)).join("<br>");
+        html += "<br>" + data.vlm_answers.map((answer) => {
+          if (typeof answer === "string") return esc(answer);
+          return `<b>${esc(answer.question || "vision")}</b>: ${esc(answer.answer || "")}`;
+        }).join("<br>");
       }
       meta.innerHTML = html;
       recordEvent("vision_snapshot", data, rawEvent);
+    },
+
+    vision_focus(data, rawEvent) {
+      recordEvent("vision_focus", data, rawEvent);
     },
 
     session_end(data, rawEvent) {

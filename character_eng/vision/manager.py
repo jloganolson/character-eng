@@ -44,6 +44,7 @@ class VisionManager:
         # Dashboard integration
         self._collector = None
         self._last_dashboard_push = 0.0
+        self._last_focus: VisualFocusResult | None = None
 
     def start(self, model_config: dict, world=None, people=None, collector=None) -> None:
         if self._running:
@@ -88,6 +89,7 @@ class VisionManager:
             result = visual_focus_call(beat, stage_goal, thought, world, people, model_config)
         except Exception:
             return
+        self._last_focus = result
 
         try:
             self._client.set_questions(result.constant_questions, result.ephemeral_questions)
@@ -97,6 +99,15 @@ class VisionManager:
             self._client.set_sam_targets(result.constant_sam_targets, result.ephemeral_sam_targets)
         except Exception:
             pass
+        if self._collector is not None:
+            self._collector.push("vision_focus", {
+                "stage_goal": stage_goal,
+                "thought": thought,
+                "constant_questions": list(result.constant_questions),
+                "ephemeral_questions": list(result.ephemeral_questions),
+                "constant_sam_targets": list(result.constant_sam_targets),
+                "ephemeral_sam_targets": list(result.ephemeral_sam_targets),
+            })
 
     def get_gaze_targets(self) -> list[str]:
         targets = self._context.get_gaze_targets()
@@ -151,7 +162,22 @@ class VisionManager:
             self._collector.push("vision_snapshot", {
                 "faces": len(snapshot.faces),
                 "persons": len(snapshot.persons),
-                "vlm_answers": [a.answer for a in snapshot.vlm_answers] if snapshot.vlm_answers else [],
+                "objects": len(snapshot.objects),
+                "object_labels": [obj.label for obj in snapshot.objects],
+                "vlm_answers": [
+                    {
+                        "question": answer.question,
+                        "answer": answer.answer,
+                        "slot_type": answer.slot_type,
+                    }
+                    for answer in snapshot.vlm_answers
+                ] if snapshot.vlm_answers else [],
+                "focus": {
+                    "constant_questions": list(self._last_focus.constant_questions),
+                    "ephemeral_questions": list(self._last_focus.ephemeral_questions),
+                    "constant_sam_targets": list(self._last_focus.constant_sam_targets),
+                    "ephemeral_sam_targets": list(self._last_focus.ephemeral_sam_targets),
+                } if self._last_focus is not None else None,
             })
 
         # 4. Push events (with dedup)
