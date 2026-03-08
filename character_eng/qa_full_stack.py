@@ -934,6 +934,55 @@ def _timeline_detail(event: dict) -> str:
     return compact[:220]
 
 
+def _detail_payload(event: dict) -> str:
+    payload = dict(event.get("data", {}))
+    if "frame_b64" in payload:
+        payload["frame_b64"] = f"<{len(payload['frame_b64'])} base64 chars>"
+    if "overlay_b64" in payload:
+        payload["overlay_b64"] = f"<{len(payload['overlay_b64'])} base64 chars>"
+    return json.dumps(payload, ensure_ascii=True, indent=2) if payload else "{}"
+
+
+def _related_event_keys(events: list[dict], index: int) -> list[str]:
+    current = events[index]
+    now = current.get("timestamp", 0.0)
+    current_type = current.get("type", "")
+    current_lane = TIMELINE_LANES.get(current_type, "other")
+    preferred = {
+        "response_chunk": {"stt_result", "user_turn_start", "vision_snapshot_read", "scene_eval", "world_seed", "plan"},
+        "response_done": {"stt_result", "user_turn_start", "vision_snapshot_read", "scene_eval", "world_seed", "plan"},
+        "assistant_tts": {"response_done", "response_chunk"},
+        "expression": {"response_done", "response_chunk"},
+        "eval": {"response_done", "response_chunk"},
+        "director": {"response_done", "eval", "beat_advance"},
+        "plan": {"session_start", "world_seed", "scene_eval", "director"},
+    }.get(current_type, set())
+
+    candidates: list[tuple[int, int, str]] = []
+    for prior_index in range(index - 1, -1, -1):
+        prior = events[prior_index]
+        age = now - prior.get("timestamp", now)
+        if age > 4.0:
+            break
+        note_key = prior.get("_note_key")
+        if not note_key:
+            continue
+        score = 0
+        prior_type = prior.get("type", "")
+        prior_lane = TIMELINE_LANES.get(prior_type, "other")
+        if prior_type in preferred:
+            score += 4
+        if prior_lane != current_lane:
+            score += 1
+        if prior_type != current_type:
+            score += 1
+        candidates.append((score, prior_index, note_key))
+
+    candidates.sort(key=lambda item: (-item[0], -item[1]))
+    selected = sorted(candidates[:4], key=lambda item: item[1])
+    return [note_key for _, _, note_key in selected]
+
+
 def _collapse_trace_events(events: list[dict]) -> list[dict]:
     collapsed: list[dict] = []
     idx = 0
@@ -1066,6 +1115,8 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
         return ("<div class='timeline-empty'>No stream events captured.</div>", [])
 
     display_events = _collapse_trace_events(events)
+    for index, event in enumerate(display_events, start=1):
+        event["_note_key"] = f"event-{index}-{event.get('seq', 0)}"
     start_ts = display_events[0].get("timestamp", 0.0)
     end_ts = display_events[-1].get("timestamp", start_ts)
     total = max(0.001, end_ts - start_ts)
@@ -1085,6 +1136,10 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
     for event in display_events:
         lane = TIMELINE_LANES.get(event.get("type", ""), "other")
         by_lane.setdefault(lane, []).append(event)
+    related_key_map = {
+        event["_note_key"]: _related_event_keys(display_events, index)
+        for index, event in enumerate(display_events)
+    }
 
     annotation_events: list[dict] = []
     lane_sections: list[str] = []
@@ -1112,14 +1167,18 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
             event_type = event.get("type", "event")
             label = _timeline_event_label(event)
             detail = _timeline_detail(event)
-            note_key = f"event-{event.get('seq', 0)}"
+            note_key = event["_note_key"]
             annotation_events.append({
                 "key": note_key,
+                "seq": event.get("seq", 0),
                 "type": event_type,
                 "lane": lane,
+                "turn": event.get("turn"),
                 "timestamp": rel,
                 "label": label,
                 "detail": detail,
+                "payload": _detail_payload(event),
+                "related_keys": related_key_map.get(note_key, []),
             })
 
             body_html = (
@@ -1151,14 +1210,12 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
 
             cards.append(
                 f"<article class='stream-card lane-{html.escape(lane)}' data-base-left='{left}' data-base-top='{top}' "
+                f"data-event-key='{note_key}' "
                 f"data-base-width='{width}' data-base-height='{height}' "
-                f"style='left:{left}px;top:{top}px;width:{width}px;height:{height}px'>"
+                f"style='left:{left}px;top:{top}px;width:{width}px;height:{height}px' onclick='selectEvent(\"{note_key}\")'>"
                 f"<div class='stream-card-head'><span class='stream-time'>+{rel:0.2f}s</span><span class='stream-type'>{html.escape(event_type)}</span></div>"
                 f"{body_html}"
-                f"<button class='note-btn note-inline' data-note-key='{note_key}' onclick='toggleAnnotation(\"{note_key}\")'>Note</button>"
-                f"<div class='annotation-box' id='ann-{note_key}' style='display:none;margin-top:8px;'>"
-                f"<textarea oninput='updateAnnotation(\"{note_key}\", this.value)' placeholder='Add an iteration note for this event...' style='width:100%;min-height:72px;background:#081018;color:#e7eef7;border:1px solid #253244;border-radius:12px;padding:10px;font:inherit;'></textarea>"
-                "</div>"
+                f"<button class='note-btn note-inline' data-note-key='{note_key}' onclick='openNote(event,\"{note_key}\")'>Note</button>"
                 "</article>"
             )
 
@@ -1215,7 +1272,7 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         "#export-btn{background:#238636;color:#fff;}#export-btn:disabled{background:#30363d;color:#8b949e;cursor:default;}"
         "#done-btn{display:none;background:#30363d;color:#e7eef7;}#save-flash{color:#7ee787;font-weight:600;opacity:0;transition:opacity .25s;}"
         "#save-flash.show{opacity:1;}.save-path{color:#8b949e;font-size:.85em;margin-left:auto;}"
-        ".note-btn.has-note{background:#238636;}.annotation-box.open{display:block;}"
+        ".note-btn.has-note{background:#238636;}"
         ".view-controls{position:sticky;top:74px;z-index:9;background:rgba(12,20,29,.94);backdrop-filter:blur(12px);border:1px solid #253244;border-radius:16px;padding:14px 16px;display:grid;grid-template-columns:repeat(3,minmax(200px,auto)) 1fr;gap:14px;align-items:end;margin:0 0 22px 0;}"
         ".control-block{display:grid;gap:6px;}"
         ".control-block label{font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9fb3c8;}"
@@ -1242,6 +1299,7 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         ".lane-dot{position:absolute;top:50%;width:10px;height:10px;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 2px #081018;}"
         ".lane-count{font-family:IBM Plex Mono,monospace;font-size:.82rem;color:#9fb3c8;text-align:right;}"
         ".lane-dot.lane-session{background:#79c0ff;}.lane-dot.lane-vision{background:#7ee787;}.lane-dot.lane-world{background:#d2a8ff;}.lane-dot.lane-stt{background:#e3b341;}.lane-dot.lane-chat{background:#ffa198;}.lane-dot.lane-expression{background:#ffb3ad;}.lane-dot.lane-eval{background:#8ddb8c;}.lane-dot.lane-script{background:#f2cc60;}.lane-dot.lane-director{background:#c297ff;}.lane-dot.lane-planner{background:#7dd3fc;}.lane-dot.lane-tts{background:#f5a6d3;}.lane-dot.lane-other{background:#c9d1d9;}"
+        ".viewer-grid{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:18px;align-items:start;}"
         ".stream-wrap{background:#101720;border:1px solid #253244;border-radius:16px;padding:18px;margin:18px 0 24px 0;overflow:hidden;}"
         ".stream-scroll{overflow:auto;padding-bottom:8px;max-width:100%;}"
         ".stream-ruler{position:sticky;top:0;z-index:4;height:28px;margin-left:0;border-bottom:1px solid #253244;background:#101720;}"
@@ -1252,7 +1310,9 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         ".stream-lane:last-child{border-bottom:none;}"
         ".stream-lane-label{position:sticky;left:0;z-index:3;align-self:stretch;font-size:.82rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#c9d1d9;padding:12px 10px 0 0;background:linear-gradient(90deg,#101720 0%,#101720 78%,rgba(16,23,32,0) 100%);}"
         ".stream-lane-track{position:relative;background:linear-gradient(180deg,rgba(8,16,24,.8),rgba(8,16,24,.4));border:1px solid #1d2a3a;border-radius:18px;min-height:120px;}"
-        ".stream-card{position:absolute;background:#0c141d;border:1px solid #253244;border-radius:14px;padding:10px 10px 12px 10px;overflow:hidden;box-shadow:0 10px 24px rgba(0,0,0,.24);}"
+        ".stream-card{position:absolute;background:#0c141d;border:1px solid #253244;border-radius:14px;padding:10px 10px 12px 10px;overflow:hidden;box-shadow:0 10px 24px rgba(0,0,0,.24);cursor:pointer;}"
+        ".stream-card.selected{border-color:#f4b942;box-shadow:0 0 0 1px #f4b942,0 12px 28px rgba(0,0,0,.3);}"
+        ".stream-card.context{border-color:#1f6feb;box-shadow:0 0 0 1px #1f6feb55,0 10px 24px rgba(0,0,0,.24);}"
         ".stream-card-head{display:flex;justify-content:space-between;gap:8px;font-family:IBM Plex Mono,monospace;font-size:.76rem;color:#9fb3c8;margin-bottom:6px;}"
         ".stream-card-label{font-size:.92rem;line-height:1.35;}"
         ".stream-card-detail{margin-top:6px;color:#9fb3c8;font-size:.8rem;white-space:pre-wrap;word-break:break-word;}"
@@ -1263,6 +1323,17 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         ".vision-answer{background:#081018;border:1px solid #1d2a3a;border-radius:10px;padding:5px 7px;}"
         ".vision-answer.muted{color:#7d8590;}"
         ".note-inline{margin-top:8px;background:#1f6feb;color:#fff;border:none;padding:0.3em 0.7em;border-radius:8px;cursor:pointer;font-weight:600;}"
+        ".detail-panel{position:sticky;top:156px;background:#101720;border:1px solid #253244;border-radius:16px;padding:18px;max-height:calc(100vh - 176px);overflow:auto;}"
+        ".detail-empty{color:#9fb3c8;margin:0;}"
+        ".detail-meta{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 14px 0;}"
+        ".detail-chip{font-family:IBM Plex Mono,monospace;font-size:.78rem;padding:3px 8px;border-radius:999px;background:#081018;border:1px solid #253244;color:#c9d1d9;}"
+        ".detail-section{margin-top:14px;display:grid;gap:6px;}"
+        ".detail-section label{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#9fb3c8;}"
+        ".detail-related{display:grid;gap:8px;}"
+        ".detail-related button{border:1px solid #253244;background:#081018;color:#e7eef7;border-radius:10px;padding:8px 10px;text-align:left;cursor:pointer;font:inherit;}"
+        ".detail-related small{display:block;color:#9fb3c8;margin-top:3px;}"
+        ".detail-payload{margin:0;background:#081018;border:1px solid #253244;border-radius:12px;padding:10px;font:12px/1.45 IBM Plex Mono,monospace;color:#c9d1d9;white-space:pre-wrap;word-break:break-word;}"
+        "#detail-note{width:100%;min-height:120px;background:#081018;color:#e7eef7;border:1px solid #253244;border-radius:12px;padding:10px;font:inherit;}"
         ".timeline-wrap{background:#101720;border:1px solid #253244;border-radius:16px;padding:18px;margin:18px 0 24px 0;}"
         ".timeline-grid{display:grid;gap:8px;}"
         ".timeline-row{display:grid;grid-template-columns:88px 96px 92px 66px 1fr;gap:10px;align-items:start;background:#081018;border:1px solid #1d2a3a;border-radius:12px;padding:10px 12px;}"
@@ -1272,6 +1343,7 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         ".timeline-type{font-size:.82rem;font-weight:700;color:#f4b942;text-transform:uppercase;letter-spacing:.04em;}"
         ".timeline-label{margin-top:2px;}.timeline-detail{margin-top:4px;color:#9fb3c8;font-family:IBM Plex Mono,monospace;font-size:.8rem;white-space:pre-wrap;word-break:break-word;}"
         ".timeline-empty{color:#9fb3c8;padding:8px 0;}"
+        "@media (max-width: 1280px){.viewer-grid{grid-template-columns:1fr;}.detail-panel{position:static;max-height:none;}}"
         "@media (max-width: 1080px){.view-controls{grid-template-columns:1fr;}.lane-toggle-grid{justify-content:flex-start;}}"
         "@media (max-width: 860px){body{padding:16px 12px 72px;}.stream-lane{grid-template-columns:1fr;}.stream-lane-label{position:static;padding:0;background:none;}.timeline-row{grid-template-columns:1fr;}.timeline-lane,.timeline-turn,.timeline-abs,.timeline-time{justify-self:start;}}"
         "</style>"
@@ -1301,7 +1373,19 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         f"<section class='lane-wrap'><h2 style='margin:0 0 6px 0;color:#f4b942;'>Thread Lanes</h2>"
         "<p style='margin-top:0;color:#9fb3c8;'>Each lane is a subsystem/thread family. Dots are positioned by time so overlapping activity is easy to compare.</p>"
         f"<div class='lane-grid'>{''.join(lane_rows)}</div></section>"
+        + "<section class='viewer-grid'>"
         + stream_board_html
+        + "<aside class='detail-panel'>"
+        + "<h2 style='margin:0 0 6px 0;color:#f4b942;'>Event Detail</h2>"
+        + "<p class='detail-empty' id='detail-empty'>Select a stream card to inspect its inputs, outputs, payload, and note.</p>"
+        + "<div id='detail-body' style='display:none;'>"
+        + "<div class='detail-meta'><span class='detail-chip' id='detail-time'>+0.00s</span><span class='detail-chip' id='detail-type'>type</span><span class='detail-chip' id='detail-lane'>lane</span><span class='detail-chip' id='detail-seq'>seq</span></div>"
+        + "<div class='detail-section'><label>Summary</label><div id='detail-label'></div></div>"
+        + "<div class='detail-section'><label>Compact Detail</label><div id='detail-detail' style='color:#9fb3c8;white-space:pre-wrap;word-break:break-word;'></div></div>"
+        + "<div class='detail-section'><label>Input Context</label><div class='detail-related' id='detail-related'></div></div>"
+        + "<div class='detail-section'><label>Payload</label><pre class='detail-payload' id='detail-payload'></pre></div>"
+        + "<div class='detail-section'><label>Annotation</label><textarea id='detail-note' placeholder='Add an iteration note for this event...' oninput='updateSelectedAnnotation(this.value)'></textarea></div>"
+        + "</div></aside></section>"
         + f"<details class='timeline-wrap'><summary style='cursor:pointer;'><b>Raw Chronology</b> ({len(timeline_rows)} rows)</summary>"
         f"<p style='margin-top:12px;color:#9fb3c8;'>Flattened trace across the whole run. Total traced time: {total_duration:0.2f}s.</p>"
         f"<div class='timeline-grid'>{''.join(timeline_rows)}</div></details>"
@@ -1310,12 +1394,18 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         + f"const MODEL_KEY = {json.dumps(json_path.stem)};"
         + f"const LANES = {json.dumps(LANE_ORDER)};"
         + f"const EVENTS = {json.dumps(annotation_events)};"
+        + "const EVENT_INDEX = Object.fromEntries(EVENTS.map((event)=>[String(event.key),event]));"
         + "const annotations = new Map();"
         + "const hiddenLanes = new Set();"
+        + "let selectedEventKey = '';"
         + "let lastSavedPath = '';"
         + "function flashSaved(text, sticky=false){const el=document.getElementById('save-flash');el.textContent=text;el.classList.add('show');if(!sticky){setTimeout(()=>el.classList.remove('show'),2200);}}"
-        + "function toggleAnnotation(turn){const area=document.getElementById('ann-'+turn);if(!area)return;const open=area.classList.toggle('open');area.style.display=open?'block':'none';if(open){area.querySelector('textarea').focus();}}"
         + "function updateAnnotation(turn,text){const key=String(turn);const btn=document.querySelector('[data-note-key=\"'+key+'\"]');if(text.trim()){annotations.set(key,text.trim());if(btn)btn.classList.add('has-note');}else{annotations.delete(key);if(btn)btn.classList.remove('has-note');}document.getElementById('note-count').textContent=annotations.size;document.getElementById('export-btn').disabled=annotations.size===0;}"
+        + "function updateSelectedAnnotation(text){if(!selectedEventKey)return;updateAnnotation(selectedEventKey,text);}"
+        + "function renderRelated(keys){const root=document.getElementById('detail-related');root.innerHTML='';if(!keys||keys.length===0){root.innerHTML='<div style=\"color:#9fb3c8;\">No linked upstream events captured for this item.</div>';return;}keys.forEach((key)=>{const event=EVENT_INDEX[String(key)];if(!event)return;const button=document.createElement('button');button.type='button';button.onclick=()=>selectEvent(String(key));button.innerHTML='<div><b>'+event.type+'</b> · '+event.label+'</div><small>'+event.lane+' · +'+Number(event.timestamp||0).toFixed(2)+'s</small>';root.appendChild(button);});}"
+        + "function highlightContext(selected){document.querySelectorAll('.stream-card').forEach((card)=>{card.classList.toggle('selected',card.dataset.eventKey===selected);card.classList.toggle('context',false);});const event=EVENT_INDEX[String(selected)];if(!event)return;(event.related_keys||[]).forEach((key)=>{const card=document.querySelector('.stream-card[data-event-key=\"'+key+'\"]');if(card)card.classList.add('context');});}"
+        + "function selectEvent(key){const event=EVENT_INDEX[String(key)];if(!event)return;selectedEventKey=String(key);highlightContext(selectedEventKey);document.getElementById('detail-empty').style.display='none';document.getElementById('detail-body').style.display='block';document.getElementById('detail-time').textContent='+'+Number(event.timestamp||0).toFixed(2)+'s';document.getElementById('detail-type').textContent=event.type;document.getElementById('detail-lane').textContent=event.lane;document.getElementById('detail-seq').textContent='seq '+String(event.seq||0);document.getElementById('detail-label').textContent=event.label||'';document.getElementById('detail-detail').textContent=event.detail||'No compact detail';document.getElementById('detail-payload').textContent=event.payload||'{}';renderRelated(event.related_keys||[]);const note=annotations.get(String(key))||'';const field=document.getElementById('detail-note');field.value=note;}"
+        + "function openNote(domEvent,key){if(domEvent){domEvent.stopPropagation();}selectEvent(String(key));const field=document.getElementById('detail-note');if(field){field.focus();field.setSelectionRange(field.value.length,field.value.length);}}"
         + "function applyLayout(){const zoom=Number(document.getElementById('time-zoom').value||1);const rowScale=Number(document.getElementById('row-scale').value||1);document.documentElement.style.setProperty('--time-zoom',zoom);document.documentElement.style.setProperty('--row-scale',rowScale);document.getElementById('time-zoom-value').textContent=zoom.toFixed(2)+'x';document.getElementById('row-scale-value').textContent=rowScale.toFixed(2)+'x';document.querySelectorAll('.ruler-tick').forEach((tick)=>{const baseLeft=Number(tick.dataset.baseLeft||0);tick.style.left=(baseLeft*zoom)+'px';});document.querySelectorAll('.stream-lane-track').forEach((track)=>{const baseWidth=Number(track.dataset.baseWidth||0);const baseHeight=Number(track.dataset.baseHeight||120);track.style.width=(baseWidth*zoom)+'px';track.style.height=(Math.max(120,baseHeight*rowScale))+'px';});document.querySelectorAll('.stream-card').forEach((card)=>{const baseLeft=Number(card.dataset.baseLeft||0);const baseTop=Number(card.dataset.baseTop||0);const baseWidth=Number(card.dataset.baseWidth||320);const baseHeight=Number(card.dataset.baseHeight||120);card.style.left=(baseLeft*zoom)+'px';card.style.top=(baseTop*rowScale)+'px';card.style.width=(baseWidth*zoom)+'px';card.style.height=(baseHeight*rowScale)+'px';});}"
         + "function syncLaneVisibility(){LANES.forEach((lane)=>{const hidden=hiddenLanes.has(lane);document.querySelectorAll('[data-stream-lane=\"'+lane+'\"]').forEach((el)=>el.classList.toggle('is-hidden',hidden));document.querySelectorAll('[data-lane-row=\"'+lane+'\"]').forEach((el)=>el.classList.toggle('is-hidden',hidden));document.querySelectorAll('[data-lane-card=\"'+lane+'\"]').forEach((el)=>el.classList.toggle('is-hidden',hidden));document.querySelectorAll('[data-lane-toggle=\"'+lane+'\"]').forEach((el)=>{el.classList.toggle('active',!hidden);el.classList.toggle('inactive',hidden);});});}"
         + "function toggleLane(lane){if(hiddenLanes.has(lane)){hiddenLanes.delete(lane);}else{hiddenLanes.add(lane);}syncLaneVisibility();}"
@@ -1326,6 +1416,7 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         + "document.getElementById('row-scale').addEventListener('input',applyLayout);"
         + "applyLayout();"
         + "syncLaneVisibility();"
+        + "if(EVENTS.length){selectEvent(String(EVENTS[0].key));}"
         + "</script>"
         + "</div></body></html>"
     )

@@ -113,6 +113,8 @@ def test_write_report_includes_dashboard_trace(tmp_path: Path):
     assert "Time Zoom" in body
     assert "Row Scale" in body
     assert "Reset View" in body
+    assert "Event Detail" in body
+    assert "Input Context" in body
     assert "+0.000s" in body
     assert "vision_poll" in body
 
