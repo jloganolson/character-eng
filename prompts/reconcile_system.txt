@@ -7,9 +7,12 @@ Rules:
 - add_facts: list of new dynamic fact strings to add (short, present-tense)
 - events: list of past-tense event descriptions (what just happened)
 - Reference facts by their ID (e.g. "f1", "f2"), NOT by index number
+- add_facts must be plain fact text only; never include prefixes like "f1." or "p1f2."
 - Keep facts concise — one clause each
 - Events should be vivid but brief
 - Process ALL pending changes in one update
+- Only include events caused by the current pending changes
+- Do NOT repeat or copy items from "Recent events" unless the same thing just happened again in the pending changes
 
 ## People
 
@@ -17,6 +20,7 @@ If a "Current people" section is present, you may also return person_updates to 
 - Person fact IDs are scoped to each person (e.g. "p1f1", "p1f2" for person p1)
 - Reference person fact IDs when removing facts from a person
 - Each person update has: person_id, remove_facts, add_facts, set_name (optional), set_presence (optional)
+- person_updates.add_facts must also be plain fact text only; never include person fact IDs in the text
 - Valid presence values: "approaching", "present", "leaving", "gone"
 - set_name: use when you learn a person's name from context (omit or null to leave unchanged)
 - set_presence: use when someone arrives, leaves, or departs (omit or null to leave unchanged)

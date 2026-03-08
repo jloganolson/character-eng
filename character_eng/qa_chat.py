@@ -8,6 +8,7 @@ Usage: uv run -m character_eng.qa_chat [--model gemini|cerebras]
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,7 @@ from character_eng.world import (
     format_pending_narrator,
     load_world_state,
     reconcile_call,
+    split_eval_call,
 )
 
 console = Console()
@@ -37,6 +39,7 @@ LOGS_DIR = PROJECT_ROOT / "logs"
 CHARACTER = "greg"
 
 AI_BLOCKLIST = ["I'm an AI", "as a language model", "I cannot", "as an AI"]
+_FACT_ID_PREFIX_RE = re.compile(r"^(?:f\d+|p\d+f\d+)\.\s*")
 
 
 def parse_test_plan(path: Path) -> dict[str, list[tuple[str, str]]]:
@@ -111,6 +114,12 @@ def run_section(name: str, commands: list[tuple[str, str]], model_config: dict) 
                 # Synchronous reconcile for test validation
                 pending = world.clear_pending()
                 update = reconcile_call(world, pending, model_config)
+                leaked_facts = [fact for fact in update.add_facts if _FACT_ID_PREFIX_RE.match(fact)]
+                if leaked_facts:
+                    failures.append(f"reconcile leaked fact IDs into add_facts: {leaked_facts}")
+                repeated_events = [event for event in update.events if event in world.events]
+                if repeated_events:
+                    failures.append(f"reconcile repeated stale events: {repeated_events}")
                 world.apply_update(update)
                 world_changed = bool(update.events or update.add_facts or update.remove_facts)
 
@@ -146,13 +155,24 @@ def run_section(name: str, commands: list[tuple[str, str]], model_config: dict) 
         elif cmd == "beat":
             console.print("  [magenta]eval[/magenta]")
             try:
-                result = eval_call(
-                    system_prompt=session.system_prompt,
-                    world=world,
-                    history=session.get_history(),
-                    model_config=model_config,
-                    script=script,
-                )
+                if script.current_beat is not None:
+                    result = split_eval_call(
+                        beat=script.current_beat,
+                        system_prompt=session.system_prompt,
+                        history=session.get_history(),
+                        model_config=model_config,
+                        world=world,
+                    )
+                    if result is None:
+                        raise RuntimeError("split_eval_call returned no result for an active beat")
+                else:
+                    result = eval_call(
+                        system_prompt=session.system_prompt,
+                        world=world,
+                        history=session.get_history(),
+                        model_config=model_config,
+                        script=script,
+                    )
                 last_eval = result
                 console.print(f"  [dim]💭 {result.thought}[/dim]")
                 console.print(f"  [dim]status={result.script_status}[/dim]")

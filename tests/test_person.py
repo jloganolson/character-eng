@@ -157,6 +157,15 @@ def test_people_state_apply_updates_set_presence():
     assert ps.people["p1"].presence == "present"
 
 
+def test_people_state_apply_updates_invalid_presence_is_recorded():
+    ps = PeopleState()
+    ps.add_person(name="Alice", presence="approaching")
+    updates = [PersonUpdate(person_id="p1", invalid_presence="teleporting")]
+    ps.apply_updates(updates)
+    assert ps.people["p1"].presence == "approaching"
+    assert ps.people["p1"].history == ["ignored invalid presence: teleporting"]
+
+
 def test_people_state_apply_updates_unknown_person_ignored():
     ps = PeopleState()
     ps.add_person(name="Alice")

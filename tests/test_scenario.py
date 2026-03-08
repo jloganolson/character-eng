@@ -156,6 +156,17 @@ def test_load_scenario_script_not_found(tmp_path, monkeypatch):
     assert script is None
 
 
+def test_load_scenario_script_rejects_path_traversal(tmp_path, monkeypatch):
+    char_dir = tmp_path / "characters" / "test_char"
+    char_dir.mkdir(parents=True)
+    monkeypatch.setattr(scenario_mod, "CHARACTERS_DIR", tmp_path / "characters")
+
+    import pytest
+
+    with pytest.raises(ValueError):
+        load_scenario_script("test_char", "../secret.toml")
+
+
 def test_load_scenario_script_greg():
     """Smoke test: load greg's actual scenario_script.toml."""
     script = load_scenario_script("greg")

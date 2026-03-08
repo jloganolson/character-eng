@@ -71,9 +71,12 @@ class DirectorResult:
 # --- File loading ---
 
 
-def load_scenario_script(character: str) -> ScenarioScript | None:
-    """Load a character's scenario_script.toml. Returns None if not found."""
-    path = CHARACTERS_DIR / character / "scenario_script.toml"
+def load_scenario_script(character: str, filename: str = "scenario_script.toml") -> ScenarioScript | None:
+    """Load a character scenario TOML file. Returns None if not found."""
+    requested = Path(filename)
+    if requested.name in {"", ".", ".."} or requested != Path(requested.name):
+        raise ValueError(f"invalid scenario filename: {filename!r}")
+    path = CHARACTERS_DIR / character / requested.name
     if not path.exists():
         return None
 

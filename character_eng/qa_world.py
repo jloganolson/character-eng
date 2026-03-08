@@ -9,6 +9,7 @@ Usage: uv run -m character_eng.qa_world [--model gemini|cerebras]
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -31,8 +32,10 @@ SCENARIOS = [
     "The person picks up the fliers and places them back on the stand",
 ]
 
+_FACT_ID_PREFIX_RE = re.compile(r"^(?:f\d+|p\d+f\d+)\.\s*")
 
-def validate_update(update: WorldUpdate, world: WorldState, scenario_idx: int) -> list[str]:
+
+def validate_update(update: WorldUpdate, world: WorldState) -> list[str]:
     """Return a list of validation errors (empty if all good)."""
     errors = []
 
@@ -58,9 +61,19 @@ def validate_update(update: WorldUpdate, world: WorldState, scenario_idx: int) -
     for fact in update.add_facts:
         if not isinstance(fact, str) or not fact.strip():
             errors.append(f"add_facts contains empty/non-string: {fact!r}")
+        elif _FACT_ID_PREFIX_RE.match(fact.strip()):
+            errors.append(f"add_facts contains leaked fact ID prefix: {fact!r}")
     for event in update.events:
         if not isinstance(event, str) or not event.strip():
             errors.append(f"events contains empty/non-string: {event!r}")
+
+    # New events should be new, not copies of already-logged history.
+    stale_events = [event for event in update.events if event in world.events]
+    if stale_events:
+        errors.append(f"events repeated existing history: {stale_events!r}")
+
+    if len(set(update.events)) != len(update.events):
+        errors.append(f"events contains duplicates: {update.events!r}")
 
     return errors
 
@@ -112,7 +125,7 @@ def main():
             scenarios_log.append(scenario_entry)
             continue
 
-        errors = validate_update(update, world, i)
+        errors = validate_update(update, world)
 
         scenario_entry["update"] = {
             "remove_facts": update.remove_facts,

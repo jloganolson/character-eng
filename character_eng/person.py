@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from rich.panel import Panel
+
+_FACT_ID_PREFIX_RE = re.compile(r"^(?:f\d+|p\d+f\d+)\.\s*")
+_VALID_PRESENCE = {"approaching", "present", "leaving", "gone"}
 
 
 @dataclass
@@ -12,6 +16,7 @@ class PersonUpdate:
     add_facts: list[str] = field(default_factory=list)
     set_name: str | None = None
     set_presence: str | None = None
+    invalid_presence: str | None = None
 
 
 @dataclass
@@ -103,11 +108,15 @@ class PeopleState:
             for fid in update.remove_facts:
                 person.facts.pop(fid, None)
             for text in update.add_facts:
-                person.add_fact(text)
+                cleaned = _FACT_ID_PREFIX_RE.sub("", text.strip())
+                if cleaned:
+                    person.add_fact(cleaned)
             if update.set_name is not None:
                 person.name = update.set_name
-            if update.set_presence is not None:
+            if update.set_presence in _VALID_PRESENCE:
                 person.presence = update.set_presence
+            elif update.invalid_presence:
+                person.history.append(f"ignored invalid presence: {update.invalid_presence}")
 
     def show(self) -> Panel:
         lines: list[str] = []

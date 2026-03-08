@@ -23,6 +23,8 @@ from character_eng.world import (
     load_world_state,
     plan_call,
     reconcile_call,
+    split_eval_call,
+    script_check_call,
 )
 
 TEST_CONFIG = {
@@ -165,6 +167,17 @@ def test_apply_update_combined():
     ws.apply_update(update)
     assert list(ws.dynamic.values()) == ["Street is quiet", "Fliers on ground"]
     assert ws.events == ["The fliers blew off the table"]
+
+
+def test_apply_update_strips_generated_fact_ids_and_dedupes_events():
+    ws = _ws_with_dynamic("A")
+    update = WorldUpdate(
+        add_facts=["f7. B", "p1f2. C", "f7. B"],
+        events=["Something happened", "Something happened", "  "],
+    )
+    ws.apply_update(update)
+    assert list(ws.dynamic.values()) == ["A", "B", "C"]
+    assert ws.events == ["Something happened"]
 
 
 def test_apply_update_invalid_id_ignored():
@@ -581,6 +594,102 @@ def test_reconcile_call_no_person_updates_key(mock_make_client):
 
     update = reconcile_call(WorldState(), ["test"], TEST_CONFIG)
     assert update.person_updates == []
+
+
+@patch("character_eng.world._make_client")
+def test_reconcile_call_sanitizes_generated_ids_and_duplicates(mock_make_client):
+    data = {
+        "remove_facts": [" f1 ", "bad", "f1"],
+        "add_facts": ["f7. A person is approaching", "p1f4. Holding a cup", "f7. A person is approaching"],
+        "events": ["A person arrives", "A person arrives", ""],
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    update = reconcile_call(WorldState(), ["someone arrives"], TEST_CONFIG)
+
+    assert update.remove_facts == ["f1"]
+    assert update.add_facts == ["A person is approaching", "Holding a cup"]
+    assert update.events == ["A person arrives"]
+
+
+@patch("character_eng.world._make_client")
+def test_reconcile_call_sanitizes_person_updates(mock_make_client):
+    data = {
+        "remove_facts": [],
+        "add_facts": [],
+        "events": ["Alice arrived"],
+        "person_updates": [
+            {
+                "person_id": "p1",
+                "remove_facts": ["p1f1", "bad", "p1f1"],
+                "add_facts": ["p1f2. Carrying a backpack", "p1f2. Carrying a backpack"],
+                "set_name": "Alice",
+                "set_presence": "teleporting",
+            }
+        ],
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    update = reconcile_call(WorldState(), ["someone arrives"], TEST_CONFIG)
+
+    assert len(update.person_updates) == 1
+    pu = update.person_updates[0]
+    assert pu.remove_facts == ["p1f1"]
+    assert pu.add_facts == ["Carrying a backpack"]
+    assert pu.set_presence is None
+    assert pu.invalid_presence == "teleporting"
+
+
+# --- script_check_call ---
+
+
+def test_script_check_call_detects_explicit_user_redirect():
+    result = script_check_call(
+        beat=Beat(line="Want a flier?", intent="Offer a flier to the customer"),
+        history=[
+            {"role": "assistant", "content": "Want a flier?"},
+            {"role": "user", "content": "I really don't care about fliers at all. Can we talk about something else?"},
+        ],
+        model_config=TEST_CONFIG,
+    )
+
+    assert result.status == "off_book"
+    assert "offer a flier" in result.plan_request.lower()
+
+
+@patch("character_eng.world.script_check_call")
+@patch("character_eng.world.thought_call")
+def test_split_eval_call_uses_split_path(mock_thought_call, mock_script_check_call):
+    mock_script_check_call.return_value.status = "advance"
+    mock_script_check_call.return_value.plan_request = ""
+    mock_thought_call.return_value.thought = "That worked."
+
+    result = split_eval_call(
+        beat=Beat(line="Want a flier?", intent="Offer a flier"),
+        system_prompt="system",
+        history=[{"role": "user", "content": "Sure"}],
+        model_config=TEST_CONFIG,
+        world=WorldState(),
+    )
+
+    assert result is not None
+    assert result.script_status == "advance"
+    assert result.thought == "That worked."
+
+
+def test_split_eval_call_without_active_beat_returns_none():
+    result = split_eval_call(
+        beat=None,
+        system_prompt="system",
+        history=[],
+        model_config=TEST_CONFIG,
+        world=WorldState(),
+    )
+    assert result is None
 
 
 # --- eval_call (mocked) ---

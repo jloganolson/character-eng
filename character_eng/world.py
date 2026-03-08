@@ -52,6 +52,7 @@ class PersonUpdate:
     add_facts: list[str] = field(default_factory=list)
     set_name: str | None = None
     set_presence: str | None = None
+    invalid_presence: str | None = None
 
 
 @dataclass
@@ -517,7 +518,9 @@ def reconcile_call(world: WorldState, pending_changes: list[str], model_config: 
     for pu in data.get("person_updates", []):
         if isinstance(pu, dict) and "person_id" in pu:
             set_presence = pu.get("set_presence")
+            invalid_presence = None
             if set_presence not in _VALID_PRESENCE:
+                invalid_presence = set_presence if isinstance(set_presence, str) and set_presence.strip() else None
                 set_presence = None
             person_updates.append(PersonUpdate(
                 person_id=pu["person_id"],
@@ -525,6 +528,7 @@ def reconcile_call(world: WorldState, pending_changes: list[str], model_config: 
                 add_facts=_clean_string_list(pu.get("add_facts", []), fact_text=True),
                 set_name=pu.get("set_name"),
                 set_presence=set_presence,
+                invalid_presence=invalid_presence,
             ))
 
     return WorldUpdate(
@@ -684,6 +688,35 @@ def script_check_call(
     return ScriptCheckResult(
         status=data.get("status", "hold"),
         plan_request=data.get("plan_request", ""),
+    )
+
+
+def split_eval_call(
+    *,
+    beat: Beat | None,
+    system_prompt: str,
+    history: list[dict],
+    model_config: dict,
+    world: WorldState | None = None,
+) -> EvalResult | None:
+    """Run the split eval path used by the runtime and return an EvalResult-compatible object."""
+    if beat is None:
+        return None
+    check = script_check_call(
+        beat=beat,
+        history=history,
+        model_config=model_config,
+        world=world,
+    )
+    thought = thought_call(
+        system_prompt=system_prompt,
+        history=history,
+        model_config=model_config,
+    )
+    return EvalResult(
+        thought=thought.thought,
+        script_status=check.status,
+        plan_request=check.plan_request,
     )
 
 

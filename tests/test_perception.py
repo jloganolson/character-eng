@@ -96,3 +96,9 @@ def test_load_sim_script_missing_file(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(FileNotFoundError):
         load_sim_script("greg", "nonexistent")
+
+
+def test_load_walkup_dialogue_script():
+    script = load_sim_script("greg", "walkup_dialogue")
+    assert len(script.events) == 7
+    assert all(event.description.startswith('"') for event in script.events)
