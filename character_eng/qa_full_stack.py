@@ -183,6 +183,7 @@ LIVE_DRIFT_TERMS = (
 )
 TIMELINE_LANES = {
     "session_start": "session",
+    "vision_stack_ready": "vision",
     "scene_capture": "vision",
     "scene_eval": "vision",
     "vision_snapshot_read": "vision",
@@ -415,6 +416,29 @@ def _launch_vision_service(port: int, live_camera: bool) -> subprocess.Popen:
             return proc
         time.sleep(0.5)
     raise RuntimeError("Vision service did not become healthy")
+
+
+def _wait_for_vision_models(client: VisionClient, *, timeout: float = 35.0) -> dict:
+    """Wait for the vision stack to become genuinely ready, not just HTTP-healthy."""
+    deadline = time.time() + timeout
+    last_status: dict = {}
+    while time.time() < deadline:
+        try:
+            status = client.model_status()
+            last_status = status
+            sam3 = status.get("sam3", {})
+            face = status.get("face", {})
+            person = status.get("person", {})
+            vllm_ready = status.get("vllm") in {"ready", "off"}
+            sam3_ready = not isinstance(sam3, dict) or sam3.get("status") in {"ready", "off", "unavailable"}
+            face_ready = not isinstance(face, dict) or face.get("status") in {"ready", "off", "unavailable"}
+            person_ready = not isinstance(person, dict) or person.get("status") in {"ready", "off", "unavailable"}
+            if vllm_ready and sam3_ready and face_ready and person_ready:
+                return status
+        except Exception:
+            pass
+        time.sleep(0.5)
+    raise RuntimeError(f"Vision models did not become ready: {last_status}")
 
 
 class PCMCollector:
@@ -873,6 +897,13 @@ def _timeline_event_label(event: dict) -> str:
         return data.get("label", "Scene image captured")
     if event_type == "scene_eval":
         return data.get("summary", "Scene evaluation complete")
+    if event_type == "vision_stack_ready":
+        return (
+            f"Vision stack ready: vLLM {data.get('vllm', 'unknown')}, "
+            f"SAM3 {data.get('sam3', {}).get('status', 'unknown') if isinstance(data.get('sam3'), dict) else data.get('sam3', 'unknown')}, "
+            f"Face {data.get('face', {}).get('status', 'unknown') if isinstance(data.get('face'), dict) else data.get('face', 'unknown')}, "
+            f"Person {data.get('person', {}).get('status', 'unknown') if isinstance(data.get('person'), dict) else data.get('person', 'unknown')}"
+        )
     if event_type == "vision_snapshot_read":
         return (
             f"Snapshot: {data.get('persons', 0)} persons, {data.get('objects', 0)} objects, "
@@ -1483,6 +1514,7 @@ def main() -> None:
         vision_proc = _launch_vision_service(port, live_camera=args.vision_source == "live")
         vision_url = f"http://127.0.0.1:{port}"
         vision_client = VisionClient(vision_url)
+        vision_ready = _wait_for_vision_models(vision_client)
         vision_client.set_questions(
             ["How many people are at Greg's stand?", "What is the nearest person doing?"],
             ["What object is the visitor touching or looking at?"],
@@ -1535,6 +1567,7 @@ def main() -> None:
             "stage": scenario.active_stage.name if scenario and scenario.active_stage else "",
             "goal": stage_goal,
         })
+        session_recorder.add("vision_stack_ready", vision_ready)
         plan = run_plan(session, world, goals, "", model_config, people=people, stage_goal=stage_goal)
         if plan and plan.beats:
             apply_plan(script, plan)
