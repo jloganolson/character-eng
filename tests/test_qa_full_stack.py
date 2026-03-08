@@ -10,6 +10,7 @@ from character_eng.qa_full_stack import (
     _ground_evaluation,
     _ground_live_evaluation,
     _scene_event_for_eval,
+    _summarize_vision_model_status,
     _write_report,
 )
 
@@ -140,3 +141,20 @@ def test_ground_live_evaluation_falls_back_for_stand_drift():
     assert plan.world_facts[0] == LIVE_SCENE_FALLBACK["world_facts"][0]
     assert plan.user_lines[0] == LIVE_SCENE_FALLBACK["user_line"]
     assert plan.user_lines[1] == LIVE_SCENE_FALLBACK["followup_line"]
+
+
+def test_summarize_vision_model_status_includes_states_and_error_text():
+    summary = _summarize_vision_model_status(
+        {
+            "vllm": "ready",
+            "vllm_model": "LFM2-VL-3B",
+            "sam3": {"status": "loading", "error": ""},
+            "face": {"status": "off", "error": ""},
+            "person": {"status": "error", "error": "weights missing from cache"},
+        }
+    )
+
+    assert "vllm=ready (LFM2-VL-3B)" in summary
+    assert "sam3=loading" in summary
+    assert "face=off" in summary
+    assert "person=error:weights missing from cache" in summary

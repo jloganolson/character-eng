@@ -24,6 +24,7 @@ from urllib import parse, request
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
+from rich.text import Text
 
 from character_eng.__main__ import (
     _bump_version,
@@ -45,6 +46,7 @@ from character_eng.prompts import load_prompt
 from character_eng.scenario import load_scenario_script
 from character_eng.vision.client import VisionClient
 from character_eng.world import Goals, Script, load_goals, load_world_state, single_beat_call
+from character_eng.utils import start_prefixed_output_thread
 
 load_dotenv()
 
@@ -404,22 +406,34 @@ def _stop_proc_group(proc: subprocess.Popen | None) -> None:
 
 
 def _launch_vision_service(port: int, live_camera: bool) -> subprocess.Popen:
-    cmd = [
-        "uv", "run", "--project", str(SERVICES_DIR), "python", str(SERVICES_DIR / "app.py"),
-        "--port", str(port),
-        "--auto-start-trackers",
-    ]
+    start_script = SERVICES_DIR / "start.sh"
+    if not start_script.exists():
+        raise RuntimeError("Vision startup script not found")
+    cmd = [str(start_script)]
     if not live_camera:
         cmd.append("--no-camera")
+    env = os.environ.copy()
+    env["APP_PORT"] = str(port)
+    console.print(
+        f"[cyan]Vision bootstrap[/cyan] launching full stack on [bold]http://127.0.0.1:{port}[/bold]"
+    )
     proc = subprocess.Popen(
         cmd,
-        cwd=PROJECT_ROOT,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        cwd=str(SERVICES_DIR),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
         start_new_session=True,
     )
+    start_prefixed_output_thread(
+        proc,
+        prefix="[vision] ",
+        sink=lambda line: console.print(Text(line, style="dim"), highlight=False),
+    )
     client = VisionClient(f"http://127.0.0.1:{port}")
-    deadline = time.time() + 40.0
+    deadline = time.time() + 180.0
     while time.time() < deadline:
         if proc.poll() is not None:
             raise RuntimeError(f"Vision service exited early with code {proc.returncode}")
@@ -429,14 +443,45 @@ def _launch_vision_service(port: int, live_camera: bool) -> subprocess.Popen:
     raise RuntimeError("Vision service did not become healthy")
 
 
+def _summarize_vision_model_status(status: dict) -> str:
+    parts: list[str] = []
+    vllm = status.get("vllm", "?")
+    model = status.get("vllm_model")
+    if model:
+        parts.append(f"vllm={vllm} ({model})")
+    else:
+        parts.append(f"vllm={vllm}")
+    for label, key in (("sam3", "sam3"), ("face", "face"), ("person", "person")):
+        item = status.get(key, {})
+        if isinstance(item, dict):
+            state = str(item.get("status", "?"))
+            error = str(item.get("error", "")).strip()
+            if state == "error" and error:
+                state = f"error:{error[:48]}"
+        else:
+            state = str(item)
+        parts.append(f"{label}={state}")
+    return ", ".join(parts)
+
+
 def _wait_for_vision_models(client: VisionClient, *, timeout: float = 35.0) -> dict:
     """Wait for the vision stack to become genuinely ready, not just HTTP-healthy."""
     deadline = time.time() + timeout
     last_status: dict = {}
+    last_summary = ""
+    last_emit_at = 0.0
+    last_probe_error = ""
+    console.print("[cyan]Vision readiness[/cyan] waiting for model stack")
     while time.time() < deadline:
         try:
             status = client.model_status()
             last_status = status
+            summary = _summarize_vision_model_status(status)
+            now = time.time()
+            if summary != last_summary or now - last_emit_at >= 5.0:
+                console.print(Text(f"[vision] {summary}", style="dim"), highlight=False)
+                last_summary = summary
+                last_emit_at = now
             sam3 = status.get("sam3", {})
             face = status.get("face", {})
             person = status.get("person", {})
@@ -445,11 +490,21 @@ def _wait_for_vision_models(client: VisionClient, *, timeout: float = 35.0) -> d
             face_ready = not isinstance(face, dict) or face.get("status") in {"ready", "off", "unavailable"}
             person_ready = not isinstance(person, dict) or person.get("status") in {"ready", "off", "unavailable"}
             if vllm_ready and sam3_ready and face_ready and person_ready:
+                console.print(
+                    Text(f"[vision] ready: {summary}", style="green"),
+                    highlight=False,
+                )
                 return status
-        except Exception:
-            pass
+        except Exception as exc:
+            message = f"model status probe failed: {exc}"
+            now = time.time()
+            if message != last_probe_error or now - last_emit_at >= 5.0:
+                console.print(Text(f"[vision] {message}", style="dim"), highlight=False)
+                last_probe_error = message
+                last_emit_at = now
         time.sleep(0.5)
-    raise RuntimeError(f"Vision models did not become ready: {last_status}")
+    detail = _summarize_vision_model_status(last_status) if last_status else "no model_status payload"
+    raise RuntimeError(f"Vision models did not become ready: {detail}")
 
 
 class PCMCollector:

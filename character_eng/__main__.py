@@ -14,9 +14,9 @@ from rich.panel import Panel
 from rich.text import Text
 
 from character_eng.chat import ChatSession
-from character_eng.config import load_config
+from character_eng.config import load_config, save_config
 from character_eng.models import BIG_MODEL, CHAT_MODEL, MODELS
-from character_eng.utils import ts as _ts
+from character_eng.utils import start_prefixed_output_thread, ts as _ts
 from character_eng.perception import PerceptionEvent, load_sim_script, process_perception
 from character_eng.person import PeopleState
 from character_eng.prompts import list_characters, load_prompt
@@ -51,6 +51,13 @@ LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 # --- Dashboard ---
 _collector = None  # set in chat_loop / main when dashboard is active
 _dashboard_input_queue = None
+_app_config = None
+_vision_runtime = {
+    "cfg": None,
+    "proc": None,
+    "mock_replay": None,
+    "no_camera": False,
+}
 
 
 def _push(event_type: str, data: dict) -> None:
@@ -108,6 +115,176 @@ _reconcile_thread: threading.Thread | None = None
 # --- Context version counter (main thread only) ---
 _context_version: int = 0
 
+# --- Runtime controls ---
+_runtime_controls = {
+    "reconcile": True,
+    "vision": True,
+    "auto_beat": True,
+    "filler": True,
+}
+
+
+def _normalize_runtime_control_name(name: str) -> str | None:
+    key = name.strip().lower().replace("_", "-")
+    aliases = {
+        "reconcile": "reconcile",
+        "vision": "vision",
+        "auto-beat": "auto_beat",
+        "autobeat": "auto_beat",
+        "beat": "auto_beat",
+        "filler": "filler",
+    }
+    return aliases.get(key)
+
+
+def _vision_process_alive() -> bool:
+    proc = _vision_runtime.get("proc")
+    return proc is not None and proc.poll() is None
+
+
+def _vision_service_health(vision_cfg=None) -> bool:
+    if vision_cfg is None:
+        vision_cfg = _vision_runtime.get("cfg")
+    if vision_cfg is None:
+        return False
+    try:
+        from character_eng.vision.client import VisionClient
+        return VisionClient(vision_cfg.service_url).health()
+    except Exception:
+        return False
+
+
+def _vision_status_snapshot(vision_cfg=None, vision_mgr=None) -> dict:
+    if vision_cfg is None:
+        vision_cfg = _vision_runtime.get("cfg")
+
+    service_url = vision_cfg.service_url if vision_cfg is not None else ""
+    healthy = _vision_service_health(vision_cfg)
+    managed = _vision_process_alive()
+    mock_replay = _vision_runtime.get("mock_replay")
+    external = healthy and not managed
+    if healthy:
+        service_state = "managed" if managed else "external"
+    elif managed:
+        service_state = "starting"
+    else:
+        service_state = "stopped"
+
+    return {
+        "service_url": service_url,
+        "healthy": healthy,
+        "managed": managed,
+        "external": external,
+        "service_state": service_state,
+        "auto_launch": bool(vision_cfg.auto_launch) if vision_cfg is not None else False,
+        "manager_active": bool(vision_mgr is not None),
+        "mode": "mock" if mock_replay else ("no-camera" if _vision_runtime.get("no_camera") else "camera"),
+        "mock_replay": mock_replay or "",
+    }
+
+
+def _runtime_controls_snapshot(voice_io=None, vision_mgr=None, vision_cfg=None) -> dict:
+    vision_status = _vision_status_snapshot(vision_cfg=vision_cfg, vision_mgr=vision_mgr)
+    return {
+        "controls": dict(_runtime_controls),
+        "voice_active": bool(voice_io is not None),
+        "vision_active": bool(vision_mgr is not None),
+        "reconcile_thread_alive": bool(_reconcile_thread and _reconcile_thread.is_alive()),
+        "vision_service_url": vision_status["service_url"],
+        "vision_service_health": vision_status["healthy"],
+        "vision_service_managed": vision_status["managed"],
+        "vision_service_external": vision_status["external"],
+        "vision_service_state": vision_status["service_state"],
+        "vision_service_autostart": vision_status["auto_launch"],
+        "vision_service_mode": vision_status["mode"],
+        "vision_mock_replay": vision_status["mock_replay"],
+    }
+
+
+def _push_runtime_controls(voice_io=None, vision_mgr=None, vision_cfg=None) -> None:
+    _push("runtime_controls", _runtime_controls_snapshot(
+        voice_io=voice_io,
+        vision_mgr=vision_mgr,
+        vision_cfg=vision_cfg,
+    ))
+
+
+def _render_runtime_controls(voice_io=None, vision_mgr=None, vision_cfg=None) -> str:
+    state = _runtime_controls_snapshot(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
+    lines = []
+    for key in ("reconcile", "vision", "auto_beat", "filler"):
+        enabled = state["controls"][key]
+        label = key.replace("_", " ")
+        lines.append(f"{label:<10} : {'on' if enabled else 'off'}")
+    lines.append(f"voice      : {'on' if state['voice_active'] else 'off'}")
+    lines.append(f"vision svc : {'on' if state['vision_active'] else 'off'}")
+    lines.append(f"vision url : {state['vision_service_url'] or 'n/a'}")
+    lines.append(f"vision proc: {state['vision_service_state']}")
+    lines.append(f"autostart  : {'on' if state['vision_service_autostart'] else 'off'}")
+    lines.append(f"reconcile  : {'running' if state['reconcile_thread_alive'] else 'idle'}")
+    return "\n".join(lines)
+
+
+def _set_runtime_control(name: str, enabled: bool, voice_io=None, vision_mgr=None, vision_cfg=None) -> str:
+    key = _normalize_runtime_control_name(name)
+    if key is None:
+        raise ValueError(f"Unknown runtime control: {name}")
+    _runtime_controls[key] = enabled
+    if key == "auto_beat" and voice_io is not None and not enabled:
+        voice_io._cancel_auto_beat()
+        voice_io.cancel_and_drain_auto_beat()
+    if key == "filler" and voice_io is not None:
+        voice_io.set_filler_enabled(enabled)
+        if not enabled:
+            voice_io.cancel_latency_filler()
+    _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
+    return key
+
+
+def handle_runtime_control_command(command: str, voice_io=None, vision_mgr=None, vision_cfg=None) -> bool:
+    parts = command.strip().split()
+    if not parts or parts[0].lower() != "/threads":
+        return False
+
+    if len(parts) == 1 or parts[1].lower() == "status":
+        console.print(Panel(_render_runtime_controls(
+            voice_io=voice_io,
+            vision_mgr=vision_mgr,
+            vision_cfg=vision_cfg,
+        ),
+                            title="Runtime Controls", border_style="dim"))
+        return True
+
+    if len(parts) < 3:
+        console.print("[yellow]Usage: /threads <reconcile|vision|auto-beat|filler> <on|off|toggle>[/yellow]")
+        return True
+
+    name = parts[1]
+    action = parts[2].lower()
+    key = _normalize_runtime_control_name(name)
+    if key is None:
+        console.print(f"[red]Unknown runtime control: {name}[/red]")
+        return True
+
+    current = _runtime_controls[key]
+    if action == "toggle":
+        enabled = not current
+    elif action in ("on", "off"):
+        enabled = action == "on"
+    else:
+        console.print("[red]Action must be on, off, or toggle[/red]")
+        return True
+
+    applied = _set_runtime_control(
+        key,
+        enabled,
+        voice_io=voice_io,
+        vision_mgr=vision_mgr,
+        vision_cfg=vision_cfg,
+    )
+    console.print(f"[green]{applied.replace('_', ' ')}[/green] → {'on' if enabled else 'off'}")
+    return True
+
 
 def _bump_version():
     """Increment context version. Called on user messages, /world changes, /beat delivery."""
@@ -129,6 +306,8 @@ def _run_reconcile(world: "WorldState", pending: list[str], model_config: dict, 
 def _start_reconcile(world, model_config, big_model_config=None, people=None):
     """Drain pending changes and spawn background reconcile thread."""
     global _reconcile_thread
+    if not _runtime_controls["reconcile"]:
+        return
     pending = world.clear_pending()
     if not pending:
         return
@@ -657,6 +836,8 @@ def _create_voice_io(voice_cfg, VoiceIO_cls):
         kw["tts_device"] = voice_cfg.tts_device
         kw["tts_server_url"] = voice_cfg.tts_server_url
         kw["pocket_voice"] = voice_cfg.pocket_voice
+        kw["filler_enabled"] = voice_cfg.filler_enabled
+        kw["filler_lead_ms"] = voice_cfg.filler_lead_ms
     return VoiceIO_cls(**kw)
 
 
@@ -830,8 +1011,9 @@ def get_big_model_config():
 
 
 def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voice_cfg=None,
-              vision_mode: bool = False, vision_cfg=None, auto_sim: str | None = None):
-    """Run the chat loop for a character. Returns on /back or Ctrl+C."""
+              vision_mode: bool = False, vision_cfg=None, auto_sim: str | None = None,
+              bridge=None, sim_speed: float = 1.0):
+    """Run the chat loop for a character. Returns None normally, 'restart' to re-enter."""
     label = character.replace("_", " ").title()
     session_id = uuid.uuid4().hex[:8]
     log: list[dict] = []
@@ -850,7 +1032,48 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
     # --- Voice setup ---
     voice_io = None
-    if voice_mode:
+    if bridge is not None:
+        # Browser mode: use BrowserVoiceIO + bridge WebSocket
+        from character_eng.browser_voice import BrowserVoiceIO
+        from character_eng.voice import check_voice_available, VOICE_OFF, EXIT, VOICE_ERROR
+
+        # Video frame injection callback for vision
+        on_video_frame = None
+        if vision_mode and vision_cfg:
+            from character_eng.vision.client import VisionClient
+            _vision_client = VisionClient(vision_cfg.service_url)
+            def on_video_frame(jpeg_bytes: bytes):
+                try:
+                    _vision_client.inject_frame(jpeg_bytes)
+                except Exception:
+                    pass
+
+        available, reason = check_voice_available(tts_backend=voice_cfg.tts_backend if voice_cfg else "elevenlabs")
+        if available:
+            bridge.start(on_audio=lambda b: None, on_video_frame=on_video_frame)
+            voice_io = BrowserVoiceIO(
+                bridge=bridge,
+                tts_backend=voice_cfg.tts_backend if voice_cfg else "elevenlabs",
+                tts_server_url=voice_cfg.tts_server_url if voice_cfg else "",
+                ref_audio=voice_cfg.ref_audio if voice_cfg else "",
+                pocket_voice=voice_cfg.pocket_voice if voice_cfg else "",
+            )
+            try:
+                voice_io.start()
+                _backend = voice_cfg.tts_backend if voice_cfg else "elevenlabs"
+                _tts_labels = {"local": "Local Qwen3-TTS", "qwen": "Local Qwen3-TTS", "pocket": "Pocket-TTS", "elevenlabs": "ElevenLabs"}
+                _tts_label = _tts_labels.get(_backend, _backend)
+                console.print(f"[green]Browser voice active[/green] — mic/camera via WebSocket bridge")
+                console.print(f"[dim]TTS: {_tts_label}[/dim]")
+            except Exception as e:
+                console.print(f"[red]Browser voice init failed: {e}[/red]")
+                console.print("[dim]Falling back to text mode[/dim]")
+                voice_io = None
+        else:
+            console.print(f"[red]Voice unavailable: {reason}[/red]")
+            console.print("[dim]Falling back to text mode (bridge still running for dashboard)[/dim]")
+            bridge.start(on_audio=lambda b: None, on_video_frame=on_video_frame)
+    elif voice_mode:
         from character_eng.voice import VoiceIO, check_voice_available, get_default_devices, list_audio_devices, VOICE_OFF, EXIT, VOICE_ERROR
         available, reason = check_voice_available(tts_backend=voice_cfg.tts_backend if voice_cfg else "elevenlabs")
         if available:
@@ -889,14 +1112,16 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
         # Start vision manager (after people setup)
         if vision_mgr is not None:
-            vision_mgr.start(model_config, world=world, people=people, collector=_collector)
-            vision_mgr.update_context(stage_goal=stage_goal)
-            console.print("[green]Vision active[/green]")
-            # Initial focus
-            vision_mgr.update_focus(
-                beat=None, stage_goal=stage_goal, thought="",
-                world=world, people=people, model_config=model_config,
+            vision_mgr = _ensure_vision_manager(
+                vision_mgr,
+                vision_cfg,
+                model_config,
+                world,
+                people,
+                stage_goal,
             )
+        if vision_mgr is not None:
+            console.print("[green]Vision active[/green]")
 
         # Generate initial script at boot (synchronous, 8B single-beat)
         plan_result = run_plan(session, world, goals, "", model_config, people=people, stage_goal=stage_goal)
@@ -915,6 +1140,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             "stage": scenario.active_stage.name if scenario and scenario.active_stage else "",
             "goal": stage_goal,
         })
+        _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
         # Push initial world/people/stage state
         if world is not None:
             _push("world_state", {
@@ -931,7 +1157,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
         # Auto-sim: run sim script then exit
         if auto_sim:
             run_sim(auto_sim, character, session, world, goals, script, people, scenario, label,
-                    model_config, big_model_config, eval_model_config, log, vision_mgr=vision_mgr)
+                    model_config, big_model_config, eval_model_config, log,
+                    vision_mgr=vision_mgr, sim_speed=sim_speed)
             save_chat_log(character, model_config, log, session_id)
             save_chat_html(character, model_config, log, session_id)
             return
@@ -940,7 +1167,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
         while True:
             # --- Get input (voice or text) ---
             show_stage_hud(scenario, voice_active=(voice_io is not None))
-            if voice_io is not None and _arm_auto_beat:
+            if voice_io is not None and _arm_auto_beat and _runtime_controls["auto_beat"]:
                 # Centralized auto-beat: start timer here so it fires after all
                 # console output is done and TTS echo has settled (avoids Deepgram
                 # false positives cancelling the timer mid-countdown).
@@ -1014,11 +1241,13 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
             # Drain vision events
             if vision_mgr is not None:
-                for event in vision_mgr.drain_events():
-                    _, narrator_msg = process_perception(event, people, world)
-                    console.print(f"[dim]{narrator_msg}[/dim]")
-                    session.inject_system(narrator_msg)
-                    _push("perception", {"source": event.source, "description": event.description})
+                vision_events = vision_mgr.drain_events()
+                if _runtime_controls["vision"]:
+                    for event in vision_events:
+                        _, narrator_msg = process_perception(event, people, world)
+                        console.print(f"[dim]{narrator_msg}[/dim]")
+                        session.inject_system(narrator_msg)
+                        _push("perception", {"source": event.source, "description": event.description})
                 vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal)
 
             # --- Command dispatch ---
@@ -1046,10 +1275,77 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     vision_mgr.stop()
                 log.append({"type": "reload"})
                 break  # break inner loop, outer loop reloads
+            elif cmd == "/pause":
+                console.print("[yellow]Paused[/yellow] — send /resume to continue")
+                _push("pause", {})
+                if voice_io is not None:
+                    voice_io._cancel_auto_beat()
+                    voice_io.cancel_speech()
+                    voice_io.cancel_and_drain_auto_beat()
+                # Block until /resume or /restart
+                while True:
+                    try:
+                        if voice_io is not None:
+                            resume_input = voice_io.wait_for_input()
+                        else:
+                            resume_input = _get_input(session_id)
+                    except (EOFError, KeyboardInterrupt):
+                        break
+                    if not resume_input:
+                        continue
+                    if resume_input.lower() == "/resume":
+                        console.print("[green]Resumed[/green]")
+                        _push("resume", {})
+                        _arm_auto_beat = True
+                        break
+                    elif resume_input.lower() == "/restart":
+                        # Fall through to /restart handler below
+                        user_input = "/restart"
+                        cmd = "/restart"
+                        break
+                if cmd == "/restart":
+                    pass  # fall through
+                else:
+                    continue
+            if cmd == "/restart":
+                console.print("[yellow]Restarting session...[/yellow]")
+                if voice_io is not None:
+                    voice_io._cancel_auto_beat()
+                    voice_io.cancel_speech()
+                    voice_io.stop()
+                _push("session_end", {"total_turns": len([e for e in log if e.get("type") in ("send", "beat", "world", "see")])})
+                save_chat_log(character, model_config, log, session_id)
+                save_chat_html(character, model_config, log, session_id)
+                if vision_mgr is not None:
+                    vision_mgr.stop()
+                log.clear()
+                return "restart"
             elif cmd == "/trace":
                 show_trace(session)
                 continue
-            elif cmd == "/help":
+            elif handle_runtime_control_command(
+                user_input,
+                voice_io=voice_io,
+                vision_mgr=vision_mgr,
+                vision_cfg=vision_cfg,
+            ):
+                continue
+            else:
+                handled, updated_vision_mgr = handle_vision_service_command(
+                    user_input,
+                    vision_mgr=vision_mgr,
+                    vision_cfg=vision_cfg,
+                    model_config=model_config,
+                    world=world,
+                    people=people,
+                    stage_goal=stage_goal,
+                    voice_io=voice_io,
+                )
+                if handled:
+                    vision_mgr = updated_vision_mgr
+                    vision_mode = vision_mgr is not None
+                    continue
+            if cmd == "/help":
                 show_help(voice_io is not None)
                 continue
             elif cmd == "/devices":
@@ -1075,6 +1371,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print("[yellow]Voice off — text mode[/yellow]")
                     voice_io.stop()
                     voice_io = None
+                    _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
                 else:
                     from character_eng.voice import VoiceIO, check_voice_available, get_default_devices, list_audio_devices
                     available, reason = check_voice_available(tts_backend=voice_cfg.tts_backend if voice_cfg else "elevenlabs")
@@ -1088,6 +1385,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                             console.print("[green]Voice mode active[/green] — speak to chat, Escape to toggle, hotkeys: i/b/t/1-4")
                             console.print(f"[dim]TTS: {_tts_label}[/dim]")
                             _show_voice_devices(_voice_dev_kw(voice_cfg), get_default_devices, list_audio_devices)
+                            voice_io.set_filler_enabled(_runtime_controls["filler"])
+                            _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
                         except Exception as e:
                             console.print(f"[red]Voice init failed: {e}[/red]")
                             voice_io = None
@@ -1553,7 +1852,7 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
             apply_plan(script, result)
 
 
-def run_sim(sim_name, character, session, world, goals, script, people, scenario, label, model_config, big_model_config, eval_model_config, log, voice_io=None, vision_mgr=None):
+def run_sim(sim_name, character, session, world, goals, script, people, scenario, label, model_config, big_model_config, eval_model_config, log, voice_io=None, vision_mgr=None, sim_speed: float = 1.0):
     """Run a sim script — replay perception events and dialogue with timing."""
     try:
         sim = load_sim_script(character, sim_name)
@@ -1561,13 +1860,17 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
         console.print(f"[red]Sim script not found: {sim_name}[/red]")
         return
 
+    if sim_speed <= 0:
+        sim_speed = 1.0
+
     console.print(f"[cyan]Sim: {sim_name} ({len(sim.events)} events)[/cyan]")
     start_time = time.time()
 
     for i, event in enumerate(sim.events):
         # Wait for the right time offset
         elapsed = time.time() - start_time
-        wait = event.time_offset - elapsed
+        target_offset = event.time_offset / sim_speed
+        wait = target_offset - elapsed
         if wait > 0:
             time.sleep(wait)
 
@@ -1653,6 +1956,9 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
         if expr_model_config is not None and full_response:
             line_text = "".join(full_response)
             stream_response._last_expr = run_expression(session, expr_model_config, line=line_text)
+            voice_io.start_latency_filler(line_text, stream_response._last_expr.expression)
+        elif full_response:
+            voice_io.start_latency_filler("".join(full_response))
 
         # Wait for ElevenLabs to finish generating
         if not voice_io._cancelled.is_set() and voice_io._tts is not None:
@@ -1663,6 +1969,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
         if not voice_io._cancelled.is_set() and voice_io._speaker is not None:
             if voice_io._speaker.wait_for_audio(timeout=0.5):
                 t_first_audio = time.time()
+        voice_io.cancel_latency_filler()
 
         # Wait for speaker to finish playback
         if voice_io._speaker is not None and not voice_io._cancelled.is_set():
@@ -1751,8 +2058,15 @@ def show_help(voice_active: bool = False):
         "/sim <name>     - Run a sim script (timed perception events)\n"
         "1-4             - Trigger a stage exit (shown in HUD)\n"
         "/vision         - Show current visual context and gaze targets\n"
+        "/vision-service - Show vision service status\n"
+        "/vision-service <start|stop|autostart on|off|toggle>\n"
+        "/threads        - Show runtime controls (reconcile, vision, auto-beat, filler)\n"
+        "/threads <name> <on|off|toggle> - Toggle a runtime subsystem\n"
         "/voice          - Toggle voice mode on/off\n"
         "/devices        - List audio input/output devices\n"
+        "/pause          - Pause the conversation loop\n"
+        "/resume         - Resume after /pause\n"
+        "/restart        - Restart this character session\n"
         "/reload         - Reload prompt files, restart conversation\n"
         "/trace          - Show system prompt, model, token usage\n"
         "/back           - Return to character selection\n"
@@ -1859,8 +2173,11 @@ def _launch_mock_vision(replay_file: str, vision_cfg) -> "subprocess.Popen | Non
 
     replay_path = Path(replay_file)
     if not replay_path.exists():
-        # Try relative to services/vision/replays/
-        replay_path = Path(__file__).resolve().parent.parent / "services" / "vision" / "replays" / replay_file
+        replays_dir = Path(__file__).resolve().parent.parent / "services" / "vision" / "replays"
+        candidates = [replays_dir / replay_file]
+        if replay_path.suffix != ".json":
+            candidates.append(replays_dir / f"{replay_file}.json")
+        replay_path = next((path for path in candidates if path.exists()), replay_path)
     if not replay_path.exists():
         console.print(f"[red]Replay file not found: {replay_file}[/red]")
         return None
@@ -1887,7 +2204,7 @@ def _launch_mock_vision(replay_file: str, vision_cfg) -> "subprocess.Popen | Non
     return None
 
 
-def _launch_vision_service(vision_cfg) -> "subprocess.Popen | None":
+def _launch_vision_service(vision_cfg, no_camera: bool = False, force: bool = False) -> "subprocess.Popen | None":
     """Auto-launch vision service if not running. Returns subprocess or None."""
     import subprocess as _sp
     from character_eng.vision.client import VisionClient
@@ -1897,21 +2214,36 @@ def _launch_vision_service(vision_cfg) -> "subprocess.Popen | None":
         console.print(f"[dim]Vision service already running at {vision_cfg.service_url}[/dim]")
         return None
 
-    if not vision_cfg.auto_launch:
+    if not force and not vision_cfg.auto_launch:
         console.print(f"[yellow]Vision service not running at {vision_cfg.service_url} (auto_launch=false)[/yellow]")
         return None
 
     services_dir = Path(__file__).resolve().parent.parent / "services" / "vision"
-    if not (services_dir / "app.py").exists():
-        console.print("[red]Vision service not found at services/vision/app.py[/red]")
+    start_script = services_dir / "start.sh"
+    if not start_script.exists():
+        console.print("[red]Vision startup script not found at services/vision/start.sh[/red]")
         return None
 
     console.print(f"[dim]Starting vision service on port {vision_cfg.service_port}...[/dim]")
+    console.print("[dim]Streaming vision bootstrap logs below.[/dim]")
+    cmd = [str(start_script)]
+    env = os.environ.copy()
+    env["APP_PORT"] = str(vision_cfg.service_port)
+    if no_camera:
+        cmd.append("--no-camera")
     proc = _sp.Popen(
-        ["uv", "run", "--project", str(services_dir), "python", str(services_dir / "app.py"),
-         "--port", str(vision_cfg.service_port), "--auto-start-trackers"],
-        stdout=_sp.DEVNULL,
-        stderr=_sp.DEVNULL,
+        cmd,
+        cwd=str(services_dir),
+        env=env,
+        stdout=_sp.PIPE,
+        stderr=_sp.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    start_prefixed_output_thread(
+        proc,
+        prefix="[vision] ",
+        sink=lambda line: console.print(Text(line, style="dim"), highlight=False),
     )
 
     # Wait for health check
@@ -1929,6 +2261,172 @@ def _launch_vision_service(vision_cfg) -> "subprocess.Popen | None":
     return None
 
 
+def _register_vision_runtime(vision_cfg, proc=None, mock_replay: str | None = None, no_camera: bool = False) -> None:
+    _vision_runtime["cfg"] = vision_cfg
+    _vision_runtime["proc"] = proc
+    _vision_runtime["mock_replay"] = mock_replay
+    _vision_runtime["no_camera"] = no_camera
+
+
+def _start_managed_vision_service(force: bool = False) -> tuple[bool, str]:
+    vision_cfg = _vision_runtime.get("cfg")
+    if vision_cfg is None:
+        return False, "Vision is not configured"
+
+    if _vision_service_health(vision_cfg):
+        return True, f"Vision service ready at {vision_cfg.service_url}"
+
+    mock_replay = _vision_runtime.get("mock_replay")
+    no_camera = bool(_vision_runtime.get("no_camera"))
+    if mock_replay:
+        proc = _launch_mock_vision(mock_replay, vision_cfg)
+    else:
+        proc = _launch_vision_service(vision_cfg, no_camera=no_camera, force=force)
+
+    if proc is not None:
+        _vision_runtime["proc"] = proc
+
+    if _vision_service_health(vision_cfg):
+        return True, f"Vision service ready at {vision_cfg.service_url}"
+    return False, f"Vision service unavailable at {vision_cfg.service_url}"
+
+
+def _stop_managed_vision_service() -> tuple[bool, str]:
+    vision_cfg = _vision_runtime.get("cfg")
+    proc = _vision_runtime.get("proc")
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+        _vision_runtime["proc"] = None
+        return True, "Vision service stopped"
+
+    _vision_runtime["proc"] = None
+    if vision_cfg is not None and _vision_service_health(vision_cfg):
+        return False, "Vision service is running externally; stop it outside character-eng"
+    return True, "Vision service already stopped"
+
+
+def _ensure_vision_manager(
+    vision_mgr,
+    vision_cfg,
+    model_config,
+    world,
+    people,
+    stage_goal: str,
+):
+    if vision_cfg is None:
+        return None
+    if not _vision_service_health(vision_cfg):
+        return None
+    if vision_mgr is None:
+        from character_eng.vision.manager import VisionManager
+        vision_mgr = VisionManager(
+            service_url=vision_cfg.service_url,
+            min_interval=vision_cfg.synthesis_min_interval,
+        )
+    vision_mgr.start(model_config, world=world, people=people, collector=_collector)
+    vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal)
+    try:
+        vision_mgr.update_focus(
+            beat=None,
+            stage_goal=stage_goal,
+            thought="",
+            world=world,
+            people=people,
+            model_config=model_config,
+        )
+    except Exception:
+        pass
+    return vision_mgr
+
+
+def handle_vision_service_command(
+    command: str,
+    *,
+    vision_mgr,
+    vision_cfg,
+    model_config,
+    world,
+    people,
+    stage_goal: str,
+    voice_io=None,
+):
+    parts = command.strip().split()
+    if not parts or parts[0].lower() not in ("/vision-service", "/visionservice"):
+        return False, vision_mgr
+
+    if vision_cfg is None:
+        console.print("[red]Vision is not configured[/red]")
+        return True, vision_mgr
+
+    action = parts[1].lower() if len(parts) > 1 else "status"
+    if action == "status":
+        console.print(Panel(
+            _render_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg),
+            title="Vision Runtime",
+            border_style="cyan",
+        ))
+        return True, vision_mgr
+
+    if action == "start":
+        ok, message = _start_managed_vision_service(force=True)
+        if ok:
+            vision_mgr = _ensure_vision_manager(
+                vision_mgr,
+                vision_cfg,
+                model_config,
+                world,
+                people,
+                stage_goal,
+            )
+        console.print(f"[{'green' if ok else 'red'}]{message}[/{'green' if ok else 'red'}]")
+        _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
+        return True, vision_mgr
+
+    if action == "stop":
+        if vision_mgr is not None:
+            vision_mgr.stop()
+            vision_mgr = None
+        ok, message = _stop_managed_vision_service()
+        console.print(f"[{'yellow' if ok else 'red'}]{message}[/{'yellow' if ok else 'red'}]")
+        _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
+        return True, vision_mgr
+
+    if action == "autostart":
+        if len(parts) < 3:
+            console.print("[yellow]Usage: /vision-service autostart <on|off|toggle>[/yellow]")
+            return True, vision_mgr
+        choice = parts[2].lower()
+        current = bool(vision_cfg.auto_launch)
+        if choice == "toggle":
+            enabled = not current
+        elif choice in ("on", "off"):
+            enabled = choice == "on"
+        else:
+            console.print("[red]Autostart must be on, off, or toggle[/red]")
+            return True, vision_mgr
+        vision_cfg.auto_launch = enabled
+        if _app_config is not None:
+            _app_config.vision.auto_launch = enabled
+            try:
+                save_config(_app_config)
+            except Exception as exc:
+                console.print(f"[red]Failed to save config.toml: {exc}[/red]")
+        console.print(f"[green]vision autostart[/green] → {'on' if enabled else 'off'}")
+        _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
+        return True, vision_mgr
+
+    console.print("[yellow]Usage: /vision-service <status|start|stop|autostart>[/yellow]")
+    return True, vision_mgr
+
+
 def main():
     parser = argparse.ArgumentParser(description="NPC Character Chat")
     parser.add_argument("--voice", action="store_true", help="Start in voice mode (Deepgram STT + ElevenLabs TTS)")
@@ -1936,20 +2434,34 @@ def main():
     parser.add_argument("--vision-mock", metavar="REPLAY", help="Enable vision with mock server using a replay JSON file")
     parser.add_argument("--character", metavar="NAME", help="Auto-select character (skip menu)")
     parser.add_argument("--sim", metavar="NAME", help="Run a sim script non-interactively then exit")
+    parser.add_argument("--sim-speed", type=float, default=1.0,
+        help="Speed multiplier for sim playback (default: 1.0)")
     parser.add_argument("--smoke", action="store_true", help="Run smoke test (auto greg, scripted inputs, exit)")
     parser.add_argument("--no-dashboard", action="store_true", help="Disable the HTML dashboard")
+    parser.add_argument("--browser", action="store_true",
+        help="Browser audio/video mode (WebSocket bridge for remote mic/camera)")
     args = parser.parse_args()
 
     if args.smoke:
         sys.exit(run_smoke())
 
+    global _app_config
     cfg = load_config()
+    _app_config = cfg
+    browser_mode = args.browser or cfg.bridge.enabled
 
     # --voice flag overrides config; config.voice.enabled is the default
     # --sim forces text mode (voice doesn't make sense for non-interactive runs)
-    voice_mode = False if args.sim else (args.voice or cfg.voice.enabled)
+    # --browser implies voice mode (audio comes from browser)
+    voice_mode = False if args.sim else (args.voice or cfg.voice.enabled or browser_mode)
     # --vision or --vision-mock overrides config; config.vision.enabled is the default
     vision_mode = args.vision or args.vision_mock or cfg.vision.enabled
+
+    # --- Bridge setup (browser mic/camera via WebSocket) ---
+    bridge = None
+    if browser_mode:
+        from character_eng.bridge import BridgeServer
+        bridge = BridgeServer(port=cfg.bridge.port)
 
     # --- Dashboard setup ---
     global _collector, _dashboard_input_queue
@@ -1957,14 +2469,21 @@ def main():
     if dashboard_enabled:
         import queue as _queue
         from character_eng.dashboard.events import DashboardEventCollector
-        from character_eng.dashboard.server import start_dashboard
-        from character_eng.open_report import open_in_browser
         _collector = DashboardEventCollector()
         _dashboard_input_queue = _queue.Queue()
-        _, dash_port = start_dashboard(_collector, _dashboard_input_queue, port=cfg.dashboard.port)
-        dash_url = f"http://127.0.0.1:{dash_port}/"
-        console.print(f"[bold green]Dashboard:[/bold green] {dash_url}")
-        open_in_browser(dash_url)
+
+        if bridge is not None:
+            # Bridge serves HTTP dashboard + WS on a single port
+            bridge.set_dashboard(_collector, _dashboard_input_queue)
+            dash_url = f"http://0.0.0.0:{cfg.bridge.port}/"
+            console.print(f"[bold green]Dashboard (bridge):[/bold green] {dash_url}")
+        else:
+            from character_eng.dashboard.server import start_dashboard
+            from character_eng.open_report import open_in_browser
+            _, dash_port = start_dashboard(_collector, _dashboard_input_queue, port=cfg.dashboard.port)
+            dash_url = f"http://127.0.0.1:{dash_port}/"
+            console.print(f"[bold green]Dashboard:[/bold green] {dash_url}")
+            open_in_browser(dash_url)
 
     console.print(Panel("[bold]NPC Character Chat[/bold]", border_style="green"))
     model_config = get_chat_model_config()
@@ -1976,11 +2495,25 @@ def main():
 
     # Auto-launch vision service (real or mock)
     vision_proc = None
+    _register_vision_runtime(
+        cfg.vision,
+        proc=None,
+        mock_replay=args.vision_mock,
+        no_camera=browser_mode,
+    )
     if vision_mode:
         if args.vision_mock:
             vision_proc = _launch_mock_vision(args.vision_mock, cfg.vision)
+        elif browser_mode:
+            vision_proc = _launch_vision_service(cfg.vision, no_camera=True)
         else:
             vision_proc = _launch_vision_service(cfg.vision)
+        _vision_runtime["proc"] = vision_proc
+
+        from character_eng.vision.client import VisionClient
+        if not VisionClient(cfg.vision.service_url).health():
+            console.print(f"[yellow]Vision unavailable at {cfg.vision.service_url} — continuing without vision[/yellow]")
+            vision_mode = False
 
     try:
         while True:
@@ -1991,16 +2524,26 @@ def main():
             if character is None:
                 console.print("Goodbye!")
                 break
-            chat_loop(character, model_config, voice_mode=voice_mode, voice_cfg=cfg.voice,
+            result = chat_loop(character, model_config, voice_mode=voice_mode, voice_cfg=cfg.voice,
                        vision_mode=vision_mode, vision_cfg=cfg.vision,
-                       auto_sim=args.sim)
+                       auto_sim=args.sim, bridge=bridge, sim_speed=args.sim_speed)
+            if result == "restart":
+                continue  # re-enter chat_loop with same character
             if args.sim or args.character:
                 break  # non-interactive: run once and exit
     finally:
-        if vision_proc is not None:
+        if bridge is not None:
+            bridge.stop()
+        managed_proc = _vision_runtime.get("proc")
+        if managed_proc is not None and managed_proc.poll() is None:
             console.print("[dim]Stopping vision service...[/dim]")
-            vision_proc.kill()
-            vision_proc.wait(timeout=5)
+            managed_proc.terminate()
+            try:
+                managed_proc.wait(timeout=5)
+            except Exception:
+                managed_proc.kill()
+                managed_proc.wait(timeout=5)
+        _vision_runtime["proc"] = None
 
 
 if __name__ == "__main__":
