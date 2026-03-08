@@ -14,6 +14,7 @@ from character_eng.dashboard.events import DashboardEventCollector
 
 HTML_PATH = Path(__file__).parent / "index.html"
 SYSTEM_MAP_PATH = Path(__file__).parent / "system_map.html"
+STREAM_SCHEMA_PATH = Path(__file__).parent / "stream_schema.json"
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -25,6 +26,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_html()
         elif self.path == "/system-map.html":
             self._serve_system_map()
+        elif self.path == "/stream-schema.json":
+            self._serve_stream_schema()
         elif self.path == "/events":
             self._serve_sse()
         elif self.path == "/state":
@@ -78,6 +81,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _serve_stream_schema(self):
+        try:
+            content = STREAM_SCHEMA_PATH.read_bytes()
+        except FileNotFoundError:
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "stream_schema.json not found")
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(content)
 

@@ -99,6 +99,14 @@ class TestDashboardServer:
         assert "Character Runtime & Design Map" in body
         assert resp.status == 200
 
+    def test_stream_schema_returns_json(self, server):
+        _, _, port = server
+        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/stream-schema.json")
+        body = json.loads(resp.read())
+        assert "lane_order" in body
+        assert body["event_lane_map"]["assistant_reply"] == "chat"
+        assert resp.status == 200
+
     def test_send_injects_input(self, server):
         _, iq, port = server
         body = json.dumps({"text": "hello world"}).encode()

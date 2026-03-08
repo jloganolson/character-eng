@@ -754,25 +754,33 @@
 
 <script>
 (function() {
-  const LANE_ORDER = ["session", "input", "chat", "expression", "eval", "director", "planner", "world", "vision", "other"];
-  const LANE_COLORS = {
-    session: "var(--stream-session)",
-    input: "var(--stream-input)",
-    chat: "var(--stream-chat)",
-    expression: "var(--stream-expression)",
-    eval: "var(--stream-eval)",
-    director: "var(--stream-director)",
-    planner: "var(--stream-planner)",
-    world: "var(--stream-world)",
-    vision: "var(--stream-vision)",
-    other: "var(--stream-other)",
+  const DEFAULT_STREAM_SCHEMA = {
+    lane_order: ["vision", "stt", "chat", "expression", "eval", "director", "planner", "world", "session", "script", "other"],
+    event_lane_map: {
+      session_start: "session",
+      session_end: "session",
+      pause: "session",
+      resume: "session",
+      runtime_controls: "session",
+      vision_snapshot: "vision",
+      world_update: "world",
+      turn_start: "chat",
+      assistant_reply: "chat",
+      expression: "expression",
+      post_response: "planner",
+      perception: "world"
+    }
   };
+  let laneOrder = [...DEFAULT_STREAM_SCHEMA.lane_order];
+  let eventLaneMap = {...DEFAULT_STREAM_SCHEMA.event_lane_map};
 
   let sessionStart = null;
   let turnCount = 0;
   let lastSeq = 0;
   let currentTurnId = 0;
   let activeReplyKey = null;
+  let activePostResponseKey = null;
+  let activeWorldUpdateKey = null;
   let streamKey = 0;
   let selectedStreamKey = null;
   let compactMode = false;
@@ -806,6 +814,24 @@
   const streamEmpty = document.getElementById("stream-empty");
   const laneToggleGrid = document.getElementById("lane-toggle-grid");
   const detailChronologyWrap = document.getElementById("detail-chronology-wrap");
+
+  async function loadStreamSchema() {
+    try {
+      const response = await fetch("/stream-schema.json");
+      if (!response.ok) throw new Error(`schema ${response.status}`);
+      const payload = await response.json();
+      laneOrder = Array.isArray(payload.lane_order) && payload.lane_order.length
+        ? payload.lane_order.map((lane) => String(lane))
+        : [...DEFAULT_STREAM_SCHEMA.lane_order];
+      eventLaneMap = payload.event_lane_map && typeof payload.event_lane_map === "object"
+        ? Object.fromEntries(Object.entries(payload.event_lane_map).map(([eventType, lane]) => [String(eventType), String(lane)]))
+        : {...DEFAULT_STREAM_SCHEMA.event_lane_map};
+    } catch (err) {
+      laneOrder = [...DEFAULT_STREAM_SCHEMA.lane_order];
+      eventLaneMap = {...DEFAULT_STREAM_SCHEMA.event_lane_map};
+    }
+    renderStream();
+  }
 
   const themeBtn = document.getElementById("theme-toggle");
   function setTheme(light) {
@@ -992,37 +1018,7 @@
   }
 
   function laneForType(type) {
-    switch (type) {
-      case "session_start":
-      case "session_end":
-      case "pause":
-      case "resume":
-      case "stage_change":
-      case "runtime_controls":
-        return "session";
-      case "turn_start":
-        return "input";
-      case "assistant_reply":
-        return "chat";
-      case "expression":
-        return "expression";
-      case "eval":
-        return "eval";
-      case "director":
-        return "director";
-      case "plan":
-      case "beat_advance":
-        return "planner";
-      case "reconcile":
-      case "world_state":
-      case "people_state":
-      case "perception":
-        return "world";
-      case "vision_snapshot":
-        return "vision";
-      default:
-        return "other";
-    }
+    return eventLaneMap[type] || "other";
   }
 
   function relativeTime(timestamp) {
@@ -1048,6 +1044,22 @@
         return data.input_text || "(empty input)";
       case "assistant_reply":
         return data.full_text || data.text || "(streaming reply)";
+      case "post_response": {
+        const bits = [];
+        if (data.script_status) bits.push(`eval ${data.script_status}`);
+        if (data.director_status) bits.push(`director ${data.director_status}`);
+        if (data.new_stage) bits.push(`stage ${data.new_stage}`);
+        if (data.plan_beats) bits.push(`${data.plan_beats} beats`);
+        if (data.next_intent) bits.push(`next ${data.next_intent}`);
+        return bits.length ? bits.join(" · ") : "Post-response update";
+      }
+      case "world_update": {
+        const bits = [];
+        if (data.add_count || data.remove_count || data.event_count) bits.push(`+${data.add_count || 0} -${data.remove_count || 0} ~${data.event_count || 0}`);
+        if (data.fact_count) bits.push(`${data.fact_count} facts`);
+        if (data.people_count) bits.push(`${data.people_count} people`);
+        return bits.length ? bits.join(" · ") : "World update";
+      }
       case "expression":
         return `${data.expression || "expression"} · ${data.gaze || "gaze"}`;
       case "eval":
@@ -1093,6 +1105,17 @@
           data.faces != null ? `faces ${data.faces}` : "",
           data.persons != null ? `people ${data.persons}` : "",
           data.object_labels && data.object_labels.length ? `objects ${data.object_labels.join(", ")}` : ""
+        ].filter(Boolean).join(" · ");
+      case "post_response":
+        return [
+          data.eval_thought || "",
+          data.plan_request || "",
+          data.director_thought || ""
+        ].filter(Boolean).join(" · ");
+      case "world_update":
+        return [
+          data.latest_event || "",
+          data.latest_fact || ""
         ].filter(Boolean).join(" · ");
       case "runtime_controls":
         return [
@@ -1149,8 +1172,24 @@
     return event;
   }
 
+  function ensureCompoundEvent(type, rawEvent, seedData) {
+    const activeKey = type === "post_response" ? activePostResponseKey : activeWorldUpdateKey;
+    let event = activeKey ? streamEventByKey.get(activeKey) : null;
+    if (!event || event.turnId !== (rawEvent.turnId || null)) {
+      event = addStreamEvent(type, {...seedData}, rawEvent);
+      if (type === "post_response") activePostResponseKey = event.key;
+      else activeWorldUpdateKey = event.key;
+    }
+    event.turnId = rawEvent.turnId || event.turnId;
+    event.timestamp = Number(rawEvent.timestamp || event.timestamp);
+    event.seq = rawEvent.seq || event.seq;
+    return event;
+  }
+
   function resetReplyStream() {
     activeReplyKey = null;
+    activePostResponseKey = null;
+    activeWorldUpdateKey = null;
   }
 
   function selectEvent(key) {
@@ -1218,12 +1257,16 @@
     if (event.type === "assistant_reply") {
       return Math.max(260, Math.min(520, 220 + event.label.length * 3));
     }
+    if (event.type === "post_response" || event.type === "world_update") {
+      return Math.max(220, Math.min(360, 180 + event.label.length * 2.4));
+    }
     return Math.max(170, Math.min(320, 130 + event.label.length * 2.4));
   }
 
   function cardHeight(event) {
     if (compactMode) return 24;
     if (event.type === "assistant_reply") return 92;
+    if (event.type === "post_response" || event.type === "world_update") return 84;
     if (event.detail) return 72;
     return 58;
   }
@@ -1242,7 +1285,7 @@
   }
 
   function renderLaneToggles() {
-    laneToggleGrid.innerHTML = LANE_ORDER.map((lane) => {
+    laneToggleGrid.innerHTML = laneOrder.map((lane) => {
       const inactive = hiddenLanes.has(lane) ? " inactive" : "";
       return `<button class="lane-toggle${inactive}" type="button" data-lane-toggle="${esc(lane)}">${esc(lane)}</button>`;
     }).join("");
@@ -1284,14 +1327,14 @@
     const maxRelative = Math.max(...streamEvents.map((event) => relativeTime(event.timestamp)));
     const baseWidth = renderRuler(maxRelative);
     const lanes = {};
-    LANE_ORDER.forEach((lane) => { lanes[lane] = []; });
+    laneOrder.forEach((lane) => { lanes[lane] = []; });
     streamEvents.forEach((event) => {
       const lane = lanes[event.lane] ? event.lane : "other";
       lanes[lane].push(event);
     });
 
     const laneHtml = [];
-    LANE_ORDER.forEach((lane) => {
+    laneOrder.forEach((lane) => {
       const laneEvents = lanes[lane];
       if (!laneEvents.length) return;
       const hidden = hiddenLanes.has(lane);
@@ -1400,17 +1443,65 @@
     eval(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
       document.getElementById("f-eval").innerHTML = `Eval: <b>${esc(data.script_status || "?")}</b>`;
-      recordEvent("eval", data, rawEvent);
+      const event = ensureCompoundEvent("post_response", rawEvent, {
+        script_status: "",
+        eval_thought: "",
+        plan_request: "",
+        director_status: "",
+        director_thought: "",
+        new_stage: "",
+        next_intent: "",
+        plan_beats: 0,
+        script_complete: false
+      });
+      event.data.script_status = data.script_status || event.data.script_status;
+      event.data.eval_thought = data.thought || event.data.eval_thought;
+      event.data.plan_request = data.plan_request || event.data.plan_request;
+      event.label = previewText("post_response", event.data);
+      event.detail = detailText("post_response", event.data);
+      renderStream();
     },
 
     director(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
-      recordEvent("director", data, rawEvent);
+      const event = ensureCompoundEvent("post_response", rawEvent, {
+        script_status: "",
+        eval_thought: "",
+        plan_request: "",
+        director_status: "",
+        director_thought: "",
+        new_stage: "",
+        next_intent: "",
+        plan_beats: 0,
+        script_complete: false
+      });
+      event.data.director_status = data.status || event.data.director_status;
+      event.data.director_thought = data.thought || event.data.director_thought;
+      event.data.new_stage = data.new_stage || event.data.new_stage;
+      event.label = previewText("post_response", event.data);
+      event.detail = detailText("post_response", event.data);
+      renderStream();
     },
 
     reconcile(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
-      recordEvent("reconcile", data, rawEvent);
+      const event = ensureCompoundEvent("world_update", rawEvent, {
+        add_count: 0,
+        remove_count: 0,
+        event_count: 0,
+        fact_count: 0,
+        people_count: 0,
+        latest_event: "",
+        latest_fact: ""
+      });
+      event.data.add_count += (data.add_facts || []).length;
+      event.data.remove_count += (data.remove_facts || []).length;
+      event.data.event_count += (data.events || []).length;
+      if (data.events && data.events.length) event.data.latest_event = data.events[data.events.length - 1];
+      if (data.add_facts && data.add_facts.length) event.data.latest_fact = data.add_facts[data.add_facts.length - 1];
+      event.label = previewText("world_update", event.data);
+      event.detail = detailText("world_update", event.data);
+      renderStream();
     },
 
     world_state(data, rawEvent) {
@@ -1426,7 +1517,24 @@
         html += data.pending.map((fact) => `<div class="fact fact-add">~ ${esc(fact)}</div>`).join("");
       }
       el.innerHTML = html || '<span style="color:var(--text-dim)">Empty</span>';
-      recordEvent("world_state", data, rawEvent);
+      rawEvent.turnId = currentTurnId || null;
+      const event = ensureCompoundEvent("world_update", rawEvent, {
+        add_count: 0,
+        remove_count: 0,
+        event_count: 0,
+        fact_count: 0,
+        people_count: 0,
+        latest_event: "",
+        latest_fact: ""
+      });
+      event.data.fact_count = (data.static_facts || []).length + (data.dynamic_facts || []).length;
+      if (data.dynamic_facts && data.dynamic_facts.length) {
+        const latest = data.dynamic_facts[data.dynamic_facts.length - 1];
+        event.data.latest_fact = latest.text || latest;
+      }
+      event.label = previewText("world_update", event.data);
+      event.detail = detailText("world_update", event.data);
+      renderStream();
     },
 
     people_state(data, rawEvent) {
@@ -1439,7 +1547,20 @@
           return `<div class="person-entry"><span class="person-name">${esc(person.name || person.id)}</span> <span style="color:var(--text-dim)">${esc(person.id)}</span>${facts}</div>`;
         }).join("");
       }
-      recordEvent("people_state", data, rawEvent);
+      rawEvent.turnId = currentTurnId || null;
+      const event = ensureCompoundEvent("world_update", rawEvent, {
+        add_count: 0,
+        remove_count: 0,
+        event_count: 0,
+        fact_count: 0,
+        people_count: 0,
+        latest_event: "",
+        latest_fact: ""
+      });
+      event.data.people_count = (data.people || []).length;
+      event.label = previewText("world_update", event.data);
+      event.detail = detailText("world_update", event.data);
+      renderStream();
     },
 
     stage_change(data, rawEvent) {
@@ -1448,7 +1569,22 @@
       let html = `<div><b>${esc(data.new_stage || "--")}</b></div>`;
       if (data.new_goal) html += `<div style="color:var(--text-dim)">${esc(data.new_goal)}</div>`;
       el.innerHTML = html;
-      recordEvent("stage_change", data, rawEvent);
+      rawEvent.turnId = currentTurnId || null;
+      const event = ensureCompoundEvent("post_response", rawEvent, {
+        script_status: "",
+        eval_thought: "",
+        plan_request: "",
+        director_status: "",
+        director_thought: "",
+        new_stage: "",
+        next_intent: "",
+        plan_beats: 0,
+        script_complete: false
+      });
+      event.data.new_stage = data.new_stage || event.data.new_stage;
+      event.label = previewText("post_response", event.data);
+      event.detail = detailText("post_response", event.data);
+      renderStream();
     },
 
     plan(data, rawEvent) {
@@ -1463,7 +1599,22 @@
           return `<div class="${cls}">${index}. [${esc(beat.intent)}]</div>`;
         }).join("") + "</div>";
       }
-      recordEvent("plan", data, rawEvent);
+      rawEvent.turnId = currentTurnId || null;
+      const event = ensureCompoundEvent("post_response", rawEvent, {
+        script_status: "",
+        eval_thought: "",
+        plan_request: "",
+        director_status: "",
+        director_thought: "",
+        new_stage: "",
+        next_intent: "",
+        plan_beats: 0,
+        script_complete: false
+      });
+      event.data.plan_beats = (data.beats || []).length;
+      event.label = previewText("post_response", event.data);
+      event.detail = detailText("post_response", event.data);
+      renderStream();
     },
 
     beat_advance(data, rawEvent) {
@@ -1473,7 +1624,23 @@
           if (item.textContent.includes(data.next_intent)) item.classList.add("current");
         });
       }
-      recordEvent("beat_advance", data, rawEvent);
+      rawEvent.turnId = currentTurnId || null;
+      const event = ensureCompoundEvent("post_response", rawEvent, {
+        script_status: "",
+        eval_thought: "",
+        plan_request: "",
+        director_status: "",
+        director_thought: "",
+        new_stage: "",
+        next_intent: "",
+        plan_beats: 0,
+        script_complete: false
+      });
+      event.data.next_intent = data.next_intent || event.data.next_intent;
+      event.data.script_complete = !!data.script_complete;
+      event.label = previewText("post_response", event.data);
+      event.detail = detailText("post_response", event.data);
+      renderStream();
     },
 
     perception(data, rawEvent) {
@@ -1582,6 +1749,7 @@
   document.getElementById("vision-service-stop").addEventListener("click", () => sendVisionServiceCommand("stop"));
   document.getElementById("vision-service-autostart").addEventListener("click", () => sendVisionServiceCommand("autostart toggle"));
 
+  loadStreamSchema();
   refreshState();
   setInterval(refreshState, 2000);
   setInterval(pollVisionModelStatus, 4000);

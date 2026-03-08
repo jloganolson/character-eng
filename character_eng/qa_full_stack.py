@@ -183,37 +183,20 @@ LIVE_DRIFT_TERMS = (
     "street",
     "sidewalk",
 )
-TIMELINE_LANES = {
-    "session_start": "session",
-    "vision_stack_ready": "vision",
-    "scene_capture": "vision",
-    "scene_eval": "vision",
-    "vision_focus": "vision",
-    "vision_snapshot_read": "vision",
-    "vision_poll": "vision",
-    "vision_models": "vision",
-    "vision_poll_error": "vision",
-    "world_seed": "world",
-    "perception_injected": "world",
-    "stt_result": "stt",
-    "user_turn_start": "chat",
-    "assistant_reply": "chat",
-    "response_ttft": "chat",
-    "response_chunk": "chat",
-    "response_done": "chat",
-    "expression": "expression",
-    "eval": "eval",
-    "beat_advance": "script",
-    "director": "director",
-    "stage_change": "director",
-    "plan": "planner",
-    "assistant_tts_first_audio": "chat",
-    "assistant_tts_done": "chat",
-    "assistant_audio_clip": "chat",
-    "assistant_filler": "chat",
-    "assistant_tts_start": "chat",
-}
-LANE_ORDER = ["vision", "stt", "chat", "expression", "eval", "director", "planner", "world", "session", "script", "other"]
+
+
+def _load_stream_schema() -> tuple[dict[str, str], list[str]]:
+    schema_path = Path(__file__).resolve().parent / "dashboard" / "stream_schema.json"
+    data = json.loads(schema_path.read_text(encoding="utf-8"))
+    lane_map = {
+        str(event_type): str(lane)
+        for event_type, lane in dict(data.get("event_lane_map", {})).items()
+    }
+    lane_order = [str(lane) for lane in data.get("lane_order", [])]
+    return lane_map, lane_order
+
+
+TIMELINE_LANES, LANE_ORDER = _load_stream_schema()
 
 
 @dataclass
@@ -1056,6 +1039,28 @@ def _timeline_event_label(event: dict) -> str:
     if event_type == "assistant_reply":
         text = str(data.get("text", "")).strip()
         return text or "Greg reply"
+    if event_type == "post_response":
+        bits = []
+        if data.get("script_status"):
+            bits.append(f"eval {data['script_status']}")
+        if data.get("director_status"):
+            bits.append(f"director {data['director_status']}")
+        if data.get("new_stage"):
+            bits.append(f"stage {data['new_stage']}")
+        if data.get("plan_beats"):
+            bits.append(f"{data['plan_beats']} beats")
+        if data.get("next_intent"):
+            bits.append(f"next {data['next_intent']}")
+        return "Post-response: " + (" · ".join(bits) if bits else "update")
+    if event_type == "world_update":
+        parts = []
+        if data.get("add_count") or data.get("remove_count") or data.get("event_count"):
+            parts.append(f"+{data.get('add_count', 0)} -{data.get('remove_count', 0)} ~{data.get('event_count', 0)}")
+        if data.get("fact_count"):
+            parts.append(f"{data['fact_count']} facts")
+        if data.get("people_count"):
+            parts.append(f"{data['people_count']} people")
+        return "World update: " + (" · ".join(parts) if parts else "state refresh")
     if event_type == "scene_capture":
         return data.get("label", "Scene image captured")
     if event_type == "scene_eval":
@@ -1155,6 +1160,22 @@ def _timeline_detail(event: dict) -> str:
         if data.get("audio_ms"):
             parts.append(f"clip {data['audio_ms']}ms")
         return " · ".join(parts)
+    if event.get("type") == "post_response":
+        parts = []
+        if data.get("eval_thought"):
+            parts.append(f"eval {data['eval_thought']}")
+        if data.get("plan_request"):
+            parts.append(f"plan {data['plan_request']}")
+        if data.get("director_thought"):
+            parts.append(f"director {data['director_thought']}")
+        return " · ".join(parts)
+    if event.get("type") == "world_update":
+        parts = []
+        if data.get("latest_event"):
+            parts.append(str(data["latest_event"]))
+        if data.get("latest_fact"):
+            parts.append(str(data["latest_fact"]))
+        return " · ".join(parts)
     data.pop("frame_b64", None)
     data.pop("overlay_b64", None)
     compact = json.dumps(data, ensure_ascii=True, separators=(",", ":"))
@@ -1170,7 +1191,7 @@ def _detail_payload(event: dict) -> str:
     return json.dumps(payload, ensure_ascii=True, indent=2) if payload else "{}"
 
 
-def _build_reply_display_events(events: list[dict]) -> list[dict]:
+def _build_compound_display_events(events: list[dict]) -> list[dict]:
     grouped: list[dict] = []
     consumed: set[int] = set()
     response_types = {
@@ -1181,11 +1202,121 @@ def _build_reply_display_events(events: list[dict]) -> list[dict]:
         "assistant_tts_done",
         "assistant_audio_clip",
     }
+    post_response_types = {"eval", "director", "plan", "beat_advance", "stage_change"}
+    world_update_types = {"reconcile", "world_state", "people_state"}
     for index, event in enumerate(events):
         if index in consumed:
             continue
         if event.get("type") != "response_done":
-            if event.get("type") not in response_types:
+            event_type = event.get("type")
+            if event_type in post_response_types:
+                turn = event.get("turn")
+                cluster = []
+                next_index = index
+                while next_index < len(events):
+                    candidate = events[next_index]
+                    candidate_type = candidate.get("type")
+                    if candidate_type not in post_response_types:
+                        break
+                    if candidate.get("turn") != turn:
+                        break
+                    cluster.append(candidate)
+                    consumed.add(next_index)
+                    next_index += 1
+
+                payload = {
+                    "script_status": "",
+                    "eval_thought": "",
+                    "plan_request": "",
+                    "director_status": "",
+                    "director_thought": "",
+                    "new_stage": "",
+                    "next_intent": "",
+                    "plan_beats": 0,
+                    "script_complete": False,
+                    "component_types": [item.get("type", "") for item in cluster],
+                }
+                for item in cluster:
+                    item_type = item.get("type")
+                    item_data = item.get("data", {})
+                    if item_type == "eval":
+                        payload["script_status"] = str(item_data.get("script_status", ""))
+                        payload["eval_thought"] = str(item_data.get("thought", ""))
+                        payload["plan_request"] = str(item_data.get("plan_request", ""))
+                    elif item_type == "director":
+                        payload["director_status"] = str(item_data.get("status", ""))
+                        payload["director_thought"] = str(item_data.get("thought", ""))
+                        payload["new_stage"] = str(item_data.get("new_stage", ""))
+                    elif item_type == "plan":
+                        payload["plan_beats"] = len(item_data.get("beats", []))
+                    elif item_type == "beat_advance":
+                        payload["next_intent"] = str(item_data.get("next_intent", ""))
+                        payload["script_complete"] = bool(item_data.get("script_complete", False))
+                    elif item_type == "stage_change" and not payload["new_stage"]:
+                        payload["new_stage"] = str(item_data.get("new_stage", ""))
+
+                grouped.append({
+                    "type": "post_response",
+                    "timestamp": cluster[0].get("timestamp", 0.0),
+                    "_anchor_ts": cluster[-1].get("timestamp", cluster[0].get("timestamp", 0.0)),
+                    "seq": cluster[0].get("seq", 0),
+                    "turn": turn,
+                    "data": payload,
+                })
+                continue
+            if event_type in world_update_types:
+                turn = event.get("turn")
+                cluster = []
+                next_index = index
+                while next_index < len(events):
+                    candidate = events[next_index]
+                    candidate_type = candidate.get("type")
+                    if candidate_type not in world_update_types:
+                        break
+                    if candidate.get("turn") != turn:
+                        break
+                    cluster.append(candidate)
+                    consumed.add(next_index)
+                    next_index += 1
+
+                payload = {
+                    "add_count": 0,
+                    "remove_count": 0,
+                    "event_count": 0,
+                    "fact_count": 0,
+                    "people_count": 0,
+                    "latest_event": "",
+                    "latest_fact": "",
+                    "component_types": [item.get("type", "") for item in cluster],
+                }
+                for item in cluster:
+                    item_type = item.get("type")
+                    item_data = item.get("data", {})
+                    if item_type == "reconcile":
+                        payload["add_count"] += len(item_data.get("add_facts", []))
+                        payload["remove_count"] += len(item_data.get("remove_facts", []))
+                        payload["event_count"] += len(item_data.get("events", []))
+                        if item_data.get("events"):
+                            payload["latest_event"] = str(item_data["events"][-1])
+                        if item_data.get("add_facts"):
+                            payload["latest_fact"] = str(item_data["add_facts"][-1])
+                    elif item_type == "world_state":
+                        payload["fact_count"] = len(item_data.get("static_facts", [])) + len(item_data.get("dynamic_facts", []))
+                        if item_data.get("dynamic_facts"):
+                            latest = item_data["dynamic_facts"][-1]
+                            payload["latest_fact"] = str(latest.get("text", latest))
+                    elif item_type == "people_state":
+                        payload["people_count"] = len(item_data.get("people", []))
+                grouped.append({
+                    "type": "world_update",
+                    "timestamp": cluster[0].get("timestamp", 0.0),
+                    "_anchor_ts": cluster[-1].get("timestamp", cluster[0].get("timestamp", 0.0)),
+                    "seq": cluster[0].get("seq", 0),
+                    "turn": turn,
+                    "data": payload,
+                })
+                continue
+            if event_type not in response_types:
                 grouped.append(event)
             continue
 
@@ -1278,6 +1409,8 @@ def _related_event_keys(events: list[dict], index: int) -> list[str]:
     current_lane = TIMELINE_LANES.get(current_type, "other")
     preferred = {
         "assistant_reply": {"stt_result", "user_turn_start", "vision_snapshot_read", "scene_eval", "world_seed", "plan"},
+        "post_response": {"assistant_reply", "stt_result", "user_turn_start", "plan", "world_seed", "scene_eval"},
+        "world_update": {"assistant_reply", "post_response", "world_seed", "vision_snapshot_read"},
         "response_ttft": {"stt_result", "user_turn_start", "vision_snapshot_read", "scene_eval", "world_seed", "plan"},
         "response_chunk": {"stt_result", "user_turn_start", "vision_snapshot_read", "scene_eval", "world_seed", "plan"},
         "response_done": {"stt_result", "user_turn_start", "vision_snapshot_read", "scene_eval", "world_seed", "plan"},
@@ -1456,6 +1589,8 @@ def _stream_card_size(event: dict, lane: str) -> tuple[int, int]:
         return (220, 110)
     if event.get("type") == "assistant_reply":
         return (340, 126)
+    if event.get("type") in {"post_response", "world_update"}:
+        return (260, 118)
     if lane in {"chat", "director", "planner"}:
         return (240, 120)
     return (220, 105)
@@ -1465,7 +1600,7 @@ def _build_stream_board(events: list[dict], prompt_traces: list[dict]) -> tuple[
     if not events:
         return ("<div class='timeline-empty'>No stream events captured.</div>", [])
 
-    display_events = _build_reply_display_events(_collapse_trace_events(events))
+    display_events = _build_compound_display_events(_collapse_trace_events(events))
     for index, event in enumerate(display_events, start=1):
         event["_note_key"] = f"event-{index}-{event.get('seq', 0)}"
     start_ts = display_events[0].get("timestamp", 0.0)
