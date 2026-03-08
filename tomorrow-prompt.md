@@ -56,6 +56,8 @@ Primary goal for tomorrow:
   - redesign/re-validate
   - drop/ignore
 
+That triage has now been sketched in `HANDOFF.md`; do not repeat it from scratch unless the worktree changes. Use it as the starting hypothesis and validate it file-by-file as you touch things.
+
 Then execute this burndown:
 
 1. Stabilize and commit the local core bucket:
@@ -70,6 +72,14 @@ Then execute this burndown:
    - `tests/test_world.py`
    - `tests/test_perception.py`
 
+The expected shape of that first commit is:
+
+- reconcile/person sanitization
+- stricter QA checks
+- prompt de-meta cleanup
+- scenario filename support
+- related tests
+
 2. Re-evaluate the local dashboard/runtime visibility bucket:
    - `character_eng/dashboard/index.html`
    - `character_eng/dashboard/server.py`
@@ -81,6 +91,8 @@ Then execute this burndown:
    - `character_eng/dashboard/system_map.html`
    - `scripts/validate.sh`
    - `scripts/vision_smoke.sh`
+
+Important: this bucket is mixed. Some parts are valuable local-runtime work, but the patch also contains unfinished bridge/remote logic. Split those concerns before committing anything here.
 
 3. Only then decide whether the browser/remote stack is worth finishing now:
    - `character_eng/bridge.py`

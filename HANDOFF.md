@@ -100,68 +100,61 @@ There are many unrelated modified/untracked files on this branch from earlier wo
 
 ## Dirty Tree Triage
 
-The remaining uncommitted files are not one coherent change. Treat them as three separate buckets.
+The remaining uncommitted files are not one coherent change. After reviewing the actual diffs, the right split is more specific than last night’s rough bucket list.
 
 ### 1. Keep Soon
 
-These look aligned with the current local-first roadmap and are likely worth stabilizing and committing after review:
+These are coherent, local-first, and directly support the validated path from tonight:
 
-- `character_eng/person.py`
-- `character_eng/qa_chat.py`
-- `character_eng/qa_world.py`
-- `character_eng/scenario.py`
-- `prompts/reconcile_system.txt`
-- `prompts/global_rules.txt`
-- `prompts/characters/greg/character.txt`
-- `tests/test_e2e.py`
-- `tests/test_world.py`
-- `tests/test_perception.py`
-- `scripts/validate.sh`
-- `scripts/vision_smoke.sh`
-- `character_eng/dashboard/system_map.html`
-
-Why these look current:
-
-- They support the local core path, QA strictness, scenario control, and review tooling.
-- They match the direction already validated in tonight's committed work.
+| File | Call | Why |
+|------|------|-----|
+| `character_eng/person.py` | keep soon | Sanitizes generated person-fact IDs and rejects invalid presence values; aligns with the real reconcile corruption we saw. |
+| `character_eng/qa_chat.py` | keep soon | Makes QA match the current split eval path and fails on leaked fact IDs / stale events instead of silently passing. |
+| `character_eng/qa_world.py` | keep soon | Upgrades world QA from schema smoke to actual drift detection (duplicate events, stale history, leaked IDs). |
+| `character_eng/scenario.py` | keep soon | Small, useful change: lets callers pick a scenario TOML filename explicitly. |
+| `prompts/reconcile_system.txt` | keep soon | Tightens reconciler instructions around plain fact text and event freshness; matches real bugs seen in logs. |
+| `prompts/global_rules.txt` | keep soon | Removes AI/meta self-description drift and strengthens the in-character rule. |
+| `prompts/characters/greg/character.txt` | keep soon | Cleans up Greg’s “large language models” self-reference. |
+| `tests/test_world.py` | keep soon | Encodes the sanitize/dedupe behavior and explicit redirect handling into tests. |
+| `tests/test_e2e.py` | keep soon | Fixes provider gating and adds a real local vision mock dialogue path instead of only the old smoke route. |
+| `tests/test_perception.py` | keep soon | Adds coverage for the dialogue sim actually being present/loadable. |
+| `scripts/validate.sh` | keep soon | Good local/CI validation entrypoint; current shape is practical and aligned with the repo. |
+| `scripts/vision_smoke.sh` | keep soon | Valuable live contract check for the real vision service endpoints. |
+| `character_eng/dashboard/system_map.html` | keep soon | Useful artifact for onboarding/debugging; low risk. |
 
 ### 2. Keep But Redesign / Re-validate
 
-These look real, but incomplete or partially superseded. They should not be trusted as “done” without another focused pass:
+These are real work, but still tangled or incomplete enough that they should not just be committed as-is:
 
-- `character_eng/bridge.py`
-- `character_eng/browser_voice.py`
-- `character_eng/dashboard/index.html`
-- `character_eng/dashboard/server.py`
-- `character_eng/config.py`
-- `config.example.toml`
-- `tests/test_dashboard.py`
-- `tests/test_bridge.py`
-- `tests/test_config.py`
-- `tests/test_runtime_controls.py`
-- `Dockerfile`
-- `.dockerignore`
-- `.github/workflows/deploy.yml`
-- `deploy/runpod.py`
-- `deploy/runpod.toml`
-- `CLAUDE.md`
-
-Why these need caution:
-
-- This is mostly the browser/remote-dev stack.
-- Some of it is useful and likely correct in direction.
-- Earlier review found gaps like dead fallback paths, incomplete SSE/live update behavior, and deploy/test coupling that was not fully hardened.
+| File | Call | Why |
+|------|------|-----|
+| `character_eng/bridge.py` | redesign / re-validate | Useful direction, but earlier review already found live-event delivery and command fallback issues. |
+| `character_eng/browser_voice.py` | redesign / re-validate | Incomplete relative to the live `VoiceIO` path: no filler, less instrumentation, and it diverges from the local runtime we just hardened. |
+| `character_eng/dashboard/index.html` | redesign / re-validate | Contains both good local runtime UI ideas and unfinished bridge/remote logic in one huge patch; should be separated before landing. |
+| `character_eng/dashboard/server.py` | redesign / re-validate | Mostly fine, but it is coupled to the dashboard patch above and should land with a cleaner local-runtime story. |
+| `character_eng/config.py` | redesign / re-validate | The filler persistence pieces are good; the bridge config additions are tied to the unfinished browser path. Split before committing. |
+| `config.example.toml` | redesign / re-validate | Same issue as `config.py`: mixed local-good and bridge-specific config in one patch. |
+| `tests/test_dashboard.py` | redesign / re-validate | Some useful local coverage, but it is bundled with the mixed dashboard patch. |
+| `tests/test_bridge.py` | redesign / re-validate | Helpful if the bridge path stays alive, but not enough reason to commit the bridge stack unchanged. |
+| `tests/test_config.py` | redesign / re-validate | Good once config changes are split into local vs bridge concerns. |
+| `tests/test_runtime_controls.py` | redesign / re-validate | Valuable, but should land with a more deliberate local-runtime dashboard patch. |
+| `Dockerfile` | redesign / re-validate | Useful base, but deploy should follow stable local/browser behavior, not lead it. |
+| `.dockerignore` | redesign / re-validate | Fine mechanically, but part of the same deploy bucket. |
+| `.github/workflows/deploy.yml` | redesign / re-validate | Better than nothing, but should not be trusted until the deploy/runtime story is intentionally finished. |
+| `deploy/runpod.py` | redesign / re-validate | Potentially useful ops tooling, but outside the current local-first stabilization path. |
+| `deploy/runpod.toml` | redesign / re-validate | Same as above. |
+| `CLAUDE.md` | redesign / re-validate | Documentation drifted toward the unfinished bridge/deploy path; should be updated only after decisions are made. |
 
 ### 3. Drop / Ignore / Do Not Commit
 
-These are local artifacts or likely stale planning residue:
+These should not drive decisions unless deliberately mined for context:
 
-- `.claude/`
-- `services/vision/app.log`
-- `services/vision/vllm.log`
-- `vision_plan.md`
-
-These should not shape the roadmap unless deliberately mined for notes.
+| File | Call | Why |
+|------|------|-----|
+| `.claude/` | ignore / do not commit | Local workspace residue, not repo product code. |
+| `services/vision/app.log` | ignore / do not commit | Local runtime log. |
+| `services/vision/vllm.log` | ignore / do not commit | Local runtime log. |
+| `vision_plan.md` | likely stale | Planning residue; useful only if someone explicitly wants historical notes. |
 
 ## Recommended Burndown Order
 
@@ -173,7 +166,7 @@ Tomorrow’s work should not start by “finishing everything in the dirty tree.
 
 2. Local dashboard/runtime visibility
    Files: `dashboard/index.html`, `dashboard/server.py`, `config.py`, `system_map.html`.
-   Goal: make local model state, pause/reset, and thread controls fully trustworthy.
+   Goal: split the local-runtime UI pieces from the unfinished bridge logic, then land the local pieces cleanly.
 
 3. Browser/remote bridge
    Files: `bridge.py`, `browser_voice.py`, deploy stack, related tests.
@@ -193,6 +186,7 @@ Tomorrow, the first agent should:
 2. Read `tomorrow-prompt.md`.
 3. Review the latest committed QA/viewer commits, not the whole dirty tree at once.
 4. Convert the “Keep Soon” bucket into one or two focused commits before touching the bridge/deploy stack again.
+5. For the dashboard/config bucket, separate `local-runtime controls` from `browser bridge` before making commit decisions.
 
 # Browser Bridge Handoff — 2026-03-06
 
