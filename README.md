@@ -453,8 +453,8 @@ uv run -m character_eng.open_report                        # latest report in lo
 uv run -m character_eng.open_report logs/some_report.html  # specific file
 uv run -m character_eng.open_report --test                 # generate + serve a spoofed test report
 
-# Focused browser regression for the full-stack trace viewer
-uv run pytest tests/test_qa_full_stack_playwright.py
+# Focused browser regressions for the dashboard + full-stack trace viewer
+uv run pytest tests/test_dashboard_playwright.py tests/test_qa_full_stack_playwright.py
 ```
 
 `test_plan.md` defines the QA chat scenarios in a human-editable format — add new test sections without touching code. Supports `send:`, `world:`, `script:` (load beats for eval tracking), `beat` (run eval), and `expect:` commands including `eval_status:<status>` to assert eval outcomes. Eval now runs synchronously via split microservices (script_check + thought) so results are immediate.
