@@ -2,7 +2,7 @@ You are continuing work in `/home/logan/Projects/character-eng` on branch `codex
 
 Start by reading:
 
-1. `HANDOFF.md`
+1. `CURRENT_STATE.md`
 2. `character_eng/qa_full_stack.py`
 3. `logs/qa_full_stack_greg_groq-llama-8b_20260307_204917.html`
 
@@ -56,7 +56,7 @@ Primary goal for tomorrow:
   - redesign/re-validate
   - drop/ignore
 
-That triage has now been sketched in `HANDOFF.md`; do not repeat it from scratch unless the worktree changes. Use it as the starting hypothesis and validate it file-by-file as you touch things.
+That triage has now been sketched in `CURRENT_STATE.md`; do not repeat it from scratch unless the worktree changes. Use it as the starting hypothesis and validate it file-by-file as you touch things.
 
 Then execute this burndown:
 
@@ -107,4 +107,4 @@ Desired output tomorrow:
 
 - A short review of the dirty tree with specific keep/redesign/drop calls.
 - At least one focused commit for the local-core bucket.
-- Updated `HANDOFF.md` with what was actually kept and what was intentionally deferred.
+- Updated `CURRENT_STATE.md` with what was actually kept and what was intentionally deferred.

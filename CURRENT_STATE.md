@@ -180,10 +180,10 @@ Tomorrow’s work should not start by “finishing everything in the dirty tree.
 
 Push the branch if you want tonight’s committed QA/viewer work safely remote. The dirty worktree will not be pushed unless it is committed.
 
-Tomorrow, the first agent should:
+The next agent should:
 
 1. Read this file.
-2. Read `tomorrow-prompt.md`.
+2. Read `AGENT_START.md`.
 3. Review the latest committed QA/viewer commits, not the whole dirty tree at once.
 4. Convert the “Keep Soon” bucket into one or two focused commits before touching the bridge/deploy stack again.
 5. For the dashboard/config bucket, separate `local-runtime controls` from `browser bridge` before making commit decisions.
