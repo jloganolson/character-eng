@@ -6,7 +6,6 @@
 <title>Character Dashboard</title>
 <style>
   :root {
-    /* Gruvbox Dark */
     --bg: #282828;
     --bg-alt: #1d2021;
     --panel: #3c3836;
@@ -23,9 +22,20 @@
     --hold: #928374;
     --blue: #458588;
     --cyan: #689d6a;
+    --stream-session: #7dd3fc;
+    --stream-input: #83a598;
+    --stream-chat: #f59e0b;
+    --stream-expression: #fb7185;
+    --stream-eval: #8ec07c;
+    --stream-director: #c084fc;
+    --stream-planner: #60a5fa;
+    --stream-world: #d3869b;
+    --stream-vision: #34d399;
+    --stream-other: #cbd5e1;
+    --sidebar-width: 110px;
+    --time-zoom: 1;
   }
   :root.light {
-    /* Gruvbox Light */
     --bg: #fbf1c7;
     --bg-alt: #f2e5bc;
     --panel: #ebdbb2;
@@ -42,10 +52,20 @@
     --hold: #928374;
     --blue: #458588;
     --cyan: #689d6a;
+    --stream-session: #1d4ed8;
+    --stream-input: #076678;
+    --stream-chat: #b45309;
+    --stream-expression: #be185d;
+    --stream-eval: #427b58;
+    --stream-director: #7c3aed;
+    --stream-planner: #1d4ed8;
+    --stream-world: #8f3f71;
+    --stream-vision: #047857;
+    --stream-other: #475569;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Consolas', monospace;
+    font-family: "JetBrains Mono", "Fira Code", "SF Mono", "Consolas", monospace;
     background: var(--bg);
     color: var(--text);
     height: 100vh;
@@ -53,7 +73,9 @@
     flex-direction: column;
     overflow: hidden;
   }
-  /* Header */
+  button, input, select {
+    font: inherit;
+  }
   #header {
     display: flex;
     align-items: center;
@@ -78,107 +100,384 @@
     border-radius: 4px;
     font-size: 1em;
   }
-  /* Main layout */
   #main {
     display: flex;
     flex: 1;
     overflow: hidden;
   }
-  /* Conversation timeline */
   #timeline {
     flex: 7;
-    overflow-y: auto;
-    padding: 0.5em 1em;
-    scroll-behavior: smooth;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0.6em;
   }
-  #timeline::-webkit-scrollbar { width: 6px; }
-  #timeline::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-  .turn {
-    margin-bottom: 0.8em;
-    padding: 0.5em 0.8em;
-    border-left: 3px solid transparent;
-    border-radius: 0 4px 4px 0;
+  #stream-app {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    height: 100%;
+    gap: 0.6em;
   }
-  .turn-user { border-left-color: var(--user); }
-  .turn-beat { border-left-color: var(--beat); }
-  .turn-world, .turn-see { border-left-color: var(--narrator); }
-  .turn-perception { border-left-color: var(--narrator); }
-  .turn-label {
-    font-size: 0.75em;
-    color: var(--text-dim);
-    margin-bottom: 0.2em;
-  }
-  .turn-input {
-    margin-bottom: 0.3em;
-  }
-  .turn-input.user-text { color: var(--user); }
-  .turn-input.beat-text { color: var(--beat); font-style: italic; }
-  .turn-input.world-text { color: var(--narrator); font-style: italic; }
-  .turn-input.perception-text { color: var(--narrator); font-size: 0.9em; }
-  .turn-response {
-    color: var(--npc);
-    padding: 0.3em 0.6em;
-    background: var(--bg-alt);
-    border-radius: 4px;
-    margin-top: 0.2em;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-  }
-  .turn-response .cursor {
-    display: inline-block;
-    width: 0.5em;
-    height: 1em;
-    background: var(--npc);
-    animation: blink 1s step-end infinite;
-    vertical-align: text-bottom;
-  }
-  @keyframes blink { 50% { opacity: 0; } }
-  .turn-meta {
-    font-size: 0.78em;
-    color: var(--text-dim);
-    margin-top: 0.3em;
-  }
-  .turn-meta details { margin-top: 0.15em; }
-  .turn-meta summary { cursor: pointer; }
-  .turn-meta .eval-body {
-    padding: 0.3em 0.5em;
-    background: var(--bg-alt);
-    border-radius: 4px;
-    margin-top: 0.2em;
-    font-size: 0.95em;
-  }
-  .meta-tag {
-    display: inline-block;
-    padding: 0 0.4em;
-    border-radius: 3px;
-    font-size: 0.85em;
-    margin-right: 0.3em;
-  }
-  .meta-tag.advance { background: var(--advance); color: var(--bg); }
-  .meta-tag.hold { background: var(--hold); color: var(--bg); }
-  .meta-tag.off_book { background: var(--narrator); color: var(--bg); }
-  /* Sidebar */
-  #sidebar {
-    flex: 3;
-    overflow-y: auto;
-    padding: 0.5em;
-    border-left: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    gap: 0.5em;
-  }
-  .sidebar-panel {
+  #stream-toolbar,
+  .sidebar-panel,
+  #stream-inspector,
+  .lane-track,
+  #stream-ruler,
+  .stream-empty {
     background: var(--panel);
     border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  #stream-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.9em;
+    padding: 0.7em 0.9em;
+  }
+  .toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+  }
+  .toolbar-group label {
+    color: var(--text-dim);
+    font-size: 0.8em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .toolbar-group input[type="range"] {
+    width: 120px;
+  }
+  .toolbar-group select {
+    background: var(--bg-alt);
+    color: var(--text);
+    border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 0.5em 0.7em;
+    padding: 0.2em 0.4em;
+  }
+  #lane-toggle-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45em;
+    margin-left: auto;
+  }
+  .lane-toggle {
+    border: 1px solid var(--border);
+    background: var(--bg-alt);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 0.35em 0.7em;
+    cursor: pointer;
+    font-size: 0.78em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .lane-toggle.inactive {
+    opacity: 0.45;
+  }
+  #stream-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    gap: 0.6em;
+    min-height: 0;
+  }
+  #stream-viewport {
+    overflow: auto;
+    min-height: 0;
+    padding-right: 0.2em;
+  }
+  #stream-viewport::-webkit-scrollbar,
+  #sidebar::-webkit-scrollbar,
+  .chronology-pane::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  #stream-viewport::-webkit-scrollbar-thumb,
+  #sidebar::-webkit-scrollbar-thumb,
+  .chronology-pane::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 999px;
+  }
+  #stream-ruler {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    min-height: 34px;
+    margin-bottom: 0.6em;
+    overflow: hidden;
+  }
+  #stream-ruler-inner {
+    position: relative;
+    height: 34px;
+    min-width: 100%;
+  }
+  .ruler-tick {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border);
+  }
+  .ruler-tick span {
+    position: absolute;
+    top: 5px;
+    left: 6px;
+    color: var(--text-dim);
+    font-size: 0.72em;
+    white-space: nowrap;
+  }
+  .stream-empty {
+    padding: 1.4em;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+  .stream-lane {
+    display: grid;
+    grid-template-columns: var(--sidebar-width) 1fr;
+    gap: 0.65em;
+    align-items: start;
+    margin-bottom: 0.55em;
+  }
+  .stream-lane.hidden {
+    display: none;
+  }
+  .stream-lane-label {
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    align-self: stretch;
+    padding: 0.7em 0.5em 0 0;
+    color: var(--text-dim);
+    font-size: 0.78em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: linear-gradient(90deg, var(--bg) 0%, var(--bg) 78%, rgba(0, 0, 0, 0) 100%);
+  }
+  .lane-track {
+    position: relative;
+    min-height: 96px;
+    overflow: hidden;
+  }
+  .lane-track-inner {
+    position: relative;
+    min-height: 100%;
+  }
+  .stream-card {
+    position: absolute;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.14);
+    padding: 0.42em 0.55em;
+    cursor: pointer;
+    overflow: hidden;
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+  }
+  .stream-card:hover {
+    border-color: var(--text-dim);
+  }
+  .stream-card.selected {
+    border-color: var(--narrator);
+    box-shadow: 0 0 0 1px var(--narrator);
+  }
+  .stream-card.context {
+    box-shadow: 0 0 0 1px var(--blue);
+  }
+  .stream-card.compact {
+    padding: 0.16em 0.45em;
+    display: flex;
+    align-items: center;
+    gap: 0.45em;
+  }
+  .stream-card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.55em;
+    margin-bottom: 0.25em;
+  }
+  .stream-card.compact .stream-card-head {
+    margin-bottom: 0;
+    gap: 0.35em;
+  }
+  .stream-card-type {
+    color: var(--text-dim);
+    font-size: 0.68em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .stream-card.compact .stream-card-type {
+    font-size: 0.62em;
+  }
+  .stream-card-time {
+    color: var(--text-dim);
+    font-size: 0.68em;
+    white-space: nowrap;
+  }
+  .stream-card-label {
+    font-size: 0.8em;
+    line-height: 1.35;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .stream-card.compact .stream-card-label {
+    font-size: 0.74em;
+    line-height: 1.15;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .stream-card-detail {
+    margin-top: 0.25em;
+    color: var(--text-dim);
+    font-size: 0.72em;
+    line-height: 1.35;
+  }
+  .stream-card.compact .stream-card-detail {
+    display: none;
+  }
+  .reply-markers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.28em;
+    margin-top: 0.35em;
+  }
+  .stream-card.compact .reply-markers {
+    display: none;
+  }
+  .reply-marker {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.12em 0.42em;
+    color: var(--text-dim);
+    font-size: 0.66em;
+  }
+  .lane-session .stream-card { border-left: 3px solid var(--stream-session); }
+  .lane-input .stream-card { border-left: 3px solid var(--stream-input); }
+  .lane-chat .stream-card { border-left: 3px solid var(--stream-chat); }
+  .lane-expression .stream-card { border-left: 3px solid var(--stream-expression); }
+  .lane-eval .stream-card { border-left: 3px solid var(--stream-eval); }
+  .lane-director .stream-card { border-left: 3px solid var(--stream-director); }
+  .lane-planner .stream-card { border-left: 3px solid var(--stream-planner); }
+  .lane-world .stream-card { border-left: 3px solid var(--stream-world); }
+  .lane-vision .stream-card { border-left: 3px solid var(--stream-vision); }
+  .lane-other .stream-card { border-left: 3px solid var(--stream-other); }
+  #stream-inspector {
+    display: grid;
+    grid-template-rows: auto auto auto 1fr;
+    gap: 0.75em;
+    padding: 0.9em;
+    min-height: 0;
+  }
+  .inspector-title {
+    font-size: 0.8em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+  }
+  #detail-summary {
+    display: grid;
+    gap: 0.4em;
+  }
+  #detail-type,
+  #detail-lane,
+  #detail-time,
+  #detail-seq {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.18em 0.45em;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-alt);
+    font-size: 0.74em;
+    color: var(--text-dim);
+  }
+  #detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35em;
+  }
+  #detail-label {
+    font-size: 0.94em;
+    line-height: 1.45;
+  }
+  #detail-detail {
+    color: var(--text-dim);
+    font-size: 0.78em;
+    line-height: 1.45;
+    white-space: pre-wrap;
+  }
+  .detail-section {
+    display: grid;
+    gap: 0.4em;
+    min-height: 0;
+  }
+  .detail-section label {
+    font-size: 0.76em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+  }
+  #detail-related button,
+  .chronology-row {
+    width: 100%;
+    text-align: left;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-alt);
+    color: var(--text);
+    padding: 0.5em 0.6em;
+    cursor: pointer;
+  }
+  #detail-related {
+    display: grid;
+    gap: 0.4em;
+  }
+  .chronology-pane {
+    display: grid;
+    gap: 0.35em;
+    overflow: auto;
+    min-height: 0;
+    padding-right: 0.2em;
+  }
+  .chronology-row.selected {
+    border-color: var(--narrator);
+    box-shadow: 0 0 0 1px var(--narrator);
+  }
+  .chronology-row small,
+  #detail-related small {
+    display: block;
+    margin-top: 0.22em;
+    color: var(--text-dim);
+  }
+  #detail-payload {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-alt);
+    padding: 0.7em;
+    font-size: 0.72em;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow: auto;
+    max-height: 220px;
+  }
+  #sidebar {
+    flex: 3;
+    min-width: 310px;
+    overflow-y: auto;
+    padding: 0.6em 0.6em 0.6em 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6em;
+  }
+  .sidebar-panel {
+    padding: 0.55em 0.7em;
   }
   .sidebar-panel h3 {
     font-size: 0.8em;
     color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 0.4em;
+    margin-bottom: 0.45em;
   }
   .sidebar-panel .content {
     font-size: 0.82em;
@@ -195,12 +494,10 @@
     margin-bottom: 0.3em;
   }
   #vision-meta { font-size: 0.8em; color: var(--text-dim); }
-  /* Beat list in stage panel */
   .beat-list { margin-top: 0.3em; }
   .beat-item { margin: 0.1em 0; font-size: 0.85em; }
   .beat-item.current { color: var(--beat); font-weight: 600; }
   .beat-item.done { color: var(--text-dim); text-decoration: line-through; }
-  /* Footer */
   #footer {
     display: flex;
     align-items: center;
@@ -213,7 +510,6 @@
   }
   #footer .stat { color: var(--text-dim); }
   #footer .stat b { color: var(--text); }
-  /* Input bar */
   #input-bar {
     display: flex;
     gap: 0.5em;
@@ -229,9 +525,8 @@
     color: var(--text);
     padding: 0.4em 0.7em;
     border-radius: 4px;
-    font-family: inherit;
-    font-size: 0.9em;
     outline: none;
+    font-size: 0.9em;
   }
   #chat-input:focus { border-color: var(--user); }
   #chat-input::placeholder { color: var(--text-dim); }
@@ -242,7 +537,6 @@
     padding: 0.4em 1em;
     border-radius: 4px;
     cursor: pointer;
-    font-family: inherit;
     font-size: 0.9em;
   }
   .hotkey-hints {
@@ -260,23 +554,51 @@
     border-radius: 2px;
     font-size: 0.9em;
   }
-  /* Scroll lock */
-  #scroll-lock {
-    position: fixed;
-    bottom: 5em;
-    right: 1.5em;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    color: var(--text-dim);
-    padding: 0.3em 0.6em;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.8em;
-    opacity: 0;
-    transition: opacity 0.2s;
-    z-index: 10;
+  @media (max-width: 1400px) {
+    #stream-main {
+      grid-template-columns: minmax(0, 1fr) 320px;
+    }
   }
-  #scroll-lock.visible { opacity: 1; }
+  @media (max-width: 1180px) {
+    #main {
+      flex-direction: column;
+    }
+    #timeline {
+      min-height: 55vh;
+    }
+    #sidebar {
+      min-width: 0;
+      padding: 0 0.6em 0.6em 0.6em;
+    }
+  }
+  @media (max-width: 980px) {
+    #stream-main {
+      grid-template-columns: 1fr;
+    }
+    #stream-inspector {
+      max-height: 42vh;
+    }
+  }
+  @media (max-width: 760px) {
+    #header {
+      flex-wrap: wrap;
+      gap: 0.8em;
+    }
+    #lane-toggle-grid {
+      margin-left: 0;
+    }
+    .stream-lane {
+      grid-template-columns: 1fr;
+    }
+    .stream-lane-label {
+      position: static;
+      padding: 0 0 0.25em 0;
+      background: none;
+    }
+    .hotkey-hints {
+      display: none;
+    }
+  }
 </style>
 </head>
 <body>
@@ -291,7 +613,69 @@
 </div>
 
 <div id="main">
-  <div id="timeline"></div>
+  <div id="timeline">
+    <div id="stream-app">
+      <div id="stream-toolbar">
+        <div class="toolbar-group">
+          <label for="stream-density">Density</label>
+          <select id="stream-density">
+            <option value="expanded">Expanded</option>
+            <option value="compact">Compact</option>
+          </select>
+        </div>
+        <div class="toolbar-group">
+          <label for="time-zoom">Time Zoom</label>
+          <input id="time-zoom" type="range" min="0.5" max="3" step="0.1" value="1">
+          <span id="time-zoom-value">1.0x</span>
+        </div>
+        <div class="toolbar-group">
+          <label for="show-chronology">Chronology</label>
+          <input id="show-chronology" type="checkbox" checked>
+        </div>
+        <div id="lane-toggle-grid"></div>
+      </div>
+
+      <div id="stream-main">
+        <div id="stream-viewport">
+          <div id="stream-ruler"><div id="stream-ruler-inner"></div></div>
+          <div id="stream-empty" class="stream-empty">Waiting for live events. The dashboard will populate as the session starts.</div>
+          <div id="stream-lanes"></div>
+        </div>
+
+        <aside id="stream-inspector">
+          <div class="detail-section">
+            <div class="inspector-title">Event Detail</div>
+            <div id="detail-summary">
+              <div id="detail-meta">
+                <span id="detail-time">+0.00s</span>
+                <span id="detail-type">type</span>
+                <span id="detail-lane">lane</span>
+                <span id="detail-seq">seq 0</span>
+              </div>
+              <div id="detail-label">Select a live event to inspect it.</div>
+              <div id="detail-detail">The stream view groups interwoven activity by lane and highlights all events from the same turn when selected.</div>
+            </div>
+          </div>
+
+          <div class="detail-section">
+            <label>Related In Turn</label>
+            <div id="detail-related"><div style="color:var(--text-dim);">No event selected.</div></div>
+          </div>
+
+          <div class="detail-section" id="detail-chronology-wrap">
+            <label>Chronology</label>
+            <div class="chronology-pane" id="detail-chronology"></div>
+          </div>
+
+          <div class="detail-section">
+            <label>Payload</label>
+            <pre id="detail-payload">{}</pre>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
   <div id="sidebar">
     <div class="sidebar-panel" id="runtime-panel">
       <h3>Runtime</h3>
@@ -321,6 +705,7 @@
         </div>
       </div>
     </div>
+
     <div class="sidebar-panel" id="vision-panel" style="display:none;">
       <h3>Vision</h3>
       <div class="content">
@@ -328,18 +713,22 @@
         <div id="vision-meta"></div>
       </div>
     </div>
+
     <div class="sidebar-panel" id="world-panel">
       <h3>World State</h3>
       <div class="content" id="world-content"><span class="fact" style="color:var(--text-dim)">No world state yet</span></div>
     </div>
+
     <div class="sidebar-panel" id="stage-panel">
       <h3>Stage</h3>
       <div class="content" id="stage-content">--</div>
     </div>
+
     <div class="sidebar-panel" id="plan-panel" style="display:none;">
       <h3>Script</h3>
       <div class="content" id="plan-content"></div>
     </div>
+
     <div class="sidebar-panel" id="people-panel">
       <h3>People</h3>
       <div class="content" id="people-content"><span style="color:var(--text-dim)">No people tracked</span></div>
@@ -363,183 +752,195 @@
   </div>
 </div>
 
-<div id="scroll-lock">&#x2193; New messages</div>
-
 <script>
 (function() {
-  // State
+  const LANE_ORDER = ["session", "input", "chat", "expression", "eval", "director", "planner", "world", "vision", "other"];
+  const LANE_COLORS = {
+    session: "var(--stream-session)",
+    input: "var(--stream-input)",
+    chat: "var(--stream-chat)",
+    expression: "var(--stream-expression)",
+    eval: "var(--stream-eval)",
+    director: "var(--stream-director)",
+    planner: "var(--stream-planner)",
+    world: "var(--stream-world)",
+    vision: "var(--stream-vision)",
+    other: "var(--stream-other)",
+  };
+
   let sessionStart = null;
   let turnCount = 0;
-  let autoScroll = true;
-  let currentTurnEl = null;
-  let currentResponseEl = null;
   let lastSeq = 0;
+  let currentTurnId = 0;
+  let activeReplyKey = null;
+  let streamKey = 0;
+  let selectedStreamKey = null;
+  let compactMode = false;
+  let timeZoom = 1;
+
   let runtimeControls = {reconcile: true, vision: true, auto_beat: true, filler: true};
   let visionService = {
-    url: '',
+    url: "",
     health: false,
     managed: false,
     external: false,
-    state: 'stopped',
+    state: "stopped",
     autostart: false,
-    mode: 'camera',
-    mockReplay: ''
+    mode: "camera",
+    mockReplay: ""
   };
   let visionModels = null;
   let visionMemory = null;
-  let visionFeedSrc = '';
+  let visionFeedSrc = "";
 
-  const timeline = document.getElementById('timeline');
-  const scrollLock = document.getElementById('scroll-lock');
-  const chatInput = document.getElementById('chat-input');
-  const sendBtn = document.getElementById('send-btn');
+  const hiddenLanes = new Set();
+  const streamEvents = [];
+  const streamEventByKey = new Map();
 
-  // Theme
-  const themeBtn = document.getElementById('theme-toggle');
+  const timeline = document.getElementById("timeline");
+  const chatInput = document.getElementById("chat-input");
+  const sendBtn = document.getElementById("send-btn");
+  const streamViewport = document.getElementById("stream-viewport");
+  const streamRulerInner = document.getElementById("stream-ruler-inner");
+  const streamLanes = document.getElementById("stream-lanes");
+  const streamEmpty = document.getElementById("stream-empty");
+  const laneToggleGrid = document.getElementById("lane-toggle-grid");
+  const detailChronologyWrap = document.getElementById("detail-chronology-wrap");
+
+  const themeBtn = document.getElementById("theme-toggle");
   function setTheme(light) {
-    document.documentElement.classList.toggle('light', light);
-    themeBtn.textContent = light ? '\u2600' : '\u263D';
-    localStorage.setItem('dashboard-theme', light ? 'light' : 'dark');
+    document.documentElement.classList.toggle("light", light);
+    themeBtn.textContent = light ? "\u2600" : "\u263D";
+    localStorage.setItem("dashboard-theme", light ? "light" : "dark");
   }
-  themeBtn.addEventListener('click', () => {
-    setTheme(!document.documentElement.classList.contains('light'));
+  themeBtn.addEventListener("click", () => {
+    setTheme(!document.documentElement.classList.contains("light"));
   });
-  if (localStorage.getItem('dashboard-theme') === 'light') setTheme(true);
+  if (localStorage.getItem("dashboard-theme") === "light") setTheme(true);
 
-  // Auto-scroll
-  timeline.addEventListener('scroll', () => {
-    const atBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 50;
-    autoScroll = atBottom;
-    scrollLock.classList.toggle('visible', !atBottom);
-  });
-  scrollLock.addEventListener('click', () => {
-    timeline.scrollTop = timeline.scrollHeight;
-    autoScroll = true;
-    scrollLock.classList.remove('visible');
-  });
-  function scrollToBottom() {
-    if (autoScroll) timeline.scrollTop = timeline.scrollHeight;
-  }
-
-  // Uptime ticker
   setInterval(() => {
     if (!sessionStart) return;
     const s = Math.floor((Date.now() / 1000) - sessionStart);
     const m = Math.floor(s / 60);
     const sec = s % 60;
-    document.getElementById('h-uptime').textContent = m > 0 ? `${m}m${sec}s` : `${sec}s`;
+    document.getElementById("h-uptime").textContent = m > 0 ? `${m}m${sec}s` : `${sec}s`;
   }, 1000);
 
-  // Input handling
   function sendInput(text) {
     if (!text.trim()) return;
-    fetch('/send', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+    fetch("/send", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
       body: JSON.stringify({text: text.trim()})
     });
-    chatInput.value = '';
+    chatInput.value = "";
   }
+
   function sendThreadCommand(name) {
     sendInput(`/threads ${name} toggle`);
   }
+
   function sendVisionServiceCommand(action) {
     sendInput(`/vision-service ${action}`);
   }
-  chatInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
+
+  chatInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
       e.preventDefault();
       sendInput(chatInput.value);
     }
   });
-  sendBtn.addEventListener('click', () => sendInput(chatInput.value));
+  sendBtn.addEventListener("click", () => sendInput(chatInput.value));
 
-  // Global hotkeys (only when input not focused)
-  document.addEventListener('keydown', (e) => {
+  document.addEventListener("keydown", (e) => {
     if (document.activeElement === chatInput) return;
-    switch(e.key) {
-      case 'b': sendInput('/beat'); break;
-      case 'i': sendInput('/info'); break;
-      case 't': sendInput('/trace'); break;
-      case 'q': sendInput('/quit'); break;
-      case '1': case '2': case '3': case '4': sendInput(e.key); break;
+    switch (e.key) {
+      case "b": sendInput("/beat"); break;
+      case "i": sendInput("/info"); break;
+      case "t": sendInput("/trace"); break;
+      case "q": sendInput("/quit"); break;
+      case "1":
+      case "2":
+      case "3":
+      case "4":
+        sendInput(e.key);
+        break;
     }
   });
 
-  // Escape HTML
-  function esc(s) {
-    const d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
+  function esc(value) {
+    const div = document.createElement("div");
+    div.textContent = value == null ? "" : String(value);
+    return div.innerHTML;
   }
 
   function statusColor(status) {
-    switch ((status || '').toLowerCase()) {
-      case 'ready': return 'var(--advance)';
-      case 'managed': return 'var(--advance)';
-      case 'external': return 'var(--cyan)';
-      case 'loading': return 'var(--warning)';
-      case 'starting': return 'var(--warning)';
-      case 'error': return 'var(--error)';
-      case 'off':
-      case 'not_loaded':
-      case 'stopped':
-      default: return 'var(--text-dim)';
+    switch ((status || "").toLowerCase()) {
+      case "ready": return "var(--advance)";
+      case "managed": return "var(--advance)";
+      case "external": return "var(--cyan)";
+      case "loading":
+      case "starting":
+        return "var(--narrator)";
+      case "error":
+        return "var(--error)";
+      default:
+        return "var(--text-dim)";
     }
   }
 
   function renderVisionModelCard(label, status, detail) {
     const color = statusColor(status);
-    const suffix = detail ? `<div style="font-size:0.78em;color:var(--text-dim);margin-top:0.18em;">${esc(detail)}</div>` : '';
+    const suffix = detail ? `<div style="font-size:0.78em;color:var(--text-dim);margin-top:0.18em;">${esc(detail)}</div>` : "";
     return `<div style="border:1px solid var(--border);border-radius:8px;padding:0.5em 0.6em;background:var(--panel-hover);">
       <div style="display:flex;justify-content:space-between;gap:0.75em;align-items:center;">
         <span>${esc(label)}</span>
-        <b style="color:${color};text-transform:lowercase;">${esc(status || 'off')}</b>
+        <b style="color:${color};text-transform:lowercase;">${esc(status || "off")}</b>
       </div>
       ${suffix}
     </div>`;
   }
 
   function updateVisionFeedUrl() {
-    const visionFeed = document.getElementById('vision-feed');
+    const visionFeed = document.getElementById("vision-feed");
     if (!visionService.url) return;
-    const nextSrc = `${visionService.url.replace(/\/$/, '')}/video_feed`;
+    const nextSrc = `${visionService.url.replace(/\/$/, "")}/video_feed`;
     if (nextSrc === visionFeedSrc) return;
     visionFeedSrc = nextSrc;
-    visionFeed.style.display = '';
+    visionFeed.style.display = "";
     visionFeed.src = nextSrc;
   }
 
   function renderVisionServiceStatus() {
-    const statusEl = document.getElementById('vision-service-status');
-    const linkEl = document.getElementById('vision-service-link');
-    const autoBtn = document.getElementById('vision-service-autostart');
-    const source = visionService.managed ? 'managed by app'
-      : visionService.external ? 'external service'
-      : 'not running';
+    const statusEl = document.getElementById("vision-service-status");
+    const linkEl = document.getElementById("vision-service-link");
+    const autoBtn = document.getElementById("vision-service-autostart");
+    const source = visionService.managed ? "managed by app"
+      : visionService.external ? "external service"
+      : "not running";
     statusEl.innerHTML = [
-      `service: <b style="color:${statusColor(visionService.state)}">${esc(visionService.state || 'stopped')}</b>`,
-      `auto-start: <b>${visionService.autostart ? 'on' : 'off'}</b>`,
-      `ingest: <b>${runtimeControls.vision ? 'on' : 'off'}</b>`,
+      `service: <b style="color:${statusColor(visionService.state)}">${esc(visionService.state || "stopped")}</b>`,
+      `auto-start: <b>${visionService.autostart ? "on" : "off"}</b>`,
+      `ingest: <b>${runtimeControls.vision ? "on" : "off"}</b>`,
       `source: <b>${esc(source)}</b>`,
-      visionService.url ? `url: <b>${esc(visionService.url)}</b>` : '',
-      visionService.mockReplay ? `mock: <b>${esc(visionService.mockReplay)}</b>` : ''
-    ].filter(Boolean).join('<br>');
-    autoBtn.textContent = `autostart ${visionService.autostart ? 'on' : 'off'}`;
+      visionService.url ? `url: <b>${esc(visionService.url)}</b>` : "",
+      visionService.mockReplay ? `mock: <b>${esc(visionService.mockReplay)}</b>` : ""
+    ].filter(Boolean).join("<br>");
+    autoBtn.textContent = `autostart ${visionService.autostart ? "on" : "off"}`;
     if (visionService.url) {
       linkEl.href = visionService.url;
-      linkEl.style.pointerEvents = 'auto';
-      linkEl.style.opacity = '1';
+      linkEl.style.pointerEvents = "auto";
+      linkEl.style.opacity = "1";
       updateVisionFeedUrl();
     } else {
-      linkEl.href = '#';
-      linkEl.style.pointerEvents = 'none';
-      linkEl.style.opacity = '0.55';
+      linkEl.href = "#";
+      linkEl.style.pointerEvents = "none";
+      linkEl.style.opacity = "0.55";
     }
   }
 
   function renderVisionModelStatus() {
-    const el = document.getElementById('vision-model-status');
+    const el = document.getElementById("vision-model-status");
     if (!visionService.url) {
       el.innerHTML = '<div style="color:var(--text-dim);font-size:0.85em;">No vision service configured.</div>';
       return;
@@ -553,18 +954,18 @@
       return;
     }
     const cards = [];
-    cards.push(renderVisionModelCard('vLLM', visionModels.vllm, visionModels.vllm_model || ''));
-    if (visionModels.sam3) cards.push(renderVisionModelCard('SAM3', visionModels.sam3.status, visionModels.sam3.error || ''));
-    if (visionModels.face) cards.push(renderVisionModelCard('InsightFace', visionModels.face.status, visionModels.face.error || ''));
-    if (visionModels.person) cards.push(renderVisionModelCard('ReID', visionModels.person.status, visionModels.person.error || ''));
+    cards.push(renderVisionModelCard("vLLM", visionModels.vllm, visionModels.vllm_model || ""));
+    if (visionModels.sam3) cards.push(renderVisionModelCard("SAM3", visionModels.sam3.status, visionModels.sam3.error || ""));
+    if (visionModels.face) cards.push(renderVisionModelCard("InsightFace", visionModels.face.status, visionModels.face.error || ""));
+    if (visionModels.person) cards.push(renderVisionModelCard("ReID", visionModels.person.status, visionModels.person.error || ""));
     if (visionMemory && visionMemory.gpu) {
       cards.push(renderVisionModelCard(
-        'GPU memory',
-        'ready',
+        "GPU memory",
+        "ready",
         `${visionMemory.gpu.allocated_mb}MB used / ${visionMemory.gpu.total_mb}MB total`
       ));
     }
-    el.innerHTML = cards.join('');
+    el.innerHTML = cards.join("");
   }
 
   async function pollVisionModelStatus() {
@@ -575,7 +976,7 @@
       return;
     }
     try {
-      const base = visionService.url.replace(/\/$/, '');
+      const base = visionService.url.replace(/\/$/, "");
       const [statusResp, memoryResp] = await Promise.all([
         fetch(`${base}/model_status`),
         fetch(`${base}/memory_status`).catch(() => null),
@@ -590,325 +991,613 @@
     renderVisionModelStatus();
   }
 
-  // Event handlers
+  function laneForType(type) {
+    switch (type) {
+      case "session_start":
+      case "session_end":
+      case "pause":
+      case "resume":
+      case "stage_change":
+      case "runtime_controls":
+        return "session";
+      case "turn_start":
+        return "input";
+      case "assistant_reply":
+        return "chat";
+      case "expression":
+        return "expression";
+      case "eval":
+        return "eval";
+      case "director":
+        return "director";
+      case "plan":
+      case "beat_advance":
+        return "planner";
+      case "reconcile":
+      case "world_state":
+      case "people_state":
+      case "perception":
+        return "world";
+      case "vision_snapshot":
+        return "vision";
+      default:
+        return "other";
+    }
+  }
+
+  function relativeTime(timestamp) {
+    if (!streamEvents.length) return 0;
+    const origin = streamEvents[0].timestamp;
+    return Math.max(0, Number(timestamp || origin) - origin);
+  }
+
+  function previewText(type, data) {
+    switch (type) {
+      case "session_start":
+        return `${data.character || "character"} started with ${data.model || "model"}`;
+      case "session_end":
+        return `Session ended after ${data.total_turns || 0} turns`;
+      case "pause":
+        return "Conversation paused";
+      case "resume":
+        return "Conversation resumed";
+      case "turn_start":
+        if (data.input_type === "beat") return "/beat";
+        if (data.input_type === "world") return `/world ${data.input_text || ""}`.trim();
+        if (data.input_type === "see") return `/see ${data.input_text || ""}`.trim();
+        return data.input_text || "(empty input)";
+      case "assistant_reply":
+        return data.full_text || data.text || "(streaming reply)";
+      case "expression":
+        return `${data.expression || "expression"} · ${data.gaze || "gaze"}`;
+      case "eval":
+        return `${data.script_status || "hold"}${data.plan_request ? ` · ${data.plan_request}` : ""}`;
+      case "director":
+        return `${data.status || "hold"}${data.new_stage ? ` -> ${data.new_stage}` : ""}`;
+      case "reconcile":
+        return `+${(data.add_facts || []).length} -${(data.remove_facts || []).length} ~${(data.events || []).length}`;
+      case "world_state":
+        return `${(data.static_facts || []).length + (data.dynamic_facts || []).length} facts`;
+      case "people_state":
+        return `${(data.people || []).length} tracked people`;
+      case "perception":
+        return data.description || "Perception update";
+      case "plan":
+        return `${(data.beats || []).length} scripted beats`;
+      case "beat_advance":
+        return data.script_complete ? "Script complete" : `Next beat: ${data.next_intent || "unknown"}`;
+      case "stage_change":
+        return `${data.new_stage || "--"}${data.new_goal ? ` · ${data.new_goal}` : ""}`;
+      case "vision_snapshot":
+        return (data.vlm_answers && data.vlm_answers[0]) || `faces ${data.faces || 0} · people ${data.persons || 0}`;
+      case "runtime_controls":
+        return `vision ${data.controls && data.controls.vision ? "on" : "off"} · filler ${data.controls && data.controls.filler ? "on" : "off"}`;
+      default:
+        return JSON.stringify(data);
+    }
+  }
+
+  function detailText(type, data) {
+    switch (type) {
+      case "assistant_reply": {
+        const bits = [];
+        if (data.ttft_ms != null) bits.push(`TTFT ${data.ttft_ms}ms`);
+        if (data.total_ms != null) bits.push(`done ${data.total_ms}ms`);
+        if (data.first_audio_ms != null) bits.push(`first audio ${data.first_audio_ms}ms`);
+        if (data.tts_start_ms != null) bits.push(`tts start ${data.tts_start_ms}ms`);
+        if (data.audio_ms != null) bits.push(`clip ${data.audio_ms}ms`);
+        return bits.join(" · ");
+      }
+      case "vision_snapshot":
+        return [
+          data.faces != null ? `faces ${data.faces}` : "",
+          data.persons != null ? `people ${data.persons}` : "",
+          data.object_labels && data.object_labels.length ? `objects ${data.object_labels.join(", ")}` : ""
+        ].filter(Boolean).join(" · ");
+      case "runtime_controls":
+        return [
+          `voice ${data.voice_active ? "on" : "off"}`,
+          `vision manager ${data.vision_active ? "on" : "off"}`,
+          `reconcile ${data.reconcile_thread_alive ? "running" : "idle"}`
+        ].join(" · ");
+      default:
+        return "";
+    }
+  }
+
+  function relatedKeysFor(event) {
+    if (!event.turnId) return [];
+    return streamEvents
+      .filter((candidate) => candidate.turnId === event.turnId && candidate.key !== event.key)
+      .map((candidate) => candidate.key);
+  }
+
+  function addStreamEvent(type, data, rawEvent) {
+    const key = `evt-${++streamKey}`;
+    const event = {
+      key,
+      type,
+      sourceType: rawEvent.type,
+      lane: laneForType(type),
+      timestamp: Number(rawEvent.timestamp || Date.now() / 1000),
+      seq: rawEvent.seq || 0,
+      data: data,
+      label: previewText(type, data),
+      detail: detailText(type, data),
+      turnId: rawEvent.turnId || null
+    };
+    streamEvents.push(event);
+    streamEventByKey.set(key, event);
+    return event;
+  }
+
+  function ensureReplyEvent(rawEvent) {
+    let event = activeReplyKey ? streamEventByKey.get(activeReplyKey) : null;
+    if (!event) {
+      event = addStreamEvent("assistant_reply", {
+        full_text: "",
+        ttft_ms: null,
+        total_ms: null,
+        tts_start_ms: null,
+        first_audio_ms: null,
+        synth_ms: null,
+        audio_ms: null,
+      }, rawEvent);
+      activeReplyKey = event.key;
+    }
+    event.turnId = rawEvent.turnId || event.turnId;
+    return event;
+  }
+
+  function resetReplyStream() {
+    activeReplyKey = null;
+  }
+
+  function selectEvent(key) {
+    const event = streamEventByKey.get(key);
+    if (!event) return;
+    selectedStreamKey = key;
+    document.getElementById("detail-time").textContent = `+${relativeTime(event.timestamp).toFixed(2)}s`;
+    document.getElementById("detail-type").textContent = event.type;
+    document.getElementById("detail-lane").textContent = event.lane;
+    document.getElementById("detail-seq").textContent = `seq ${event.seq || 0}`;
+    document.getElementById("detail-label").textContent = event.label || "";
+    document.getElementById("detail-detail").textContent = event.detail || "No compact detail";
+    document.getElementById("detail-payload").textContent = JSON.stringify(event.data || {}, null, 2);
+
+    const related = relatedKeysFor(event);
+    const relatedEl = document.getElementById("detail-related");
+    if (!related.length) {
+      relatedEl.innerHTML = '<div style="color:var(--text-dim);">No linked turn context captured for this event.</div>';
+    } else {
+      relatedEl.innerHTML = "";
+      related.forEach((relatedKey) => {
+        const relatedEvent = streamEventByKey.get(relatedKey);
+        if (!relatedEvent) return;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.onclick = () => selectEvent(relatedKey);
+        button.innerHTML = `<div><b>${esc(relatedEvent.type)}</b> · ${esc(relatedEvent.label)}</div><small>${esc(relatedEvent.lane)} · +${relativeTime(relatedEvent.timestamp).toFixed(2)}s</small>`;
+        relatedEl.appendChild(button);
+      });
+    }
+
+    document.querySelectorAll(".stream-card").forEach((card) => {
+      card.classList.toggle("selected", card.dataset.eventKey === key);
+      card.classList.remove("context");
+    });
+    related.forEach((relatedKey) => {
+      const card = document.querySelector(`.stream-card[data-event-key="${relatedKey}"]`);
+      if (card) card.classList.add("context");
+    });
+    document.querySelectorAll(".chronology-row").forEach((row) => {
+      const active = row.dataset.eventKey === key;
+      row.classList.toggle("selected", active);
+      if (active) row.scrollIntoView({block: "nearest"});
+    });
+  }
+
+  function renderChronology() {
+    const root = document.getElementById("detail-chronology");
+    root.innerHTML = "";
+    streamEvents.forEach((event) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "chronology-row";
+      row.dataset.eventKey = event.key;
+      row.onclick = () => selectEvent(event.key);
+      row.innerHTML = `<div><b>${esc(event.type)}</b> · ${esc(event.label)}</div><small>${esc(event.lane)} · +${relativeTime(event.timestamp).toFixed(2)}s</small>`;
+      root.appendChild(row);
+    });
+  }
+
+  function cardWidth(event) {
+    if (compactMode) {
+      return Math.max(110, Math.min(220, 90 + event.label.length * 4));
+    }
+    if (event.type === "assistant_reply") {
+      return Math.max(260, Math.min(520, 220 + event.label.length * 3));
+    }
+    return Math.max(170, Math.min(320, 130 + event.label.length * 2.4));
+  }
+
+  function cardHeight(event) {
+    if (compactMode) return 24;
+    if (event.type === "assistant_reply") return 92;
+    if (event.detail) return 72;
+    return 58;
+  }
+
+  function renderReplyMarkers(event) {
+    if (compactMode || event.type !== "assistant_reply") return "";
+    const markers = [];
+    if (event.data.ttft_ms != null) markers.push(`TTFT ${event.data.ttft_ms}ms`);
+    if (event.data.total_ms != null) markers.push(`Done ${event.data.total_ms}ms`);
+    if (event.data.tts_start_ms != null) markers.push(`TTS start ${event.data.tts_start_ms}ms`);
+    if (event.data.first_audio_ms != null) markers.push(`First audio ${event.data.first_audio_ms}ms`);
+    if (event.data.synth_ms != null) markers.push(`TTS done ${event.data.synth_ms}ms`);
+    if (event.data.audio_ms != null) markers.push(`Clip ${event.data.audio_ms}ms`);
+    if (!markers.length) return "";
+    return `<div class="reply-markers">${markers.map((marker) => `<span class="reply-marker">${esc(marker)}</span>`).join("")}</div>`;
+  }
+
+  function renderLaneToggles() {
+    laneToggleGrid.innerHTML = LANE_ORDER.map((lane) => {
+      const inactive = hiddenLanes.has(lane) ? " inactive" : "";
+      return `<button class="lane-toggle${inactive}" type="button" data-lane-toggle="${esc(lane)}">${esc(lane)}</button>`;
+    }).join("");
+    laneToggleGrid.querySelectorAll(".lane-toggle").forEach((button) => {
+      button.addEventListener("click", () => {
+        const lane = button.dataset.laneToggle;
+        if (hiddenLanes.has(lane)) hiddenLanes.delete(lane);
+        else hiddenLanes.add(lane);
+        renderStream();
+      });
+    });
+  }
+
+  function renderRuler(maxRelative) {
+    const scale = 160 * timeZoom;
+    const baseWidth = Math.max(streamViewport.clientWidth - 24, Math.max(960, (maxRelative + 2) * scale));
+    streamRulerInner.style.width = `${baseWidth}px`;
+    const tickCount = Math.max(4, Math.ceil(maxRelative) + 2);
+    const ticks = [];
+    for (let i = 0; i <= tickCount; i += 1) {
+      ticks.push(`<div class="ruler-tick" style="left:${20 + i * scale}px;"><span>+${i.toFixed(0)}s</span></div>`);
+    }
+    streamRulerInner.innerHTML = ticks.join("");
+    return baseWidth;
+  }
+
+  function renderStream() {
+    renderLaneToggles();
+    renderChronology();
+
+    if (!streamEvents.length) {
+      streamEmpty.style.display = "";
+      streamLanes.innerHTML = "";
+      streamRulerInner.innerHTML = "";
+      return;
+    }
+
+    streamEmpty.style.display = "none";
+    const maxRelative = Math.max(...streamEvents.map((event) => relativeTime(event.timestamp)));
+    const baseWidth = renderRuler(maxRelative);
+    const lanes = {};
+    LANE_ORDER.forEach((lane) => { lanes[lane] = []; });
+    streamEvents.forEach((event) => {
+      const lane = lanes[event.lane] ? event.lane : "other";
+      lanes[lane].push(event);
+    });
+
+    const laneHtml = [];
+    LANE_ORDER.forEach((lane) => {
+      const laneEvents = lanes[lane];
+      if (!laneEvents.length) return;
+      const hidden = hiddenLanes.has(lane);
+      const trackEnds = [];
+      const cards = [];
+      let trackHeight = compactMode ? 34 : 96;
+      laneEvents.forEach((event) => {
+        const left = 20 + relativeTime(event.timestamp) * 160 * timeZoom;
+        const width = cardWidth(event);
+        const height = cardHeight(event);
+        let row = 0;
+        while (row < trackEnds.length && left < trackEnds[row] + 8) row += 1;
+        if (row === trackEnds.length) trackEnds.push(0);
+        trackEnds[row] = left + width;
+        const top = compactMode ? 6 + row * 28 : 8 + row * 84;
+        trackHeight = Math.max(trackHeight, top + height + 10);
+        cards.push(
+          `<article class="stream-card${compactMode ? " compact" : ""}" data-event-key="${esc(event.key)}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;">
+            <div class="stream-card-head">
+              <span class="stream-card-type">${esc(event.type)}</span>
+              <span class="stream-card-time">+${relativeTime(event.timestamp).toFixed(2)}s</span>
+            </div>
+            <div class="stream-card-label">${esc(event.label)}</div>
+            ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+            ${renderReplyMarkers(event)}
+          </article>`
+        );
+      });
+
+      laneHtml.push(
+        `<section class="stream-lane lane-${esc(lane)}${hidden ? " hidden" : ""}" data-stream-lane="${esc(lane)}">
+          <div class="stream-lane-label">${esc(lane)}</div>
+          <div class="lane-track">
+            <div class="lane-track-inner" style="width:${baseWidth}px;height:${trackHeight}px;">${cards.join("")}</div>
+          </div>
+        </section>`
+      );
+    });
+
+    streamLanes.innerHTML = laneHtml.join("");
+    streamLanes.querySelectorAll(".stream-card").forEach((card) => {
+      card.addEventListener("click", () => selectEvent(card.dataset.eventKey));
+    });
+    if (selectedStreamKey && streamEventByKey.has(selectedStreamKey)) {
+      selectEvent(selectedStreamKey);
+    } else {
+      selectEvent(streamEvents[streamEvents.length - 1].key);
+    }
+    streamViewport.scrollLeft = streamViewport.scrollWidth;
+  }
+
+  function recordEvent(type, data, rawEvent) {
+    const event = addStreamEvent(type, data, rawEvent);
+    renderStream();
+    return event;
+  }
+
   const handlers = {
-    session_start(data) {
-      sessionStart = Date.now() / 1000;
-      document.getElementById('h-character').textContent = data.character || '--';
-      document.getElementById('h-model').textContent = data.model || '--';
-      document.getElementById('h-session').textContent = data.session_id || '--';
-      if (data.stage) document.getElementById('h-stage').textContent = data.stage;
-      document.title = `${data.character || 'Character'} Dashboard`;
+    session_start(data, rawEvent) {
+      sessionStart = Number(rawEvent.timestamp || Date.now() / 1000);
+      document.getElementById("h-character").textContent = data.character || "--";
+      document.getElementById("h-model").textContent = data.model || "--";
+      document.getElementById("h-session").textContent = data.session_id || "--";
+      if (data.stage) document.getElementById("h-stage").textContent = data.stage;
+      document.title = `${data.character || "Character"} Dashboard`;
+      recordEvent("session_start", data, rawEvent);
     },
 
-    turn_start(data) {
-      turnCount++;
-      document.getElementById('f-turns').innerHTML = `Turns: <b>${turnCount}</b>`;
-
-      const div = document.createElement('div');
-      const cls = data.input_type === 'beat' ? 'turn-beat'
-                : data.input_type === 'world' || data.input_type === 'see' ? 'turn-world'
-                : 'turn-user';
-      div.className = `turn ${cls}`;
-
-      let label = '';
-      let inputCls = 'user-text';
-      let inputText = esc(data.input_text || '');
-      if (data.input_type === 'beat') {
-        label = '/beat';
-        inputCls = 'beat-text';
-        inputText = '/beat';
-      } else if (data.input_type === 'world') {
-        label = '/world';
-        inputCls = 'world-text';
-      } else if (data.input_type === 'see') {
-        label = '/see';
-        inputCls = 'world-text';
-      } else {
-        label = 'You';
-      }
-
-      div.innerHTML = `<div class="turn-label">${esc(label)}</div>
-        <div class="turn-input ${inputCls}">${inputText}</div>
-        <div class="turn-response"><span class="cursor"></span></div>
-        <div class="turn-meta"></div>`;
-
-      timeline.appendChild(div);
-      currentTurnEl = div;
-      currentResponseEl = div.querySelector('.turn-response');
-      scrollToBottom();
+    turn_start(data, rawEvent) {
+      currentTurnId += 1;
+      rawEvent.turnId = currentTurnId;
+      turnCount += 1;
+      document.getElementById("f-turns").innerHTML = `Turns: <b>${turnCount}</b>`;
+      resetReplyStream();
+      recordEvent("turn_start", data, rawEvent);
     },
 
-    response_chunk(data) {
-      if (!currentResponseEl) return;
-      // Remove cursor, append text
-      const cursor = currentResponseEl.querySelector('.cursor');
-      const textNode = document.createTextNode(data.text);
-      if (cursor) {
-        currentResponseEl.insertBefore(textNode, cursor);
-      } else {
-        currentResponseEl.appendChild(textNode);
-      }
-      scrollToBottom();
+    response_chunk(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      const event = ensureReplyEvent(rawEvent);
+      event.data.full_text = `${event.data.full_text || ""}${data.text || ""}`;
+      event.label = previewText("assistant_reply", event.data);
+      event.detail = detailText("assistant_reply", event.data);
+      renderStream();
     },
 
-    response_done(data) {
-      if (!currentResponseEl) return;
-      // Remove cursor
-      const cursor = currentResponseEl.querySelector('.cursor');
-      if (cursor) cursor.remove();
-      // Update timing
-      const ttft = data.ttft_ms || 0;
-      const total = data.total_ms || 0;
-      document.getElementById('f-ttft').innerHTML = `TTFT: <b>${ttft}ms</b> | Total: <b>${total}ms</b>`;
-      scrollToBottom();
+    response_done(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      const event = ensureReplyEvent(rawEvent);
+      event.timestamp = Number(rawEvent.timestamp || event.timestamp);
+      event.seq = rawEvent.seq || event.seq;
+      event.data.full_text = data.full_text || event.data.full_text || "";
+      event.data.ttft_ms = data.ttft_ms;
+      event.data.total_ms = data.total_ms;
+      event.label = previewText("assistant_reply", event.data);
+      event.detail = detailText("assistant_reply", event.data);
+      document.getElementById("f-ttft").innerHTML = `TTFT: <b>${data.ttft_ms || 0}ms</b> | Total: <b>${data.total_ms || 0}ms</b>`;
+      renderStream();
     },
 
-    expression(data) {
-      if (!currentTurnEl) return;
-      const meta = currentTurnEl.querySelector('.turn-meta');
-      let gazeLabel = esc(data.gaze || '');
-      if (data.gaze_type === 'glance') gazeLabel += ' (glance)';
-      const html = `<div>gaze: ${gazeLabel} &middot; expression: ${esc(data.expression || '')}</div>`;
-      meta.insertAdjacentHTML('beforeend', html);
+    expression(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      recordEvent("expression", data, rawEvent);
     },
 
-    eval(data) {
-      if (!currentTurnEl) return;
-      const meta = currentTurnEl.querySelector('.turn-meta');
-      const statusCls = data.script_status || 'hold';
-      let html = `<details><summary>
-        <span class="meta-tag ${esc(statusCls)}">${esc(data.script_status || '?')}</span>
-        eval</summary><div class="eval-body">
-        <div><b>thought:</b> ${esc(data.thought || '')}</div>`;
-      if (data.plan_request) {
-        html += `<div><b>plan_request:</b> ${esc(data.plan_request)}</div>`;
-      }
-      html += '</div></details>';
-      meta.insertAdjacentHTML('beforeend', html);
-      document.getElementById('f-eval').innerHTML = `Eval: <b>${esc(data.script_status || '?')}</b>`;
+    eval(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      document.getElementById("f-eval").innerHTML = `Eval: <b>${esc(data.script_status || "?")}</b>`;
+      recordEvent("eval", data, rawEvent);
     },
 
-    director(data) {
-      if (!currentTurnEl) return;
-      const meta = currentTurnEl.querySelector('.turn-meta');
-      let html = `<details><summary>director: ${esc(data.status || 'hold')}</summary>
-        <div class="eval-body"><div><b>thought:</b> ${esc(data.thought || '')}</div>`;
-      if (data.new_stage) {
-        html += `<div><b>new stage:</b> ${esc(data.new_stage)}</div>`;
-      }
-      html += '</div></details>';
-      meta.insertAdjacentHTML('beforeend', html);
+    director(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      recordEvent("director", data, rawEvent);
     },
 
-    reconcile(data) {
-      if (!currentTurnEl) return;
-      const meta = currentTurnEl.querySelector('.turn-meta');
-      let items = '';
-      if (data.remove_facts && data.remove_facts.length) {
-        items += data.remove_facts.map(f => `<div style="color:var(--error)">- ${esc(f)}</div>`).join('');
-      }
-      if (data.add_facts && data.add_facts.length) {
-        items += data.add_facts.map(f => `<div style="color:var(--advance)">+ ${esc(f)}</div>`).join('');
-      }
-      if (items) {
-        meta.insertAdjacentHTML('beforeend',
-          `<details><summary>reconcile</summary><div class="eval-body">${items}</div></details>`);
-      }
+    reconcile(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      recordEvent("reconcile", data, rawEvent);
     },
 
-    world_state(data) {
-      const el = document.getElementById('world-content');
-      let html = '';
+    world_state(data, rawEvent) {
+      const el = document.getElementById("world-content");
+      let html = "";
       if (data.static_facts && data.static_facts.length) {
-        html += data.static_facts.map(f => `<div class="fact"><span class="fact-id">${esc(f.id || '')}</span> ${esc(f.text || f)}</div>`).join('');
+        html += data.static_facts.map((fact) => `<div class="fact"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}</div>`).join("");
       }
       if (data.dynamic_facts && data.dynamic_facts.length) {
-        html += data.dynamic_facts.map(f => `<div class="fact"><span class="fact-id">${esc(f.id || '')}</span> ${esc(f.text || f)}</div>`).join('');
+        html += data.dynamic_facts.map((fact) => `<div class="fact"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}</div>`).join("");
       }
       if (data.pending && data.pending.length) {
-        html += data.pending.map(f => `<div class="fact fact-add">~ ${esc(f)}</div>`).join('');
+        html += data.pending.map((fact) => `<div class="fact fact-add">~ ${esc(fact)}</div>`).join("");
       }
       el.innerHTML = html || '<span style="color:var(--text-dim)">Empty</span>';
+      recordEvent("world_state", data, rawEvent);
     },
 
-    people_state(data) {
-      const el = document.getElementById('people-content');
+    people_state(data, rawEvent) {
+      const el = document.getElementById("people-content");
       if (!data.people || !data.people.length) {
         el.innerHTML = '<span style="color:var(--text-dim)">No people tracked</span>';
-        return;
+      } else {
+        el.innerHTML = data.people.map((person) => {
+          const facts = (person.facts || []).map((fact) => `<div class="fact" style="padding-left:1em"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}</div>`).join("");
+          return `<div class="person-entry"><span class="person-name">${esc(person.name || person.id)}</span> <span style="color:var(--text-dim)">${esc(person.id)}</span>${facts}</div>`;
+        }).join("");
       }
-      el.innerHTML = data.people.map(p => {
-        let facts = '';
-        if (p.facts && p.facts.length) {
-          facts = p.facts.map(f => `<div class="fact" style="padding-left:1em"><span class="fact-id">${esc(f.id || '')}</span> ${esc(f.text || f)}</div>`).join('');
-        }
-        return `<div class="person-entry"><span class="person-name">${esc(p.name || p.id)}</span> <span style="color:var(--text-dim)">${esc(p.id)}</span>${facts}</div>`;
-      }).join('');
+      recordEvent("people_state", data, rawEvent);
     },
 
-    stage_change(data) {
-      document.getElementById('h-stage').textContent = data.new_stage || '--';
-      const el = document.getElementById('stage-content');
-      let html = `<div><b>${esc(data.new_stage || '--')}</b></div>`;
+    stage_change(data, rawEvent) {
+      document.getElementById("h-stage").textContent = data.new_stage || "--";
+      const el = document.getElementById("stage-content");
+      let html = `<div><b>${esc(data.new_stage || "--")}</b></div>`;
       if (data.new_goal) html += `<div style="color:var(--text-dim)">${esc(data.new_goal)}</div>`;
       el.innerHTML = html;
-
-      // Insert a stage-change marker in the timeline
-      const marker = document.createElement('div');
-      marker.className = 'turn';
-      marker.style.borderLeftColor = 'var(--cyan)';
-      marker.style.color = 'var(--cyan)';
-      marker.style.fontWeight = '600';
-      marker.innerHTML = `Stage &rarr; ${esc(data.new_stage || '?')}${data.new_goal ? ': ' + esc(data.new_goal) : ''}`;
-      timeline.appendChild(marker);
-      scrollToBottom();
+      recordEvent("stage_change", data, rawEvent);
     },
 
-    plan(data) {
-      const panel = document.getElementById('plan-panel');
-      const el = document.getElementById('plan-content');
+    plan(data, rawEvent) {
+      const panel = document.getElementById("plan-panel");
+      const el = document.getElementById("plan-content");
       if (!data.beats || !data.beats.length) {
-        panel.style.display = 'none';
-        return;
+        panel.style.display = "none";
+      } else {
+        panel.style.display = "";
+        el.innerHTML = '<div class="beat-list">' + data.beats.map((beat, index) => {
+          const cls = index === 0 ? "beat-item current" : "beat-item";
+          return `<div class="${cls}">${index}. [${esc(beat.intent)}]</div>`;
+        }).join("") + "</div>";
       }
-      panel.style.display = '';
-      el.innerHTML = '<div class="beat-list">' +
-        data.beats.map((b, i) => {
-          const cls = i === 0 ? 'beat-item current' : 'beat-item';
-          return `<div class="${cls}">${i}. [${esc(b.intent)}]</div>`;
-        }).join('') + '</div>';
+      recordEvent("plan", data, rawEvent);
     },
 
-    beat_advance(data) {
-      // Update plan panel: mark completed beats
+    beat_advance(data, rawEvent) {
       if (data.next_intent) {
-        // Re-highlight in plan panel
-        const items = document.querySelectorAll('#plan-content .beat-item');
-        items.forEach(item => {
-          item.classList.remove('current');
-          if (item.textContent.includes(data.next_intent)) {
-            item.classList.add('current');
-          }
+        document.querySelectorAll("#plan-content .beat-item").forEach((item) => {
+          item.classList.remove("current");
+          if (item.textContent.includes(data.next_intent)) item.classList.add("current");
         });
       }
+      recordEvent("beat_advance", data, rawEvent);
     },
 
-    perception(data) {
-      const div = document.createElement('div');
-      div.className = 'turn turn-perception';
-      div.innerHTML = `<div class="turn-label">${esc(data.source || 'perception')}</div>
-        <div class="turn-input perception-text">${esc(data.description || '')}</div>`;
-      timeline.appendChild(div);
-      scrollToBottom();
+    perception(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      recordEvent("perception", data, rawEvent);
     },
 
-    vision_snapshot(data) {
-      const panel = document.getElementById('vision-panel');
-      panel.style.display = '';
-      const meta = document.getElementById('vision-meta');
-      let html = '';
+    vision_snapshot(data, rawEvent) {
+      const panel = document.getElementById("vision-panel");
+      panel.style.display = "";
+      const meta = document.getElementById("vision-meta");
+      let html = "";
       if (data.faces !== undefined) html += `Faces: ${data.faces} `;
       if (data.persons !== undefined) html += `People: ${data.persons} `;
       if (data.vlm_answers && data.vlm_answers.length) {
-        html += '<br>' + data.vlm_answers.map(a => esc(a)).join('<br>');
+        html += "<br>" + data.vlm_answers.map((answer) => esc(answer)).join("<br>");
       }
       meta.innerHTML = html;
+      recordEvent("vision_snapshot", data, rawEvent);
     },
 
-    session_end(data) {
-      const div = document.createElement('div');
-      div.className = 'turn';
-      div.style.color = 'var(--text-dim)';
-      div.style.fontStyle = 'italic';
-      div.innerHTML = `Session ended. ${data.total_turns || 0} turns, ${data.duration_s || 0}s`;
-      timeline.appendChild(div);
-      scrollToBottom();
+    session_end(data, rawEvent) {
+      recordEvent("session_end", data, rawEvent);
     },
 
-    runtime_controls(data) {
+    pause(data, rawEvent) {
+      recordEvent("pause", data, rawEvent);
+    },
+
+    resume(data, rawEvent) {
+      recordEvent("resume", data, rawEvent);
+    },
+
+    runtime_controls(data, rawEvent) {
       runtimeControls = data.controls || runtimeControls;
       visionService = {
-        url: data.vision_service_url || '',
+        url: data.vision_service_url || "",
         health: !!data.vision_service_health,
         managed: !!data.vision_service_managed,
         external: !!data.vision_service_external,
-        state: data.vision_service_state || 'stopped',
+        state: data.vision_service_state || "stopped",
         autostart: !!data.vision_service_autostart,
-        mode: data.vision_service_mode || 'camera',
-        mockReplay: data.vision_mock_replay || ''
+        mode: data.vision_service_mode || "camera",
+        mockReplay: data.vision_mock_replay || ""
       };
-      const status = document.getElementById('runtime-status');
+      const status = document.getElementById("runtime-status");
       status.innerHTML = [
-        `reconcile: <b>${runtimeControls.reconcile ? 'on' : 'off'}</b>`,
-        `vision: <b>${runtimeControls.vision ? 'on' : 'off'}</b>`,
-        `auto-beat: <b>${runtimeControls.auto_beat ? 'on' : 'off'}</b>`,
-        `filler: <b>${runtimeControls.filler ? 'on' : 'off'}</b>`,
-        `voice: <b>${data.voice_active ? 'on' : 'off'}</b>`,
-        `vision manager: <b>${data.vision_active ? 'on' : 'off'}</b>`,
-        `reconcile thread: <b>${data.reconcile_thread_alive ? 'running' : 'idle'}</b>`,
-      ].join('<br>');
-      document.querySelectorAll('.runtime-toggle').forEach((btn) => {
-        const key = btn.dataset.control.replace('-', '_');
+        `reconcile: <b>${runtimeControls.reconcile ? "on" : "off"}</b>`,
+        `vision: <b>${runtimeControls.vision ? "on" : "off"}</b>`,
+        `auto-beat: <b>${runtimeControls.auto_beat ? "on" : "off"}</b>`,
+        `filler: <b>${runtimeControls.filler ? "on" : "off"}</b>`,
+        `voice: <b>${data.voice_active ? "on" : "off"}</b>`,
+        `vision manager: <b>${data.vision_active ? "on" : "off"}</b>`,
+        `reconcile thread: <b>${data.reconcile_thread_alive ? "running" : "idle"}</b>`,
+      ].join("<br>");
+      document.querySelectorAll(".runtime-toggle").forEach((button) => {
+        const key = button.dataset.control.replace("-", "_");
         const enabled = !!runtimeControls[key];
-        btn.style.background = enabled ? 'var(--advance)' : 'var(--panel-hover)';
-        btn.style.color = enabled ? 'var(--bg)' : 'var(--text)';
-        btn.textContent = `${btn.dataset.control} ${enabled ? 'on' : 'off'}`;
+        button.style.background = enabled ? "var(--advance)" : "var(--panel-hover)";
+        button.style.color = enabled ? "var(--bg)" : "var(--text)";
+        button.textContent = `${button.dataset.control} ${enabled ? "on" : "off"}`;
       });
       updateVisionFeedUrl();
       renderVisionServiceStatus();
       pollVisionModelStatus();
+      recordEvent("runtime_controls", data, rawEvent);
     }
   };
 
   function handleEvent(event) {
-    if (typeof event.seq === 'number') {
+    if (typeof event.seq === "number") {
       if (event.seq <= lastSeq) return;
       lastSeq = event.seq;
     }
     const handler = handlers[event.type];
-    if (handler) handler(event.data);
+    if (handler) handler(event.data, event);
   }
 
   function refreshState() {
-    fetch('/state')
-      .then(r => r.json())
-      .then(events => { events.forEach(handleEvent); })
+    fetch("/state")
+      .then((r) => r.json())
+      .then((events) => { events.forEach(handleEvent); })
       .catch(() => {});
   }
 
-  // Catch up on page load and poll as a fallback when SSE isn't truly live.
+  document.getElementById("stream-density").addEventListener("change", (e) => {
+    compactMode = e.target.value === "compact";
+    renderStream();
+  });
+  document.getElementById("time-zoom").addEventListener("input", (e) => {
+    timeZoom = Number(e.target.value || 1);
+    document.getElementById("time-zoom-value").textContent = `${timeZoom.toFixed(1)}x`;
+    renderStream();
+  });
+  document.getElementById("show-chronology").addEventListener("change", (e) => {
+    detailChronologyWrap.style.display = e.target.checked ? "" : "none";
+  });
+
+  document.querySelectorAll(".runtime-toggle").forEach((button) => {
+    button.addEventListener("click", () => sendThreadCommand(button.dataset.control));
+  });
+  document.getElementById("runtime-pause").addEventListener("click", () => sendInput("/pause"));
+  document.getElementById("runtime-resume").addEventListener("click", () => sendInput("/resume"));
+  document.getElementById("runtime-restart").addEventListener("click", () => sendInput("/restart"));
+  document.getElementById("vision-service-start").addEventListener("click", () => sendVisionServiceCommand("start"));
+  document.getElementById("vision-service-stop").addEventListener("click", () => sendVisionServiceCommand("stop"));
+  document.getElementById("vision-service-autostart").addEventListener("click", () => sendVisionServiceCommand("autostart toggle"));
+
   refreshState();
   setInterval(refreshState, 2000);
+  setInterval(pollVisionModelStatus, 4000);
 
-  // SSE stream
-  const es = new EventSource('/events');
+  const es = new EventSource("/events");
   es.onmessage = (e) => {
     try {
       handleEvent(JSON.parse(e.data));
     } catch (err) {
-      console.error('SSE parse error:', err);
+      console.error("SSE parse error:", err);
     }
   };
-  es.onerror = () => {
-    // EventSource will auto-reconnect
-  };
+  es.onerror = () => {};
 
-  // Vision feed: try to load MJPEG from vision service
-  const visionFeed = document.getElementById('vision-feed');
-  visionFeed.onerror = () => { visionFeed.style.display = 'none'; };
-
-  document.querySelectorAll('.runtime-toggle').forEach((btn) => {
-    btn.addEventListener('click', () => sendThreadCommand(btn.dataset.control));
-  });
-  document.getElementById('runtime-pause').addEventListener('click', () => sendInput('/pause'));
-  document.getElementById('runtime-resume').addEventListener('click', () => sendInput('/resume'));
-  document.getElementById('runtime-restart').addEventListener('click', () => sendInput('/restart'));
-  document.getElementById('vision-service-start').addEventListener('click', () => sendVisionServiceCommand('start'));
-  document.getElementById('vision-service-stop').addEventListener('click', () => sendVisionServiceCommand('stop'));
-  document.getElementById('vision-service-autostart').addEventListener('click', () => sendVisionServiceCommand('autostart toggle'));
-  setInterval(pollVisionModelStatus, 4000);
-
+  const visionFeed = document.getElementById("vision-feed");
+  visionFeed.onerror = () => { visionFeed.style.display = "none"; };
 })();
 </script>
 </body>
