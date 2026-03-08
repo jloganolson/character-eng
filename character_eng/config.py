@@ -1,4 +1,4 @@
-"""Load user settings from config.toml (project root)."""
+"""Load and persist user settings from config.toml (project root)."""
 
 import tomllib
 from dataclasses import dataclass, field
@@ -20,6 +20,8 @@ class VoiceConfig:
     tts_device: str = "cuda:0"  # GPU device for local TTS
     tts_server_url: str = ""  # server URL for pocket backend
     pocket_voice: str = "voices/greg.safetensors"  # path to .safetensors or WAV for pocket-tts serve --voice
+    filler_enabled: bool = True  # use short Pocket-TTS filler clips while primary TTS spins up
+    filler_lead_ms: int = 180  # wait this long for real audio before inserting filler
 
 
 @dataclass
@@ -38,10 +40,66 @@ class DashboardConfig:
 
 
 @dataclass
+class BridgeConfig:
+    enabled: bool = False
+    port: int = 7862  # shares dashboard port (HTTP + WS on single port)
+
+
+@dataclass
 class AppConfig:
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
+    bridge: BridgeConfig = field(default_factory=BridgeConfig)
+
+
+def _toml_string(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
+    """Persist AppConfig to config.toml."""
+    lines = [
+        "[voice]",
+        f"enabled = {'true' if config.voice.enabled else 'false'}",
+        f"aec = {'true' if config.voice.aec else 'false'}",
+        f"tts_backend = {_toml_string(config.voice.tts_backend)}",
+        f"ref_audio = {_toml_string(config.voice.ref_audio)}",
+        f"ref_text = {_toml_string(config.voice.ref_text)}",
+        f"tts_model = {_toml_string(config.voice.tts_model)}",
+        f"tts_device = {_toml_string(config.voice.tts_device)}",
+        f"tts_server_url = {_toml_string(config.voice.tts_server_url)}",
+        f"pocket_voice = {_toml_string(config.voice.pocket_voice)}",
+        f"filler_enabled = {'true' if config.voice.filler_enabled else 'false'}",
+        f"filler_lead_ms = {int(config.voice.filler_lead_ms)}",
+        "",
+        "[vision]",
+        f"enabled = {'true' if config.vision.enabled else 'false'}",
+        f"service_url = {_toml_string(config.vision.service_url)}",
+        f"service_port = {int(config.vision.service_port)}",
+        f"auto_launch = {'true' if config.vision.auto_launch else 'false'}",
+        f"synthesis_min_interval = {config.vision.synthesis_min_interval}",
+        "",
+        "[dashboard]",
+        f"enabled = {'true' if config.dashboard.enabled else 'false'}",
+        f"port = {int(config.dashboard.port)}",
+        "",
+        "[bridge]",
+        f"enabled = {'true' if config.bridge.enabled else 'false'}",
+        f"port = {int(config.bridge.port)}",
+        "",
+    ]
+
+    if config.voice.input_device is not None:
+        value = config.voice.input_device
+        lines.insert(1, f"input_device = {value}" if isinstance(value, int) else f"input_device = {_toml_string(str(value))}")
+    if config.voice.output_device is not None:
+        value = config.voice.output_device
+        insert_at = 2 if config.voice.input_device is not None else 1
+        lines.insert(insert_at, f"output_device = {value}" if isinstance(value, int) else f"output_device = {_toml_string(str(value))}")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def load_config() -> AppConfig:
@@ -65,6 +123,8 @@ def load_config() -> AppConfig:
         tts_device=voice_data.get("tts_device", "cuda:0"),
         tts_server_url=voice_data.get("tts_server_url", ""),
         pocket_voice=voice_data.get("pocket_voice", "voices/greg.safetensors"),
+        filler_enabled=voice_data.get("filler_enabled", True),
+        filler_lead_ms=voice_data.get("filler_lead_ms", 180),
     )
 
     vision_data = data.get("vision", {})
@@ -82,4 +142,10 @@ def load_config() -> AppConfig:
         port=dashboard_data.get("port", 7862),
     )
 
-    return AppConfig(voice=voice, vision=vision, dashboard=dashboard)
+    bridge_data = data.get("bridge", {})
+    bridge = BridgeConfig(
+        enabled=bridge_data.get("enabled", False),
+        port=bridge_data.get("port", 7862),
+    )
+
+    return AppConfig(voice=voice, vision=vision, dashboard=dashboard, bridge=bridge)

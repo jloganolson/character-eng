@@ -92,6 +92,13 @@ class TestDashboardServer:
         assert len(data) == 1
         assert data[0]["type"] == "test_event"
 
+    def test_system_map_returns_html(self, server):
+        _, _, port = server
+        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/system-map.html")
+        body = resp.read().decode()
+        assert "Character Runtime & Design Map" in body
+        assert resp.status == 200
+
     def test_send_injects_input(self, server):
         _, iq, port = server
         body = json.dumps({"text": "hello world"}).encode()

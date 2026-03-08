@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Character Runtime & Design Map</title>
+<style>
+  :root {
+    --bg: #081018;
+    --bg-2: #0c1826;
+    --panel: #101720;
+    --panel-2: #152131;
+    --panel-3: #0d1c2d;
+    --line: #253244;
+    --text: #e7eef7;
+    --muted: #9fb3c8;
+    --accent: #f4b942;
+    --accent-2: #ff9f43;
+    --blue: #58a6ff;
+    --green: #7ee787;
+    --red: #ff7b72;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    background:
+      radial-gradient(circle at top right, rgba(88,166,255,.16), transparent 28rem),
+      radial-gradient(circle at bottom left, rgba(244,185,66,.08), transparent 30rem),
+      linear-gradient(180deg, var(--bg-2), var(--bg));
+    color: var(--text);
+    padding: 28px 18px 80px;
+  }
+  main {
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+  h1, h2, h3 {
+    margin: 0 0 12px;
+    line-height: 1.1;
+  }
+  h1 { font-size: clamp(2rem, 4vw, 3.25rem); }
+  h2 { font-size: clamp(1.2rem, 2vw, 1.8rem); }
+  h3 { font-size: 1.05rem; }
+  p {
+    margin: 0;
+    color: var(--muted);
+    line-height: 1.58;
+  }
+  code {
+    color: var(--accent);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.95em;
+  }
+  section {
+    margin-top: 24px;
+  }
+  .hero,
+  .card,
+  .panel {
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    box-shadow: 0 18px 42px rgba(0,0,0,.2);
+  }
+  .hero {
+    padding: 28px;
+    background:
+      linear-gradient(135deg, rgba(244,185,66,.16), rgba(88,166,255,.1)),
+      var(--panel);
+  }
+  .hero p {
+    max-width: 78ch;
+    margin-top: 10px;
+  }
+  .badges,
+  .legend,
+  .quick-commands {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .badge,
+  .legend span,
+  .quick-commands code {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0.4em 0.8em;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: rgba(8,16,24,.45);
+    color: var(--muted);
+  }
+  .topnav {
+    position: sticky;
+    top: 12px;
+    z-index: 2;
+    margin-top: 18px;
+    padding: 12px 14px;
+    background: rgba(12,24,38,.86);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+  }
+  .topnav a {
+    color: var(--text);
+    text-decoration: none;
+    margin-right: 14px;
+    white-space: nowrap;
+    font-size: 0.92rem;
+  }
+  .grid {
+    display: grid;
+    gap: 16px;
+  }
+  .grid.two {
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  }
+  .grid.three {
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  }
+  .card,
+  .panel {
+    background: var(--panel);
+    padding: 20px;
+  }
+  .chip {
+    display: inline-block;
+    margin-bottom: 10px;
+    border-radius: 999px;
+    padding: 0.18em 0.7em;
+    background: rgba(88,166,255,.12);
+    color: var(--blue);
+    font-size: 0.8rem;
+  }
+  .chip.warn {
+    background: rgba(255,123,114,.1);
+    color: var(--red);
+  }
+  .chip.good {
+    background: rgba(126,231,135,.1);
+    color: var(--green);
+  }
+  .grid ul,
+  .panel ul,
+  .card ul {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--muted);
+  }
+  li {
+    margin-bottom: 8px;
+  }
+  .split {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: 1.2fr .8fr;
+  }
+  .system-layers {
+    display: grid;
+    gap: 14px;
+    margin-top: 16px;
+  }
+  .layer {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: 160px 1fr;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 16px;
+  }
+  .layer-label {
+    color: var(--accent);
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    font-size: 0.82rem;
+  }
+  .mode-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    margin-top: 14px;
+  }
+  .mode {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 16px;
+  }
+  .command-list {
+    display: grid;
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .command {
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    border-radius: 16px;
+    padding: 12px 14px;
+  }
+  .rail {
+    display: grid;
+    gap: 12px;
+    margin-top: 14px;
+  }
+  .rail-step {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    gap: 14px;
+    align-items: start;
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(21,33,49,.92), rgba(16,23,32,.98));
+    border-radius: 18px;
+    padding: 14px;
+  }
+  .rail-step .num {
+    width: 52px;
+    height: 52px;
+    display: grid;
+    place-items: center;
+    border-radius: 16px;
+    background: rgba(244,185,66,.12);
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 1.1rem;
+  }
+  .timeline {
+    display: grid;
+    gap: 12px;
+    margin-top: 14px;
+  }
+  .timeline-row {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: 160px 1fr;
+    align-items: start;
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+  }
+  .timeline-row:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+  .timeline-label {
+    color: var(--blue);
+    font-weight: 700;
+  }
+  .matrix {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    margin-top: 14px;
+  }
+  .matrix .cell {
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    border-radius: 18px;
+    padding: 16px;
+  }
+  .processes {
+    display: grid;
+    gap: 14px;
+    margin-top: 14px;
+  }
+  .process {
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    border-radius: 18px;
+    padding: 18px;
+  }
+  .process h3 {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: baseline;
+  }
+  .small {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .prompt-grid,
+  .control-grid,
+  .review-grid,
+  .edit-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    margin-top: 14px;
+  }
+  .prompt-card,
+  .control,
+  .review,
+  .edit {
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    border-radius: 18px;
+    padding: 16px;
+  }
+  .warn-list {
+    display: grid;
+    gap: 12px;
+    margin-top: 14px;
+  }
+  .warn-item {
+    border-left: 4px solid var(--red);
+    background: rgba(255,123,114,.08);
+    border-radius: 10px 16px 16px 10px;
+    padding: 14px 16px;
+  }
+  .footer-note {
+    margin-top: 26px;
+    padding: 16px 18px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: rgba(8,16,24,.45);
+  }
+  .good { color: var(--green); }
+  .warn-text { color: var(--red); }
+  .accent { color: var(--accent); }
+  @media (max-width: 920px) {
+    .split { grid-template-columns: 1fr; }
+    .layer,
+    .timeline-row { grid-template-columns: 1fr; }
+    .topnav a {
+      display: inline-block;
+      margin-bottom: 8px;
+    }
+  }
+</style>
+</head>
+<body>
+<main>
+  <section class="hero" id="top">
+    <h1>Character Runtime & Design Map</h1>
+    <p>This is the current offline visual explainer for the whole stack: the local character runtime, the separate vision service, the dashboard and bridge surface, the generated-image QA harness, and the review loop used to iterate on line quality. It is meant to answer two questions at once: <span class="accent">what kind of experience are we trying to create?</span> and <span class="accent">what exactly is happening under the hood when a turn succeeds or fails?</span></p>
+    <div class="badges">
+      <span class="badge">Creative target: short, punchy, world-aware conversation</span>
+      <span class="badge">Core path: local mic + speaker + optional camera</span>
+      <span class="badge">Review path: dashboard + HTML reports + annotations</span>
+      <span class="badge">Iteration goal: debug drift without guessing</span>
+    </div>
+    <div class="quick-commands">
+      <code>uv run -m character_eng --character greg</code>
+      <code>uv run -m character_eng --vision --character greg</code>
+      <code>uv run -m character_eng.qa_full_stack --model groq-llama-8b --vision-source generated</code>
+    </div>
+    <div class="legend">
+      <span>Orchestrator: session loop, world, stage, commands</span>
+      <span>Voice: STT, barge-in, TTS, speaker queue, fillers</span>
+      <span>Vision: service process, trackers, snapshots, events</span>
+      <span>Review: dashboard timeline, logs, HTML reports, annotations</span>
+    </div>
+  </section>
+
+  <nav class="topnav">
+    <a href="#intent">Intent</a>
+    <a href="#topology">Topology</a>
+    <a href="#modes">Modes</a>
+    <a href="#turn">Turn Lifecycle</a>
+    <a href="#threads">Threads & Processes</a>
+    <a href="#vision">Vision</a>
+    <a href="#prompts">Prompt Stack</a>
+    <a href="#controls">Controls</a>
+    <a href="#review">Review Loop</a>
+    <a href="#failure">Failure Signatures</a>
+    <a href="#edit">Where To Edit</a>
+  </nav>
+
+  <section id="intent" class="grid two">
+    <article class="card">
+      <div class="chip">Creative Design</div>
+      <h2>What This Should Feel Like</h2>
+      <p>The system is not aiming for broad assistant competence. It is aiming for a compact dramatic interaction: a character in a world, reacting to a passerby, with visible grounding and enough surprise to feel authored rather than random.</p>
+      <ul>
+        <li>Replies should usually be one or two sentences, with a clean stop.</li>
+        <li>The line should feel shaped by the visible scene first, lore second.</li>
+        <li>Oddness is welcome; incoherence is not.</li>
+        <li>The user should feel invited forward, not talked at.</li>
+        <li>When the scene changes, the character should notice quickly.</li>
+      </ul>
+    </article>
+    <article class="card">
+      <div class="chip">Technical Contract</div>
+      <h2>What The Runtime Must Guarantee</h2>
+      <p>The stack should remain inspectable even when model output gets messy. That means input/output plumbing, event capture, and runtime controls have to stay reliable enough that a bad turn can be traced to a specific stage instead of turning into folklore.</p>
+      <ul>
+        <li>Text, audio, and vision inputs must all land in the same world model.</li>
+        <li>Speech should start quickly enough to feel responsive, with filler only as a cover for latency.</li>
+        <li>All important state changes should be visible in logs or the dashboard timeline.</li>
+        <li>Generated QA runs should be reproducible and reviewable after the fact.</li>
+      </ul>
+    </article>
+  </section>
+
+  <section id="topology" class="panel split">
+    <div>
+      <div class="chip">System Topology</div>
+      <h2>How The Big Pieces Fit Together</h2>
+      <p>The simplest mental model is: one main conversation runtime, one optional vision service process, and one optional dashboard surface. The dashboard is for visibility and control. The character loop remains the center of gravity.</p>
+      <div class="system-layers">
+        <div class="layer">
+          <div class="layer-label">Input Layer</div>
+          <div>
+            <p>Console text, local mic, bridge mic, live camera, injected JPEGs, simulation events, and QA transcripts all become candidate user or environment input.</p>
+          </div>
+        </div>
+        <div class="layer">
+          <div class="layer-label">State Layer</div>
+          <div>
+            <p><code>__main__.py</code> maintains the live session. <code>world.py</code> owns facts, people, events, and reconciliation of world changes into durable state.</p>
+          </div>
+        </div>
+        <div class="layer">
+          <div class="layer-label">Model Layer</div>
+          <div>
+            <p>Chat, thought, expression, director, script checks, reconcile, and automation evaluators are all narrow model calls with different jobs. They should act like small specialists, not one giant brain.</p>
+          </div>
+        </div>
+        <div class="layer">
+          <div class="layer-label">Output Layer</div>
+          <div>
+            <p>Text streams to the UI, PCM streams to the speaker, dashboard events build a timeline, and QA runs emit JSON plus HTML artifacts that can be annotated.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="chip good">Core Principle</div>
+      <h2>Keep The Character Loop Legible</h2>
+      <ul>
+        <li>The fastest route to a fix is isolating whether the problem started in perception, world state, planning, speech timing, or review tooling.</li>
+        <li>Runtime toggles are meant to remove noise without changing code.</li>
+        <li>If a bug cannot be observed in the dashboard or report, the tooling is still incomplete.</li>
+      </ul>
+      <div class="footer-note">
+        <strong>Rule of thumb:</strong>
+        <p>If the visible line is bad but the world state is right, the bug is usually prompt or routing. If the visible line is bad because the world is wrong, the bug is usually vision, reconcile, or scenario state.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="modes" class="panel">
+    <div class="chip">Operating Modes</div>
+    <h2>Three Main Ways To Run The System</h2>
+    <div class="mode-grid">
+      <article class="mode">
+        <h3>1. Full Local</h3>
+        <p>The main truth path. Local mic and speaker, optional local vision service, standard dashboard.</p>
+        <ul>
+          <li>Best mode for feeling real latency, barge-in, and reply shape.</li>
+          <li>Most important mode to keep clean before any remote work.</li>
+          <li>Use this when judging if the character actually works.</li>
+        </ul>
+      </article>
+      <article class="mode">
+        <h3>2. Browser / Remote</h3>
+        <p>Bridge mode moves audio and camera capture to the browser while keeping the server-side logic largely the same.</p>
+        <ul>
+          <li>Useful for remote machines, tunnels, and containerized runs.</li>
+          <li>Less important than full local for truth-testing the creative loop.</li>
+          <li>Dashboard becomes both control panel and transport shell.</li>
+        </ul>
+      </article>
+      <article class="mode">
+        <h3>3. Full-Stack QA</h3>
+        <p>Automation path that can generate or inject images, transcribe speech, run the character, synthesize replies, and score the result.</p>
+        <ul>
+          <li>Best mode for repeatable regressions and artifact-driven review.</li>
+          <li>Produces HTML reports with inline notes saved to <code>logs/annotated/</code>.</li>
+          <li>Ideal for catching drift after prompt or logic changes.</li>
+        </ul>
+      </article>
+    </div>
+    <div class="command-list">
+      <div class="command"><strong>Core local:</strong> <code>uv run -m character_eng --character greg</code></div>
+      <div class="command"><strong>Local with vision:</strong> <code>uv run -m character_eng --vision --character greg</code></div>
+      <div class="command"><strong>Deterministic mock vision:</strong> <code>uv run -m character_eng --vision-mock walkup --sim walkup_dialogue --sim-speed 50 --character greg --no-dashboard</code></div>
+      <div class="command"><strong>Automation harness:</strong> <code>uv run -m character_eng.qa_full_stack --model groq-llama-8b --vision-source generated</code></div>
+    </div>
+  </section>
+
+  <section id="turn" class="panel">
+    <div class="chip">Turn Lifecycle</div>
+    <h2>What Happens During One Good Turn</h2>
+    <p>This is the path to hold in your head while debugging. Almost every broken conversation can be located by asking which numbered stage drifted first.</p>
+    <div class="rail">
+      <div class="rail-step">
+        <div class="num">1</div>
+        <div>
+          <h3>Input arrives</h3>
+          <p>User speech, text, a simulator cue, or a perception event enters the loop. Commands can short-circuit and change runtime state immediately.</p>
+        </div>
+      </div>
+      <div class="rail-step">
+        <div class="num">2</div>
+        <div>
+          <h3>STT or raw text becomes a message</h3>
+          <p>If audio is used, Deepgram produces transcript text and barge-in signals. That transcript is normalized into the same path used by console or dashboard text.</p>
+        </div>
+      </div>
+      <div class="rail-step">
+        <div class="num">3</div>
+        <div>
+          <h3>World and scenario context update</h3>
+          <p>Visible events, tracked people, stage progression, and prior facts all shape what the character should think is true before it speaks.</p>
+        </div>
+      </div>
+      <div class="rail-step">
+        <div class="num">4</div>
+        <div>
+          <h3>Prompt assembly happens</h3>
+          <p>Global rules, character prompt, scenario materials, world summary, and optional system nudges are assembled into the final chat call.</p>
+        </div>
+      </div>
+      <div class="rail-step">
+        <div class="num">5</div>
+        <div>
+          <h3>Visible reply streams</h3>
+          <p>The chat model generates the response. Expression tags and speech generation begin alongside it. If first audio is slow, short Pocket-TTS fillers can buy time.</p>
+        </div>
+      </div>
+      <div class="rail-step">
+        <div class="num">6</div>
+        <div>
+          <h3>Post-turn helpers run</h3>
+          <p>Thought, director, script checks, and reconcile adjust world state and prepare the next beat. These should refine the interaction, not hijack it.</p>
+        </div>
+      </div>
+      <div class="rail-step">
+        <div class="num">7</div>
+        <div>
+          <h3>Events get published</h3>
+          <p>The dashboard timeline, JSON logs, HTML reports, and QA metrics are updated so the turn remains inspectable later.</p>
+        </div>
+      </div>
+      <div class="rail-step">
+        <div class="num">8</div>
+        <div>
+          <h3>Idle logic may schedule the next beat</h3>
+          <p>If auto-beat is on, the loop can schedule a follow-up beat after speech finishes. If it is off, the user fully controls pacing.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="threads" class="panel">
+    <div class="chip">Processes & Threads</div>
+    <h2>Where Concurrency Actually Lives</h2>
+    <p>The system has several overlapping loops, but they are not all equal. The key discipline is to treat only a few of them as authority-bearing and the rest as feeder or helper paths.</p>
+    <div class="processes">
+      <article class="process">
+        <h3>Main character process <span class="small">authoritative session state</span></h3>
+        <ul>
+          <li>Runs the main conversation loop in <code>character_eng/__main__.py</code>.</li>
+          <li>Owns scenario stage, chat history, world state application, command handling, and dashboard emission.</li>
+          <li>Should be the only place where a user turn is finally interpreted into character action.</li>
+        </ul>
+      </article>
+      <article class="process">
+        <h3>Voice helper threads <span class="small">latency-sensitive I/O</span></h3>
+        <ul>
+          <li>Mic feeder thread sends audio to Deepgram.</li>
+          <li>Deepgram listener thread turns partials/finals into transcript and barge-in events.</li>
+          <li>TTS generation/receive path streams PCM to the speaker queue.</li>
+          <li>Filler timer can briefly emit Pocket-TTS clips while waiting for primary speech.</li>
+        </ul>
+      </article>
+      <article class="process">
+        <h3>Vision service process <span class="small">separate HTTP service</span></h3>
+        <ul>
+          <li>Runs in <code>services/vision/app.py</code>.</li>
+          <li>Can be backed by a live camera, browser frames, replay files, or generated images.</li>
+          <li>Exposes health, snapshot, injection, and question/target endpoints consumed by <code>VisionManager</code>.</li>
+        </ul>
+      </article>
+      <article class="process">
+        <h3>Dashboard / bridge surface <span class="small">observability and control</span></h3>
+        <ul>
+          <li>Displays event history and current runtime controls.</li>
+          <li>Can inject text commands and show reviewable state.</li>
+          <li>Should never become the hidden source of truth for the character.</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <section id="vision" class="panel">
+    <div class="chip">Vision Design</div>
+    <h2>How Visual Grounding Is Supposed To Work</h2>
+    <div class="timeline">
+      <div class="timeline-row">
+        <div class="timeline-label">Frame source</div>
+        <div><p>A frame comes from a local camera, the browser bridge, a replay file, or generated imagery from the QA harness.</p></div>
+      </div>
+      <div class="timeline-row">
+        <div class="timeline-label">Vision service</div>
+        <div><p>The service tracks people and scene targets, answers configured VLM questions, and can use SAM targets to focus on likely objects that matter for the beat.</p></div>
+      </div>
+      <div class="timeline-row">
+        <div class="timeline-label">Snapshot distillation</div>
+        <div><p><code>VisionManager</code> polls snapshots and converts raw service output into compact perception events usable by the character loop.</p></div>
+      </div>
+      <div class="timeline-row">
+        <div class="timeline-label">World state merge</div>
+        <div><p>Perception enters the world and reconcile path as claims about the current scene. This is where false positives, missing targets, or stale observations can poison the turn.</p></div>
+      </div>
+      <div class="timeline-row">
+        <div class="timeline-label">Creative consequence</div>
+        <div><p>The character should then speak as if it actually noticed the object or person. If the VLM saw a bottle but the line ignores it, the integration is weak even if the vision service was technically correct.</p></div>
+      </div>
+    </div>
+    <div class="matrix">
+      <div class="cell">
+        <h3>Good vision behavior</h3>
+        <ul>
+          <li>Notices the few objects that matter for the current beat.</li>
+          <li>Updates quickly when the user enters, leaves, or reveals something.</li>
+          <li>Produces facts that can survive into later turns without getting weird.</li>
+        </ul>
+      </div>
+      <div class="cell">
+        <h3>Common weak points</h3>
+        <ul>
+          <li>Noisy or stale snapshots produce old facts.</li>
+          <li>SAM targets are too generic or missing key props.</li>
+          <li>Scene interpretation is correct in logs but never affects the final line.</li>
+        </ul>
+      </div>
+      <div class="cell">
+        <h3>What to tune first</h3>
+        <ul>
+          <li>Question set for the current beat.</li>
+          <li>Target list for likely props or gestures.</li>
+          <li>How perception is summarized into the chat context.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="prompts" class="panel">
+    <div class="chip">Prompt Stack</div>
+    <h2>Which Prompts Exist And Why</h2>
+    <p>The stack works better when prompts are narrow and explicit. The visible reply should be controlled by a small set of strong constraints, while support prompts clean up state or stage management around it.</p>
+    <div class="prompt-grid">
+      <div class="prompt-card">
+        <h3>Global rules</h3>
+        <p>Sets the broad behavioral frame: short turns, no AI self-reference, and constraints that should apply across characters.</p>
+      </div>
+      <div class="prompt-card">
+        <h3>Character prompt</h3>
+        <p>Defines voice, tone, quirks, and what makes Greg feel specific instead of generic.</p>
+      </div>
+      <div class="prompt-card">
+        <h3>Scenario materials</h3>
+        <p>Supply beat-specific framing, stage objectives, and a sense of where the conversation is currently supposed to be.</p>
+      </div>
+      <div class="prompt-card">
+        <h3>World summary</h3>
+        <p>Injects visible scene facts, people, and recent events so the line can be grounded in the moment.</p>
+      </div>
+      <div class="prompt-card">
+        <h3>System nudges</h3>
+        <p>Short-turn automation or runtime hints can be appended before submit to bias the immediate line without rewriting the whole stack.</p>
+      </div>
+      <div class="prompt-card">
+        <h3>Support prompts</h3>
+        <p>Thought, director, reconcile, script checks, and evaluators are support systems. They should sharpen the scene, not dominate it.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="controls" class="panel">
+    <div class="chip">Runtime Controls</div>
+    <h2>How To Iterate Without Restarting The Whole App</h2>
+    <p>The dashboard and CLI now expose the same control surface via <code>/threads</code>. These controls mute subsystems logically instead of tearing down the process graph.</p>
+    <div class="control-grid">
+      <div class="control">
+        <h3>Reconcile</h3>
+        <p>Stops new reconcile jobs from starting. Use it when background fact cleanup is making it hard to judge the immediate conversational line.</p>
+      </div>
+      <div class="control">
+        <h3>Vision</h3>
+        <p>Mutes vision event ingestion into the main loop while keeping the service alive for snapshots and diagnosis.</p>
+      </div>
+      <div class="control">
+        <h3>Auto-beat</h3>
+        <p>Disables the idle follow-up timer. Useful when you need fully user-driven pacing during testing.</p>
+      </div>
+      <div class="control">
+        <h3>Filler</h3>
+        <p>Toggles short Pocket-TTS latency fillers like "oh", "hmm", and "okay" while waiting on primary speech.</p>
+      </div>
+    </div>
+    <div class="command-list">
+      <div class="command"><strong>Status:</strong> <code>/threads status</code></div>
+      <div class="command"><strong>Disable a subsystem:</strong> <code>/threads reconcile off</code>, <code>/threads vision off</code>, <code>/threads auto-beat off</code>, <code>/threads filler off</code></div>
+    </div>
+  </section>
+
+  <section id="review" class="panel">
+    <div class="chip good">Iteration Workflow</div>
+    <h2>How To Review And Feed Fixes Back In</h2>
+    <div class="review-grid">
+      <div class="review">
+        <h3>Live dashboard</h3>
+        <p>Use it to watch events, current state, controls, and the rough timing of a session while the app is running.</p>
+      </div>
+      <div class="review">
+        <h3>HTML QA reports</h3>
+        <p>Use the full-stack harness when you want a stable artifact with images, turns, timings, and evaluator output.</p>
+      </div>
+      <div class="review">
+        <h3>Inline annotations</h3>
+        <p>Open a report with <code>uv run -m character_eng.open_report &lt;report.html&gt;</code>, annotate individual turns, and save structured notes to <code>logs/annotated/</code>.</p>
+      </div>
+      <div class="review">
+        <h3>Agent feedback loop</h3>
+        <p>Those notes are the cleanest way to turn human taste into concrete iteration requests like "too long", "great open-ended question", or "vision missed the bottle".</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="failure" class="panel">
+    <div class="chip warn">Failure Signatures</div>
+    <h2>What Breakage Usually Looks Like</h2>
+    <div class="warn-list">
+      <div class="warn-item">
+        <h3>Reply is too long</h3>
+        <p>The short-turn prompt is losing authority, or support prompts are bloating context until the visible line stops feeling crisp.</p>
+      </div>
+      <div class="warn-item">
+        <h3>Reply ignores obvious visible objects</h3>
+        <p>Either the vision service did not notice the thing, the summary dropped it, or the chat prompt is not weighting visible facts strongly enough.</p>
+      </div>
+      <div class="warn-item">
+        <h3>Audio feels late or dead</h3>
+        <p>Look at TTS startup timing, speaker queue behavior, and whether fillers are masking or merely hiding a deeper speech latency issue.</p>
+      </div>
+      <div class="warn-item">
+        <h3>World facts get weirdly polluted</h3>
+        <p>Reconcile output or event carryover is introducing stale or malformed facts. This usually shows up as repeated irrelevant observations or awkwardly prefixed fact text.</p>
+      </div>
+      <div class="warn-item">
+        <h3>Internal artifacts drift into nonsense</h3>
+        <p>The visible reply may still look grounded while planner, director, or script artifacts start talking about things like coupons or hidden lore. That means the support layer is no longer serving the scene cleanly.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="edit" class="panel">
+    <div class="chip">Where To Edit</div>
+    <h2>If You Want To Change Behavior, Start Here</h2>
+    <div class="edit-grid">
+      <div class="edit">
+        <h3>Conversation loop</h3>
+        <p><code>character_eng/__main__.py</code></p>
+        <ul>
+          <li>Main runtime flow</li>
+          <li>Command handling</li>
+          <li>Runtime controls</li>
+          <li>Scenario/stage transitions</li>
+        </ul>
+      </div>
+      <div class="edit">
+        <h3>World and reconcile</h3>
+        <p><code>character_eng/world.py</code></p>
+        <ul>
+          <li>Fact storage and people state</li>
+          <li>World updates</li>
+          <li>Reconcile sanitization</li>
+        </ul>
+      </div>
+      <div class="edit">
+        <h3>Voice path</h3>
+        <p><code>character_eng/voice.py</code> and <code>character_eng/filler_audio.py</code></p>
+        <ul>
+          <li>STT wiring</li>
+          <li>Speaker buffering</li>
+          <li>TTS startup</li>
+          <li>Latency filler behavior</li>
+        </ul>
+      </div>
+      <div class="edit">
+        <h3>Vision service</h3>
+        <p><code>services/vision/app.py</code> and <code>character_eng/vision.py</code></p>
+        <ul>
+          <li>Snapshot contract</li>
+          <li>Tracking and questions</li>
+          <li>Perception summarization</li>
+        </ul>
+      </div>
+      <div class="edit">
+        <h3>Prompts and character</h3>
+        <p><code>prompts/</code></p>
+        <ul>
+          <li>Global behavior constraints</li>
+          <li>Character voice</li>
+          <li>Scenario framing</li>
+          <li>Automation short-turn bias</li>
+        </ul>
+      </div>
+      <div class="edit">
+        <h3>QA harness and reports</h3>
+        <p><code>character_eng/qa_full_stack.py</code></p>
+        <ul>
+          <li>Generated scenes</li>
+          <li>Automation runs</li>
+          <li>HTML report rendering</li>
+          <li>Annotation export</li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-note">
+      <strong>Recommended debugging order:</strong>
+      <p>First confirm the world is right. Then confirm the visible reply is short and grounded. Then tune support prompts, filler, and automation. Do not start by changing ten prompts at once.</p>
+    </div>
+  </section>
+</main>
+</body>
+</html>

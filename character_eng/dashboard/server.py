@@ -13,6 +13,7 @@ from pathlib import Path
 from character_eng.dashboard.events import DashboardEventCollector
 
 HTML_PATH = Path(__file__).parent / "index.html"
+SYSTEM_MAP_PATH = Path(__file__).parent / "system_map.html"
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -22,6 +23,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
             self._serve_html()
+        elif self.path == "/system-map.html":
+            self._serve_system_map()
         elif self.path == "/events":
             self._serve_sse()
         elif self.path == "/state":
@@ -59,6 +62,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             content = HTML_PATH.read_bytes()
         except FileNotFoundError:
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "index.html not found")
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _serve_system_map(self):
+        try:
+            content = SYSTEM_MAP_PATH.read_bytes()
+        except FileNotFoundError:
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "system_map.html not found")
             return
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")

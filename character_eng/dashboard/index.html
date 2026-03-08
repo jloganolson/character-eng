@@ -293,6 +293,34 @@
 <div id="main">
   <div id="timeline"></div>
   <div id="sidebar">
+    <div class="sidebar-panel" id="runtime-panel">
+      <h3>Runtime</h3>
+      <div class="content">
+        <div id="runtime-status" style="margin-bottom:0.5em;color:var(--text-dim);">Waiting for runtime state...</div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.45em;">
+          <button class="runtime-toggle" data-control="reconcile" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">reconcile</button>
+          <button class="runtime-toggle" data-control="vision" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">vision</button>
+          <button class="runtime-toggle" data-control="auto-beat" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">auto-beat</button>
+          <button class="runtime-toggle" data-control="filler" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">filler</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
+          <button id="runtime-pause" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--narrator);color:var(--bg);cursor:pointer;">Pause</button>
+          <button id="runtime-resume" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--advance);color:var(--bg);cursor:pointer;">Resume</button>
+          <button id="runtime-restart" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--error);color:var(--bg);cursor:pointer;">Restart</button>
+        </div>
+        <div id="vision-service-status" style="margin-top:0.7em;color:var(--text-dim);">Vision service: waiting for runtime state...</div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
+          <button id="vision-service-start" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">vision start</button>
+          <button id="vision-service-stop" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">vision stop</button>
+          <button id="vision-service-autostart" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">autostart</button>
+          <a id="vision-service-link" href="#" target="_blank" style="padding:0.45em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--cyan);text-decoration:none;text-align:center;">vision ui</a>
+        </div>
+        <div id="vision-model-status" style="margin-top:0.7em;display:grid;gap:0.4em;"></div>
+        <div style="margin-top:0.7em;">
+          <a href="/system-map.html" target="_blank" style="color:var(--cyan);text-decoration:none;">Open system map</a>
+        </div>
+      </div>
+    </div>
     <div class="sidebar-panel" id="vision-panel" style="display:none;">
       <h3>Vision</h3>
       <div class="content">
@@ -345,6 +373,21 @@
   let autoScroll = true;
   let currentTurnEl = null;
   let currentResponseEl = null;
+  let lastSeq = 0;
+  let runtimeControls = {reconcile: true, vision: true, auto_beat: true, filler: true};
+  let visionService = {
+    url: '',
+    health: false,
+    managed: false,
+    external: false,
+    state: 'stopped',
+    autostart: false,
+    mode: 'camera',
+    mockReplay: ''
+  };
+  let visionModels = null;
+  let visionMemory = null;
+  let visionFeedSrc = '';
 
   const timeline = document.getElementById('timeline');
   const scrollLock = document.getElementById('scroll-lock');
@@ -397,6 +440,12 @@
     });
     chatInput.value = '';
   }
+  function sendThreadCommand(name) {
+    sendInput(`/threads ${name} toggle`);
+  }
+  function sendVisionServiceCommand(action) {
+    sendInput(`/vision-service ${action}`);
+  }
   chatInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -422,6 +471,123 @@
     const d = document.createElement('div');
     d.textContent = s;
     return d.innerHTML;
+  }
+
+  function statusColor(status) {
+    switch ((status || '').toLowerCase()) {
+      case 'ready': return 'var(--advance)';
+      case 'managed': return 'var(--advance)';
+      case 'external': return 'var(--cyan)';
+      case 'loading': return 'var(--warning)';
+      case 'starting': return 'var(--warning)';
+      case 'error': return 'var(--error)';
+      case 'off':
+      case 'not_loaded':
+      case 'stopped':
+      default: return 'var(--text-dim)';
+    }
+  }
+
+  function renderVisionModelCard(label, status, detail) {
+    const color = statusColor(status);
+    const suffix = detail ? `<div style="font-size:0.78em;color:var(--text-dim);margin-top:0.18em;">${esc(detail)}</div>` : '';
+    return `<div style="border:1px solid var(--border);border-radius:8px;padding:0.5em 0.6em;background:var(--panel-hover);">
+      <div style="display:flex;justify-content:space-between;gap:0.75em;align-items:center;">
+        <span>${esc(label)}</span>
+        <b style="color:${color};text-transform:lowercase;">${esc(status || 'off')}</b>
+      </div>
+      ${suffix}
+    </div>`;
+  }
+
+  function updateVisionFeedUrl() {
+    const visionFeed = document.getElementById('vision-feed');
+    if (!visionService.url) return;
+    const nextSrc = `${visionService.url.replace(/\/$/, '')}/video_feed`;
+    if (nextSrc === visionFeedSrc) return;
+    visionFeedSrc = nextSrc;
+    visionFeed.style.display = '';
+    visionFeed.src = nextSrc;
+  }
+
+  function renderVisionServiceStatus() {
+    const statusEl = document.getElementById('vision-service-status');
+    const linkEl = document.getElementById('vision-service-link');
+    const autoBtn = document.getElementById('vision-service-autostart');
+    const source = visionService.managed ? 'managed by app'
+      : visionService.external ? 'external service'
+      : 'not running';
+    statusEl.innerHTML = [
+      `service: <b style="color:${statusColor(visionService.state)}">${esc(visionService.state || 'stopped')}</b>`,
+      `auto-start: <b>${visionService.autostart ? 'on' : 'off'}</b>`,
+      `ingest: <b>${runtimeControls.vision ? 'on' : 'off'}</b>`,
+      `source: <b>${esc(source)}</b>`,
+      visionService.url ? `url: <b>${esc(visionService.url)}</b>` : '',
+      visionService.mockReplay ? `mock: <b>${esc(visionService.mockReplay)}</b>` : ''
+    ].filter(Boolean).join('<br>');
+    autoBtn.textContent = `autostart ${visionService.autostart ? 'on' : 'off'}`;
+    if (visionService.url) {
+      linkEl.href = visionService.url;
+      linkEl.style.pointerEvents = 'auto';
+      linkEl.style.opacity = '1';
+      updateVisionFeedUrl();
+    } else {
+      linkEl.href = '#';
+      linkEl.style.pointerEvents = 'none';
+      linkEl.style.opacity = '0.55';
+    }
+  }
+
+  function renderVisionModelStatus() {
+    const el = document.getElementById('vision-model-status');
+    if (!visionService.url) {
+      el.innerHTML = '<div style="color:var(--text-dim);font-size:0.85em;">No vision service configured.</div>';
+      return;
+    }
+    if (!visionModels) {
+      el.innerHTML = '<div style="color:var(--text-dim);font-size:0.85em;">Waiting for model status...</div>';
+      return;
+    }
+    if (visionModels.error) {
+      el.innerHTML = `<div style="color:var(--error);font-size:0.85em;">${esc(visionModels.error)}</div>`;
+      return;
+    }
+    const cards = [];
+    cards.push(renderVisionModelCard('vLLM', visionModels.vllm, visionModels.vllm_model || ''));
+    if (visionModels.sam3) cards.push(renderVisionModelCard('SAM3', visionModels.sam3.status, visionModels.sam3.error || ''));
+    if (visionModels.face) cards.push(renderVisionModelCard('InsightFace', visionModels.face.status, visionModels.face.error || ''));
+    if (visionModels.person) cards.push(renderVisionModelCard('ReID', visionModels.person.status, visionModels.person.error || ''));
+    if (visionMemory && visionMemory.gpu) {
+      cards.push(renderVisionModelCard(
+        'GPU memory',
+        'ready',
+        `${visionMemory.gpu.allocated_mb}MB used / ${visionMemory.gpu.total_mb}MB total`
+      ));
+    }
+    el.innerHTML = cards.join('');
+  }
+
+  async function pollVisionModelStatus() {
+    if (!visionService.url) {
+      visionModels = null;
+      visionMemory = null;
+      renderVisionModelStatus();
+      return;
+    }
+    try {
+      const base = visionService.url.replace(/\/$/, '');
+      const [statusResp, memoryResp] = await Promise.all([
+        fetch(`${base}/model_status`),
+        fetch(`${base}/memory_status`).catch(() => null),
+      ]);
+      if (!statusResp.ok) throw new Error(`model_status failed (${statusResp.status})`);
+      visionModels = await statusResp.json();
+      visionMemory = memoryResp && memoryResp.ok ? await memoryResp.json() : null;
+    } catch (err) {
+      visionModels = {error: `Vision status unavailable: ${err.message}`};
+      visionMemory = null;
+    }
+    renderVisionModelStatus();
   }
 
   // Event handlers
@@ -658,19 +824,62 @@
       div.innerHTML = `Session ended. ${data.total_turns || 0} turns, ${data.duration_s || 0}s`;
       timeline.appendChild(div);
       scrollToBottom();
+    },
+
+    runtime_controls(data) {
+      runtimeControls = data.controls || runtimeControls;
+      visionService = {
+        url: data.vision_service_url || '',
+        health: !!data.vision_service_health,
+        managed: !!data.vision_service_managed,
+        external: !!data.vision_service_external,
+        state: data.vision_service_state || 'stopped',
+        autostart: !!data.vision_service_autostart,
+        mode: data.vision_service_mode || 'camera',
+        mockReplay: data.vision_mock_replay || ''
+      };
+      const status = document.getElementById('runtime-status');
+      status.innerHTML = [
+        `reconcile: <b>${runtimeControls.reconcile ? 'on' : 'off'}</b>`,
+        `vision: <b>${runtimeControls.vision ? 'on' : 'off'}</b>`,
+        `auto-beat: <b>${runtimeControls.auto_beat ? 'on' : 'off'}</b>`,
+        `filler: <b>${runtimeControls.filler ? 'on' : 'off'}</b>`,
+        `voice: <b>${data.voice_active ? 'on' : 'off'}</b>`,
+        `vision manager: <b>${data.vision_active ? 'on' : 'off'}</b>`,
+        `reconcile thread: <b>${data.reconcile_thread_alive ? 'running' : 'idle'}</b>`,
+      ].join('<br>');
+      document.querySelectorAll('.runtime-toggle').forEach((btn) => {
+        const key = btn.dataset.control.replace('-', '_');
+        const enabled = !!runtimeControls[key];
+        btn.style.background = enabled ? 'var(--advance)' : 'var(--panel-hover)';
+        btn.style.color = enabled ? 'var(--bg)' : 'var(--text)';
+        btn.textContent = `${btn.dataset.control} ${enabled ? 'on' : 'off'}`;
+      });
+      updateVisionFeedUrl();
+      renderVisionServiceStatus();
+      pollVisionModelStatus();
     }
   };
 
   function handleEvent(event) {
+    if (typeof event.seq === 'number') {
+      if (event.seq <= lastSeq) return;
+      lastSeq = event.seq;
+    }
     const handler = handlers[event.type];
     if (handler) handler(event.data);
   }
 
-  // Catch up on page load
-  fetch('/state')
-    .then(r => r.json())
-    .then(events => { events.forEach(handleEvent); })
-    .catch(() => {});
+  function refreshState() {
+    fetch('/state')
+      .then(r => r.json())
+      .then(events => { events.forEach(handleEvent); })
+      .catch(() => {});
+  }
+
+  // Catch up on page load and poll as a fallback when SSE isn't truly live.
+  refreshState();
+  setInterval(refreshState, 2000);
 
   // SSE stream
   const es = new EventSource('/events');
@@ -688,7 +897,18 @@
   // Vision feed: try to load MJPEG from vision service
   const visionFeed = document.getElementById('vision-feed');
   visionFeed.onerror = () => { visionFeed.style.display = 'none'; };
-  visionFeed.src = 'http://localhost:7860/video_feed';
+
+  document.querySelectorAll('.runtime-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => sendThreadCommand(btn.dataset.control));
+  });
+  document.getElementById('runtime-pause').addEventListener('click', () => sendInput('/pause'));
+  document.getElementById('runtime-resume').addEventListener('click', () => sendInput('/resume'));
+  document.getElementById('runtime-restart').addEventListener('click', () => sendInput('/restart'));
+  document.getElementById('vision-service-start').addEventListener('click', () => sendVisionServiceCommand('start'));
+  document.getElementById('vision-service-stop').addEventListener('click', () => sendVisionServiceCommand('stop'));
+  document.getElementById('vision-service-autostart').addEventListener('click', () => sendVisionServiceCommand('autostart toggle'));
+  setInterval(pollVisionModelStatus, 4000);
+
 })();
 </script>
 </body>

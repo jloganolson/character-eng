@@ -46,6 +46,12 @@
 # ref_audio = "/path/to/reference.wav"   # WAV for voice cloning (optional)
 # pocket_voice = "voices/greg.safetensors"  # voice file for pocket-tts serve --voice (default)
 
+# Optional latency filler clips (Pocket-TTS). These are short interjections such
+# as "Hmm." or "Okay." that can play if real TTS takes too long to deliver its
+# first audio chunk.
+# filler_enabled = true
+# filler_lead_ms = 180
+
 [vision]
 # Enable vision by default (same as --vision flag).
 # enabled = false
