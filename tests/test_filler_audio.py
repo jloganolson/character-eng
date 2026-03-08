@@ -86,3 +86,40 @@ def test_clip_for_preserves_remote_voice_url():
     bank = FillerBank("http://localhost:8003", voice="https://example.com/greg.safetensors")
     with patch("character_eng.filler_audio.PocketTTS", side_effect=fake_ctor):
         assert bank.clip_for("neutral") == b"\x05\x06"
+
+
+def test_clip_cache_is_reused_across_sentiments_for_same_phrase():
+    fake_tts = MagicMock()
+    fake_tts.wait_for_done.return_value = True
+
+    def fake_ctor(*args, **kwargs):
+        on_audio = kwargs["on_audio"]
+        on_audio(b"\x07\x08")
+        return fake_tts
+
+    bank = FillerBank("http://localhost:8003")
+    with patch("character_eng.filler_audio.PocketTTS", side_effect=fake_ctor) as ctor:
+        clip_a = bank.clip_for_choice(bank.pick("curious", response_text="Hello?", expression=""))
+        clip_b = bank.clip_for_choice(type(bank.pick("neutral"))(sentiment="skeptical", phrase="Hmm."))
+
+    assert clip_a == b"\x07\x08"
+    assert clip_b == b"\x07\x08"
+    assert ctor.call_count == 1
+
+
+def test_prewarm_synthesizes_each_unique_phrase_once():
+    fake_tts = MagicMock()
+    fake_tts.wait_for_done.return_value = True
+
+    def fake_ctor(*args, **kwargs):
+        on_audio = kwargs["on_audio"]
+        on_audio(b"\x09\x0a")
+        return fake_tts
+
+    bank = FillerBank("http://localhost:8003")
+    unique_phrases = {phrase for options in FILLER_LIBRARY.values() for phrase in options}
+    with patch("character_eng.filler_audio.PocketTTS", side_effect=fake_ctor) as ctor:
+        warmed = bank.prewarm()
+
+    assert warmed == len(unique_phrases)
+    assert ctor.call_count == len(unique_phrases)

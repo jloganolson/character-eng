@@ -931,6 +931,15 @@ class VoiceIO:
                 voice=voice_path,
                 ref_audio=self._ref_audio,
             )
+            try:
+                warmed = self._filler_bank.prewarm()
+                sys.stderr.write(f"[Pocket-TTS] Prewarmed {warmed} filler clips.\n")
+                sys.stderr.flush()
+            except Exception as exc:
+                sys.stderr.write(f"[Pocket-TTS] Filler prewarm failed: {exc}\n")
+                sys.stderr.flush()
+                self._filler_enabled = False
+                self._filler_bank = None
 
         if not self._output_only:
             self._stt = DeepgramSTT(

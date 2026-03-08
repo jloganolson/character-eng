@@ -36,7 +36,7 @@ class _PCMCollector:
 
 
 class FillerBank:
-    """Lazy cache of short Pocket-TTS filler clips."""
+    """Prewarmed cache of short Pocket-TTS filler clips."""
 
     def __init__(
         self,
@@ -48,7 +48,7 @@ class FillerBank:
         self._server_url = server_url.rstrip("/")
         self._voice = voice
         self._ref_audio = ref_audio
-        self._clips: dict[tuple[str, str], bytes] = {}
+        self._clips: dict[str, bytes] = {}
         self._indexes = {sentiment: 0 for sentiment in FILLER_LIBRARY}
         self._lock = threading.Lock()
 
@@ -74,7 +74,7 @@ class FillerBank:
         return self.clip_for_choice(choice)
 
     def clip_for_choice(self, choice: FillerChoice) -> bytes:
-        key = (choice.sentiment, choice.phrase)
+        key = choice.phrase
         with self._lock:
             cached = self._clips.get(key)
         if cached is not None:
@@ -97,6 +97,19 @@ class FillerBank:
         with self._lock:
             self._clips[key] = clip
         return clip
+
+    def prewarm(self) -> int:
+        phrases: list[str] = []
+        seen: set[str] = set()
+        for options in FILLER_LIBRARY.values():
+            for phrase in options:
+                if phrase in seen:
+                    continue
+                seen.add(phrase)
+                phrases.append(phrase)
+        for phrase in phrases:
+            self.clip_for_choice(FillerChoice(sentiment="neutral", phrase=phrase))
+        return len(phrases)
 
     @staticmethod
     def infer_sentiment(response_text: str = "", expression: str = "", default: str = "neutral") -> str:

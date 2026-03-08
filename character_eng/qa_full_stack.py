@@ -207,12 +207,13 @@ TIMELINE_LANES = {
     "director": "director",
     "stage_change": "director",
     "plan": "planner",
-    "assistant_tts_first_audio": "tts",
-    "assistant_tts_done": "tts",
-    "assistant_audio_clip": "tts",
-    "assistant_filler": "tts",
+    "assistant_tts_first_audio": "chat",
+    "assistant_tts_done": "chat",
+    "assistant_audio_clip": "chat",
+    "assistant_filler": "chat",
+    "assistant_tts_start": "chat",
 }
-LANE_ORDER = ["vision", "stt", "chat", "expression", "eval", "director", "planner", "tts", "world", "session", "script", "other"]
+LANE_ORDER = ["vision", "stt", "chat", "expression", "eval", "director", "planner", "world", "session", "script", "other"]
 
 
 @dataclass
@@ -1125,6 +1126,8 @@ def _timeline_event_label(event: dict) -> str:
         return f"Assistant TTS done: {data.get('synth_ms', 0)}ms synth"
     if event_type == "assistant_audio_clip":
         return f"Assistant clip duration: {data.get('audio_ms', 0)}ms"
+    if event_type == "assistant_tts_start":
+        return "Assistant TTS start"
     if event_type == "assistant_filler":
         return f"Filler: {data.get('phrase', '')}"
     if event_type == "session_start":
@@ -1170,6 +1173,7 @@ def _build_reply_display_events(events: list[dict]) -> list[dict]:
     response_types = {
         "response_ttft",
         "response_done",
+        "assistant_tts_start",
         "assistant_tts_first_audio",
         "assistant_tts_done",
         "assistant_audio_clip",
@@ -1184,6 +1188,7 @@ def _build_reply_display_events(events: list[dict]) -> list[dict]:
 
         response_done = event
         response_ttft = None
+        tts_start = None
         first_audio = None
         tts_done = None
         audio_clip = None
@@ -1201,7 +1206,10 @@ def _build_reply_display_events(events: list[dict]) -> list[dict]:
             candidate = events[next_index]
             if candidate.get("type") == "response_done":
                 break
-            if candidate.get("type") == "assistant_tts_first_audio" and first_audio is None:
+            if candidate.get("type") == "assistant_tts_start" and tts_start is None:
+                tts_start = candidate
+                consumed.add(next_index)
+            elif candidate.get("type") == "assistant_tts_first_audio" and first_audio is None:
                 first_audio = candidate
                 consumed.add(next_index)
             elif candidate.get("type") == "assistant_tts_done" and tts_done is None:
@@ -1237,6 +1245,7 @@ def _build_reply_display_events(events: list[dict]) -> list[dict]:
                 "text": text,
                 "ttft_ms": int(response_done.get("data", {}).get("ttft_ms", 0)),
                 "total_ms": total_ms,
+                "tts_start_ts": tts_start.get("timestamp") if tts_start else None,
                 "first_audio_ms": int(first_audio.get("data", {}).get("first_audio_ms", 0)) if first_audio else 0,
                 "synth_ms": int(tts_done.get("data", {}).get("synth_ms", 0)) if tts_done else 0,
                 "audio_ms": int(audio_clip.get("data", {}).get("audio_ms", 0)) if audio_clip else 0,
@@ -1248,6 +1257,7 @@ def _build_reply_display_events(events: list[dict]) -> list[dict]:
                     item for item in [
                         response_ttft.get("type") if response_ttft else "",
                         response_done.get("type"),
+                        tts_start.get("type") if tts_start else "",
                         first_audio.get("type") if first_audio else "",
                         tts_done.get("type") if tts_done else "",
                         audio_clip.get("type") if audio_clip else "",
@@ -1271,6 +1281,7 @@ def _related_event_keys(events: list[dict], index: int) -> list[str]:
         "assistant_tts_first_audio": {"response_done", "response_chunk", "response_ttft"},
         "assistant_tts_done": {"assistant_tts_first_audio", "response_done", "response_chunk", "response_ttft"},
         "assistant_audio_clip": {"assistant_tts_done", "assistant_tts_first_audio", "response_done"},
+        "assistant_tts_start": {"response_done", "response_chunk", "response_ttft"},
         "expression": {"response_done", "response_chunk"},
         "eval": {"response_done", "response_chunk"},
         "director": {"response_done", "eval", "beat_advance"},
@@ -1561,6 +1572,7 @@ def _build_stream_board(events: list[dict], prompt_traces: list[dict]) -> tuple[
                 marker_specs = [
                     ("TTFT", start + int(data.get("ttft_ms", 0)) / 1000.0 if data.get("ttft_ms") else None),
                     ("Text", data.get("response_done_ts")),
+                    ("TTS start", data.get("tts_start_ts")),
                     ("Audio", data.get("first_audio_ts")),
                     ("TTS", data.get("tts_done_ts")),
                     ("Clip", data.get("clip_end_ts")),
@@ -1899,6 +1911,12 @@ def main() -> None:
     def _on_voice_trace(event_type: str, data: dict) -> None:
         if event_type == "assistant_filler":
             session_recorder.add("assistant_filler", data)
+            return
+        if event_type == "assistant_tts_live_start":
+            session_recorder.add(
+                "assistant_tts_start",
+                {"text": data.get("text", "")},
+            )
             return
         if event_type == "assistant_tts_live_first_audio":
             session_recorder.add(
