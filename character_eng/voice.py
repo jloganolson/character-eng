@@ -812,6 +812,10 @@ class VoiceIO:
         tts_device: str = "cuda:0",
         tts_server_url: str = "",
         pocket_voice: str = "",
+        filler_enabled: bool = True,
+        filler_lead_ms: int = 180,
+        output_only: bool = False,
+        trace_hook: Callable[[str, dict], None] | None = None,
     ):
         self._event_queue: queue.Queue[str] = queue.Queue()
         self._cancelled = threading.Event()
@@ -840,7 +844,22 @@ class VoiceIO:
         self._pocket_voice = pocket_voice
         self._pocket_server: subprocess.Popen | None = None
         self._pocket_we_started = False
+        self._filler_enabled = filler_enabled
+        self._filler_lead_ms = filler_lead_ms
+        self._filler_bank = None
+        self._filler_thread: threading.Thread | None = None
+        self._filler_cancel = threading.Event()
         self._started = False
+        self._output_only = output_only
+        self._trace_hook = trace_hook
+
+    def _trace(self, event_type: str, data: dict) -> None:
+        if self._trace_hook is None:
+            return
+        try:
+            self._trace_hook(event_type, dict(data))
+        except Exception:
+            pass
 
     def start(self):
         """Initialize and start all voice components."""
@@ -896,17 +915,35 @@ class VoiceIO:
                 voice_id=self._voice_id,
             )
 
-        self._stt = DeepgramSTT(
-            on_transcript=self._on_transcript,
-            on_turn_start=self._on_turn_start,
-        )
-        self._stt.start()
+        if self._filler_enabled:
+            from character_eng.filler_audio import FillerBank
 
-        self._mic = MicStream(on_audio=self._on_mic_audio, device=self._input_device)
-        self._mic.start()
+            server_url = self._tts_server_url or "http://localhost:8003"
+            self._ensure_pocket_server(server_url)
+            voice_path = ""
+            if self._pocket_voice:
+                voice_path = self._pocket_voice
+                voice_candidate = Path(voice_path)
+                if not voice_candidate.is_absolute():
+                    voice_path = str(Path(__file__).resolve().parent.parent / voice_candidate)
+            self._filler_bank = FillerBank(
+                server_url,
+                voice=voice_path,
+                ref_audio=self._ref_audio,
+            )
 
-        self._keys = KeyListener(self._event_queue, on_voice_off=self.cancel_speech)
-        self._keys.start()
+        if not self._output_only:
+            self._stt = DeepgramSTT(
+                on_transcript=self._on_transcript,
+                on_turn_start=self._on_turn_start,
+            )
+            self._stt.start()
+
+            self._mic = MicStream(on_audio=self._on_mic_audio, device=self._input_device)
+            self._mic.start()
+
+            self._keys = KeyListener(self._event_queue, on_voice_off=self.cancel_speech)
+            self._keys.start()
 
         self._started = True
 
@@ -1018,6 +1055,7 @@ class VoiceIO:
         """Stop all voice components and cancel timers."""
         self._started = False
         self._cancel_auto_beat()
+        self.cancel_latency_filler()
 
         if self._mic is not None:
             self._mic.stop()
@@ -1046,6 +1084,54 @@ class VoiceIO:
                 self._event_queue.get_nowait()
             except queue.Empty:
                 break
+
+    def set_filler_enabled(self, enabled: bool) -> None:
+        self._filler_enabled = enabled
+        if not enabled:
+            self.cancel_latency_filler()
+
+    def start_latency_filler(self, response_text: str = "", expression: str = "") -> None:
+        if (
+            not self._filler_enabled
+            or self._filler_bank is None
+            or self._speaker is None
+            or self._cancelled.is_set()
+        ):
+            return
+        self.cancel_latency_filler()
+        self._filler_cancel.clear()
+
+        def _run():
+            if self._speaker is None:
+                return
+            if self._speaker.wait_for_audio(timeout=self._filler_lead_ms / 1000):
+                return
+            if self._filler_cancel.is_set() or self._cancelled.is_set():
+                return
+            try:
+                choice = self._filler_bank.pick(
+                    sentiment="neutral",
+                    response_text=response_text,
+                    expression=expression,
+                )
+                clip = self._filler_bank.clip_for_choice(choice)
+            except Exception:
+                return
+            if clip and not self._filler_cancel.is_set() and not self._cancelled.is_set():
+                self._trace("assistant_filler", {
+                    "phrase": choice.phrase,
+                    "sentiment": choice.sentiment,
+                })
+                self._speaker.enqueue(clip)
+
+        self._filler_thread = threading.Thread(target=_run, daemon=True)
+        self._filler_thread.start()
+
+    def cancel_latency_filler(self) -> None:
+        self._filler_cancel.set()
+        if self._filler_thread is not None:
+            self._filler_thread.join(timeout=1)
+            self._filler_thread = None
 
     @property
     def is_started(self) -> bool:
@@ -1079,6 +1165,9 @@ class VoiceIO:
         self._barged_in = False
         self._cancelled.clear()
         self._is_speaking = True
+        self.cancel_latency_filler()
+        started_at = time.time()
+        self._trace("assistant_tts_live_start", {})
         if self._speaker is not None:
             self._speaker.reset_counters()
         for chunk in text_chunks:
@@ -1090,14 +1179,24 @@ class VoiceIO:
         # Signal end of text input
         if not self._cancelled.is_set() and self._tts is not None:
             self._tts.flush()
+            self.start_latency_filler()
 
         # Wait for ElevenLabs to finish generating
         if not self._cancelled.is_set() and self._tts is not None:
             self._tts.wait_for_done(timeout=15.0)
+            self._trace("assistant_tts_live_synth_done", {
+                "elapsed_ms": int((time.time() - started_at) * 1000),
+            })
 
         # Wait for first audio to arrive at the speaker
+        first_audio_at = None
         if not self._cancelled.is_set() and self._speaker is not None:
-            self._speaker.wait_for_audio(timeout=0.5)
+            if self._speaker.wait_for_audio(timeout=0.5):
+                first_audio_at = time.time()
+                self._trace("assistant_tts_live_first_audio", {
+                    "elapsed_ms": int((first_audio_at - started_at) * 1000),
+                })
+        self.cancel_latency_filler()
 
         # Wait for speaker to finish playback
         if self._speaker is not None and not self._cancelled.is_set():
@@ -1110,25 +1209,45 @@ class VoiceIO:
         if self._tts is not None:
             self._tts.close()
         self._is_speaking = False
+        done_at = time.time()
+        self._trace("assistant_tts_live_done", {
+            "elapsed_ms": int((done_at - started_at) * 1000),
+            "playback_ms": int((done_at - (first_audio_at or started_at)) * 1000),
+        })
 
     def speak_text(self, text: str) -> None:
         """One-shot TTS for pre-rendered beats."""
         self._barged_in = False
         self._cancelled.clear()
         self._is_speaking = True
+        self.cancel_latency_filler()
+        started_at = time.time()
+        self._trace("assistant_tts_live_start", {"text": text})
         if self._speaker is not None:
             self._speaker.reset_counters()
         if self._tts is not None:
             self._tts.send_text(text)
             self._tts.flush()
+            self.start_latency_filler(text)
 
         # Wait for ElevenLabs to finish generating
         if not self._cancelled.is_set() and self._tts is not None:
             self._tts.wait_for_done(timeout=15.0)
+            self._trace("assistant_tts_live_synth_done", {
+                "elapsed_ms": int((time.time() - started_at) * 1000),
+                "text": text,
+            })
 
         # Wait for first audio to arrive at the speaker
+        first_audio_at = None
         if not self._cancelled.is_set() and self._speaker is not None:
-            self._speaker.wait_for_audio(timeout=0.5)
+            if self._speaker.wait_for_audio(timeout=0.5):
+                first_audio_at = time.time()
+                self._trace("assistant_tts_live_first_audio", {
+                    "elapsed_ms": int((first_audio_at - started_at) * 1000),
+                    "text": text,
+                })
+        self.cancel_latency_filler()
 
         # Wait for speaker to finish playback
         if self._speaker is not None and not self._cancelled.is_set():
@@ -1141,6 +1260,12 @@ class VoiceIO:
         if self._tts is not None:
             self._tts.close()
         self._is_speaking = False
+        done_at = time.time()
+        self._trace("assistant_tts_live_done", {
+            "elapsed_ms": int((done_at - started_at) * 1000),
+            "playback_ms": int((done_at - (first_audio_at or started_at)) * 1000),
+            "text": text,
+        })
 
     def cancel_speech(self):
         """Barge-in: cancel current LLM+TTS+speaker, cancel auto-beat."""
@@ -1148,6 +1273,7 @@ class VoiceIO:
         self._barged_in = True
         self._is_speaking = False
         self._cancel_auto_beat()
+        self.cancel_latency_filler()
         if self._tts is not None:
             self._tts.close()
         if self._speaker is not None:

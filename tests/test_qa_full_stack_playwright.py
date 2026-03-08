@@ -82,6 +82,21 @@ def report_url(tmp_path: Path) -> str:
                 "data": {"audio_ms": 820},
             },
         ],
+        prompt_traces=[
+            {
+                "label": "chat",
+                "title": "Chat prompt",
+                "provider": "Groq",
+                "model": "llama",
+                "messages": [
+                    {"role": "system", "content": "Stay short."},
+                    {"role": "user", "content": "What's the pitch?"},
+                ],
+                "output": "Free water. Free advice. Interested?",
+                "started_at": 1.0,
+                "finished_at": 1.8,
+            }
+        ],
     )
 
     handler = partial(SimpleHTTPRequestHandler, directory=str(tmp_path))
@@ -115,16 +130,18 @@ def test_report_interactions_in_browser(browser_page: Page, report_url: str):
     expect(page.locator("h1")).to_have_text("Full Stack QA Trace Report")
     expect(page.locator("#detail-type")).to_have_text("vision_poll")
 
-    response_card = page.locator(".stream-card", has_text="Assistant text done")
-    response_card.get_by_role("button", name="Note").click()
-    expect(page.locator("#detail-type")).to_have_text("response_done")
-    expect(page.locator("#detail-label")).to_contain_text("Assistant text done")
-    assert page.locator("#detail-related button").count() >= 1
+    response_label = page.locator(".main-reply-label").first
+    response_card = response_label.locator("xpath=ancestor::article[1]")
+    response_label.click(force=True)
+    expect(page.locator("#detail-type")).to_have_text("assistant_reply")
+    expect(page.locator("#detail-label")).to_contain_text("Greg reply")
+    expect(page.locator("#detail-prompts")).to_contain_text("Chat prompt")
+    expect(page.locator("#detail-prompts")).to_contain_text("Stay short.")
+    expect(page.locator("#detail-prompts")).to_contain_text("What's the pitch?")
 
     page.locator("#detail-note").fill("Keep this kind of timing tight.")
-    expect(response_card.get_by_role("button", name="Note")).to_have_class(
-        re.compile(r"\bhas-note\b")
-    )
+    expect(page.locator("#note-count")).to_have_text("1")
+    expect(page.locator("#export-btn")).to_be_enabled()
 
     page.select_option("#density-mode", "compact")
     expect(page.locator(".page-shell")).to_have_class(
@@ -141,8 +158,8 @@ def test_report_interactions_in_browser(browser_page: Page, report_url: str):
     )
     assert compact_metrics["height"] <= 24
     assert compact_metrics["noteDisplay"] == "none"
-    response_card.click()
-    expect(page.locator("#detail-type")).to_have_text("response_done")
+    response_label.click(force=True)
+    expect(page.locator("#detail-type")).to_have_text("assistant_reply")
 
     page.locator("#show-chronology").uncheck()
     expect(page.locator("#detail-chronology")).to_have_class(

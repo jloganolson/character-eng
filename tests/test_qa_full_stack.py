@@ -105,6 +105,21 @@ def test_write_report_includes_dashboard_trace(tmp_path: Path):
                 "data": {"ttft_ms": 210, "total_ms": 980},
             },
         ],
+        prompt_traces=[
+            {
+                "label": "chat",
+                "title": "Chat prompt",
+                "provider": "Groq",
+                "model": "llama",
+                "messages": [
+                    {"role": "system", "content": "Stay short."},
+                    {"role": "user", "content": "What's the pitch?"},
+                ],
+                "output": "Free water. Free advice. Interested?",
+                "started_at": 0.0,
+                "finished_at": 0.5,
+            }
+        ],
     )
 
     body = html_path.read_text()
@@ -117,8 +132,11 @@ def test_write_report_includes_dashboard_trace(tmp_path: Path):
     assert "Compact" in body
     assert "Event Detail" in body
     assert "Input Context" in body
+    assert "Prompt / IO" in body
     assert "Chronology" in body
     assert "Assistant first token" in body
+    assert "prompt" in body
+    assert "reply-track-bar" in body
     assert "+0.000s" in body
     assert "vision_poll" in body
 

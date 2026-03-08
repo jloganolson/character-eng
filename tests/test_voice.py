@@ -505,6 +505,44 @@ def test_voice_io_speak_text_clears_barged_in():
     assert voice._barged_in is False
 
 
+def test_voice_io_start_latency_filler_traces_phrase():
+    events = []
+    voice = VoiceIO(trace_hook=lambda event_type, data: events.append((event_type, data)))
+    voice._speaker = MagicMock()
+    voice._speaker.wait_for_audio.return_value = False
+    voice._filler_bank = MagicMock()
+    choice = MagicMock()
+    choice.phrase = "Hmm."
+    choice.sentiment = "curious"
+    voice._filler_bank.pick.return_value = choice
+    voice._filler_bank.clip_for_choice.return_value = b"\x00\x01"
+
+    voice.start_latency_filler("hello", "curious")
+    assert voice._filler_thread is not None
+    voice._filler_thread.join(timeout=1)
+
+    assert events == [("assistant_filler", {"phrase": "Hmm.", "sentiment": "curious"})]
+    voice._speaker.enqueue.assert_called_once_with(b"\x00\x01")
+
+
+def test_voice_io_speak_text_traces_live_timing():
+    events = []
+    voice = VoiceIO(trace_hook=lambda event_type, data: events.append((event_type, data)))
+    voice._speaker = MagicMock()
+    voice._speaker.is_done.return_value = True
+    voice._speaker.wait_for_audio.return_value = True
+    voice._tts = MagicMock()
+    voice._tts.wait_for_done.return_value = True
+
+    voice.speak_text("hello")
+
+    names = [name for name, _ in events]
+    assert "assistant_tts_live_start" in names
+    assert "assistant_tts_live_synth_done" in names
+    assert "assistant_tts_live_first_audio" in names
+    assert "assistant_tts_live_done" in names
+
+
 def test_voice_io_speaker_playback_ratio_delegates():
     """speaker_playback_ratio should delegate to speaker.playback_ratio."""
     voice = VoiceIO()

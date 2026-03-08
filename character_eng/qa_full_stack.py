@@ -188,6 +188,7 @@ TIMELINE_LANES = {
     "vision_stack_ready": "vision",
     "scene_capture": "vision",
     "scene_eval": "vision",
+    "vision_focus": "vision",
     "vision_snapshot_read": "vision",
     "vision_poll": "vision",
     "vision_models": "vision",
@@ -196,6 +197,7 @@ TIMELINE_LANES = {
     "perception_injected": "world",
     "stt_result": "stt",
     "user_turn_start": "chat",
+    "assistant_reply": "chat",
     "response_ttft": "chat",
     "response_chunk": "chat",
     "response_done": "chat",
@@ -208,6 +210,7 @@ TIMELINE_LANES = {
     "assistant_tts_first_audio": "tts",
     "assistant_tts_done": "tts",
     "assistant_audio_clip": "tts",
+    "assistant_filler": "tts",
 }
 LANE_ORDER = ["vision", "stt", "chat", "expression", "eval", "director", "planner", "tts", "world", "session", "script", "other"]
 
@@ -276,6 +279,81 @@ class TraceRecorder:
             return [dict(event) for event in self._events]
 
 
+def _record_prompt_trace(prompt_traces: list[dict], **payload) -> None:
+    trace = dict(payload)
+    trace.setdefault("messages", [])
+    trace.setdefault("inputs", [])
+    trace.setdefault("output", "")
+    prompt_traces.append(trace)
+
+
+def _render_messages_text(messages: list[dict]) -> str:
+    parts: list[str] = []
+    for message in messages:
+        role = str(message.get("role", "message")).upper()
+        content = str(message.get("content", ""))
+        parts.append(f"{role}:\n{content}")
+    return "\n\n".join(parts).strip()
+
+
+def _prompt_trace_blocks_for_event(event: dict, prompt_traces: list[dict]) -> list[dict]:
+    event_type = event.get("type", "")
+    anchor_ts = float(event.get("_anchor_ts", event.get("timestamp", 0.0)))
+    desired = {
+        "assistant_reply": ("chat",),
+        "response_done": ("chat",),
+        "expression": ("expression",),
+        "director": ("director",),
+        "plan": ("plan_single", "plan"),
+        "eval": ("script_check", "thought"),
+        "scene_eval": ("scene_eval",),
+        "scene_capture": ("scene_capture",),
+    }.get(event_type, ())
+    if not desired:
+        return []
+
+    selected: list[dict] = []
+    seen_labels: set[str] = set()
+    for label in desired:
+        for trace in reversed(prompt_traces):
+            if trace.get("label") != label:
+                continue
+            started_at = float(trace.get("started_at", 0.0))
+            finished_at = float(trace.get("finished_at", started_at))
+            if finished_at > anchor_ts + 0.75:
+                continue
+            if anchor_ts - started_at > 12.0:
+                continue
+            seen_labels.add(label)
+            selected.append(trace)
+            break
+    if not selected and desired:
+        for trace in reversed(prompt_traces):
+            label = str(trace.get("label", ""))
+            if label not in desired or label in seen_labels:
+                continue
+            selected.append(trace)
+            seen_labels.add(label)
+            if len(seen_labels) == len(desired):
+                break
+
+    blocks: list[dict] = []
+    for trace in selected:
+        messages = [dict(message) for message in trace.get("messages", [])]
+        inputs = [str(item) for item in trace.get("inputs", []) if str(item).strip()]
+        blocks.append({
+            "title": str(trace.get("title") or trace.get("label") or "Prompt"),
+            "label": str(trace.get("label", "")),
+            "provider": str(trace.get("provider", "")),
+            "model": str(trace.get("model", "")),
+            "messages": messages,
+            "rendered_prompt": _render_messages_text(messages),
+            "inputs": inputs,
+            "output": str(trace.get("output", "")),
+        })
+    return blocks
+
+
 class VisionSampler:
     def __init__(self, vision_client: VisionClient, recorder: TraceRecorder, interval: float = 0.75) -> None:
         self._vision_client = vision_client
@@ -310,7 +388,10 @@ class VisionSampler:
                         "persons": len(snapshot.persons),
                         "objects": len(snapshot.objects),
                         "object_labels": [obj.label for obj in snapshot.objects[:4]],
-                        "vlm_answers": [answer.answer for answer in snapshot.vlm_answers[:3]],
+                        "vlm_answers": [
+                            {"question": answer.question, "answer": answer.answer}
+                            for answer in snapshot.vlm_answers[:3]
+                        ],
                         "frame_b64": base64.b64encode(raw_frame).decode("utf-8"),
                         "overlay_b64": base64.b64encode(overlay_frame).decode("utf-8"),
                         "mime_type": "image/jpeg",
@@ -971,10 +1052,20 @@ def _ground_evaluation(spec: dict, summary: str, facts: list[str], goal: str, us
 def _timeline_event_label(event: dict) -> str:
     event_type = event.get("type", "event")
     data = event.get("data", {})
+    if event_type == "assistant_reply":
+        text = str(data.get("text", "")).strip()
+        return text or "Greg reply"
     if event_type == "scene_capture":
         return data.get("label", "Scene image captured")
     if event_type == "scene_eval":
         return data.get("summary", "Scene evaluation complete")
+    if event_type == "vision_focus":
+        return (
+            f"Vision focus: {len(data.get('constant_questions', []))} constant Q, "
+            f"{len(data.get('ephemeral_questions', []))} ephemeral Q, "
+            f"{len(data.get('constant_sam_targets', []))} constant SAM, "
+            f"{len(data.get('ephemeral_sam_targets', []))} ephemeral SAM"
+        )
     if event_type == "vision_stack_ready":
         return (
             f"Vision stack ready: vLLM {data.get('vllm', 'unknown')}, "
@@ -1034,6 +1125,8 @@ def _timeline_event_label(event: dict) -> str:
         return f"Assistant TTS done: {data.get('synth_ms', 0)}ms synth"
     if event_type == "assistant_audio_clip":
         return f"Assistant clip duration: {data.get('audio_ms', 0)}ms"
+    if event_type == "assistant_filler":
+        return f"Filler: {data.get('phrase', '')}"
     if event_type == "session_start":
         return f"Session start: {data.get('character', '')} / {data.get('model', '')}"
     return json.dumps(data, ensure_ascii=True)
@@ -1043,6 +1136,19 @@ def _timeline_detail(event: dict) -> str:
     data = dict(event.get("data", {}))
     if not data:
         return ""
+    if event.get("type") == "assistant_reply":
+        parts: list[str] = []
+        if data.get("ttft_ms"):
+            parts.append(f"TTFT {data['ttft_ms']}ms")
+        if data.get("total_ms"):
+            parts.append(f"text {data['total_ms']}ms")
+        if data.get("first_audio_ms"):
+            parts.append(f"first audio {data['first_audio_ms']}ms")
+        if data.get("synth_ms"):
+            parts.append(f"synth {data['synth_ms']}ms")
+        if data.get("audio_ms"):
+            parts.append(f"clip {data['audio_ms']}ms")
+        return " · ".join(parts)
     data.pop("frame_b64", None)
     data.pop("overlay_b64", None)
     compact = json.dumps(data, ensure_ascii=True, separators=(",", ":"))
@@ -1058,12 +1164,107 @@ def _detail_payload(event: dict) -> str:
     return json.dumps(payload, ensure_ascii=True, indent=2) if payload else "{}"
 
 
+def _build_reply_display_events(events: list[dict]) -> list[dict]:
+    grouped: list[dict] = []
+    consumed: set[int] = set()
+    response_types = {
+        "response_ttft",
+        "response_done",
+        "assistant_tts_first_audio",
+        "assistant_tts_done",
+        "assistant_audio_clip",
+    }
+    for index, event in enumerate(events):
+        if index in consumed:
+            continue
+        if event.get("type") != "response_done":
+            if event.get("type") not in response_types:
+                grouped.append(event)
+            continue
+
+        response_done = event
+        response_ttft = None
+        first_audio = None
+        tts_done = None
+        audio_clip = None
+
+        for prior_index in range(index - 1, -1, -1):
+            prior = events[prior_index]
+            if prior.get("type") == "response_done":
+                break
+            if prior.get("type") == "response_ttft":
+                response_ttft = prior
+                consumed.add(prior_index)
+                break
+
+        for next_index in range(index + 1, len(events)):
+            candidate = events[next_index]
+            if candidate.get("type") == "response_done":
+                break
+            if candidate.get("type") == "assistant_tts_first_audio" and first_audio is None:
+                first_audio = candidate
+                consumed.add(next_index)
+            elif candidate.get("type") == "assistant_tts_done" and tts_done is None:
+                tts_done = candidate
+                consumed.add(next_index)
+            elif candidate.get("type") == "assistant_audio_clip" and audio_clip is None:
+                audio_clip = candidate
+                consumed.add(next_index)
+
+        consumed.add(index)
+        total_ms = int(response_done.get("data", {}).get("total_ms", 0))
+        start_ts = response_done.get("timestamp", 0.0) - (total_ms / 1000.0 if total_ms else 0.0)
+        if response_ttft is not None:
+            start_ts = min(start_ts, response_ttft.get("timestamp", start_ts))
+        text = str(response_done.get("data", {}).get("full_text", "")).strip()
+        clip_end_ts = response_done.get("timestamp", start_ts)
+        if audio_clip is not None:
+            clip_end_ts = max(
+                clip_end_ts,
+                audio_clip.get("timestamp", clip_end_ts) + int(audio_clip.get("data", {}).get("audio_ms", 0)) / 1000.0,
+            )
+        if tts_done is not None:
+            clip_end_ts = max(clip_end_ts, tts_done.get("timestamp", clip_end_ts))
+        if first_audio is not None:
+            clip_end_ts = max(clip_end_ts, first_audio.get("timestamp", clip_end_ts))
+        grouped.append({
+            "type": "assistant_reply",
+            "timestamp": start_ts,
+            "_anchor_ts": response_done.get("timestamp", start_ts),
+            "seq": response_done.get("seq", 0),
+            "turn": response_done.get("turn"),
+            "data": {
+                "text": text,
+                "ttft_ms": int(response_done.get("data", {}).get("ttft_ms", 0)),
+                "total_ms": total_ms,
+                "first_audio_ms": int(first_audio.get("data", {}).get("first_audio_ms", 0)) if first_audio else 0,
+                "synth_ms": int(tts_done.get("data", {}).get("synth_ms", 0)) if tts_done else 0,
+                "audio_ms": int(audio_clip.get("data", {}).get("audio_ms", 0)) if audio_clip else 0,
+                "response_done_ts": response_done.get("timestamp", start_ts),
+                "first_audio_ts": first_audio.get("timestamp") if first_audio else None,
+                "tts_done_ts": tts_done.get("timestamp") if tts_done else None,
+                "clip_end_ts": clip_end_ts,
+                "component_types": [
+                    item for item in [
+                        response_ttft.get("type") if response_ttft else "",
+                        response_done.get("type"),
+                        first_audio.get("type") if first_audio else "",
+                        tts_done.get("type") if tts_done else "",
+                        audio_clip.get("type") if audio_clip else "",
+                    ] if item
+                ],
+            },
+        })
+    return sorted(grouped, key=lambda item: (item.get("timestamp", 0.0), item.get("seq", 0)))
+
+
 def _related_event_keys(events: list[dict], index: int) -> list[str]:
     current = events[index]
     now = current.get("timestamp", 0.0)
     current_type = current.get("type", "")
     current_lane = TIMELINE_LANES.get(current_type, "other")
     preferred = {
+        "assistant_reply": {"stt_result", "user_turn_start", "vision_snapshot_read", "scene_eval", "world_seed", "plan"},
         "response_ttft": {"stt_result", "user_turn_start", "vision_snapshot_read", "scene_eval", "world_seed", "plan"},
         "response_chunk": {"stt_result", "user_turn_start", "vision_snapshot_read", "scene_eval", "world_seed", "plan"},
         "response_done": {"stt_result", "user_turn_start", "vision_snapshot_read", "scene_eval", "world_seed", "plan"},
@@ -1239,16 +1440,18 @@ def _stream_card_size(event: dict, lane: str) -> tuple[int, int]:
         return (300, 210)
     if event.get("type") == "vision_models":
         return (220, 110)
+    if event.get("type") == "assistant_reply":
+        return (340, 126)
     if lane in {"chat", "director", "planner"}:
         return (240, 120)
     return (220, 105)
 
 
-def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
+def _build_stream_board(events: list[dict], prompt_traces: list[dict]) -> tuple[str, list[dict]]:
     if not events:
         return ("<div class='timeline-empty'>No stream events captured.</div>", [])
 
-    display_events = _collapse_trace_events(events)
+    display_events = _build_reply_display_events(_collapse_trace_events(events))
     for index, event in enumerate(display_events, start=1):
         event["_note_key"] = f"event-{index}-{event.get('seq', 0)}"
     start_ts = display_events[0].get("timestamp", 0.0)
@@ -1303,6 +1506,7 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
             detail = _timeline_detail(event)
             note_key = event["_note_key"]
             hover_title = html.escape(f"{event_type} | {label}" + (f"\n{detail}" if detail else ""))
+            prompt_blocks = _prompt_trace_blocks_for_event(event, prompt_traces)
             annotation_events.append({
                 "key": note_key,
                 "seq": event.get("seq", 0),
@@ -1314,10 +1518,12 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
                 "detail": detail,
                 "payload": _detail_payload(event),
                 "related_keys": related_key_map.get(note_key, []),
+                "prompt_blocks": prompt_blocks,
             })
 
+            prompt_badge = " <span class='prompt-chip'>prompt</span>" if prompt_blocks else ""
             body_html = (
-                f"<div class='stream-card-label'>{html.escape(label)}</div>"
+                f"<div class='stream-card-label'>{html.escape(label)}{prompt_badge}</div>"
                 f"{f'<div class=\"stream-card-detail\">{html.escape(detail)}</div>' if detail else ''}"
             )
             if event_type == "vision_poll":
@@ -1328,7 +1534,11 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
                 objects = ", ".join(data.get("object_labels", [])[:4]) or "none"
                 answers = data.get("vlm_answers", [])
                 answers_html = "".join(
-                    f"<div class='vision-answer'>{html.escape(answer)}</div>"
+                    (
+                        f"<div class='vision-answer'><b>{html.escape(str(answer.get('question', 'Q')))}</b><br>{html.escape(str(answer.get('answer', '')))}</div>"
+                        if isinstance(answer, dict)
+                        else f"<div class='vision-answer'>{html.escape(str(answer))}</div>"
+                    )
                     for answer in answers
                 )
                 body_html = (
@@ -1341,6 +1551,38 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
                     f"<div><b>objects</b> {html.escape(objects)}</div>"
                     f"{answers_html or '<div class=\"vision-answer muted\">No VLM answers</div>'}"
                     "</div>"
+                )
+            elif event_type == "assistant_reply":
+                data = event.get("data", {})
+                start = float(event.get("timestamp", 0.0))
+                end = float(data.get("clip_end_ts") or data.get("response_done_ts") or start)
+                span = max(0.001, end - start)
+                markers: list[str] = []
+                marker_specs = [
+                    ("TTFT", start + int(data.get("ttft_ms", 0)) / 1000.0 if data.get("ttft_ms") else None),
+                    ("Text", data.get("response_done_ts")),
+                    ("Audio", data.get("first_audio_ts")),
+                    ("TTS", data.get("tts_done_ts")),
+                    ("Clip", data.get("clip_end_ts")),
+                ]
+                for marker_label, marker_ts in marker_specs:
+                    if marker_ts is None:
+                        continue
+                    offset_pct = min(100.0, max(0.0, ((float(marker_ts) - start) / span) * 100.0))
+                    markers.append(
+                        f"<span class='reply-marker' style='left:{offset_pct:.2f}%' title='{html.escape(marker_label)}'></span>"
+                    )
+                timing_bits = [bit for bit in [
+                    f"TTFT {data.get('ttft_ms', 0)}ms" if data.get("ttft_ms") else "",
+                    f"text {data.get('total_ms', 0)}ms" if data.get("total_ms") else "",
+                    f"audio {data.get('first_audio_ms', 0)}ms" if data.get("first_audio_ms") else "",
+                    f"synth {data.get('synth_ms', 0)}ms" if data.get("synth_ms") else "",
+                    f"clip {data.get('audio_ms', 0)}ms" if data.get("audio_ms") else "",
+                ] if bit]
+                body_html = (
+                    f"<div class='stream-card-label main-reply-label'>{html.escape(label)}{prompt_badge}</div>"
+                    f"<div class='reply-timing'>{html.escape(' · '.join(timing_bits) or 'timing unavailable')}</div>"
+                    f"<div class='reply-track-bar'>{''.join(markers)}</div>"
                 )
 
             cards.append(
@@ -1365,7 +1607,7 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
     board_html = (
         "<section class='stream-wrap'>"
         "<h2 style='margin:0 0 6px 0;color:#f4b942;'>Interwoven Streams</h2>"
-        "<p style='margin-top:0;color:#9fb3c8;'>Each lane carries the actual payload at that moment. Vision samples include the raw frame and the overlay frame side by side.</p>"
+        "<p style='margin-top:0;color:#9fb3c8;'>Each lane carries the actual payload at that moment. Greg replies render as one primary span with internal timing markers. Vision samples include the raw frame and the overlay frame side by side.</p>"
         "<div class='stream-scroll'>"
         f"<div class='stream-ruler' style='width:{track_width + label_width}px'>{''.join(ruler_ticks)}</div>"
         + "".join(lane_sections)
@@ -1374,17 +1616,24 @@ def _build_stream_board(events: list[dict]) -> tuple[str, list[dict]]:
     return board_html, annotation_events
 
 
-def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, session_events: list[dict] | None = None) -> None:
+def _write_report(
+    turns: list[TurnRecord],
+    json_path: Path,
+    html_path: Path,
+    session_events: list[dict] | None = None,
+    prompt_traces: list[dict] | None = None,
+) -> None:
     json_path.write_text(json.dumps({
         "turns": [asdict(turn) for turn in turns],
         "session_events": session_events or [],
+        "prompt_traces": prompt_traces or [],
     }, indent=2))
 
     report_name = html_path.stem
     session_trace = _flatten_session_events(turns, session_events)
     timeline_rows, total_duration = _build_action_timeline(session_trace)
     lane_rows, lane_summary_cards = _build_thread_lanes(session_trace)
-    stream_board_html, annotation_events = _build_stream_board(session_trace)
+    stream_board_html, annotation_events = _build_stream_board(session_trace, prompt_traces or [])
     avg_ttft = int(sum(turn.response_ttft_ms for turn in turns) / max(1, len(turns)))
     avg_total = int(sum(turn.response_total_ms for turn in turns) / max(1, len(turns)))
     lane_toggle_html = "".join(
@@ -1403,7 +1652,7 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         ".page-shell{width:min(100%,1800px);margin:0 auto;}"
         ".page-shell.compact-mode .stream-wrap{padding:12px 14px;margin-bottom:16px;}"
         ".page-shell.compact-mode .stream-card{padding:2px 8px;border-radius:7px;box-shadow:none;display:flex;align-items:center;gap:8px;}"
-        ".page-shell.compact-mode .stream-card-detail,.page-shell.compact-mode .vision-meta,.page-shell.compact-mode .note-inline,.page-shell.compact-mode .vision-strip,.page-shell.compact-mode .stream-type{display:none;}"
+        ".page-shell.compact-mode .stream-card-detail,.page-shell.compact-mode .vision-meta,.page-shell.compact-mode .note-inline,.page-shell.compact-mode .vision-strip,.page-shell.compact-mode .stream-type,.page-shell.compact-mode .reply-timing{display:none;}"
         ".page-shell.compact-mode .stream-card-head{margin:0;font-size:.68rem;min-width:58px;flex:0 0 auto;}"
         ".page-shell.compact-mode .stream-time{white-space:nowrap;}"
         ".page-shell.compact-mode .stream-card-label{font-size:.74rem;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;}"
@@ -1463,8 +1712,14 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         ".stream-card.context{border-color:#1f6feb;box-shadow:0 0 0 1px #1f6feb55,0 10px 24px rgba(0,0,0,.24);}"
         ".stream-card-head{display:flex;justify-content:space-between;gap:8px;font-family:IBM Plex Mono,monospace;font-size:.76rem;color:#9fb3c8;margin-bottom:6px;}"
         ".stream-card-label{font-size:.92rem;line-height:1.35;}"
+        ".main-reply-label{font-weight:700;}"
         ".stream-card-detail{margin-top:6px;color:#9fb3c8;font-size:.8rem;white-space:pre-wrap;word-break:break-word;}"
         ".stream-type{color:#f4b942;text-transform:uppercase;letter-spacing:.04em;}"
+        ".prompt-chip{display:inline-flex;align-items:center;margin-left:8px;padding:1px 7px;border-radius:999px;background:#1f6feb22;border:1px solid #1f6feb66;color:#79c0ff;font:600 .67rem IBM Plex Mono,monospace;text-transform:uppercase;letter-spacing:.04em;vertical-align:middle;}"
+        ".reply-timing{margin-top:6px;color:#9fb3c8;font:.76rem IBM Plex Mono,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}"
+        ".reply-track-bar{position:relative;margin-top:8px;height:18px;border-radius:999px;background:linear-gradient(90deg,#f4b94222,#f4b94255);border:1px solid #f4b94255;overflow:hidden;}"
+        ".reply-track-bar::after{content:'';position:absolute;inset:3px;border-radius:999px;background:linear-gradient(90deg,#15202b,#202d3a);opacity:.95;}"
+        ".reply-marker{position:absolute;top:-1px;bottom:-1px;width:2px;background:#f4b942;z-index:1;box-shadow:0 0 0 1px rgba(8,16,24,.9);}"
         ".vision-strip{display:grid;grid-template-columns:1fr 1fr;gap:8px;}"
         ".vision-strip img{width:100%;border-radius:10px;border:1px solid #253244;background:#081018;}"
         ".vision-meta{margin-top:8px;font-size:.8rem;color:#c9d1d9;display:grid;gap:4px;}"
@@ -1480,6 +1735,17 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         ".detail-related{display:grid;gap:8px;}"
         ".detail-related button{border:1px solid #253244;background:#081018;color:#e7eef7;border-radius:10px;padding:8px 10px;text-align:left;cursor:pointer;font:inherit;}"
         ".detail-related small{display:block;color:#9fb3c8;margin-top:3px;}"
+        ".detail-prompts{display:grid;gap:12px;}"
+        ".prompt-block{background:#081018;border:1px solid #253244;border-radius:12px;padding:12px;display:grid;gap:10px;}"
+        ".prompt-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}"
+        ".prompt-title{font-weight:700;}"
+        ".prompt-meta{font:12px IBM Plex Mono,monospace;color:#9fb3c8;}"
+        ".prompt-subsection{display:grid;gap:6px;}"
+        ".prompt-subsection strong{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;color:#9fb3c8;}"
+        ".prompt-message-list{display:grid;gap:8px;}"
+        ".prompt-message{border:1px solid #1d2a3a;border-radius:10px;padding:8px 10px;background:#0c141d;}"
+        ".prompt-message-role{font:700 .72rem IBM Plex Mono,monospace;color:#f4b942;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;}"
+        ".prompt-message-content{white-space:pre-wrap;word-break:break-word;color:#e7eef7;}"
         ".detail-payload{margin:0;background:#081018;border:1px solid #253244;border-radius:12px;padding:10px;font:12px/1.45 IBM Plex Mono,monospace;color:#c9d1d9;white-space:pre-wrap;word-break:break-word;}"
         "#detail-note{width:100%;min-height:120px;background:#081018;color:#e7eef7;border:1px solid #253244;border-radius:12px;padding:10px;font:inherit;}"
         ".chronology-pane{display:grid;gap:8px;max-height:280px;overflow:auto;padding-right:2px;}"
@@ -1502,7 +1768,7 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         "</style>"
         "</head><body><div class='page-shell'>"
         "<h1>Full Stack QA Trace Report</h1>"
-        "<p>Stream-centric QA artifact with vision thumbnails, overlay thumbnails, live chat traces, and interwoven subsystem lanes.</p>"
+        "<p>Stream-centric QA artifact with vision thumbnails, overlay thumbnails, live chat traces, actual prompt snapshots, and interwoven subsystem lanes.</p>"
         f"<div id='annotation-toolbar'>"
         "<span class='count'><b id='note-count'>0</b> annotations</span>"
         "<button id='export-btn' disabled onclick='exportAnnotations()'>Export annotations</button>"
@@ -1532,12 +1798,13 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         + stream_board_html
         + "<aside class='detail-panel'>"
         + "<h2 style='margin:0 0 6px 0;color:#f4b942;'>Event Detail</h2>"
-        + "<p class='detail-empty' id='detail-empty'>Select a stream card to inspect its inputs, outputs, payload, and note.</p>"
+        + "<p class='detail-empty' id='detail-empty'>Select a stream card to inspect its inputs, prompts, outputs, payload, and note.</p>"
         + "<div id='detail-body' style='display:none;'>"
         + "<div class='detail-meta'><span class='detail-chip' id='detail-time'>+0.00s</span><span class='detail-chip' id='detail-type'>type</span><span class='detail-chip' id='detail-lane'>lane</span><span class='detail-chip' id='detail-seq'>seq</span></div>"
         + "<div class='detail-section'><label>Summary</label><div id='detail-label'></div></div>"
         + "<div class='detail-section'><label>Compact Detail</label><div id='detail-detail' style='color:#9fb3c8;white-space:pre-wrap;word-break:break-word;'></div></div>"
         + "<div class='detail-section'><label>Input Context</label><div class='detail-related' id='detail-related'></div></div>"
+        + "<div class='detail-section'><label>Prompt / IO</label><div class='detail-prompts' id='detail-prompts'></div></div>"
         + "<div class='detail-section'><label>Payload</label><pre class='detail-payload' id='detail-payload'></pre></div>"
         + "<div class='detail-section'><label>Annotation</label><textarea id='detail-note' placeholder='Add an iteration note for this event...' oninput='updateSelectedAnnotation(this.value)'></textarea></div>"
         + "<div class='detail-section'><label>Chronology</label><div class='chronology-pane' id='detail-chronology'></div></div>"
@@ -1560,8 +1827,10 @@ def _write_report(turns: list[TurnRecord], json_path: Path, html_path: Path, ses
         + "function updateSelectedAnnotation(text){if(!selectedEventKey)return;updateAnnotation(selectedEventKey,text);}"
         + "function renderChronology(){const root=document.getElementById('detail-chronology');root.innerHTML='';EVENTS.forEach((event)=>{const row=document.createElement('button');row.type='button';row.className='chronology-row';row.dataset.chronoKey=String(event.key);row.onclick=()=>selectEvent(String(event.key));row.innerHTML='<div><b>'+event.type+'</b> · '+event.label+'</div><small>'+event.lane+' · +'+Number(event.timestamp||0).toFixed(2)+'s</small>';root.appendChild(row);});}"
         + "function renderRelated(keys){const root=document.getElementById('detail-related');root.innerHTML='';if(!keys||keys.length===0){root.innerHTML='<div style=\"color:#9fb3c8;\">No linked upstream events captured for this item.</div>';return;}keys.forEach((key)=>{const event=EVENT_INDEX[String(key)];if(!event)return;const button=document.createElement('button');button.type='button';button.onclick=()=>selectEvent(String(key));button.innerHTML='<div><b>'+event.type+'</b> · '+event.label+'</div><small>'+event.lane+' · +'+Number(event.timestamp||0).toFixed(2)+'s</small>';root.appendChild(button);});}"
+        + "function esc(value){return String(value||'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');}"
+        + "function renderPromptBlocks(blocks){const root=document.getElementById('detail-prompts');root.innerHTML='';if(!blocks||blocks.length===0){root.innerHTML='<div style=\"color:#9fb3c8;\">No prompt snapshot captured for this event.</div>';return;}blocks.forEach((block)=>{const wrap=document.createElement('div');wrap.className='prompt-block';const head=document.createElement('div');head.className='prompt-head';head.innerHTML='<div class=\"prompt-title\">'+esc(block.title||'Prompt')+'</div>'+(block.model||block.provider?'<div class=\"prompt-meta\">'+esc([block.provider,block.model].filter(Boolean).join(' · '))+'</div>':'');wrap.appendChild(head);if(block.inputs&&block.inputs.length){const sec=document.createElement('div');sec.className='prompt-subsection';sec.innerHTML='<strong>Inputs</strong><div class=\"prompt-message-list\">'+block.inputs.map((item)=>'<div class=\"prompt-message\"><div class=\"prompt-message-content\">'+esc(item)+'</div></div>').join('')+'</div>';wrap.appendChild(sec);}if(block.messages&&block.messages.length){const sec=document.createElement('div');sec.className='prompt-subsection';const messages=block.messages.map((message)=>'<div class=\"prompt-message\"><div class=\"prompt-message-role\">'+esc(message.role||'message')+'</div><div class=\"prompt-message-content\">'+esc(message.content||'')+'</div></div>').join('');sec.innerHTML='<strong>Messages</strong><div class=\"prompt-message-list\">'+messages+'</div>';wrap.appendChild(sec);}if(block.rendered_prompt){const sec=document.createElement('div');sec.className='prompt-subsection';sec.innerHTML='<strong>Rendered Prompt</strong><div class=\"prompt-message\"><div class=\"prompt-message-content\">'+esc(block.rendered_prompt)+'</div></div>';wrap.appendChild(sec);}if(block.output){const sec=document.createElement('div');sec.className='prompt-subsection';sec.innerHTML='<strong>Output</strong><div class=\"prompt-message\"><div class=\"prompt-message-content\">'+esc(block.output)+'</div></div>';wrap.appendChild(sec);}root.appendChild(wrap);});}"
         + "function highlightContext(selected){document.querySelectorAll('.stream-card').forEach((card)=>{card.classList.toggle('selected',card.dataset.eventKey===selected);card.classList.toggle('context',false);});document.querySelectorAll('.chronology-row').forEach((row)=>{const active=row.dataset.chronoKey===selected;row.classList.toggle('selected',active);if(active){row.scrollIntoView({block:'nearest'});}});const event=EVENT_INDEX[String(selected)];if(!event)return;(event.related_keys||[]).forEach((key)=>{const card=document.querySelector('.stream-card[data-event-key=\"'+key+'\"]');if(card)card.classList.add('context');});}"
-        + "function selectEvent(key){const event=EVENT_INDEX[String(key)];if(!event)return;selectedEventKey=String(key);highlightContext(selectedEventKey);document.getElementById('detail-empty').style.display='none';document.getElementById('detail-body').style.display='block';document.getElementById('detail-time').textContent='+'+Number(event.timestamp||0).toFixed(2)+'s';document.getElementById('detail-type').textContent=event.type;document.getElementById('detail-lane').textContent=event.lane;document.getElementById('detail-seq').textContent='seq '+String(event.seq||0);document.getElementById('detail-label').textContent=event.label||'';document.getElementById('detail-detail').textContent=event.detail||'No compact detail';document.getElementById('detail-payload').textContent=event.payload||'{}';renderRelated(event.related_keys||[]);const note=annotations.get(String(key))||'';const field=document.getElementById('detail-note');field.value=note;const card=document.querySelector('.stream-card[data-event-key=\"'+key+'\"]');if(card){card.scrollIntoView({block:'nearest',inline:'center'});}}"
+        + "function selectEvent(key){const event=EVENT_INDEX[String(key)];if(!event)return;selectedEventKey=String(key);highlightContext(selectedEventKey);document.getElementById('detail-empty').style.display='none';document.getElementById('detail-body').style.display='block';document.getElementById('detail-time').textContent='+'+Number(event.timestamp||0).toFixed(2)+'s';document.getElementById('detail-type').textContent=event.type;document.getElementById('detail-lane').textContent=event.lane;document.getElementById('detail-seq').textContent='seq '+String(event.seq||0);document.getElementById('detail-label').textContent=event.label||'';document.getElementById('detail-detail').textContent=event.detail||'No compact detail';document.getElementById('detail-payload').textContent=event.payload||'{}';renderRelated(event.related_keys||[]);renderPromptBlocks(event.prompt_blocks||[]);const note=annotations.get(String(key))||'';const field=document.getElementById('detail-note');field.value=note;const card=document.querySelector('.stream-card[data-event-key=\"'+key+'\"]');if(card){card.scrollIntoView({block:'nearest',inline:'center'});}}"
         + "function openNote(domEvent,key){if(domEvent){domEvent.stopPropagation();}selectEvent(String(key));const field=document.getElementById('detail-note');if(field){field.focus();field.setSelectionRange(field.value.length,field.value.length);}}"
         + "function applyDensity(){const shell=document.querySelector('.page-shell');const compact=document.getElementById('density-mode').value==='compact';shell.classList.toggle('compact-mode',compact);applyLayout();}"
         + "function syncChronologyVisibility(){const show=document.getElementById('show-chronology').checked;document.getElementById('detail-chronology').classList.toggle('hidden',!show);}"
@@ -1595,6 +1864,8 @@ def main() -> None:
     parser.add_argument("--vision-port", type=int, default=0)
     parser.add_argument("--pocket-server-url", default="http://127.0.0.1:8003")
     parser.add_argument("--pocket-voice", default="voices/greg.safetensors")
+    parser.add_argument("--assistant-audio-path", choices=("offline", "live"), default="offline")
+    parser.add_argument("--filler-lead-ms", type=int, default=180)
     args = parser.parse_args()
 
     model_config = MODELS[args.model]
@@ -1608,26 +1879,85 @@ def main() -> None:
     pocket_proc = None
     vision_proc = None
     vision_sampler = None
+    voice_output = None
     turns: list[TurnRecord] = []
     import character_eng.__main__ as app_main
+    import character_eng.chat as chat_mod
+    import character_eng.world as world_mod
     collector = DashboardEventCollector()
     session_recorder = TraceRecorder()
+    prompt_traces: list[dict] = []
     previous_collector = app_main._collector
+    previous_llm_trace_hook = world_mod.set_llm_trace_hook(
+        lambda payload: _record_prompt_trace(prompt_traces, **payload)
+    )
+    previous_chat_trace_hook = chat_mod.set_chat_trace_hook(
+        lambda payload: _record_prompt_trace(prompt_traces, **payload)
+    )
+    voice_trace_state = {"last_audio_ms": 0}
+
+    def _on_voice_trace(event_type: str, data: dict) -> None:
+        if event_type == "assistant_filler":
+            session_recorder.add("assistant_filler", data)
+            return
+        if event_type == "assistant_tts_live_first_audio":
+            session_recorder.add(
+                "assistant_tts_first_audio",
+                {"first_audio_ms": int(data.get("elapsed_ms", 0)), "text": data.get("text", "")},
+            )
+            return
+        if event_type == "assistant_tts_live_synth_done":
+            session_recorder.add(
+                "assistant_tts_done",
+                {"synth_ms": int(data.get("elapsed_ms", 0)), "text": data.get("text", "")},
+            )
+            return
+        if event_type == "assistant_tts_live_done":
+            audio_ms = int(data.get("playback_ms", 0))
+            voice_trace_state["last_audio_ms"] = audio_ms
+            session_recorder.add(
+                "assistant_audio_clip",
+                {"audio_ms": audio_ms, "text": data.get("text", "")},
+            )
 
     try:
         app_main._collector = collector
         pocket_proc = _ensure_pocket_server(args.pocket_server_url, args.pocket_voice)
+        if args.assistant_audio_path == "live":
+            from character_eng.voice import VoiceIO
+
+            voice_output = VoiceIO(
+                tts_backend="pocket",
+                tts_server_url=args.pocket_server_url,
+                pocket_voice=args.pocket_voice,
+                filler_enabled=True,
+                filler_lead_ms=args.filler_lead_ms,
+                output_only=True,
+                aec=False,
+                trace_hook=_on_voice_trace,
+            )
+            voice_output.start()
 
         port = args.vision_port or _free_port()
         vision_proc = _launch_vision_service(port, live_camera=args.vision_source == "live")
         vision_url = f"http://127.0.0.1:{port}"
         vision_client = VisionClient(vision_url)
         vision_ready = _wait_for_vision_models(vision_client)
-        vision_client.set_questions(
-            ["How many people are at Greg's stand?", "What is the nearest person doing?"],
-            ["What object is the visitor touching or looking at?"],
+        focus_constant_questions = ["How many people are at Greg's stand?", "What is the nearest person doing?"]
+        focus_ephemeral_questions = ["What object is the visitor touching or looking at?"]
+        focus_constant_sam = ["person", "flier", "cup"]
+        focus_ephemeral_sam = ["hood", "sign"]
+        vision_client.set_questions(focus_constant_questions, focus_ephemeral_questions)
+        vision_client.set_sam_targets(focus_constant_sam, focus_ephemeral_sam)
+        session_recorder.add(
+            "vision_focus",
+            {
+                "constant_questions": focus_constant_questions,
+                "ephemeral_questions": focus_ephemeral_questions,
+                "constant_sam_targets": focus_constant_sam,
+                "ephemeral_sam_targets": focus_ephemeral_sam,
+            },
         )
-        vision_client.set_sam_targets(["person", "flier", "cup"], ["hood", "sign"])
         vision_sampler = VisionSampler(vision_client, session_recorder)
         vision_sampler.start()
 
@@ -1693,24 +2023,48 @@ def main() -> None:
             if args.vision_source == "generated":
                 console.print(f"[cyan]Generating scene {idx + 1}/{len(scene_specs)}: {spec['name']}[/cyan]")
                 generated = generate_image(spec["prompt"])
+                _record_prompt_trace(
+                    prompt_traces,
+                    label="scene_capture",
+                    title="Scene image prompt",
+                    provider="generated",
+                    model="image",
+                    inputs=[spec["prompt"]],
+                    started_at=time.time(),
+                    finished_at=time.time(),
+                    output=f"Generated scene image for {spec['name']}",
+                )
                 turn.image_mime_type = generated.mime_type
                 turn.image_b64 = base64.b64encode(generated.image_bytes).decode("utf-8")
                 synthetic_trace_events.append(session_recorder.add(
                     "scene_capture",
                     {"label": f"Generated scene {idx + 1}: {spec['name']}"},
                 ))
+                scene_eval_prompt = (
+                    "You are preparing a short NPC test scene from this image. Stay literal and conservative. "
+                    "Greg must remain a robot head on a folding-table water/advice stand. "
+                    "There should be one hooded visitor near the stand. Do not invent coupons, prices, ice cream, "
+                    "extra people, toys, coffee, backstory, or internal robot mechanics. "
+                    "Summarize only what is visibly present, extract concrete world facts, "
+                    "and write one short user line of at most 10 words that a real passerby would say "
+                    "about the stand, the flyer, the water, or leaving."
+                )
                 evaluation = evaluate_image(
                     generated.image_bytes,
                     generated.mime_type,
-                    prompt=(
-                        "You are preparing a short NPC test scene from this image. Stay literal and conservative. "
-                        "Greg must remain a robot head on a folding-table water/advice stand. "
-                        "There should be one hooded visitor near the stand. Do not invent coupons, prices, ice cream, "
-                        "extra people, toys, coffee, backstory, or internal robot mechanics. "
-                        "Summarize only what is visibly present, extract concrete world facts, "
-                        "and write one short user line of at most 10 words that a real passerby would say "
-                        "about the stand, the flyer, the water, or leaving."
-                    ),
+                    prompt=scene_eval_prompt,
+                )
+                _record_prompt_trace(
+                    prompt_traces,
+                    label="scene_eval",
+                    title="Scene evaluation prompt",
+                    provider="gemini",
+                    model="vision-eval",
+                    inputs=[f"Scene: {spec['name']}", "Image input attached"],
+                    messages=[{"role": "user", "content": scene_eval_prompt}],
+                    started_at=time.time(),
+                    finished_at=time.time(),
+                    output=evaluation.summary,
                 )
                 summary, facts, goal, user_line = _ground_evaluation(
                     spec,
@@ -1735,6 +2089,30 @@ def main() -> None:
                 turn.image_mime_type = "image/jpeg"
                 turn.image_b64 = live_frame_b64
                 evaluation = live_plan
+                live_bootstrap_prompt = _live_bootstrap_prompt(live_snapshot)
+                _record_prompt_trace(
+                    prompt_traces,
+                    label="scene_capture",
+                    title="Live bootstrap capture",
+                    provider="camera",
+                    model="webcam",
+                    inputs=["Captured live webcam frame from Greg POV"],
+                    started_at=time.time(),
+                    finished_at=time.time(),
+                    output="Live first-person frame captured",
+                )
+                _record_prompt_trace(
+                    prompt_traces,
+                    label="scene_eval",
+                    title="Live scene evaluation prompt",
+                    provider="gemini",
+                    model="vision-eval",
+                    inputs=["Live webcam frame", f"Scene: {spec['name']}"],
+                    messages=[{"role": "user", "content": live_bootstrap_prompt}],
+                    started_at=time.time(),
+                    finished_at=time.time(),
+                    output=live_plan.summary,
+                )
                 turn.visual_summary = live_plan.summary
                 turn.visual_world_facts = list(live_plan.world_facts)
                 turn.visual_goal = live_plan.visual_goal
@@ -1758,6 +2136,11 @@ def main() -> None:
                     "faces": turn.snapshot_faces,
                     "persons": turn.snapshot_persons,
                     "objects": turn.snapshot_objects,
+                    "object_labels": [obj.label for obj in snapshot.objects[:6]],
+                    "vlm_answers": [
+                        {"question": answer.question, "answer": answer.answer}
+                        for answer in snapshot.vlm_answers[:6]
+                    ],
                 },
             ))
 
@@ -1832,25 +2215,30 @@ def main() -> None:
             turn.response_word_count = len(response.split())
             turn.response_ok, turn.response_note = _response_note(response)
 
-            tts_wall_start = time.time()
-            assistant_synth = synthesize_pocket_pcm(response, args.pocket_server_url, args.pocket_voice)
-            turn.assistant_audio_ms = assistant_synth.audio_ms
-            if assistant_synth.first_audio_ms > 0:
+            if args.assistant_audio_path == "live" and voice_output is not None:
+                voice_trace_state["last_audio_ms"] = 0
+                voice_output.speak_text(response)
+                turn.assistant_audio_ms = int(voice_trace_state.get("last_audio_ms", 0))
+            else:
+                tts_wall_start = time.time()
+                assistant_synth = synthesize_pocket_pcm(response, args.pocket_server_url, args.pocket_voice)
+                turn.assistant_audio_ms = assistant_synth.audio_ms
+                if assistant_synth.first_audio_ms > 0:
+                    synthetic_trace_events.append(session_recorder.add(
+                        "assistant_tts_first_audio",
+                        {"first_audio_ms": assistant_synth.first_audio_ms, "text": response},
+                        timestamp=tts_wall_start + (assistant_synth.first_audio_ms / 1000.0),
+                    ))
                 synthetic_trace_events.append(session_recorder.add(
-                    "assistant_tts_first_audio",
-                    {"first_audio_ms": assistant_synth.first_audio_ms, "text": response},
-                    timestamp=tts_wall_start + (assistant_synth.first_audio_ms / 1000.0),
+                    "assistant_tts_done",
+                    {"synth_ms": assistant_synth.synth_ms, "text": response},
+                    timestamp=tts_wall_start + (assistant_synth.synth_ms / 1000.0),
                 ))
-            synthetic_trace_events.append(session_recorder.add(
-                "assistant_tts_done",
-                {"synth_ms": assistant_synth.synth_ms, "text": response},
-                timestamp=tts_wall_start + (assistant_synth.synth_ms / 1000.0),
-            ))
-            synthetic_trace_events.append(session_recorder.add(
-                "assistant_audio_clip",
-                {"audio_ms": assistant_synth.audio_ms, "text": response},
-                timestamp=tts_wall_start + (assistant_synth.synth_ms / 1000.0),
-            ))
+                synthetic_trace_events.append(session_recorder.add(
+                    "assistant_audio_clip",
+                    {"audio_ms": assistant_synth.audio_ms, "text": response},
+                    timestamp=tts_wall_start + (assistant_synth.synth_ms / 1000.0),
+                ))
 
             _check_reconcile(world, log, people=people)
             all_events = collector.get_all()
@@ -1878,7 +2266,13 @@ def main() -> None:
             session_recorder.snapshot() + collector.get_all(),
             key=lambda event: (event.get("timestamp", 0.0), event.get("seq", 0)),
         )
-        _write_report(turns, report_json, report_html, session_events=combined_session_events)
+        _write_report(
+            turns,
+            report_json,
+            report_html,
+            session_events=combined_session_events,
+            prompt_traces=prompt_traces,
+        )
         failures = [turn for turn in turns if not turn.response_ok]
         console.print(f"[green]Report:[/green] {report_json}")
         console.print(f"[green]HTML:[/green] {report_html}")
@@ -1886,10 +2280,14 @@ def main() -> None:
             raise SystemExit(f"{len(failures)} turn(s) exceeded punchiness target")
         console.print("[bold green]Full stack QA passed.[/bold green]")
     finally:
+        chat_mod.set_chat_trace_hook(previous_chat_trace_hook)
+        world_mod.set_llm_trace_hook(previous_llm_trace_hook)
         app_main._collector = previous_collector
         collector.shutdown()
         if vision_sampler is not None:
             vision_sampler.stop()
+        if voice_output is not None:
+            voice_output.stop()
         _stop_proc_group(vision_proc)
         _stop_proc_group(pocket_proc)
 

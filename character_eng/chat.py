@@ -1,4 +1,5 @@
 import os
+import time
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -10,11 +11,19 @@ from character_eng.utils import ts as _ts
 load_dotenv()
 
 _console = Console()
+_chat_trace_hook = None
 
 
 def _make_chat_client(model_config: dict) -> OpenAI:
     api_key = model_config.get("api_key") or os.environ[model_config["api_key_env"]]
     return OpenAI(api_key=api_key, base_url=model_config["base_url"])
+
+
+def set_chat_trace_hook(hook):
+    global _chat_trace_hook
+    previous = _chat_trace_hook
+    _chat_trace_hook = hook
+    return previous
 
 
 class ChatSession:
@@ -44,6 +53,8 @@ class ChatSession:
         (both at stream creation and during iteration before any chunks yield).
         """
         self._messages.append({"role": "user", "content": message})
+        started_at = time.time()
+        prompt_messages = [dict(msg) for msg in self._messages]
 
         stream = self._open_stream_with_fallback()
 
@@ -60,6 +71,19 @@ class ChatSession:
             response_text = "".join(full_response)
             if response_text:
                 self._messages.append({"role": "assistant", "content": response_text})
+                if _chat_trace_hook is not None:
+                    try:
+                        _chat_trace_hook({
+                            "label": "chat",
+                            "provider": self._model_config["name"],
+                            "model": self._model_config["model"],
+                            "messages": prompt_messages,
+                            "started_at": started_at,
+                            "finished_at": time.time(),
+                            "output": response_text,
+                        })
+                    except Exception:
+                        pass
 
     def _open_stream_with_fallback(self):
         """Try primary + fallbacks, returning the first working stream.

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,6 +22,22 @@ load_dotenv()
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 CHARACTERS_DIR = PROMPTS_DIR / "characters"
+_FACT_ID_PREFIX_RE = re.compile(r"^(?:f\d+|p\d+f\d+)\.\s*")
+_WORLD_FACT_ID_RE = re.compile(r"^f\d+$")
+_PERSON_FACT_ID_RE = re.compile(r"^p\d+f\d+$")
+_VALID_PRESENCE = {"approaching", "present", "leaving", "gone"}
+_EXPLICIT_REDIRECT_PATTERNS = (
+    re.compile(r"\bi don't care about\b"),
+    re.compile(r"\bi do not care about\b"),
+    re.compile(r"\bnot interested\b"),
+    re.compile(r"\bdon't want to talk about\b"),
+    re.compile(r"\bdo not want to talk about\b"),
+    re.compile(r"\bcan we talk about something else\b"),
+    re.compile(r"\blet'?s talk about something else\b"),
+    re.compile(r"\bchange the subject\b"),
+)
+_TOPIC_REQUEST_RE = re.compile(r"\b(?:can we|let'?s|want to)\s+(?:talk|chat|speak)\s+about\s+([^?.!]+)")
+_llm_trace_hook = None
 
 
 
@@ -188,9 +206,11 @@ class WorldState:
     def apply_update(self, update: WorldUpdate) -> None:
         for fid in update.remove_facts:
             self.dynamic.pop(fid, None)
-        for text in update.add_facts:
-            self.add_fact(text)
-        self.events.extend(update.events)
+        for text in _clean_string_list(update.add_facts, fact_text=True):
+            cleaned = _clean_fact_text(text)
+            if cleaned:
+                self.add_fact(cleaned)
+        self.events.extend(_clean_string_list(update.events))
 
     def show(self) -> Panel:
         lines: list[str] = []
@@ -252,6 +272,68 @@ def _read_lines(path: Path) -> list[str]:
 def _load_prompt_file(filename: str) -> str:
     """Read a system prompt from prompts/ directory."""
     return (PROMPTS_DIR / filename).read_text()
+
+
+def _clean_fact_text(text: str) -> str:
+    """Strip accidental LLM-generated ID prefixes from newly added facts."""
+    return _FACT_ID_PREFIX_RE.sub("", text.strip())
+
+
+def _clean_string_list(values: list, *, fact_text: bool = False) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        cleaned = _clean_fact_text(value) if fact_text else value.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return result
+
+
+def _clean_id_list(values: list, pattern: re.Pattern[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        cleaned = value.strip()
+        if not pattern.match(cleaned) or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return result
+
+
+def _detect_explicit_redirect(history: list[dict], beat: Beat) -> ScriptCheckResult | None:
+    """Return off_book when the latest user turn explicitly rejects the current topic."""
+    for msg in reversed(history):
+        if msg.get("role") != "user":
+            continue
+        content = str(msg.get("content", "")).strip()
+        lowered = content.lower()
+        if not lowered:
+            return None
+        if not any(pattern.search(lowered) for pattern in _EXPLICIT_REDIRECT_PATTERNS):
+            return None
+
+        topic_match = _TOPIC_REQUEST_RE.search(lowered)
+        if topic_match:
+            requested_topic = topic_match.group(1).strip(" .")
+            if requested_topic and requested_topic != "something else":
+                plan_request = (
+                    f"Drop the current beat about {beat.intent.lower()} and talk about "
+                    f"{requested_topic} instead."
+                )
+                return ScriptCheckResult(status="off_book", plan_request=plan_request)
+
+        return ScriptCheckResult(
+            status="off_book",
+            plan_request=f"Drop the current beat about {beat.intent.lower()} and follow the user's new topic.",
+        )
+    return None
 
 
 def load_world_state(character: str) -> WorldState | None:
@@ -323,6 +405,13 @@ def _make_client(model_config: dict) -> OpenAI:
     )
 
 
+def set_llm_trace_hook(hook):
+    global _llm_trace_hook
+    previous = _llm_trace_hook
+    _llm_trace_hook = hook
+    return previous
+
+
 def _llm_call(model_config: dict, label: str = "", **create_kwargs):
     """Make an LLM call with automatic fallback on provider failure.
 
@@ -345,11 +434,28 @@ def _llm_call(model_config: dict, label: str = "", **create_kwargs):
             _console.print(f"[dim]  {_ts()} → {cfg['name']}{tag}[/dim]")
         else:
             _console.print(f"[yellow]  {_ts()} → fallback: {cfg['name']}{tag}[/yellow]")
+        started_at = time.time()
         try:
             client = _make_client(cfg)
-            return client.chat.completions.create(
+            response = client.chat.completions.create(
                 model=cfg["model"], **create_kwargs
             )
+            if _llm_trace_hook is not None:
+                try:
+                    _llm_trace_hook({
+                        "label": label,
+                        "provider": cfg["name"],
+                        "model": cfg["model"],
+                        "messages": [dict(message) for message in create_kwargs.get("messages", [])],
+                        "temperature": create_kwargs.get("temperature"),
+                        "response_format": create_kwargs.get("response_format"),
+                        "started_at": started_at,
+                        "finished_at": time.time(),
+                        "output": response.choices[0].message.content if response.choices else "",
+                    })
+                except Exception:
+                    pass
+            return response
         except Exception as e:
             # Don't fallback on auth errors
             status = getattr(e, "status_code", None)
@@ -410,18 +516,21 @@ def reconcile_call(world: WorldState, pending_changes: list[str], model_config: 
     person_updates = []
     for pu in data.get("person_updates", []):
         if isinstance(pu, dict) and "person_id" in pu:
+            set_presence = pu.get("set_presence")
+            if set_presence not in _VALID_PRESENCE:
+                set_presence = None
             person_updates.append(PersonUpdate(
                 person_id=pu["person_id"],
-                remove_facts=pu.get("remove_facts", []),
-                add_facts=pu.get("add_facts", []),
+                remove_facts=_clean_id_list(pu.get("remove_facts", []), _PERSON_FACT_ID_RE),
+                add_facts=_clean_string_list(pu.get("add_facts", []), fact_text=True),
                 set_name=pu.get("set_name"),
-                set_presence=pu.get("set_presence"),
+                set_presence=set_presence,
             ))
 
     return WorldUpdate(
-        remove_facts=data.get("remove_facts", []),
-        add_facts=data.get("add_facts", []),
-        events=data.get("events", []),
+        remove_facts=_clean_id_list(data.get("remove_facts", []), _WORLD_FACT_ID_RE),
+        add_facts=_clean_string_list(data.get("add_facts", []), fact_text=True),
+        events=_clean_string_list(data.get("events", [])),
         person_updates=person_updates,
     )
 
@@ -532,6 +641,10 @@ def script_check_call(
     recent_n: int = 6,
 ) -> ScriptCheckResult:
     """Focused script status classification. Minimal context, no monologue. 8B-friendly."""
+    redirect = _detect_explicit_redirect(history, beat)
+    if redirect is not None:
+        return redirect
+
     parts: list[str] = []
 
     parts.append("=== CURRENT BEAT ===")
