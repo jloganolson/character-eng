@@ -1145,6 +1145,9 @@ def _timeline_detail(event: dict) -> str:
             parts.append(f"TTFT {data['ttft_ms']}ms")
         if data.get("total_ms"):
             parts.append(f"text {data['total_ms']}ms")
+        if data.get("tts_start_ts") and data.get("response_done_ts"):
+            tts_start_ms = int(max(0.0, float(data["tts_start_ts"]) - float(data["response_done_ts"])) * 1000)
+            parts.append(f"tts start +{tts_start_ms}ms")
         if data.get("first_audio_ms"):
             parts.append(f"first audio {data['first_audio_ms']}ms")
         if data.get("synth_ms"):
@@ -1587,6 +1590,11 @@ def _build_stream_board(events: list[dict], prompt_traces: list[dict]) -> tuple[
                 timing_bits = [bit for bit in [
                     f"TTFT {data.get('ttft_ms', 0)}ms" if data.get("ttft_ms") else "",
                     f"text {data.get('total_ms', 0)}ms" if data.get("total_ms") else "",
+                    (
+                        "tts start +"
+                        + str(int(max(0.0, float(data.get('tts_start_ts', 0.0)) - float(data.get('response_done_ts', 0.0))) * 1000))
+                        + "ms"
+                    ) if data.get("tts_start_ts") and data.get("response_done_ts") else "",
                     f"audio {data.get('first_audio_ms', 0)}ms" if data.get("first_audio_ms") else "",
                     f"synth {data.get('synth_ms', 0)}ms" if data.get("synth_ms") else "",
                     f"clip {data.get('audio_ms', 0)}ms" if data.get("audio_ms") else "",

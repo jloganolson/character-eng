@@ -104,6 +104,12 @@ def test_write_report_includes_dashboard_trace(tmp_path: Path):
                 "seq": 2,
                 "data": {"ttft_ms": 210, "total_ms": 980},
             },
+            {
+                "type": "assistant_tts_start",
+                "timestamp": 0.62,
+                "seq": 3,
+                "data": {"text": "Free water. Free advice. Interested?"},
+            },
         ],
         prompt_traces=[
             {
@@ -135,6 +141,7 @@ def test_write_report_includes_dashboard_trace(tmp_path: Path):
     assert "Prompt / IO" in body
     assert "Chronology" in body
     assert "Assistant first token" in body
+    assert "tts start +" in body
     assert "prompt" in body
     assert "reply-track-bar" in body
     assert "+0.000s" in body
