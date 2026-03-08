@@ -72,15 +72,29 @@ The app works without `config.toml` — all settings have defaults. The `--voice
 ## Run
 
 ```bash
+./scripts/run_local.sh                  # one-command local stack: character + full vision auto-boot
 uv run -m character_eng                  # text mode (dashboard auto-opens at :7862)
 uv run -m character_eng --no-dashboard   # text mode without dashboard
 uv run -m character_eng --voice          # voice mode (speak to chat, hear responses)
 uv run -m character_eng --vision         # vision mode (live camera + visual intelligence)
 uv run -m character_eng --voice --vision # voice + vision
 uv run -m character_eng --vision-mock walkup.json  # vision with mock replay (no camera)
+uv run -m character_eng --browser        # browser mic/camera via WebSocket (remote mode)
+uv run -m character_eng --browser --vision  # full remote: browser audio + camera → vision
 uv run -m character_eng --character mara           # auto-select character (skip menu)
 uv run -m character_eng --character mara --sim curious  # run sim non-interactively
 uv run -m character_eng --smoke          # smoke test (auto greg, scripted inputs, exit)
+```
+
+`./scripts/run_local.sh` is the recommended hands-on entrypoint. By default it does a clean local restart first: it stops older character-eng app processes plus anything still bound to the usual local ports for dashboard/bridge (`:7862`), vision (`:7860`), vLLM (`:8000`), and Pocket-TTS (`:8003`), then launches the app with `--vision`.
+
+Useful variants:
+
+```bash
+CHARACTER=mara ./scripts/run_local.sh    # pick a default character
+CLEAN_START=0 ./scripts/run_local.sh     # reuse existing local services
+KEEP_POCKET=1 ./scripts/run_local.sh     # keep an already-running Pocket-TTS server
+./scripts/run_local.sh --no-dashboard    # same clean start, but CLI only
 ```
 
 Pick a character from the menu, then chat. After each response, synchronous microservices evaluate script progress and check scenario exits with immediate effect. In-session commands:
@@ -294,6 +308,58 @@ enabled = true
 port = 7862
 ```
 
+## Remote Deployment (RunPod / SSH tunnel)
+
+Browser mode (`--browser`) enables remote access by routing mic and camera through a WebSocket bridge instead of local hardware. The same architecture works for both RunPod GPU pods and SSH tunnel access.
+
+### Three modes, one codebase
+
+| Mode | Audio | Camera | Access |
+|------|-------|--------|--------|
+| **Local** (default) | sounddevice mic/speaker | cv2.VideoCapture | Terminal + browser :7862 |
+| **RunPod/Remote** | Browser getUserMedia → WS | Browser camera → WS | Browser :7862 (RunPod proxy) |
+| **SSH tunnel** | Same as RunPod | Same as RunPod | `ssh -L 7862:localhost:7862 -L 7863:localhost:7863` |
+
+### Quick start
+
+```bash
+# Run locally with browser audio (e.g. for SSH tunnel access)
+uv run -m character_eng --browser --character greg
+
+# Run with browser audio + vision
+uv run -m character_eng --browser --vision --character greg
+
+# SSH tunnel from another machine
+ssh -L 7862:localhost:7862 -L 7863:localhost:7863 user@server
+# Then open http://localhost:7862 in your browser
+```
+
+The dashboard auto-detects the bridge — when connected, mic/camera controls appear in the sidebar. Click "Mic On" to start capturing audio, "Cam On" for camera (if `--vision` is active). Audio latency (RTT) is displayed.
+
+### Docker / RunPod
+
+```bash
+# Build container
+docker build -t character-eng .
+
+# Run locally with GPU
+docker run --gpus all -p 7862:7862 -p 7863:7863 --env-file .env character-eng
+
+# RunPod CLI
+uv run deploy/runpod.py up        # Create pod
+uv run deploy/runpod.py status    # Pod URLs
+uv run deploy/runpod.py deploy    # Build + push + restart
+uv run deploy/runpod.py ssh       # Print SSH tunnel command
+uv run deploy/runpod.py down      # Stop (preserves volume)
+uv run deploy/runpod.py destroy   # Delete pod + volume
+```
+
+Configure RunPod in `deploy/runpod.toml`. Set `RUNPOD_API_KEY` in `.env`.
+
+### CI/CD
+
+Push to `main` triggers GitHub Actions (`.github/workflows/deploy.yml`) which builds and pushes to GHCR, then restarts the RunPod pod. Set `RUNPOD_API_KEY` and `RUNPOD_POD_ID` as GitHub secrets.
+
 ## Editing prompts
 
 Characters live in `prompts/characters/<name>/` with these files:
@@ -355,6 +421,15 @@ Available local models: LFM-2 2.6B (`lfm-2.6b`), LFM-2.5 1.2B (`lfm-1.2b`). The 
 # Unit tests + e2e smoke (includes real LLM smoke test when API keys are set)
 uv run pytest
 
+# One-time browser install for Playwright UI regression tests
+uv run playwright install chromium
+
+# One-command validation: pytest + smoke + voice QA when keys are available
+./scripts/validate.sh
+
+# Extended validation: also runs qa_world + qa_chat against the active chat model
+./scripts/validate.sh full
+
 # E2e smoke test standalone (sends real messages, exercises full startup path)
 uv run -m character_eng --smoke
 
@@ -377,6 +452,9 @@ uv run -m character_eng.qa_personas --turns 5 --open       # run and open report
 uv run -m character_eng.open_report                        # latest report in logs/
 uv run -m character_eng.open_report logs/some_report.html  # specific file
 uv run -m character_eng.open_report --test                 # generate + serve a spoofed test report
+
+# Focused browser regression for the full-stack trace viewer
+uv run pytest tests/test_qa_full_stack_playwright.py
 ```
 
 `test_plan.md` defines the QA chat scenarios in a human-editable format — add new test sections without touching code. Supports `send:`, `world:`, `script:` (load beats for eval tracking), `beat` (run eval), and `expect:` commands including `eval_status:<status>` to assert eval outcomes. Eval now runs synchronously via split microservices (script_check + thought) so results are immediate.

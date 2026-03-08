@@ -14,6 +14,7 @@ dependencies = [
     "websocket-client>=1.7",
     "pocket-tts>=1.0",
     "livekit>=1.1.2",
+    "websockets>=14.0",
 ]
 
 [project.optional-dependencies]
@@ -41,5 +42,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "playwright>=1.58.0",
     "pytest>=9.0.2",
+    "pytest-playwright>=0.7.2",
 ]
