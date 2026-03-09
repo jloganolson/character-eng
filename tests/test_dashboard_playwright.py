@@ -165,6 +165,16 @@ def test_runtime_panel_interactions_in_browser(
             },
             "conversation_paused": True,
             "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
             "vision_active": True,
             "reconcile_thread_alive": True,
             "vision_service_url": vision_service_url,
@@ -188,8 +198,12 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#boot-grid")).to_contain_text("models")
     expect(page.locator("#runtime-status")).to_contain_text("reconcile: on")
     expect(page.locator("#runtime-status")).to_contain_text("auto-beat: off")
+    expect(page.locator("#runtime-status")).to_contain_text("stt: ready")
+    expect(page.locator("#runtime-status")).to_contain_text("tts: ready")
     expect(page.locator("button[data-control='vision']")).to_have_text("vision on")
     expect(page.locator("button[data-control='filler']")).to_have_text("filler off")
+    expect(page.locator("#boot-grid")).to_contain_text("Deepgram socket open.")
+    expect(page.locator("#boot-grid")).to_contain_text("Pocket-TTS reachable.")
     expect(page.locator("#vision-service-status")).to_contain_text("source: external service")
     expect(page.locator("#vision-service-status")).to_contain_text(vision_service_url)
     expect(page.locator("#vision-model-status")).to_contain_text("vLLM")
@@ -242,37 +256,6 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#detail-type")).to_have_text("vision_snapshot")
     expect(page.locator("#detail-payload")).to_contain_text("\"question\": \"Is there a bottle visible?\"")
 
-    collector.push(
-        "runtime_controls",
-        {
-            "controls": {
-                "reconcile": False,
-                "vision": False,
-                "auto_beat": True,
-                "filler": True,
-            },
-            "conversation_paused": False,
-            "voice_active": True,
-            "vision_active": False,
-            "reconcile_thread_alive": False,
-            "vision_service_url": vision_service_url,
-            "vision_service_health": True,
-            "vision_service_managed": True,
-            "vision_service_external": False,
-            "vision_service_state": "managed",
-            "vision_service_autostart": False,
-            "vision_service_mode": "camera",
-            "vision_mock_replay": "walkup.json",
-        },
-    )
-
-    expect(page.locator("button[data-control='reconcile']")).to_have_text("reconcile off")
-    expect(page.locator("#runtime-status")).to_contain_text("state: live")
-    expect(page.locator("#boot-summary")).to_contain_text("Runtime is live. You can speak or type now.")
-    expect(page.locator("button[data-control='auto-beat']")).to_have_text("auto-beat on")
-    expect(page.locator("#vision-service-status")).to_contain_text("source: managed by app")
-    expect(page.locator("#vision-service-status")).to_contain_text("mock: walkup.json")
-
     with page.expect_popup() as vision_popup_info:
         page.locator("#vision-service-link").click()
     vision_popup = vision_popup_info.value
@@ -319,6 +302,50 @@ def test_runtime_panel_interactions_in_browser(
     assert input_queue.get(timeout=2) == "1"
 
     expect(page.locator("#vision-model-status")).to_contain_text(re.compile("ready|loading"))
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": False,
+                "vision": False,
+                "auto_beat": True,
+                "filler": True,
+            },
+            "conversation_paused": False,
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": True,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "error", "detail": "Deepgram socket lost."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": False,
+            "vision_service_url": vision_service_url,
+            "vision_service_health": True,
+            "vision_service_managed": True,
+            "vision_service_external": False,
+            "vision_service_state": "managed",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "walkup.json",
+        },
+    )
+
+    expect(page.locator("button[data-control='reconcile']")).to_have_text("reconcile off")
+    expect(page.locator("#runtime-status")).to_contain_text("state: live")
+    expect(page.locator("button[data-control='auto-beat']")).to_have_text("auto-beat on")
+    expect(page.locator("#vision-service-status")).to_contain_text("source: managed by app")
+    expect(page.locator("#vision-service-status")).to_contain_text("mock: walkup.json")
+
+    expect(page.locator("#runtime-status")).to_contain_text("stt: error")
+    expect(page.locator("#boot-summary")).to_contain_text("Voice needs attention before the runtime is ready.")
+    expect(page.locator("body")).to_have_class(re.compile(r"\bbooting\b"))
 
     vision_service.set_fail(True)
     expect(page.locator("#vision-model-status")).to_contain_text("Vision status unavailable", timeout=7000)

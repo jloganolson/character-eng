@@ -47,6 +47,7 @@ def test_runtime_snapshot_includes_vision_service_metadata(monkeypatch):
     assert state["vision_service_state"] == "external"
     assert state["vision_service_autostart"] is True
     assert state["conversation_paused"] is False
+    assert state["voice_status"]["stt"]["state"] == "off"
 
 
 def test_runtime_snapshot_includes_paused_state(monkeypatch):
@@ -60,6 +61,29 @@ def test_runtime_snapshot_includes_paused_state(monkeypatch):
         assert state["conversation_paused"] is True
     finally:
         app._conversation_paused = previous
+
+
+def test_runtime_snapshot_includes_voice_status(monkeypatch):
+    cfg = AppConfig()
+    monkeypatch.setattr(app, "_vision_service_health", lambda vision_cfg=None: False)
+    monkeypatch.setitem(app._vision_runtime, "cfg", cfg.vision)
+    voice = MagicMock()
+    voice.status_snapshot.return_value = {
+        "active": True,
+        "output_only": False,
+        "filler_enabled": True,
+        "tts_backend": "pocket",
+        "mic_ready": True,
+        "speaker_ready": True,
+        "stt": {"state": "ready", "detail": "Deepgram socket open."},
+        "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+    }
+
+    state = app._runtime_controls_snapshot(voice_io=voice, vision_cfg=cfg.vision)
+
+    assert state["voice_active"] is True
+    assert state["voice_status"]["stt"]["state"] == "ready"
+    assert state["voice_status"]["tts"]["backend"] == "pocket"
 
 
 def test_vision_service_autostart_command_updates_config(monkeypatch):

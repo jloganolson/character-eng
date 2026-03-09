@@ -940,6 +940,16 @@
   let visionFeedSrc = "";
   let conversationPaused = false;
   let voiceActive = false;
+  let voiceStatus = {
+    active: false,
+    output_only: false,
+    filler_enabled: false,
+    tts_backend: "",
+    mic_ready: false,
+    speaker_ready: false,
+    stt: {state: "off", detail: "Voice inactive."},
+    tts: {state: "off", detail: "Voice inactive.", backend: ""}
+  };
   let visionManagerActive = false;
   let lastEventAt = 0;
   let runtimeStateSeen = false;
@@ -1101,10 +1111,18 @@
       : "Waiting for the app to publish runtime controls.";
 
     const voiceState = runtimeStateSeen
-      ? (voiceActive ? "ready" : "off")
+      ? (
+        !voiceActive ? "off"
+        : (voiceStatus.stt?.state === "error" || voiceStatus.tts?.state === "error") ? "error"
+        : (voiceStatus.stt?.state === "starting" || voiceStatus.tts?.state === "starting") ? "active"
+        : "ready"
+      )
       : "waiting";
     const voiceDetail = runtimeStateSeen
-      ? (voiceActive ? "Mic/STT/TTS path is active." : "Voice path is not active yet.")
+      ? (
+        !voiceActive ? "Voice path is not active yet."
+        : `${voiceStatus.stt?.detail || "STT unknown."} · ${voiceStatus.tts?.detail || "TTS unknown."}`
+      )
       : "Waiting for voice runtime info.";
 
     let visionServiceState = "waiting";
@@ -1149,12 +1167,15 @@
 
     const summary =
       !runtimeStateSeen ? "Connecting to the local runtime..." :
+      modelPollError ? "Vision models need attention before the runtime is ready." :
+      voiceState === "error" ? "Voice needs attention before the runtime is ready." :
       conversationPaused ? "Everything is warm. Resume when you want to start." :
       "Runtime is live. You can speak or type now.";
 
     const modelReady = modelState === "ready" || modelState === "off";
+    const voiceReady = voiceState === "ready" || voiceState === "off";
     const visionReady = !visionService.url || visionServiceState === "ready" || visionServiceState === "off";
-    const bootReady = runtimeStateSeen && sessionSeen && visionReady && modelReady && !modelPollError;
+    const bootReady = runtimeStateSeen && sessionSeen && visionReady && voiceReady && modelReady && !modelPollError;
     document.body.classList.toggle("booting", !bootReady);
 
     summaryEl.textContent = summary;
@@ -2049,6 +2070,7 @@
       runtimeStateSeen = true;
       conversationPaused = !!data.conversation_paused;
       voiceActive = !!data.voice_active;
+      voiceStatus = data.voice_status || voiceStatus;
       visionManagerActive = !!data.vision_active;
       visionService = {
         url: data.vision_service_url || "",
@@ -2068,6 +2090,8 @@
         `auto-beat: <b>${runtimeControls.auto_beat ? "on" : "off"}</b>`,
         `filler: <b>${runtimeControls.filler ? "on" : "off"}</b>`,
         `voice: <b>${data.voice_active ? "on" : "off"}</b>`,
+        `stt: <b style="color:${statusColor(voiceStatus.stt?.state || "off")}">${esc(voiceStatus.stt?.state || "off")}</b>`,
+        `tts: <b style="color:${statusColor(voiceStatus.tts?.state || "off")}">${esc(voiceStatus.tts?.state || "off")}</b>`,
         `vision manager: <b>${data.vision_active ? "on" : "off"}</b>`,
         `reconcile thread: <b>${data.reconcile_thread_alive ? "running" : "idle"}</b>`,
       ].join("<br>");

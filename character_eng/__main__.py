@@ -184,12 +184,43 @@ def _vision_status_snapshot(vision_cfg=None, vision_mgr=None) -> dict:
     }
 
 
+def _voice_status_snapshot(voice_io=None) -> dict:
+    if voice_io is None:
+        return {
+            "active": False,
+            "output_only": False,
+            "filler_enabled": bool(_runtime_controls.get("filler", False)),
+            "tts_backend": "",
+            "mic_ready": False,
+            "speaker_ready": False,
+            "stt": {"state": "off", "detail": "Voice inactive."},
+            "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+        }
+    try:
+        status = voice_io.status_snapshot()
+    except Exception as exc:
+        return {
+            "active": True,
+            "output_only": False,
+            "filler_enabled": bool(_runtime_controls.get("filler", False)),
+            "tts_backend": "",
+            "mic_ready": False,
+            "speaker_ready": False,
+            "stt": {"state": "error", "detail": f"Voice snapshot failed: {exc}"},
+            "tts": {"state": "error", "detail": f"Voice snapshot failed: {exc}", "backend": ""},
+        }
+    status["filler_enabled"] = bool(_runtime_controls.get("filler", False))
+    return status
+
+
 def _runtime_controls_snapshot(voice_io=None, vision_mgr=None, vision_cfg=None) -> dict:
     vision_status = _vision_status_snapshot(vision_cfg=vision_cfg, vision_mgr=vision_mgr)
+    voice_status = _voice_status_snapshot(voice_io=voice_io)
     return {
         "controls": dict(_runtime_controls),
         "conversation_paused": bool(_conversation_paused),
         "voice_active": bool(voice_io is not None),
+        "voice_status": voice_status,
         "vision_active": bool(vision_mgr is not None),
         "reconcile_thread_alive": bool(_reconcile_thread and _reconcile_thread.is_alive()),
         "vision_service_url": vision_status["service_url"],

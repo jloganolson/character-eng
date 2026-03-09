@@ -434,6 +434,8 @@ class DeepgramSTT:
         self._listener_thread: threading.Thread | None = None
         self._is_speaking = False
         self._pending_transcript = ""
+        self._ws_open = threading.Event()
+        self._last_error = ""
 
     def start(self):
         from deepgram import DeepgramClient
@@ -451,9 +453,6 @@ class DeepgramSTT:
             endpointing="300",
         )
         self._socket = self._ctx_manager.__enter__()
-
-        # Wait for WebSocket to be fully open before accepting audio
-        self._ws_open = threading.Event()
 
         def _on_open(_):
             self._ws_open.set()
@@ -559,7 +558,16 @@ class DeepgramSTT:
 
     def _on_error(self, error):
         """Called on Deepgram errors."""
-        pass
+        self._last_error = str(error)
+
+    def status_snapshot(self) -> dict:
+        return {
+            "thread_alive": bool(self._listener_thread and self._listener_thread.is_alive()),
+            "ws_open": self._ws_open.is_set(),
+            "error": self._last_error,
+            "speaking": self._is_speaking,
+            "pending_transcript": bool(self._pending_transcript),
+        }
 
     def stop(self):
         if self._socket is not None:
@@ -860,6 +868,51 @@ class VoiceIO:
             self._trace_hook(event_type, dict(data))
         except Exception:
             pass
+
+    def status_snapshot(self) -> dict:
+        import requests
+
+        stt = {"state": "off", "detail": "STT inactive."}
+        if self._output_only:
+            stt = {"state": "off", "detail": "Output-only mode."}
+        elif self._stt is not None:
+            stt_status = self._stt.status_snapshot()
+            if stt_status["error"]:
+                stt = {"state": "error", "detail": stt_status["error"]}
+            elif stt_status["ws_open"]:
+                stt = {"state": "ready", "detail": "Deepgram socket open."}
+            elif stt_status["thread_alive"]:
+                stt = {"state": "starting", "detail": "Deepgram socket connecting."}
+            else:
+                stt = {"state": "error", "detail": "Deepgram listener stopped."}
+
+        tts = {"state": "off", "detail": "TTS inactive.", "backend": self._tts_backend}
+        if self._tts is not None:
+            tts = {"state": "ready", "detail": f"{self._tts_backend} ready.", "backend": self._tts_backend}
+            if self._tts_backend == "pocket":
+                server_url = self._tts_server_url or "http://localhost:8003"
+                try:
+                    resp = requests.get(server_url, timeout=1.5)
+                    resp.raise_for_status()
+                    tts["detail"] = f"Pocket-TTS reachable at {server_url}."
+                except Exception as exc:
+                    tts["state"] = "error"
+                    tts["detail"] = f"Pocket-TTS unavailable: {exc}"
+            elif self._tts_backend in ("local", "qwen"):
+                tts["detail"] = "Local TTS model loaded."
+            elif self._tts_backend == "elevenlabs":
+                tts["detail"] = "ElevenLabs streaming client ready."
+
+        return {
+            "active": self._started,
+            "output_only": self._output_only,
+            "filler_enabled": self._filler_enabled,
+            "tts_backend": self._tts_backend,
+            "mic_ready": self._mic is not None,
+            "speaker_ready": self._speaker is not None,
+            "stt": stt,
+            "tts": tts,
+        }
 
     def start(self):
         """Initialize and start all voice components."""
