@@ -860,6 +860,9 @@ class VoiceIO:
         self._started = False
         self._output_only = output_only
         self._trace_hook = trace_hook
+        self._last_speech_started_at: float | None = None
+        self._last_transcript_final_at: float | None = None
+        self._last_transcript_text: str = ""
 
     def _trace(self, event_type: str, data: dict) -> None:
         if self._trace_hook is None:
@@ -1367,6 +1370,9 @@ class VoiceIO:
         With AEC, barge-in triggers here (on real transcript) instead of on
         SpeechStarted, since AEC residual can cause false VAD triggers.
         """
+        self._last_transcript_final_at = time.time()
+        self._last_transcript_text = text
+        self._trace("user_transcript_final", {"text": text})
         if self._aec is not None and self._is_speaking:
             self._cancel_auto_beat()
             if self._started:
@@ -1382,6 +1388,8 @@ class VoiceIO:
         Barge-in is handled in _on_transcript() instead.
         Without AEC: triggers barge-in during playback (legacy behavior).
         """
+        self._last_speech_started_at = time.time()
+        self._trace("user_speech_started", {})
         if self._is_speaking:
             if self._aec is not None:
                 # AEC mode: ignore SpeechStarted during playback — barge-in
@@ -1405,6 +1413,34 @@ class VoiceIO:
             if had_auto_beat and self._started:
                 sys.stdout.write(f"  \033[2m[{_ts()} auto-beat: cancelled by speech]\033[0m\n")
                 sys.stdout.flush()
+
+    def consume_input_timing(self, expected_text: str = "") -> dict:
+        """Return and clear cached speech/transcript timing for the latest utterance."""
+        started_at = self._last_speech_started_at
+        final_at = self._last_transcript_final_at
+        transcript_text = self._last_transcript_text
+        self._last_speech_started_at = None
+        self._last_transcript_final_at = None
+        self._last_transcript_text = ""
+
+        if started_at is None and final_at is None and not transcript_text:
+            return {}
+
+        payload: dict[str, object] = {
+            "input_source": "voice",
+        }
+        if started_at is not None:
+            payload["speech_started_ts"] = started_at
+        if final_at is not None:
+            payload["transcript_final_ts"] = final_at
+        if started_at is not None and final_at is not None:
+            payload["stt_ms"] = round(max(0.0, final_at - started_at) * 1000)
+        cleaned_transcript = transcript_text.strip()
+        cleaned_expected = expected_text.strip()
+        if cleaned_transcript:
+            payload["stt_text"] = cleaned_transcript
+            payload["stt_text_match"] = cleaned_transcript == cleaned_expected if cleaned_expected else True
+        return payload
 
     def _start_auto_beat(self):
         """Start auto-beat timer — fires /beat after AUTO_BEAT_DELAY seconds."""

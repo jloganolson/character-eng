@@ -34,6 +34,7 @@ class ChatSession:
         self._messages: list[dict] = [
             {"role": "system", "content": system_prompt},
         ]
+        self._tagged_system_indices: dict[str, int] = {}
         self._last_usage = None
 
         # Build fallback chain
@@ -161,6 +162,17 @@ class ChatSession:
     def inject_system(self, content: str):
         """Append a system message to the conversation history."""
         self._messages.append({"role": "system", "content": content})
+
+    def upsert_system(self, tag: str, content: str):
+        """Replace or append a tagged system message without duplicating it."""
+        index = self._tagged_system_indices.get(tag)
+        if index is not None and 0 <= index < len(self._messages):
+            message = self._messages[index]
+            if message.get("role") == "system":
+                message["content"] = content
+                return
+        self._messages.append({"role": "system", "content": content})
+        self._tagged_system_indices[tag] = len(self._messages) - 1
 
     def get_history(self) -> list[dict]:
         """Return a copy of the message history."""

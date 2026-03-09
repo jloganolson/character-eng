@@ -488,6 +488,51 @@
     color: var(--text-dim);
     font-size: 0.66em;
   }
+  .stream-card.type-turn-start,
+  .stream-card.type-user-transcript-final {
+    background: rgba(77, 163, 255, 0.14);
+  }
+  .stream-card.type-user-speech-started {
+    background: rgba(77, 163, 255, 0.08);
+  }
+  .stream-card.type-assistant-reply {
+    background: rgba(249, 190, 109, 0.12);
+  }
+  .stream-card.type-post-response {
+    background: rgba(146, 121, 201, 0.1);
+  }
+  .stream-card.type-world-update {
+    background: rgba(122, 206, 176, 0.1);
+  }
+  .stream-card.type-vision-snapshot,
+  .stream-card.type-vision-focus {
+    background: rgba(111, 219, 196, 0.1);
+  }
+  .stream-card.type-runtime-controls,
+  .stream-card.type-session-start,
+  .stream-card.type-session-end,
+  .stream-card.type-pause,
+  .stream-card.type-resume {
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .stream-card.type-turn-start .stream-card-type,
+  .stream-card.type-user-transcript-final .stream-card-type,
+  .stream-card.type-user-speech-started .stream-card-type {
+    color: #72b6ff;
+  }
+  .stream-card.type-assistant-reply .stream-card-type {
+    color: #f5cf78;
+  }
+  .stream-card.type-post-response .stream-card-type {
+    color: #c8b1ff;
+  }
+  .stream-card.type-world-update .stream-card-type {
+    color: #87d8c6;
+  }
+  .stream-card.type-vision-snapshot .stream-card-type,
+  .stream-card.type-vision-focus .stream-card-type {
+    color: #79e1cb;
+  }
   .lane-session .stream-card { border-left: 3px solid var(--stream-session); }
   .lane-input .stream-card { border-left: 3px solid var(--stream-input); }
   .lane-chat .stream-card { border-left: 3px solid var(--stream-chat); }
@@ -514,6 +559,26 @@
   #detail-summary {
     display: grid;
     gap: 0.4em;
+  }
+  .detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4em;
+  }
+  .detail-action {
+    background: var(--bg-alt);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.32em 0.7em;
+    cursor: pointer;
+    font-size: 0.72em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .detail-action:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
   #detail-type,
   #detail-lane,
@@ -542,6 +607,69 @@
     font-size: 0.78em;
     line-height: 1.45;
     white-space: pre-wrap;
+  }
+  #detail-loop {
+    display: none;
+    gap: 0.45em;
+    margin-top: 0.15em;
+    padding: 0.6em 0.7em;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-alt);
+  }
+  #detail-loop.active {
+    display: grid;
+  }
+  .loop-title {
+    font-size: 0.74em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+  }
+  .loop-track {
+    position: relative;
+    height: 44px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+    overflow: hidden;
+  }
+  .loop-band {
+    position: absolute;
+    top: 10px;
+    bottom: 10px;
+    border-radius: 999px;
+    opacity: 0.85;
+  }
+  .loop-band.stt { background: rgba(77, 163, 255, 0.2); border: 1px solid rgba(77, 163, 255, 0.45); }
+  .loop-band.llm { background: rgba(249, 190, 109, 0.2); border: 1px solid rgba(249, 190, 109, 0.45); }
+  .loop-band.tts { background: rgba(136, 209, 134, 0.18); border: 1px solid rgba(136, 209, 134, 0.45); }
+  .loop-marker {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    width: 2px;
+    background: rgba(255,255,255,0.75);
+  }
+  .loop-marker-label {
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    font-size: 0.63em;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .loop-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3em;
+  }
+  .loop-chip {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.14em 0.46em;
+    font-size: 0.68em;
+    color: var(--text-dim);
   }
   .detail-section {
     display: grid;
@@ -631,7 +759,12 @@
     border-radius: 8px;
     padding: 0.5em 0.6em;
     background: color-mix(in srgb, var(--panel-hover) 75%, transparent);
+    border-left: 3px solid var(--border);
   }
+  .prompt-message.role-system { background: rgba(196, 170, 255, 0.09); border-left-color: #c8b1ff; }
+  .prompt-message.role-user { background: rgba(77, 163, 255, 0.08); border-left-color: #72b6ff; }
+  .prompt-message.role-assistant { background: rgba(249, 190, 109, 0.08); border-left-color: #f5cf78; }
+  .prompt-message.role-input { background: rgba(255, 255, 255, 0.04); border-left-color: var(--text-dim); }
   .prompt-message-role {
     font-size: 0.72em;
     text-transform: uppercase;
@@ -866,6 +999,16 @@
               </div>
               <div id="detail-label">Select a live event to inspect it.</div>
               <div id="detail-detail">The stream view groups interwoven activity by lane and highlights all events from the same turn when selected.</div>
+              <div class="detail-actions">
+                <button class="detail-action" id="detail-open-window" type="button" disabled>Open In New Window</button>
+                <button class="detail-action" id="detail-export-json" type="button" disabled>Export JSON</button>
+                <button class="detail-action" id="detail-export-html" type="button" disabled>Export HTML</button>
+              </div>
+              <div id="detail-loop">
+                <div class="loop-title">Loop Timing</div>
+                <div class="loop-track" id="detail-loop-track"></div>
+                <div class="loop-chips" id="detail-loop-chips"></div>
+              </div>
             </div>
           </div>
 
@@ -963,6 +1106,8 @@
       runtime_controls: "session",
       vision_snapshot: "vision",
       world_update: "world",
+      user_speech_started: "stt",
+      user_transcript_final: "stt",
       turn_start: "chat",
       assistant_reply: "chat",
       expression: "expression",
@@ -978,6 +1123,7 @@
   let turnCount = 0;
   let lastSeq = 0;
   let currentTurnId = 0;
+  let pendingInputTurnId = null;
   let activeReplyKey = null;
   let activePostResponseKey = null;
   let activeWorldUpdateKey = null;
@@ -1044,6 +1190,9 @@
   const bootRestartButton = document.getElementById("boot-restart");
   const timeWindowSlider = document.getElementById("time-window");
   const timeWindowValue = document.getElementById("time-window-value");
+  const detailOpenWindowButton = document.getElementById("detail-open-window");
+  const detailExportJsonButton = document.getElementById("detail-export-json");
+  const detailExportHtmlButton = document.getElementById("detail-export-html");
 
   async function loadStreamSchema() {
     try {
@@ -1221,6 +1370,8 @@
       model: trace.model || "",
       messages: Array.isArray(trace.messages) ? trace.messages : [],
       inputs: Array.isArray(trace.inputs) ? trace.inputs : [],
+      started_at: trace.started_at || null,
+      finished_at: trace.finished_at || null,
       rendered_prompt: trace.rendered_prompt || _renderMessagesText(trace.messages || []),
       output: trace.output || "",
     }));
@@ -1232,6 +1383,21 @@
       const content = String(message.content || "");
       return `${role}:\n${content}`;
     }).join("\n\n").trim();
+  }
+
+  function promptRoleClass(role) {
+    const normalized = String(role || "message").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    return `role-${normalized || "message"}`;
+  }
+
+  function promptMetaText(block) {
+    const parts = [block.provider, block.model].filter(Boolean);
+    const startedAt = Number(block.started_at || 0);
+    const finishedAt = Number(block.finished_at || startedAt);
+    if (startedAt && finishedAt && finishedAt >= startedAt) {
+      parts.push(`${Math.max(0, Math.round((finishedAt - startedAt) * 1000))}ms`);
+    }
+    return parts.join(" · ");
   }
 
   function renderPromptBlocks(blocks) {
@@ -1247,14 +1413,14 @@
       const head = document.createElement("div");
       head.className = "prompt-head";
       head.innerHTML = `<div class="prompt-title">${esc(block.title || "Prompt")}</div>${
-        block.provider || block.model ? `<div class="prompt-meta">${esc([block.provider, block.model].filter(Boolean).join(" · "))}</div>` : ""
+        promptMetaText(block) ? `<div class="prompt-meta">${esc(promptMetaText(block))}</div>` : ""
       }`;
       wrap.appendChild(head);
       if (block.inputs && block.inputs.length) {
         const sec = document.createElement("div");
         sec.className = "prompt-subsection";
         sec.innerHTML = `<strong>Inputs</strong><div class="prompt-message-list">${
-          block.inputs.map((item) => `<div class="prompt-message"><div class="prompt-message-content">${esc(item)}</div></div>`).join("")
+          block.inputs.map((item) => `<div class="prompt-message role-input"><div class="prompt-message-role">input</div><div class="prompt-message-content">${esc(item)}</div></div>`).join("")
         }</div>`;
         wrap.appendChild(sec);
       }
@@ -1263,7 +1429,7 @@
         sec.className = "prompt-subsection";
         sec.innerHTML = `<strong>Messages</strong><div class="prompt-message-list">${
           block.messages.map((message) => `
-            <div class="prompt-message">
+            <div class="prompt-message ${promptRoleClass(message.role)}">
               <div class="prompt-message-role">${esc(message.role || "message")}</div>
               <div class="prompt-message-content">${esc(message.content || "")}</div>
             </div>`).join("")
@@ -1273,13 +1439,13 @@
       if (block.rendered_prompt) {
         const sec = document.createElement("div");
         sec.className = "prompt-subsection";
-        sec.innerHTML = `<strong>Rendered Prompt</strong><div class="prompt-message"><div class="prompt-message-content">${esc(block.rendered_prompt)}</div></div>`;
+        sec.innerHTML = `<strong>Rendered Prompt</strong><div class="prompt-message role-system"><div class="prompt-message-role">rendered</div><div class="prompt-message-content">${esc(block.rendered_prompt)}</div></div>`;
         wrap.appendChild(sec);
       }
       if (block.output) {
         const sec = document.createElement("div");
         sec.className = "prompt-subsection";
-        sec.innerHTML = `<strong>Output</strong><div class="prompt-message"><div class="prompt-message-content">${esc(block.output)}</div></div>`;
+        sec.innerHTML = `<strong>Output</strong><div class="prompt-message role-assistant"><div class="prompt-message-role">output</div><div class="prompt-message-content">${esc(block.output)}</div></div>`;
         wrap.appendChild(sec);
       }
       root.appendChild(wrap);
@@ -1438,6 +1604,7 @@
     sessionSeen = false;
     turnCount = 0;
     currentTurnId = 0;
+    pendingInputTurnId = null;
     activeReplyKey = null;
     activePostResponseKey = null;
     activeWorldUpdateKey = null;
@@ -1454,6 +1621,12 @@
     document.getElementById("detail-prompts").innerHTML = '<div style="color:var(--text-dim);">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-related").innerHTML = '<div style="color:var(--text-dim);">No event selected.</div>';
     document.getElementById("detail-chronology").innerHTML = "";
+    document.getElementById("detail-loop").classList.remove("active");
+    document.getElementById("detail-loop-track").innerHTML = "";
+    document.getElementById("detail-loop-chips").innerHTML = "";
+    detailOpenWindowButton.disabled = true;
+    detailExportJsonButton.disabled = true;
+    detailExportHtmlButton.disabled = true;
     document.getElementById("boot-summary").textContent = message;
     document.getElementById("boot-overlay-summary").textContent = message;
     setDetailTab(activeDetailTab);
@@ -1475,6 +1648,7 @@
     statePollingSuspended = false;
     turnCount = 0;
     currentTurnId = 0;
+    pendingInputTurnId = null;
     activeReplyKey = null;
     activePostResponseKey = null;
     activeWorldUpdateKey = null;
@@ -1519,6 +1693,12 @@
     document.getElementById("detail-prompts").innerHTML = '<div style="color:var(--text-dim);">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-related").innerHTML = '<div style="color:var(--text-dim);">No event selected.</div>';
     document.getElementById("detail-chronology").innerHTML = "";
+    document.getElementById("detail-loop").classList.remove("active");
+    document.getElementById("detail-loop-track").innerHTML = "";
+    document.getElementById("detail-loop-chips").innerHTML = "";
+    detailOpenWindowButton.disabled = true;
+    detailExportJsonButton.disabled = true;
+    detailExportHtmlButton.disabled = true;
     setDetailTab(activeDetailTab);
     document.getElementById("boot-summary").textContent = message;
     document.getElementById("boot-overlay-summary").textContent = message;
@@ -1661,6 +1841,10 @@
         if (data.input_type === "world") return `/world ${data.input_text || ""}`.trim();
         if (data.input_type === "see") return `/see ${data.input_text || ""}`.trim();
         return data.input_text || "(empty input)";
+      case "user_speech_started":
+        return "speech detected";
+      case "user_transcript_final":
+        return data.text || data.stt_text || "(voice transcript)";
       case "assistant_reply":
         return data.full_text || data.text || "(streaming reply)";
       case "post_response": {
@@ -1725,13 +1909,18 @@
     switch (type) {
       case "assistant_reply": {
         const bits = [];
+        if (data.stt_ms != null) bits.push(`STT ${data.stt_ms}ms`);
         if (data.ttft_ms != null) bits.push(`TTFT ${data.ttft_ms}ms`);
+        if (data.llm_ms != null) bits.push(`LLM ${data.llm_ms}ms`);
         if (data.total_ms != null) bits.push(`done ${data.total_ms}ms`);
+        if (data.tts_request_ms != null) bits.push(`tts req ${data.tts_request_ms}ms`);
         if (data.first_audio_ms != null) bits.push(`first audio ${data.first_audio_ms}ms`);
-        if (data.tts_start_ms != null) bits.push(`tts start ${data.tts_start_ms}ms`);
+        if (data.tts_synth_done_ms != null) bits.push(`tts done ${data.tts_synth_done_ms}ms`);
         if (data.audio_ms != null) bits.push(`clip ${data.audio_ms}ms`);
         return bits.join(" · ");
       }
+      case "user_transcript_final":
+        return data.text ? `final transcript` : "";
       case "vision_snapshot":
         return [
           data.faces != null ? `faces ${data.faces}` : "",
@@ -1767,11 +1956,225 @@
     }
   }
 
+  function typeClass(type) {
+    return String(type || "event").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  }
+
+  function selectedEventBundle(event) {
+    if (!event) return null;
+    const promptBlocks = promptTraceBlocksForEvent(event);
+    const relatedEvents = relatedKeysFor(event)
+      .map((key) => streamEventByKey.get(key))
+      .filter(Boolean)
+      .map((item) => ({
+        key: item.key,
+        type: item.type,
+        lane: item.lane,
+        time_s: Number(relativeTime(item.timestamp).toFixed(2)),
+        label: item.label,
+        detail: item.detail,
+        data: item.data,
+      }));
+    return {
+      exported_at: new Date().toISOString(),
+      session_id: currentSessionId || "",
+      event: {
+        key: event.key,
+        type: event.type,
+        lane: event.lane,
+        seq: event.seq || 0,
+        time_s: Number(relativeTime(event.timestamp).toFixed(2)),
+        label: event.label,
+        detail: event.detail,
+        data: event.data || {},
+      },
+      prompt_blocks: promptBlocks,
+      related_events: relatedEvents,
+    };
+  }
+
+  function bundleToHtml(bundle) {
+    const promptHtml = (bundle.prompt_blocks || []).map((block) => {
+      const messages = (block.messages || []).map((message) => `
+        <div class="prompt-message ${promptRoleClass(message.role)}">
+          <div class="prompt-message-role">${esc(message.role || "message")}</div>
+          <div class="prompt-message-content">${esc(message.content || "")}</div>
+        </div>
+      `).join("");
+      const inputs = (block.inputs || []).map((item) => `
+        <div class="prompt-message role-input">
+          <div class="prompt-message-role">input</div>
+          <div class="prompt-message-content">${esc(item)}</div>
+        </div>
+      `).join("");
+      return `
+        <section class="prompt-block">
+          <div class="prompt-head">
+            <div class="prompt-title">${esc(block.title || "Prompt")}</div>
+            <div class="prompt-meta">${esc(promptMetaText(block))}</div>
+          </div>
+          ${inputs ? `<div class="prompt-subsection"><strong>Inputs</strong><div class="prompt-message-list">${inputs}</div></div>` : ""}
+          ${messages ? `<div class="prompt-subsection"><strong>Messages</strong><div class="prompt-message-list">${messages}</div></div>` : ""}
+          ${block.rendered_prompt ? `<div class="prompt-subsection"><strong>Rendered Prompt</strong><div class="prompt-message role-system"><div class="prompt-message-role">rendered</div><div class="prompt-message-content">${esc(block.rendered_prompt)}</div></div></div>` : ""}
+          ${block.output ? `<div class="prompt-subsection"><strong>Output</strong><div class="prompt-message role-assistant"><div class="prompt-message-role">output</div><div class="prompt-message-content">${esc(block.output)}</div></div></div>` : ""}
+        </section>
+      `;
+    }).join("");
+    const relatedHtml = (bundle.related_events || []).map((item) => `
+      <div class="related-row">
+        <div><strong>${esc(item.type)}</strong> · ${esc(item.label || "")}</div>
+        <div class="muted">${esc(item.lane)} · +${esc(item.time_s.toFixed(2))}s</div>
+      </div>
+    `).join("");
+    return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${esc(bundle.event.type)} · detail</title>
+  <style>
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:#151515; color:#f3efe4; margin:0; padding:24px; }
+    .panel { border:1px solid #3a3835; border-radius:14px; background:#1c1b19; padding:18px; margin-bottom:18px; }
+    .meta { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+    .pill { border:1px solid #3a3835; border-radius:999px; padding:4px 10px; color:#c7bfae; font-size:12px; }
+    .prompt-block { border:1px solid #3a3835; border-radius:12px; padding:14px; margin-top:12px; background:#191816; }
+    .prompt-head { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; margin-bottom:8px; }
+    .prompt-title { font-weight:700; }
+    .prompt-meta,.muted,strong { color:#c7bfae; }
+    .prompt-subsection { margin-top:10px; }
+    .prompt-message-list { display:grid; gap:8px; margin-top:6px; }
+    .prompt-message { border:1px solid #3a3835; border-left:3px solid #3a3835; border-radius:10px; padding:10px 12px; background:#21201d; }
+    .prompt-message.role-system { border-left-color:#c8b1ff; background:rgba(196,170,255,0.08); }
+    .prompt-message.role-user { border-left-color:#72b6ff; background:rgba(77,163,255,0.08); }
+    .prompt-message.role-assistant { border-left-color:#f5cf78; background:rgba(249,190,109,0.08); }
+    .prompt-message.role-input { border-left-color:#8b8b8b; background:rgba(255,255,255,0.04); }
+    .prompt-message-role { font-size:12px; text-transform:uppercase; letter-spacing:0.04em; color:#c7bfae; margin-bottom:4px; }
+    .prompt-message-content, pre { white-space:pre-wrap; word-break:break-word; line-height:1.45; }
+    .related-row { border:1px solid #3a3835; border-radius:10px; padding:10px 12px; margin-top:8px; background:#21201d; }
+    pre { border:1px solid #3a3835; border-radius:12px; padding:14px; background:#111; }
+  </style>
+</head>
+<body>
+  <section class="panel">
+    <div class="meta">
+      <span class="pill">+${esc(bundle.event.time_s.toFixed(2))}s</span>
+      <span class="pill">${esc(bundle.event.type)}</span>
+      <span class="pill">${esc(bundle.event.lane)}</span>
+      <span class="pill">seq ${esc(String(bundle.event.seq || 0))}</span>
+    </div>
+    <h1>${esc(bundle.event.label || bundle.event.type)}</h1>
+    <div class="muted">${esc(bundle.event.detail || "")}</div>
+  </section>
+  <section class="panel">
+    <h2>Prompt / IO</h2>
+    ${promptHtml || '<div class="muted">No prompt snapshot captured for this event.</div>'}
+  </section>
+  <section class="panel">
+    <h2>Related In Turn</h2>
+    ${relatedHtml || '<div class="muted">No linked turn context captured for this event.</div>'}
+  </section>
+  <section class="panel">
+    <h2>Raw Event JSON</h2>
+    <pre>${esc(JSON.stringify(bundle, null, 2))}</pre>
+  </section>
+</body>
+</html>`;
+  }
+
   function relatedKeysFor(event) {
     if (!event.turnId) return [];
     return streamEvents
       .filter((candidate) => candidate.turnId === event.turnId && candidate.key !== event.key)
       .map((candidate) => candidate.key);
+  }
+
+  function eventForTurnType(event, type) {
+    if (!event || !event.turnId) return null;
+    return streamEvents.find((candidate) => candidate.turnId === event.turnId && candidate.type === type) || null;
+  }
+
+  function renderLoopTiming(event) {
+    const root = document.getElementById("detail-loop");
+    const track = document.getElementById("detail-loop-track");
+    const chips = document.getElementById("detail-loop-chips");
+    root.classList.remove("active");
+    track.innerHTML = "";
+    chips.innerHTML = "";
+    if (!event || event.type !== "assistant_reply") return;
+
+    const inputEvent = eventForTurnType(event, "turn_start") || eventForTurnType(event, "user_transcript_final");
+    const startCandidates = [
+      Number(event.data?.speech_started_ts || 0),
+      Number(inputEvent?.data?.speech_started_ts || 0),
+      Number(inputEvent?.data?.transcript_final_ts || 0),
+      Number(event.data?.llm_start_ts || 0),
+    ].filter((value) => value > 0);
+    const baseTs = startCandidates.length ? Math.min(...startCandidates) : Number(event.timestamp || 0);
+    const markers = [];
+
+    const pushMarker = (label, ts, fallbackMs = null) => {
+      const numericTs = Number(ts || 0);
+      if (numericTs > 0 && numericTs >= baseTs) {
+        markers.push({label, offsetMs: Math.round((numericTs - baseTs) * 1000)});
+        return;
+      }
+      if (fallbackMs != null && Number.isFinite(Number(fallbackMs))) {
+        markers.push({label, offsetMs: Math.max(0, Number(fallbackMs))});
+      }
+    };
+
+    pushMarker("speech", event.data?.speech_started_ts || inputEvent?.data?.speech_started_ts, 0);
+    pushMarker("transcript", event.data?.transcript_final_ts || inputEvent?.data?.transcript_final_ts, event.data?.stt_ms);
+    pushMarker("llm start", event.data?.llm_start_ts);
+    pushMarker("ttft", event.data?.response_ttft_ts, event.data?.ttft_ms);
+    pushMarker("text done", event.data?.response_done_ts, event.data?.llm_ms);
+    pushMarker("tts req", event.data?.tts_request_ts, event.data?.tts_request_ms);
+    pushMarker("tts done", event.data?.tts_synth_done_ts, event.data?.tts_synth_done_ms);
+    pushMarker("first audio", event.data?.first_audio_ts, event.data?.first_audio_ms);
+    pushMarker("spoken end", event.data?.spoken_done_ts, event.data?.total_ms);
+
+    const uniqueMarkers = markers
+      .filter((marker, index, list) => list.findIndex((item) => item.label === marker.label) === index)
+      .sort((a, b) => a.offsetMs - b.offsetMs);
+    if (!uniqueMarkers.length) return;
+
+    const totalMs = Math.max(uniqueMarkers[uniqueMarkers.length - 1].offsetMs, 1);
+    const clampLeft = (offsetMs) => Math.min(98, Math.max(1, (offsetMs / totalMs) * 100));
+
+    const speechMs = Number(event.data?.stt_ms ?? inputEvent?.data?.stt_ms ?? 0);
+    const llmStartOffset = uniqueMarkers.find((marker) => marker.label === "llm start")?.offsetMs ?? speechMs;
+    const textDoneOffset = uniqueMarkers.find((marker) => marker.label === "text done")?.offsetMs ?? llmStartOffset;
+    const firstAudioOffset = uniqueMarkers.find((marker) => marker.label === "first audio")?.offsetMs ?? textDoneOffset;
+    const spokenEndOffset = uniqueMarkers.find((marker) => marker.label === "spoken end")?.offsetMs ?? totalMs;
+
+    if (speechMs > 0) {
+      track.insertAdjacentHTML("beforeend", `<div class="loop-band stt" style="left:0%;width:${clampLeft(speechMs)}%;"></div>`);
+    }
+    if (textDoneOffset > llmStartOffset) {
+      track.insertAdjacentHTML("beforeend", `<div class="loop-band llm" style="left:${clampLeft(llmStartOffset)}%;width:${Math.max(1, clampLeft(textDoneOffset) - clampLeft(llmStartOffset))}%;"></div>`);
+    }
+    if (spokenEndOffset > textDoneOffset) {
+      track.insertAdjacentHTML("beforeend", `<div class="loop-band tts" style="left:${clampLeft(textDoneOffset)}%;width:${Math.max(1, clampLeft(spokenEndOffset) - clampLeft(textDoneOffset))}%;"></div>`);
+    }
+
+    uniqueMarkers.forEach((marker) => {
+      const left = clampLeft(marker.offsetMs);
+      track.insertAdjacentHTML("beforeend", `<div class="loop-marker" style="left:${left}%"><span class="loop-marker-label">${esc(marker.label)}</span></div>`);
+      chips.insertAdjacentHTML("beforeend", `<span class="loop-chip">${esc(marker.label)} ${esc(String(marker.offsetMs))}ms</span>`);
+    });
+
+    root.classList.add("active");
+  }
+
+  function downloadBlob(filename, mimeType, text) {
+    const blob = new Blob([text], {type: mimeType});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function addStreamEvent(type, data, rawEvent) {
@@ -1798,10 +2201,26 @@
     if (!event) {
       event = addStreamEvent("assistant_reply", {
         full_text: "",
+        input_source: "",
+        stt_ms: null,
+        speech_started_ts: null,
+        transcript_final_ts: null,
+        stt_text: "",
+        stt_text_match: null,
         ttft_ms: null,
+        llm_ms: null,
         total_ms: null,
+        llm_start_ts: null,
+        response_ttft_ts: null,
+        response_done_ts: null,
+        tts_request_ts: null,
+        tts_synth_done_ts: null,
+        spoken_done_ts: null,
+        tts_request_ms: null,
         tts_start_ms: null,
+        tts_synth_done_ms: null,
         first_audio_ms: null,
+        first_audio_ts: null,
         synth_ms: null,
         audio_ms: null,
       }, rawEvent);
@@ -1835,6 +2254,9 @@
     const event = streamEventByKey.get(key);
     if (!event) return;
     selectedStreamKey = key;
+    detailOpenWindowButton.disabled = false;
+    detailExportJsonButton.disabled = false;
+    detailExportHtmlButton.disabled = false;
     document.getElementById("detail-time").textContent = `+${relativeTime(event.timestamp).toFixed(2)}s`;
     document.getElementById("detail-type").textContent = event.type;
     document.getElementById("detail-lane").textContent = event.lane;
@@ -1843,6 +2265,7 @@
     document.getElementById("detail-detail").textContent = event.detail || "No compact detail";
     document.getElementById("detail-payload").textContent = JSON.stringify(event.data || {}, null, 2);
     renderPromptBlocks(promptTraceBlocksForEvent(event));
+    renderLoopTiming(event);
 
     const related = relatedKeysFor(event);
     const relatedEl = document.getElementById("detail-related");
@@ -1914,11 +2337,13 @@
   function renderReplyMarkers(event) {
     if (compactMode || event.type !== "assistant_reply") return "";
     const markers = [];
+    if (event.data.stt_ms != null) markers.push(`STT ${event.data.stt_ms}ms`);
     if (event.data.ttft_ms != null) markers.push(`TTFT ${event.data.ttft_ms}ms`);
-    if (event.data.total_ms != null) markers.push(`Done ${event.data.total_ms}ms`);
-    if (event.data.tts_start_ms != null) markers.push(`TTS start ${event.data.tts_start_ms}ms`);
+    if (event.data.llm_ms != null) markers.push(`LLM ${event.data.llm_ms}ms`);
+    if (event.data.tts_request_ms != null) markers.push(`TTS req ${event.data.tts_request_ms}ms`);
     if (event.data.first_audio_ms != null) markers.push(`First audio ${event.data.first_audio_ms}ms`);
-    if (event.data.synth_ms != null) markers.push(`TTS done ${event.data.synth_ms}ms`);
+    if (event.data.tts_synth_done_ms != null) markers.push(`TTS done ${event.data.tts_synth_done_ms}ms`);
+    if (event.data.total_ms != null) markers.push(`Spoken ${event.data.total_ms}ms`);
     if (event.data.audio_ms != null) markers.push(`Clip ${event.data.audio_ms}ms`);
     if (!markers.length) return "";
     return `<div class="reply-markers">${markers.map((marker) => `<span class="reply-marker">${esc(marker)}</span>`).join("")}</div>`;
@@ -2074,7 +2499,7 @@
         const top = compactMode ? 6 + row * 28 : 8 + row * 84;
         trackHeight = Math.max(trackHeight, top + height + 10);
         cards.push(
-          `<article class="stream-card${compactMode ? " compact" : ""}" data-event-key="${esc(event.key)}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;">
+          `<article class="stream-card type-${esc(typeClass(event.type))}${compactMode ? " compact" : ""}" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;">
             <div class="stream-card-head">
               <span class="stream-card-type">${esc(event.type)}</span>
               <span class="stream-card-time">+${relativeTime(event.timestamp).toFixed(2)}s</span>
@@ -2131,8 +2556,21 @@
       renderBootStatus();
     },
 
+    user_speech_started(data, rawEvent) {
+      if (pendingInputTurnId == null) pendingInputTurnId = currentTurnId + 1;
+      rawEvent.turnId = pendingInputTurnId;
+      recordEvent("user_speech_started", data, rawEvent);
+    },
+
+    user_transcript_final(data, rawEvent) {
+      if (pendingInputTurnId == null) pendingInputTurnId = currentTurnId + 1;
+      rawEvent.turnId = pendingInputTurnId;
+      recordEvent("user_transcript_final", data, rawEvent);
+    },
+
     turn_start(data, rawEvent) {
-      currentTurnId += 1;
+      currentTurnId = pendingInputTurnId != null ? pendingInputTurnId : (currentTurnId + 1);
+      pendingInputTurnId = null;
       rawEvent.turnId = currentTurnId;
       turnCount += 1;
       resetReplyStream();
@@ -2154,8 +2592,27 @@
       event.timestamp = Number(rawEvent.timestamp || event.timestamp);
       event.seq = rawEvent.seq || event.seq;
       event.data.full_text = data.full_text || event.data.full_text || "";
-      event.data.ttft_ms = data.ttft_ms;
-      event.data.total_ms = data.total_ms;
+      event.data.input_source = data.input_source || event.data.input_source || "";
+      event.data.stt_ms = data.stt_ms ?? event.data.stt_ms;
+      event.data.speech_started_ts = data.speech_started_ts ?? event.data.speech_started_ts;
+      event.data.transcript_final_ts = data.transcript_final_ts ?? event.data.transcript_final_ts;
+      event.data.stt_text = data.stt_text || event.data.stt_text || "";
+      event.data.stt_text_match = data.stt_text_match ?? event.data.stt_text_match;
+      event.data.ttft_ms = data.ttft_ms ?? event.data.ttft_ms;
+      event.data.llm_ms = data.llm_ms ?? event.data.llm_ms;
+      event.data.total_ms = data.total_ms ?? event.data.total_ms;
+      event.data.llm_start_ts = data.llm_start_ts ?? event.data.llm_start_ts;
+      event.data.response_ttft_ts = data.response_ttft_ts ?? event.data.response_ttft_ts;
+      event.data.response_done_ts = data.response_done_ts ?? event.data.response_done_ts;
+      event.data.tts_request_ts = data.tts_request_ts ?? event.data.tts_request_ts;
+      event.data.tts_synth_done_ts = data.tts_synth_done_ts ?? event.data.tts_synth_done_ts;
+      event.data.first_audio_ts = data.first_audio_ts ?? event.data.first_audio_ts;
+      event.data.spoken_done_ts = data.spoken_done_ts ?? event.data.spoken_done_ts;
+      event.data.tts_request_ms = data.tts_request_ms ?? event.data.tts_request_ms;
+      event.data.tts_start_ms = data.tts_start_ms ?? event.data.tts_start_ms;
+      event.data.tts_synth_done_ms = data.tts_synth_done_ms ?? data.synth_ms ?? event.data.tts_synth_done_ms;
+      event.data.first_audio_ms = data.first_audio_ms ?? event.data.first_audio_ms;
+      event.data.audio_ms = data.audio_ms ?? event.data.audio_ms;
       event.label = previewText("assistant_reply", event.data);
       event.detail = detailText("assistant_reply", event.data);
       renderStream();
@@ -2564,6 +3021,32 @@
   runtimeToggleButton.addEventListener("click", () => sendInput(conversationPaused ? "/resume" : "/pause"));
   runtimeRestartButton.addEventListener("click", requestRestart);
   bootRestartButton.addEventListener("click", requestRestart);
+  detailOpenWindowButton.addEventListener("click", () => {
+    const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
+    const bundle = selectedEventBundle(event);
+    if (!bundle) return;
+    const html = bundleToHtml(bundle);
+    const blob = new Blob([html], {type: "text/html"});
+    const url = URL.createObjectURL(blob);
+    const popup = window.open(url, "_blank", "noopener,noreferrer");
+    if (popup) {
+      popup.addEventListener("load", () => setTimeout(() => URL.revokeObjectURL(url), 1000), {once: true});
+    } else {
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+  });
+  detailExportJsonButton.addEventListener("click", () => {
+    const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
+    const bundle = selectedEventBundle(event);
+    if (!bundle) return;
+    downloadBlob(`event-${typeClass(bundle.event.type)}-${bundle.event.seq || 0}.json`, "application/json", JSON.stringify(bundle, null, 2));
+  });
+  detailExportHtmlButton.addEventListener("click", () => {
+    const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
+    const bundle = selectedEventBundle(event);
+    if (!bundle) return;
+    downloadBlob(`event-${typeClass(bundle.event.type)}-${bundle.event.seq || 0}.html`, "text/html", bundleToHtml(bundle));
+  });
 
   loadStreamSchema();
   timelineWindowSeconds = sliderToWindow(timeWindowSlider.value);

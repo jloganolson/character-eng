@@ -30,6 +30,8 @@
     "world_seed": "world",
     "perception_injected": "world",
     "world_update": "world",
+    "user_speech_started": "stt",
+    "user_transcript_final": "stt",
     "stt_result": "stt",
     "user_turn_start": "chat",
     "turn_start": "chat",

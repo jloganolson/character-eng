@@ -220,7 +220,18 @@ def test_runtime_panel_interactions_in_browser(
     })
     expect(page.locator(".stream-card")).to_have_count(2)
 
-    collector.push("turn_start", {"input_type": "send", "input_text": "Do you have water?"})
+    turn_base = time.time()
+    collector.push("user_speech_started", {})
+    collector.push("user_transcript_final", {"text": "Do you have water?"})
+    collector.push("turn_start", {
+        "input_type": "send",
+        "input_text": "Do you have water?",
+        "input_source": "voice",
+        "speech_started_ts": turn_base,
+        "transcript_final_ts": turn_base + 0.42,
+        "stt_ms": 420,
+        "stt_text": "Do you have water?",
+    })
     collector.push("prompt_trace", {
         "label": "chat",
         "title": "Chat prompt",
@@ -236,7 +247,28 @@ def test_runtime_panel_interactions_in_browser(
     })
     collector.push("response_chunk", {"text": "Free water. "})
     collector.push("response_chunk", {"text": "Want one?"})
-    collector.push("response_done", {"full_text": "Free water. Want one?", "ttft_ms": 190, "total_ms": 780})
+    collector.push("response_done", {
+        "full_text": "Free water. Want one?",
+        "input_source": "voice",
+        "speech_started_ts": turn_base,
+        "transcript_final_ts": turn_base + 0.42,
+        "stt_ms": 420,
+        "stt_text": "Do you have water?",
+        "llm_start_ts": turn_base + 0.42,
+        "response_ttft_ts": turn_base + 0.61,
+        "response_done_ts": turn_base + 1.2,
+        "tts_request_ts": turn_base + 0.72,
+        "tts_synth_done_ts": turn_base + 1.46,
+        "first_audio_ts": turn_base + 1.31,
+        "spoken_done_ts": turn_base + 2.4,
+        "ttft_ms": 190,
+        "llm_ms": 780,
+        "total_ms": 1980,
+        "tts_request_ms": 300,
+        "tts_synth_done_ms": 1040,
+        "first_audio_ms": 890,
+        "audio_ms": 1090,
+    })
     collector.push("eval", {"script_status": "advance", "thought": "Keep it tight."})
     collector.push("vision_focus", {
         "stage_goal": "Notice props near the table.",
@@ -253,25 +285,48 @@ def test_runtime_panel_interactions_in_browser(
         "object_labels": ["water bottle"],
     })
 
-    expect(page.locator(".stream-card")).to_have_count(6)
+    expect(page.locator(".stream-card")).to_have_count(8)
+    expect(page.locator(".stream-card[data-event-type='user_speech_started']")).to_have_count(1)
+    expect(page.locator(".stream-card[data-event-type='user_transcript_final']")).to_have_count(1)
     reply_card = page.locator(".stream-card").filter(has_text="Free water. Want one?").first
     reply_card.click()
     expect(page.locator("#detail-type")).to_have_text("assistant_reply")
     expect(page.locator("#detail-label")).to_contain_text("Free water. Want one?")
+    expect(page.locator("#detail-detail")).to_contain_text("STT 420ms")
     expect(page.locator("#detail-detail")).to_contain_text("TTFT 190ms")
+    expect(page.locator("#detail-loop")).to_have_class(re.compile(r"\bactive\b"))
+    expect(page.locator("#detail-loop-chips")).to_contain_text("speech 0ms")
+    expect(page.locator("#detail-loop-chips")).to_contain_text("first audio")
     page.locator("#tab-prompts").click()
     expect(page.locator("#detail-prompts")).to_contain_text("Chat prompt")
     expect(page.locator("#detail-prompts")).to_contain_text("Keep it short.")
     expect(page.locator("#detail-prompts")).to_contain_text("Do you have water?")
+    expect(page.locator(".prompt-message.role-system")).to_have_count(2)
+    expect(page.locator(".prompt-message.role-user")).to_have_count(1)
+    expect(page.locator(".prompt-message.role-assistant")).to_have_count(1)
+    with page.expect_popup() as detail_popup_info:
+        page.locator("#detail-open-window").click()
+    detail_popup = detail_popup_info.value
+    detail_popup.wait_for_load_state("domcontentloaded")
+    expect(detail_popup.locator("body")).to_contain_text("Prompt / IO")
+    expect(detail_popup.locator("body")).to_contain_text("Free water. Want one?")
+    detail_popup.close()
+    with page.expect_download() as json_download_info:
+        page.locator("#detail-export-json").click()
+    assert json_download_info.value.suggested_filename.endswith(".json")
+    with page.expect_download() as html_download_info:
+        page.locator("#detail-export-html").click()
+    assert html_download_info.value.suggested_filename.endswith(".html")
     page.locator("#tab-payload").click()
-    expect(page.locator("#detail-payload")).to_contain_text("\"total_ms\": 780")
+    expect(page.locator("#detail-payload")).to_contain_text("\"total_ms\": 1980")
     page.locator("#tab-chronology").click()
     expect(page.locator("#detail-related")).to_contain_text("turn_start")
+    expect(page.locator("#detail-related")).to_contain_text("user_transcript_final")
     expect(page.locator(".chronology-row.selected")).to_have_count(1)
 
     page.locator("#stream-density").select_option("compact")
     reply_card.click()
-    expect(page.locator(".stream-card.compact")).to_have_count(6)
+    expect(page.locator(".stream-card.compact")).to_have_count(8)
     expect(page.locator("#detail-type")).to_have_text("assistant_reply")
 
     page.locator("button[data-lane-toggle='vision']").click()

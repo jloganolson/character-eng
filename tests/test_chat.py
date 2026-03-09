@@ -93,3 +93,17 @@ def test_replace_last_assistant(mock_openai_cls):
     history = session.get_history()
     assert history[1] == {"role": "assistant", "content": "Full resp —"}
     assert history[2] == {"role": "system", "content": "Some eval note."}
+
+
+@patch("character_eng.chat.OpenAI")
+def test_upsert_system_replaces_tagged_message_without_duplication(mock_openai_cls):
+    session = ChatSession("You are Greg.", TEST_CONFIG)
+    session.upsert_system("runtime_turn_guardrails", "First guardrail")
+    session.add_assistant("hello")
+    session.upsert_system("runtime_turn_guardrails", "Updated guardrail")
+
+    history = session.get_history()
+    system_messages = [message for message in history if message["role"] == "system"]
+
+    assert len(system_messages) == 2
+    assert system_messages[1] == {"role": "system", "content": "Updated guardrail"}

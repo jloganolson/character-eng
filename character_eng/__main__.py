@@ -946,6 +946,7 @@ def _create_voice_io(voice_cfg, VoiceIO_cls):
         kw["pocket_voice"] = voice_cfg.pocket_voice
         kw["filler_enabled"] = voice_cfg.filler_enabled
         kw["filler_lead_ms"] = voice_cfg.filler_lead_ms
+    kw["trace_hook"] = lambda event_type, data: _push(event_type, data)
     return VoiceIO_cls(**kw)
 
 
@@ -1637,12 +1638,13 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 )
 
             # --- Turn flow ---
-            _push("turn_start", {"input_type": "send", "input_text": user_input})
+            input_timing = _consume_live_input_metadata(voice_io, user_input)
+            _push("turn_start", {"input_type": "send", "input_text": user_input, **input_timing})
 
             # First user input: natural LLM response, then parallel eval + replan
             if not had_user_input:
                 had_user_input = True
-                response = stream_response(session, label, user_input, voice_io=voice_io, expr_model_config=model_config)
+                response = stream_response(session, label, user_input, voice_io=voice_io, expr_model_config=model_config, input_timing=input_timing)
                 expr = stream_response._last_expr
                 entry = {"type": "send", "input": user_input, "response": response}
                 if expr:
@@ -1678,7 +1680,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 response = stream_guided_beat(session, script.current_beat, label, user_input, voice_io=voice_io, expr_model_config=model_config)
             else:
                 # No script available (planner unavailable/failed) — LLM generates response
-                response = stream_response(session, label, user_input, voice_io=voice_io, expr_model_config=model_config)
+                response = stream_response(session, label, user_input, voice_io=voice_io, expr_model_config=model_config, input_timing=input_timing)
             expr = stream_response._last_expr
             entry = {"type": "send", "input": user_input, "response": response}
             if expr:
@@ -2124,10 +2126,22 @@ def _inject_runtime_turn_guardrails(session, user_input: str = "") -> None:
             parts.append("- For this turn, answer plainly: free water, free advice, no catch.")
         if any(token in lowered for token in ("i should get going", "got to go", "gotta go", "i should go", "goodbye", "bye", "see you")):
             parts.append("- The user is leaving. Give one warm goodbye line, no follow-up question, and do not try to keep them there.")
-    session.inject_system("\n".join(parts))
+    session.upsert_system("runtime_turn_guardrails", "\n".join(parts))
 
 
-def stream_response(session, label, message, voice_io=None, expr_model_config=None) -> str:
+def _consume_live_input_metadata(voice_io, user_input: str) -> dict:
+    if voice_io is None or not hasattr(voice_io, "consume_input_timing"):
+        return {"input_source": "text"}
+    try:
+        timing = voice_io.consume_input_timing(user_input)
+    except Exception:
+        timing = {}
+    if timing:
+        return timing
+    return {"input_source": "text"}
+
+
+def stream_response(session, label, message, voice_io=None, expr_model_config=None, input_timing: dict | None = None) -> str:
     """Send a message and stream the response. Returns full response text.
 
     When voice_io is provided, also feeds chunks to TTS and checks for barge-in.
@@ -2142,6 +2156,9 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
     full_response = []
     t_start = time.time()
     t_first = None
+    t_llm_done = None
+    t_tts_request = None
+    t_tts_synth_done = None
     gen = session.send(message)
 
     if voice_io is not None:
@@ -2160,6 +2177,8 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
             full_response.append(chunk)
             console.print(chunk, end="", highlight=False)
             _push("response_chunk", {"text": chunk})
+            if t_tts_request is None:
+                t_tts_request = time.time()
             voice_io._tts.send_text(chunk)
 
         t_llm_done = time.time()
@@ -2180,6 +2199,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
         # Wait for ElevenLabs to finish generating
         if not voice_io._cancelled.is_set() and voice_io._tts is not None:
             voice_io._tts.wait_for_done(timeout=15.0)
+            t_tts_synth_done = time.time()
 
         # Wait for first audio to arrive at the speaker
         t_first_audio = None
@@ -2207,6 +2227,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
             full_response.append(chunk)
             console.print(chunk, end="", highlight=False)
             _push("response_chunk", {"text": chunk})
+        t_llm_done = time.time()
 
         # Fire expression after LLM streaming (no TTS to overlap with, but still before timing print)
         if expr_model_config is not None and full_response:
@@ -2233,27 +2254,49 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
 
     # Timing info
     t_end = time.time()
+    if t_llm_done is None:
+        t_llm_done = t_end
     ttft_ms = int((t_first - t_start) * 1000) if t_first else 0
+    response_payload = {
+        "full_text": response_text,
+        "ttft_ms": ttft_ms,
+        "llm_start_ts": t_start,
+        "response_ttft_ts": t_first,
+        "response_done_ts": t_llm_done,
+        "tts_request_ts": t_tts_request,
+        "tts_synth_done_ts": t_tts_synth_done,
+        "first_audio_ts": None,
+        "spoken_done_ts": t_end,
+        "prompt_blocks": _prompt_trace_blocks_for_labels(("chat",)),
+    }
+    if input_timing:
+        response_payload.update(input_timing)
     if voice_io is not None and t_first:
         llm_ms = int((t_llm_done - t_start) * 1000)
         first_audio_ms = int((t_first_audio - t_start) * 1000) if t_first_audio else 0
         spoken_ms = int((t_end - t_start) * 1000)
+        tts_request_ms = int((t_tts_request - t_start) * 1000) if t_tts_request else None
+        tts_synth_done_ms = int((t_tts_synth_done - t_start) * 1000) if t_tts_synth_done else None
         console.print(f"\n[dim]  {ttft_ms}ms TTFT · {llm_ms}ms LLM · {first_audio_ms}ms first audio · {spoken_ms}ms spoken[/dim]\n")
-        _push("response_done", {
-            "full_text": response_text,
-            "ttft_ms": ttft_ms,
+        response_payload.update({
             "total_ms": spoken_ms,
-            "prompt_blocks": _prompt_trace_blocks_for_labels(("chat",)),
+            "llm_ms": llm_ms,
+            "tts_request_ms": tts_request_ms,
+            "tts_start_ms": tts_request_ms,
+            "tts_synth_done_ms": tts_synth_done_ms,
+            "first_audio_ms": first_audio_ms,
+            "audio_ms": spoken_ms - first_audio_ms if first_audio_ms else spoken_ms,
+            "first_audio_ts": t_first_audio,
         })
+        _push("response_done", response_payload)
     else:
         total_ms = int((t_end - t_start) * 1000)
         console.print(f"\n[dim]  {ttft_ms}ms TTFT · {total_ms}ms total[/dim]\n")
-        _push("response_done", {
-            "full_text": response_text,
-            "ttft_ms": ttft_ms,
+        response_payload.update({
             "total_ms": total_ms,
-            "prompt_blocks": _prompt_trace_blocks_for_labels(("chat",)),
+            "llm_ms": total_ms,
         })
+        _push("response_done", response_payload)
     return response_text
 
 

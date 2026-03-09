@@ -571,6 +571,23 @@ def test_voice_io_turn_start_cancels_auto_beat_when_not_speaking():
     assert not voice._cancelled.is_set()  # cancel_speech NOT called
 
 
+def test_voice_io_consume_input_timing_captures_latest_speech_window():
+    voice = VoiceIO(trace_hook=MagicMock())
+    with patch("character_eng.voice.time.time", side_effect=[10.0, 10.42]):
+        voice._on_turn_start()
+        voice._on_transcript("hello there")
+
+    payload = voice.consume_input_timing("hello there")
+
+    assert payload["input_source"] == "voice"
+    assert payload["speech_started_ts"] == 10.0
+    assert payload["transcript_final_ts"] == 10.42
+    assert payload["stt_ms"] == 420
+    assert payload["stt_text"] == "hello there"
+    assert payload["stt_text_match"] is True
+    assert voice.consume_input_timing() == {}
+
+
 # --- check_voice_available ---
 
 
