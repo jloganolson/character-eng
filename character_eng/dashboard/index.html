@@ -1502,6 +1502,12 @@
     streamViewport.scrollLeft = streamViewport.scrollWidth;
   }
 
+  function disableFollowLive() {
+    if (!followLive) return;
+    followLive = false;
+    document.getElementById("follow-live").checked = false;
+  }
+
   function promptTraceBlocksForEvent(event) {
     if (!event) return [];
     if (Array.isArray(event.data?.prompt_blocks) && event.data.prompt_blocks.length) {
@@ -1716,6 +1722,10 @@
     return Array.isArray(event?.data?.perceptions) ? event.data.perceptions : [];
   }
 
+  function visionPassClaimTraces(event) {
+    return Array.isArray(event?.data?.claim_traces) ? event.data.claim_traces : [];
+  }
+
   function visionPassEffects(event) {
     const results = [];
     const seen = new Set();
@@ -1761,6 +1771,7 @@
       const snapshot = visionPassSnapshot(event);
       const answers = visionPassAnswers(event);
       const claims = visionPassClaims(event);
+      const claimTraces = visionPassClaimTraces(event);
       const effects = visionPassEffects(event);
       const inputItems = [];
       if (snapshot) {
@@ -1769,6 +1780,13 @@
           key: "snapshot",
           value: `faces ${snapshot.faces ?? 0} · people ${snapshot.persons ?? 0} · objects ${snapshot.objects ?? event.data.object_count ?? 0}`,
         });
+        if (Array.isArray(snapshot.object_labels) && snapshot.object_labels.length) {
+          inputItems.push({
+            kind: "input",
+            key: "objects",
+            value: snapshot.object_labels.join(", "),
+          });
+        }
       }
       const questions = [
         ...(focus?.constant_questions || []).map((item) => ({kind: "input", key: "constant q", value: item})),
@@ -1786,17 +1804,46 @@
         value: typeof item === "string" ? item : (item.answer || ""),
       })), `${answers.length} answer${answers.length === 1 ? "" : "s"}`));
 
-      sections.push(structureSection("Derived Claims", claims.map((item) => ({
-        kind: "claim",
-        key: "claim",
-        value: item,
-      })), `${claims.length} claim${claims.length === 1 ? "" : "s"}`));
+      const claimItems = (claimTraces.length ? claimTraces : claims.map((item) => ({description: item}))).map((item) => {
+        const support = (item.supporting_answers || []).map((answer) => `${answer.question} -> ${answer.answer}`).join("\n");
+        const contradiction = (item.contradicting_answers || []).map((answer) => `${answer.question} -> ${answer.answer}`).join("\n");
+        const suffix = [
+          support ? `support:\n${support}` : "",
+          contradiction ? `contradicted by:\n${contradiction}` : "",
+        ].filter(Boolean).join("\n\n");
+        return {
+          kind: "claim",
+          key: "claim",
+          value: suffix ? `${item.description}\n\n${suffix}` : item.description,
+        };
+      });
+      sections.push(structureSection("Derived Claims", claimItems, `${claims.length} claim${claims.length === 1 ? "" : "s"}`));
 
       sections.push(structureSection("Effects", effects.map((item) => ({
         kind: "effect",
         key: `${item.type} · +${relativeTime(item.timestamp).toFixed(2)}s`,
         value: item.label || item.detail || item.type,
       })), `${effects.length} linked`));
+    } else if (event.type === "perception") {
+      const trace = event.data?.source_trace || {};
+      const evidenceItems = [
+        ...(trace.supporting_answers || []).map((answer) => ({
+          kind: "answer",
+          key: "supports",
+          value: `${answer.question} -> ${answer.answer}`,
+        })),
+        ...(trace.contradicting_answers || []).map((answer) => ({
+          kind: "effect",
+          key: "contradicts",
+          value: `${answer.question} -> ${answer.answer}`,
+        })),
+      ];
+      sections.push(structureSection("Perception", [{
+        kind: "claim",
+        key: event.data?.source || "source",
+        value: event.data?.description || event.label || "",
+      }]));
+      sections.push(structureSection("Evidence", evidenceItems));
     } else if (event.type === "assistant_reply") {
       const inputItems = [];
       if (event.data?.stt_text) inputItems.push({kind: "input", key: "heard", value: event.data.stt_text});
@@ -1869,6 +1916,12 @@
       if (trace?.object_labels?.length) chipList.push(...trace.object_labels.slice(0, 5).map((item) => `object ${item}`));
       if (trace?.vlm_answers?.length) {
         chipList.push(...trace.vlm_answers.slice(0, 3).map((item) => `${item.question || "vision"}: ${item.answer || ""}`));
+      }
+      if (trace?.supporting_answers?.length) {
+        chipList.push(...trace.supporting_answers.slice(0, 2).map((item) => `supports ${item.question || "vision"}`));
+      }
+      if (trace?.contradicting_answers?.length) {
+        chipList.push(...trace.contradicting_answers.slice(0, 2).map((item) => `contradicts ${item.question || "vision"}`));
       }
       if (trace?.focus?.ephemeral_questions?.length) {
         chipList.push(...trace.focus.ephemeral_questions.slice(0, 3).map((item) => `q ${item}`));
@@ -2811,6 +2864,7 @@
         latest_answer: "",
         latest_perception: "",
         perceptions: [],
+        claim_traces: [],
         constant_questions: [],
         ephemeral_questions: [],
         constant_sam_targets: [],
@@ -3108,6 +3162,7 @@
       const hidden = hiddenLanes.has(lane);
       const trackEnds = [];
       const cards = [];
+      const rowStep = compactMode ? 28 : 144;
       let trackHeight = compactMode ? 34 : 96;
       laneEvents.forEach((event) => {
         const left = 20 + relativeTime(event.timestamp) * scale;
@@ -3117,7 +3172,7 @@
         while (row < trackEnds.length && left < trackEnds[row] + 8) row += 1;
         if (row === trackEnds.length) trackEnds.push(0);
         trackEnds[row] = left + width;
-        const top = compactMode ? 6 + row * 28 : 8 + row * 84;
+        const top = compactMode ? 6 + row * rowStep : 8 + row * rowStep;
         trackHeight = Math.max(trackHeight, top + height + 10);
         cards.push(
           `<article class="stream-card type-${esc(typeClass(event.type))}${compactMode ? " compact" : ""}" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;">
@@ -3453,6 +3508,13 @@
         const nextPerceptions = Array.isArray(event.data.perceptions) ? event.data.perceptions.slice() : [];
         nextPerceptions.push(data.description || "visual perception");
         event.data.perceptions = nextPerceptions.slice(-8);
+        const nextClaimTraces = Array.isArray(event.data.claim_traces) ? event.data.claim_traces.slice() : [];
+        nextClaimTraces.push({
+          description: data.description || "visual perception",
+          supporting_answers: data.source_trace?.supporting_answers || [],
+          contradicting_answers: data.source_trace?.contradicting_answers || [],
+        });
+        event.data.claim_traces = nextClaimTraces.slice(-8);
         event.data.perception_count = nextPerceptions.length;
         event.data.latest_perception = data.description || event.data.latest_perception;
         if (data.source_trace) {
@@ -3663,6 +3725,7 @@
   streamViewport.addEventListener("mousedown", (event) => {
     if (event.button !== 0) return;
     if (event.target.closest(".stream-card")) return;
+    disableFollowLive();
     isTimelineDragging = true;
     dragStartX = event.clientX;
     dragStartScrollLeft = streamViewport.scrollLeft;
@@ -3684,11 +3747,13 @@
   streamViewport.addEventListener("wheel", (event) => {
     const horizontalDelta = Math.abs(event.deltaX) > 0 ? event.deltaX : 0;
     if (horizontalDelta) {
+      disableFollowLive();
       streamViewport.scrollLeft += horizontalDelta;
       event.preventDefault();
       return;
     }
     if (event.shiftKey) {
+      disableFollowLive();
       streamViewport.scrollLeft += event.deltaY;
       event.preventDefault();
     }

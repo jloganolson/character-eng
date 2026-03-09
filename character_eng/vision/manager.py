@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections
+import re
 import threading
 import time
 
@@ -193,22 +194,107 @@ class VisionManager:
         for event_text in result.events:
             key = self._normalize_event(event_text)
             if key not in self._recent_events:
+                trace = self._trace_payload(snapshot, kind="vision_synthesis")
+                evidence = self._classify_event_evidence(snapshot, event_text)
+                trace.update(evidence)
+                if trace["contradicting_answers"] and not trace["supporting_answers"]:
+                    continue
                 self._recent_events[key] = now
                 self._event_history.append(event_text)
                 self._events.append(PerceptionEvent(
                     description=event_text,
                     source="visual",
-                    trace=self._trace_payload(snapshot, kind="vision_synthesis"),
+                    trace=trace,
                 ))
 
     @staticmethod
     def _normalize_event(text: str) -> str:
         """Normalize event text for dedup. Strips articles, lowercases, collapses whitespace."""
-        import re
         t = text.lower().strip()
         t = re.sub(r'\b(a|an|the|is|are|now|still|just|has|have)\b', '', t)
         t = re.sub(r'\s+', ' ', t).strip()
         return t
+
+    @staticmethod
+    def _answer_polarity(answer_text: str) -> str:
+        text = (answer_text or "").strip().lower()
+        if not text:
+            return "unknown"
+        negative_patterns = [
+            r"\bno\b",
+            r"\bnot\b",
+            r"\bdoes not\b",
+            r"\bdo not\b",
+            r"\bthere (?:does|do) not appear\b",
+            r"\bthere is no\b",
+            r"\bthere are no\b",
+            r"\bcannot be determined\b",
+            r"\bimpossible to\b",
+            r"\bnot possible to determine\b",
+        ]
+        if any(re.search(pattern, text) for pattern in negative_patterns):
+            return "no"
+        positive_patterns = [
+            r"\byes\b",
+            r"\bthere is\b",
+            r"\bthere are\b",
+            r"\bone person\b",
+            r"\ba person\b",
+            r"\bsomeone is\b",
+            r"\bsomeone appears to be\b",
+        ]
+        if any(re.search(pattern, text) for pattern in positive_patterns):
+            return "yes"
+        return "unknown"
+
+    @staticmethod
+    def _event_keywords(text: str) -> set[str]:
+        lowered = re.sub(r"[^a-z0-9\s]+", " ", (text or "").lower())
+        words = {
+            word.rstrip("s")
+            for word in lowered.split()
+            if len(word) >= 4 and word not in {
+                "there", "with", "from", "that", "this", "into", "near",
+                "someone", "person", "people", "stand", "greg", "scene",
+            }
+        }
+        return words
+
+    @classmethod
+    def _question_matches_event(cls, question_text: str, event_text: str) -> bool:
+        question_keywords = cls._event_keywords(question_text)
+        event_keywords = cls._event_keywords(event_text)
+        if not question_keywords or not event_keywords:
+            return False
+        overlap = question_keywords & event_keywords
+        if overlap:
+            return True
+        # Handle small wording shifts like "approaching" vs "approaches".
+        softened = {word.rstrip("ing").rstrip("ed") for word in question_keywords}
+        event_softened = {word.rstrip("ing").rstrip("ed") for word in event_keywords}
+        return bool(softened & event_softened)
+
+    @classmethod
+    def _classify_event_evidence(cls, snapshot: RawVisualSnapshot, event_text: str) -> dict:
+        supporting_answers = []
+        contradicting_answers = []
+        for answer in snapshot.vlm_answers or []:
+            if not cls._question_matches_event(answer.question, event_text):
+                continue
+            answer_payload = {
+                "question": answer.question,
+                "answer": answer.answer,
+                "slot_type": answer.slot_type,
+            }
+            polarity = cls._answer_polarity(answer.answer)
+            if polarity == "yes":
+                supporting_answers.append(answer_payload)
+            elif polarity == "no":
+                contradicting_answers.append(answer_payload)
+        return {
+            "supporting_answers": supporting_answers,
+            "contradicting_answers": contradicting_answers,
+        }
 
     def _resolve_people(self, snapshot: RawVisualSnapshot) -> None:
         """Map visual identities to PeopleState, emit presence-change events."""

@@ -373,6 +373,34 @@ def test_vision_manager_dashboard_snapshot_includes_objects_and_focus(monkeypatc
     assert event["data"]["focus"]["ephemeral_questions"] == ["Are they holding a bottle?"]
 
 
+def test_vision_manager_skips_contradicted_synthesis_event(monkeypatch):
+    from character_eng.vision.manager import VisionManager
+
+    mgr = VisionManager()
+    mgr._model_config = {"name": "test"}
+    snapshot = RawVisualSnapshot(
+        persons=[PersonObservation(identity="Person 1", bbox=(0, 0, 100, 200))],
+        vlm_answers=[
+            VLMAnswer(
+                question="Is anyone holding a water bottle?",
+                answer="No, there does not appear to be anyone holding a water bottle.",
+                slot_type="ephemeral",
+            ),
+        ],
+    )
+
+    monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)
+    monkeypatch.setattr(
+        "character_eng.vision.manager.vision_synthesis_call",
+        lambda **kwargs: type("Synth", (), {"events": ["Someone is holding a water bottle"]})(),
+    )
+
+    mgr._tick()
+
+    descriptions = [event.description for event in mgr.drain_events()]
+    assert "Someone is holding a water bottle" not in descriptions
+
+
 def test_mara_character_loads():
     """Verify the Mara character loads correctly."""
     from character_eng.prompts import load_prompt

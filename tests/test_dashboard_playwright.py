@@ -293,6 +293,9 @@ def test_runtime_panel_interactions_in_browser(
             "vlm_answers": [
                 {"question": "What is the person holding?", "answer": "A flier.", "slot_type": "activity"},
             ],
+            "supporting_answers": [
+                {"question": "What is the person holding?", "answer": "A flier.", "slot_type": "activity"},
+            ],
             "focus": {
                 "ephemeral_questions": ["Is anyone holding a flier?"],
                 "ephemeral_sam_targets": ["flier"],
@@ -355,9 +358,11 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#detail-structure")).to_contain_text("Effects")
     expect(page.locator("#detail-structure")).to_contain_text("Is anyone holding a flier?")
     expect(page.locator("#detail-structure")).to_contain_text("A flier.")
+    expect(page.locator("#detail-structure")).to_contain_text("support:")
     expect(page.locator("#detail-trace-summary")).to_contain_text("source: visual")
     expect(page.locator("#detail-trace-chips")).to_contain_text("object flier")
     expect(page.locator("#detail-trace-chips")).to_contain_text("sam flier")
+    expect(page.locator("#detail-trace-chips")).to_contain_text("supports What is the person holding?")
 
     with page.expect_popup() as vision_detail_popup_info:
         page.locator("#detail-open-window").click()
@@ -389,6 +394,16 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("[data-stream-lane='vision']")).to_have_class(re.compile(r"\bhidden\b"))
     page.locator("button[data-lane-toggle='vision']").click()
     expect(page.locator("[data-stream-lane='vision']")).not_to_have_class(re.compile(r"\bhidden\b"))
+
+    stream_viewport = page.locator("#stream-viewport")
+    viewport_box = stream_viewport.bounding_box()
+    assert viewport_box is not None
+    page.mouse.move(viewport_box["x"] + 120, viewport_box["y"] + 40)
+    page.mouse.down()
+    page.mouse.move(viewport_box["x"] + 320, viewport_box["y"] + 40)
+    page.mouse.up()
+    expect(page.locator("#follow-live")).not_to_be_checked()
+
     page.locator("#show-chronology").uncheck()
     expect(page.locator("#tab-chronology")).to_be_hidden()
     page.locator("#show-chronology").check()
