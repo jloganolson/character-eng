@@ -45,6 +45,7 @@ class VisionManager:
         self._collector = None
         self._last_dashboard_push = 0.0
         self._last_focus: VisualFocusResult | None = None
+        self._paused = False
 
     def start(self, model_config: dict, world=None, people=None, collector=None) -> None:
         if self._running:
@@ -82,6 +83,9 @@ class VisionManager:
             self._beat = beat
         if stage_goal is not None:
             self._stage_goal = stage_goal
+
+    def set_paused(self, paused: bool) -> None:
+        self._paused = paused
 
     def update_focus(self, beat, stage_goal: str, thought: str, world, people, model_config: dict) -> None:
         """Run visual_focus_call and update vision service questions/targets."""
@@ -130,6 +134,8 @@ class VisionManager:
                 time.sleep(wait)
 
     def _tick(self) -> None:
+        if self._paused:
+            return
         # 1. Poll snapshot
         try:
             snapshot = self._client.snapshot()

@@ -60,6 +60,10 @@ class DashboardEventCollector:
                      "timestamp": e.timestamp, "seq": e.seq}
                     for e in self._events]
 
+    def reset(self) -> None:
+        with self._lock:
+            self._events.clear()
+
     def shutdown(self) -> None:
         with self._lock:
             for q in self._subscribers:

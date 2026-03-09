@@ -1,5 +1,6 @@
 """Tests for runtime control helpers in the main loop."""
 
+import queue
 from unittest.mock import MagicMock
 
 import character_eng.__main__ as app
@@ -110,3 +111,41 @@ def test_vision_service_autostart_command_updates_config(monkeypatch):
     assert handled is True
     assert cfg.vision.auto_launch is False
     assert saved["auto_launch"] is False
+
+
+def test_get_live_input_prefers_dashboard_queue(monkeypatch):
+    previous = app._dashboard_input_queue
+    dashboard_q = queue.Queue()
+    dashboard_q.put("/restart")
+    monkeypatch.setattr(app, "_dashboard_input_queue", dashboard_q)
+    monkeypatch.setattr(app.console, "input", lambda prompt="": "")
+
+    class FakeVoice:
+        def wait_for_input(self, timeout=None):
+            raise queue.Empty
+
+    try:
+        assert app._get_live_input("sess", FakeVoice()) == "/restart"
+    finally:
+        app._dashboard_input_queue = previous
+
+
+def test_get_live_input_falls_back_to_voice(monkeypatch):
+    previous = app._dashboard_input_queue
+    monkeypatch.setattr(app, "_dashboard_input_queue", queue.Queue())
+    monkeypatch.setattr(app.console, "input", lambda prompt="": "")
+
+    class FakeVoice:
+        def __init__(self):
+            self.calls = 0
+
+        def wait_for_input(self, timeout=None):
+            self.calls += 1
+            if self.calls < 2:
+                raise queue.Empty
+            return "/resume"
+
+    try:
+        assert app._get_live_input("sess", FakeVoice()) == "/resume"
+    finally:
+        app._dashboard_input_queue = previous

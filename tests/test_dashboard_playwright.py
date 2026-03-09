@@ -196,12 +196,10 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#boot-overlay-summary")).to_contain_text("Everything is warm. Resume when you want to start.")
     expect(page.locator("#boot-grid")).to_contain_text("voice")
     expect(page.locator("#boot-grid")).to_contain_text("models")
-    expect(page.locator("#runtime-status")).to_contain_text("reconcile: on")
     expect(page.locator("#runtime-status")).to_contain_text("auto-beat: off")
     expect(page.locator("#runtime-status")).to_contain_text("stt: ready")
     expect(page.locator("#runtime-status")).to_contain_text("tts: ready")
-    expect(page.locator("button[data-control='vision']")).to_have_text("vision on")
-    expect(page.locator("button[data-control='filler']")).to_have_text("filler off")
+    expect(page.locator("#runtime-toggle")).to_have_text("Resume")
     expect(page.locator("#boot-grid")).to_contain_text("Deepgram socket open.")
     expect(page.locator("#boot-grid")).to_contain_text("Pocket-TTS reachable.")
     expect(page.locator("#vision-service-status")).to_contain_text("source: external service")
@@ -210,6 +208,15 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#vision-model-status")).to_contain_text("gemma-vision-test")
     expect(page.locator("#vision-model-status")).to_contain_text("GPU memory")
     expect(page.locator("#vision-service-link")).to_have_attribute("href", vision_service_url)
+    expect(page.locator(".stream-card")).to_have_count(2)
+
+    collector.push("vision_snapshot", {
+        "faces": 0,
+        "persons": 1,
+        "objects": 1,
+        "vlm_answers": [{"question": "Is there a bottle visible?", "answer": "Yes, a water bottle is on the table."}],
+        "object_labels": ["water bottle"],
+    })
     expect(page.locator(".stream-card")).to_have_count(2)
 
     collector.push("turn_start", {"input_type": "send", "input_text": "Do you have water?"})
@@ -232,7 +239,7 @@ def test_runtime_panel_interactions_in_browser(
         "object_labels": ["water bottle"],
     })
 
-    expect(page.locator(".stream-card")).to_have_count(7)
+    expect(page.locator(".stream-card")).to_have_count(6)
     reply_card = page.locator(".stream-card").filter(has_text="Free water. Want one?").first
     reply_card.click()
     expect(page.locator("#detail-type")).to_have_text("assistant_reply")
@@ -244,17 +251,13 @@ def test_runtime_panel_interactions_in_browser(
 
     page.locator("#stream-density").select_option("compact")
     reply_card.click()
-    expect(page.locator(".stream-card.compact")).to_have_count(7)
+    expect(page.locator(".stream-card.compact")).to_have_count(6)
     expect(page.locator("#detail-type")).to_have_text("assistant_reply")
 
     page.locator("button[data-lane-toggle='vision']").click()
     expect(page.locator("[data-stream-lane='vision']")).to_have_class(re.compile(r"\bhidden\b"))
     page.locator("button[data-lane-toggle='vision']").click()
     expect(page.locator("[data-stream-lane='vision']")).not_to_have_class(re.compile(r"\bhidden\b"))
-    vision_card = page.locator(".stream-card").filter(has_text="water bottle").first
-    vision_card.click()
-    expect(page.locator("#detail-type")).to_have_text("vision_snapshot")
-    expect(page.locator("#detail-payload")).to_contain_text("\"question\": \"Is there a bottle visible?\"")
 
     with page.expect_popup() as vision_popup_info:
         page.locator("#vision-service-link").click()
@@ -263,37 +266,8 @@ def test_runtime_panel_interactions_in_browser(
     assert "Vision Test UI" in vision_popup.text_content("body")
     vision_popup.close()
 
-    with page.expect_popup() as system_map_popup_info:
-        page.get_by_text("Open system map").click()
-    system_map_popup = system_map_popup_info.value
-    system_map_popup.wait_for_load_state("domcontentloaded")
-    assert "Character Runtime & Design Map" in system_map_popup.text_content("body")
-    system_map_popup.close()
-
-    page.locator("button[data-control='reconcile']").click()
-    assert input_queue.get(timeout=2) == "/threads reconcile toggle"
-
-    page.locator("#runtime-pause").click()
-    assert input_queue.get(timeout=2) == "/pause"
-
-    page.locator("#runtime-resume").click()
+    page.locator("#runtime-toggle").click()
     assert input_queue.get(timeout=2) == "/resume"
-
-    page.locator("#runtime-restart").click()
-    assert input_queue.get(timeout=2) == "/restart"
-
-    page.locator("#vision-service-start").click()
-    assert input_queue.get(timeout=2) == "/vision-service start"
-
-    page.locator("#vision-service-stop").click()
-    assert input_queue.get(timeout=2) == "/vision-service stop"
-
-    page.locator("#vision-service-autostart").click()
-    assert input_queue.get(timeout=2) == "/vision-service autostart toggle"
-
-    page.locator("#chat-input").fill("status check")
-    page.locator("#send-btn").click()
-    assert input_queue.get(timeout=2) == "status check"
 
     page.keyboard.press("KeyB")
     assert input_queue.get(timeout=2) == "/beat"
@@ -337,15 +311,64 @@ def test_runtime_panel_interactions_in_browser(
         },
     )
 
-    expect(page.locator("button[data-control='reconcile']")).to_have_text("reconcile off")
     expect(page.locator("#runtime-status")).to_contain_text("state: live")
-    expect(page.locator("button[data-control='auto-beat']")).to_have_text("auto-beat on")
+    expect(page.locator("#runtime-toggle")).to_have_text("Pause")
     expect(page.locator("#vision-service-status")).to_contain_text("source: managed by app")
     expect(page.locator("#vision-service-status")).to_contain_text("mock: walkup.json")
-
     expect(page.locator("#runtime-status")).to_contain_text("stt: error")
     expect(page.locator("#boot-summary")).to_contain_text("Voice needs attention before the runtime is ready.")
     expect(page.locator("body")).to_have_class(re.compile(r"\bbooting\b"))
+
+    page.locator("#boot-restart").click()
+    assert input_queue.get(timeout=2) == "/restart"
+    expect(page.locator("#boot-summary")).to_contain_text("Restarting session...")
+    expect(page.locator(".stream-card")).to_have_count(0)
+
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-restarted",
+            "stage": "watching",
+        },
+    )
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": True,
+                "filler": True,
+            },
+            "conversation_paused": True,
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": True,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": vision_service_url,
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    expect(page.locator("#h-session")).to_have_text("sess-restarted")
+    expect(page.locator("#runtime-toggle")).to_have_text("Resume")
+    expect(page.locator(".stream-card")).to_have_count(2)
 
     vision_service.set_fail(True)
     expect(page.locator("#vision-model-status")).to_contain_text("Vision status unavailable", timeout=7000)

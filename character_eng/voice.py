@@ -1199,16 +1199,19 @@ class VoiceIO:
     def is_started(self) -> bool:
         return self._started
 
-    def wait_for_input(self) -> str:
+    def wait_for_input(self, timeout: float | None = None) -> str:
         """Block until user speaks, auto-beat fires, or hotkey pressed.
 
         Returns:
             Transcript text, "/beat", or sentinel strings (VOICE_OFF, EXIT, VOICE_ERROR)
         """
+        wait_timeout = 0.5 if timeout is None else timeout
         while True:
             try:
-                return self._event_queue.get(timeout=0.5)
+                return self._event_queue.get(timeout=wait_timeout)
             except queue.Empty:
+                if timeout is not None:
+                    raise
                 if not self._started:
                     return EXIT
 

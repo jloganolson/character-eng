@@ -98,6 +98,50 @@ def _get_input(session_id: str) -> str:
             return text
         except _queue.Empty:
             pass
+
+
+def _get_live_input(session_id: str, voice_io) -> str:
+    """Get input from voice, dashboard, or stdin while voice mode is active."""
+    import queue as _queue
+
+    if voice_io is None:
+        return _get_input(session_id)
+
+    merge_q: _queue.Queue = _queue.Queue()
+
+    def _stdin_reader():
+        try:
+            line = console.input(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: ").strip()
+            merge_q.put(("stdin", line))
+        except (EOFError, KeyboardInterrupt) as e:
+            merge_q.put(("error", e))
+
+    reader = threading.Thread(target=_stdin_reader, daemon=True)
+    reader.start()
+
+    while True:
+        if _dashboard_input_queue is not None:
+            try:
+                text = _dashboard_input_queue.get(timeout=0.1)
+                console.print(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: {text}")
+                return text
+            except _queue.Empty:
+                pass
+
+        try:
+            source, value = merge_q.get_nowait()
+            if source == "error":
+                raise value
+            if not value:
+                continue
+            return value
+        except _queue.Empty:
+            pass
+
+        try:
+            return voice_io.wait_for_input(timeout=0.1)
+        except _queue.Empty:
+            continue
         # Check stdin
         try:
             source, value = merge_q.get_nowait()
@@ -1173,6 +1217,10 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
         console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]{mode_tag}  [dim]{session_id}[/dim]  (type /help for commands)\n")
 
         model_key = next((k for k, v in MODELS.items() if v is model_config), "unknown")
+        if _collector is not None:
+            _collector.reset()
+        if vision_mgr is not None:
+            vision_mgr.set_paused(_conversation_paused)
         _push("session_start", {
             "character": label, "model": model_key, "session_id": session_id,
             "stage": scenario.active_stage.name if scenario and scenario.active_stage else "",
@@ -1211,7 +1259,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             if _conversation_paused:
                 try:
                     if voice_io is not None:
-                        user_input = voice_io.wait_for_input()
+                        user_input = _get_live_input(session_id, voice_io)
                     else:
                         user_input = _get_input(session_id)
                 except (EOFError, KeyboardInterrupt):
@@ -1228,6 +1276,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 if cmd == "/resume":
                     console.print("[green]Resumed[/green]")
                     _conversation_paused = False
+                    if vision_mgr is not None:
+                        vision_mgr.set_paused(False)
                     _push("resume", {})
                     _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
                     _arm_auto_beat = False if startup_pause_pending else True
@@ -1264,7 +1314,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 voice_io._start_auto_beat()
                 _arm_auto_beat = False
                 try:
-                    user_input = voice_io.wait_for_input()
+                    user_input = _get_live_input(session_id, voice_io)
                 except (EOFError, KeyboardInterrupt):
                     console.print()
                     voice_io.stop()
@@ -1368,6 +1418,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             elif cmd == "/pause":
                 console.print("[yellow]Paused[/yellow] — send /resume to continue")
                 _conversation_paused = True
+                if vision_mgr is not None:
+                    vision_mgr.set_paused(True)
                 _push("pause", {})
                 _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
                 if voice_io is not None:
@@ -1378,7 +1430,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 while True:
                     try:
                         if voice_io is not None:
-                            resume_input = voice_io.wait_for_input()
+                            resume_input = _get_live_input(session_id, voice_io)
                         else:
                             resume_input = _get_input(session_id)
                     except (EOFError, KeyboardInterrupt):
@@ -1388,6 +1440,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     if resume_input.lower() == "/resume":
                         console.print("[green]Resumed[/green]")
                         _conversation_paused = False
+                        if vision_mgr is not None:
+                            vision_mgr.set_paused(False)
                         _push("resume", {})
                         _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
                         _arm_auto_beat = True

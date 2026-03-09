@@ -59,6 +59,18 @@ class TestEventCollector:
         event = q.get(timeout=1)
         assert event is None
 
+    def test_reset_clears_history_but_keeps_sequence_progressing(self):
+        c = DashboardEventCollector()
+        c.push("a", {})
+        c.push("b", {})
+        c.reset()
+        assert c.get_all() == []
+        c.push("c", {})
+        events = c.get_all()
+        assert len(events) == 1
+        assert events[0]["type"] == "c"
+        assert events[0]["seq"] == 3
+
 
 class TestDashboardServer:
     @pytest.fixture()

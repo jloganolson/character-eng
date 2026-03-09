@@ -74,9 +74,7 @@
     overflow: hidden;
   }
   body.booting #header,
-  body.booting #main,
-  body.booting #footer,
-  body.booting #input-bar {
+  body.booting #main {
     filter: blur(1.5px) saturate(0.7);
     opacity: 0.28;
     pointer-events: none;
@@ -119,6 +117,19 @@
     color: var(--text-dim);
     margin-bottom: 0.9rem;
     line-height: 1.5;
+  }
+  .boot-overlay-actions {
+    display: flex;
+    gap: 0.6rem;
+    margin-top: 0.9rem;
+  }
+  .boot-overlay-actions button {
+    padding: 0.55rem 0.8rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    background: var(--panel-hover);
+    color: var(--text);
   }
   #header {
     display: flex;
@@ -566,11 +577,11 @@
     border-radius: 8px;
     background: var(--bg-alt);
     padding: 0.7em;
-    font-size: 0.72em;
+    font-size: 0.8em;
     line-height: 1.45;
     white-space: pre-wrap;
     overflow: auto;
-    max-height: 220px;
+    max-height: 34vh;
   }
   #sidebar {
     flex: 3;
@@ -605,66 +616,23 @@
     border-radius: 4px;
     margin-bottom: 0.3em;
   }
-  #vision-meta { font-size: 0.8em; color: var(--text-dim); }
+  #vision-meta {
+    font-size: 0.92em;
+    line-height: 1.45;
+    color: var(--text);
+  }
   .beat-list { margin-top: 0.3em; }
   .beat-item { margin: 0.1em 0; font-size: 0.85em; }
   .beat-item.current { color: var(--beat); font-weight: 600; }
   .beat-item.done { color: var(--text-dim); text-decoration: line-through; }
-  #footer {
-    display: flex;
-    align-items: center;
-    gap: 1em;
-    padding: 0.4em 1em;
-    background: var(--panel);
-    border-top: 1px solid var(--border);
-    font-size: 0.8em;
-    flex-shrink: 0;
+  button, a {
+    transition: filter 120ms ease, transform 120ms ease, opacity 120ms ease;
   }
-  #footer .stat { color: var(--text-dim); }
-  #footer .stat b { color: var(--text); }
-  #input-bar {
-    display: flex;
-    gap: 0.5em;
-    padding: 0.4em 1em;
-    background: var(--bg-alt);
-    border-top: 1px solid var(--border);
-    flex-shrink: 0;
+  button:hover, a:hover {
+    filter: brightness(1.08);
   }
-  #chat-input {
-    flex: 1;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 0.4em 0.7em;
-    border-radius: 4px;
-    outline: none;
-    font-size: 0.9em;
-  }
-  #chat-input:focus { border-color: var(--user); }
-  #chat-input::placeholder { color: var(--text-dim); }
-  #send-btn {
-    background: var(--blue);
-    color: var(--text);
-    border: none;
-    padding: 0.4em 1em;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.9em;
-  }
-  .hotkey-hints {
-    font-size: 0.8em;
-    color: var(--text-dim);
-    padding: 0 0.5em;
-    display: flex;
-    align-items: center;
-    gap: 0.8em;
-  }
-  .hotkey-hints kbd {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    padding: 0 0.3em;
-    border-radius: 2px;
-    font-size: 0.9em;
+  button:active {
+    transform: translateY(1px);
   }
   @media (max-width: 1400px) {
     #stream-main {
@@ -713,9 +681,6 @@
       padding: 0 0 0.25em 0;
       background: none;
     }
-    .hotkey-hints {
-      display: none;
-    }
   }
 </style>
 </head>
@@ -730,6 +695,9 @@
       <div id="boot-overlay-heartbeat" class="boot-heartbeat">page live</div>
     </div>
     <div id="boot-overlay-grid" class="boot-grid"></div>
+    <div class="boot-overlay-actions">
+      <button id="boot-restart">Restart Session</button>
+    </div>
   </div>
 </div>
 
@@ -755,7 +723,7 @@
         </div>
         <div class="toolbar-group">
           <label for="time-zoom">Time Zoom</label>
-          <input id="time-zoom" type="range" min="0.5" max="3" step="0.1" value="1">
+          <input id="time-zoom" type="range" min="0.01" max="3" step="0.01" value="1">
           <span id="time-zoom-value">1.0x</span>
         </div>
         <div class="toolbar-group">
@@ -819,28 +787,15 @@
           <div id="boot-grid" class="boot-grid"></div>
         </div>
         <div id="runtime-status" style="margin-bottom:0.5em;color:var(--text-dim);">Waiting for runtime state...</div>
-        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.45em;">
-          <button class="runtime-toggle" data-control="reconcile" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">reconcile</button>
-          <button class="runtime-toggle" data-control="vision" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">vision</button>
-          <button class="runtime-toggle" data-control="auto-beat" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">auto-beat</button>
-          <button class="runtime-toggle" data-control="filler" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">filler</button>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
-          <button id="runtime-pause" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--narrator);color:var(--bg);cursor:pointer;">Pause</button>
-          <button id="runtime-resume" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--advance);color:var(--bg);cursor:pointer;">Resume</button>
-          <button id="runtime-restart" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--error);color:var(--bg);cursor:pointer;">Restart</button>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
+          <button id="runtime-toggle" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--narrator);color:var(--bg);cursor:pointer;">Resume</button>
+          <button id="runtime-restart" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--error);color:var(--bg);cursor:pointer;">Restart Session</button>
         </div>
         <div id="vision-service-status" style="margin-top:0.7em;color:var(--text-dim);">Vision service: waiting for runtime state...</div>
-        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
-          <button id="vision-service-start" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">vision start</button>
-          <button id="vision-service-stop" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">vision stop</button>
-          <button id="vision-service-autostart" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">autostart</button>
+        <div style="display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
           <a id="vision-service-link" href="#" target="_blank" style="padding:0.45em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--cyan);text-decoration:none;text-align:center;">vision ui</a>
         </div>
         <div id="vision-model-status" style="margin-top:0.7em;display:grid;gap:0.4em;"></div>
-        <div style="margin-top:0.7em;">
-          <a href="/system-map.html" target="_blank" style="color:var(--cyan);text-decoration:none;">Open system map</a>
-        </div>
       </div>
     </div>
 
@@ -874,22 +829,6 @@
   </div>
 </div>
 
-<div id="footer">
-  <span class="stat" id="f-ttft"></span>
-  <span class="stat" id="f-eval"></span>
-  <span class="stat" id="f-turns">Turns: <b>0</b></span>
-</div>
-
-<div id="input-bar">
-  <input type="text" id="chat-input" placeholder="Type a message... (Enter to send)" autocomplete="off">
-  <button id="send-btn">Send</button>
-  <div class="hotkey-hints">
-    <span><kbd>B</kbd>=beat</span>
-    <span><kbd>1-4</kbd>=triggers</span>
-    <span><kbd>I</kbd>=info</span>
-  </div>
-</div>
-
 <script>
 (function() {
   const DEFAULT_STREAM_SCHEMA = {
@@ -913,6 +852,7 @@
   let eventLaneMap = {...DEFAULT_STREAM_SCHEMA.event_lane_map};
 
   let sessionStart = null;
+  let currentSessionId = "";
   let turnCount = 0;
   let lastSeq = 0;
   let currentTurnId = 0;
@@ -956,6 +896,8 @@
   let sessionSeen = false;
   let sseConnected = false;
   let modelPollError = "";
+  let statePollFailures = 0;
+  let statePollingSuspended = false;
   const pageLoadedAt = Date.now();
 
   const hiddenLanes = new Set();
@@ -963,14 +905,15 @@
   const streamEventByKey = new Map();
 
   const timeline = document.getElementById("timeline");
-  const chatInput = document.getElementById("chat-input");
-  const sendBtn = document.getElementById("send-btn");
   const streamViewport = document.getElementById("stream-viewport");
   const streamRulerInner = document.getElementById("stream-ruler-inner");
   const streamLanes = document.getElementById("stream-lanes");
   const streamEmpty = document.getElementById("stream-empty");
   const laneToggleGrid = document.getElementById("lane-toggle-grid");
   const detailChronologyWrap = document.getElementById("detail-chronology-wrap");
+  const runtimeToggleButton = document.getElementById("runtime-toggle");
+  const runtimeRestartButton = document.getElementById("runtime-restart");
+  const bootRestartButton = document.getElementById("boot-restart");
 
   async function loadStreamSchema() {
     try {
@@ -1016,27 +959,9 @@
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({text: text.trim()})
     });
-    chatInput.value = "";
   }
-
-  function sendThreadCommand(name) {
-    sendInput(`/threads ${name} toggle`);
-  }
-
-  function sendVisionServiceCommand(action) {
-    sendInput(`/vision-service ${action}`);
-  }
-
-  chatInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      sendInput(chatInput.value);
-    }
-  });
-  sendBtn.addEventListener("click", () => sendInput(chatInput.value));
 
   document.addEventListener("keydown", (e) => {
-    if (document.activeElement === chatInput) return;
     switch (e.key) {
       case "b": sendInput("/beat"); break;
       case "i": sendInput("/info"); break;
@@ -1167,6 +1092,7 @@
 
     const summary =
       !runtimeStateSeen ? "Connecting to the local runtime..." :
+      statePollingSuspended ? "Dashboard disconnected. Refresh after the local runtime comes back." :
       modelPollError ? "Vision models need attention before the runtime is ready." :
       voiceState === "error" ? "Voice needs attention before the runtime is ready." :
       conversationPaused ? "Everything is warm. Resume when you want to start." :
@@ -1180,9 +1106,11 @@
 
     summaryEl.textContent = summary;
     overlaySummaryEl.textContent = summary;
-    overlaySubEl.textContent = !bootReady
-      ? "The stack is warming voice, vision, and models. This view will unlock as soon as the local runtime is actually ready."
-      : "The runtime is ready. You can start from the dashboard or just speak when you are ready.";
+    overlaySubEl.textContent = statePollingSuspended
+      ? "The dashboard lost its connection to the local runtime. Restart the app if needed, then refresh this page."
+      : !bootReady
+        ? "The stack is warming voice, vision, and models. This view will unlock as soon as the local runtime is actually ready."
+        : "The runtime is ready. You can start from the dashboard or just speak when you are ready.";
     const cardHtml = [
       bootChip("dashboard", sseConnected ? "ready" : "active", sseConnected ? "Live event stream connected." : "Polling and waiting for server-side events."),
       bootChip("session", sessionState, sessionDetail),
@@ -1193,6 +1121,90 @@
     ].join("");
     gridEl.innerHTML = cardHtml;
     overlayGridEl.innerHTML = cardHtml;
+  }
+
+  function updateRuntimeButtons() {
+    runtimeToggleButton.textContent = conversationPaused ? "Resume" : "Pause";
+    runtimeToggleButton.style.background = conversationPaused ? "var(--advance)" : "var(--narrator)";
+    runtimeToggleButton.style.color = "var(--bg)";
+    runtimeRestartButton.textContent = "Restart Session";
+    runtimeRestartButton.disabled = false;
+    runtimeRestartButton.style.opacity = "1";
+    bootRestartButton.textContent = "Restart Session";
+    bootRestartButton.disabled = false;
+    bootRestartButton.style.opacity = "1";
+  }
+
+  function requestRestart() {
+    runtimeRestartButton.textContent = "Restarting...";
+    runtimeRestartButton.disabled = true;
+    runtimeRestartButton.style.opacity = "0.6";
+    bootRestartButton.textContent = "Restarting...";
+    bootRestartButton.disabled = true;
+    bootRestartButton.style.opacity = "0.6";
+    currentSessionId = "";
+    resetDashboardState("Restarting session...");
+    sendInput("/restart");
+  }
+
+  function resetDashboardState(message = "Connecting to the local runtime...") {
+    streamEvents.length = 0;
+    streamEventByKey.clear();
+    hiddenLanes.clear();
+    sessionStart = null;
+    sessionSeen = false;
+    runtimeStateSeen = false;
+    statePollFailures = 0;
+    statePollingSuspended = false;
+    turnCount = 0;
+    currentTurnId = 0;
+    activeReplyKey = null;
+    activePostResponseKey = null;
+    activeWorldUpdateKey = null;
+    selectedStreamKey = null;
+    streamKey = 0;
+    conversationPaused = true;
+    voiceActive = false;
+    voiceStatus = {
+      active: false,
+      output_only: false,
+      filler_enabled: false,
+      tts_backend: "",
+      mic_ready: false,
+      speaker_ready: false,
+      stt: {state: "off", detail: "Voice inactive."},
+      tts: {state: "off", detail: "Voice inactive.", backend: ""}
+    };
+    visionManagerActive = false;
+    visionService = {
+      url: "",
+      health: false,
+      managed: false,
+      external: false,
+      state: "stopped",
+      autostart: false,
+      mode: "camera",
+      mockReplay: ""
+    };
+    visionModels = null;
+    visionMemory = null;
+    modelPollError = "";
+    visionFeedSrc = "";
+    document.getElementById("vision-panel").style.display = "none";
+    document.getElementById("vision-meta").innerHTML = "";
+    document.getElementById("world-content").innerHTML = '<span class="fact" style="color:var(--text-dim)">No world state yet</span>';
+    document.getElementById("people-content").innerHTML = '<span style="color:var(--text-dim)">No people tracked</span>';
+    document.getElementById("stage-content").textContent = "--";
+    document.getElementById("runtime-status").innerHTML = "Waiting for runtime state...";
+    document.getElementById("detail-label").textContent = "Select a live event to inspect it.";
+    document.getElementById("detail-detail").textContent = "The stream view groups interwoven activity by lane and highlights all events from the same turn when selected.";
+    document.getElementById("detail-payload").textContent = "{}";
+    document.getElementById("detail-related").innerHTML = '<div style="color:var(--text-dim);">No event selected.</div>';
+    document.getElementById("detail-chronology").innerHTML = "";
+    document.getElementById("boot-summary").textContent = message;
+    document.getElementById("boot-overlay-summary").textContent = message;
+    renderStream();
+    updateRuntimeButtons();
   }
 
   function renderVisionModelCard(label, status, detail) {
@@ -1220,7 +1232,6 @@
   function renderVisionServiceStatus() {
     const statusEl = document.getElementById("vision-service-status");
     const linkEl = document.getElementById("vision-service-link");
-    const autoBtn = document.getElementById("vision-service-autostart");
     const health = modelPollError ? "unreachable" : (visionService.health ? "ok" : "unknown");
     const effectiveState = modelPollError ? "error" : (visionService.state || "stopped");
     const source = visionService.managed ? "managed by app"
@@ -1229,14 +1240,11 @@
     statusEl.innerHTML = [
       `service: <b style="color:${statusColor(effectiveState)}">${esc(effectiveState)}</b>`,
       `health: <b style="color:${statusColor(modelPollError ? "error" : (visionService.health ? "ready" : "waiting"))}">${esc(health)}</b>`,
-      `auto-start: <b>${visionService.autostart ? "on" : "off"}</b>`,
-      `ingest: <b>${runtimeControls.vision ? "on" : "off"}</b>`,
       `source: <b>${esc(source)}</b>`,
       visionService.url ? `url: <b>${esc(visionService.url)}</b>` : "",
       visionService.mockReplay ? `mock: <b>${esc(visionService.mockReplay)}</b>` : "",
       modelPollError ? `error: <b style="color:var(--error)">${esc(modelPollError)}</b>` : "",
     ].filter(Boolean).join("<br>");
-    autoBtn.textContent = `autostart ${visionService.autostart ? "on" : "off"}`;
     if (visionService.url) {
       linkEl.href = visionService.url;
       linkEl.style.pointerEvents = "auto";
@@ -1381,9 +1389,14 @@
       case "stage_change":
         return `${data.new_stage || "--"}${data.new_goal ? ` · ${data.new_goal}` : ""}`;
       case "vision_snapshot":
-        return (data.vlm_answers && data.vlm_answers[0]) || `faces ${data.faces || 0} · people ${data.persons || 0}`;
+        if (data.vlm_answers && data.vlm_answers.length) {
+          const first = data.vlm_answers[0];
+          if (typeof first === "string") return first;
+          return first.answer || first.question || "Vision snapshot";
+        }
+        return `faces ${data.faces || 0} · people ${data.persons || 0}`;
       case "runtime_controls":
-        return `vision ${data.controls && data.controls.vision ? "on" : "off"} · filler ${data.controls && data.controls.filler ? "on" : "off"}`;
+        return `state ${data.conversation_paused ? "paused" : "live"} · stt ${data.voice_status?.stt?.state || "off"} · tts ${data.voice_status?.tts?.state || "off"}`;
       default:
         return JSON.stringify(data);
     }
@@ -1771,6 +1784,10 @@
 
   const handlers = {
     session_start(data, rawEvent) {
+      if (data.session_id && data.session_id !== currentSessionId) {
+        resetDashboardState("Starting a fresh session...");
+      }
+      currentSessionId = data.session_id || currentSessionId;
       sessionStart = Number(rawEvent.timestamp || Date.now() / 1000);
       sessionSeen = true;
       document.getElementById("h-character").textContent = data.character || "--";
@@ -1786,7 +1803,6 @@
       currentTurnId += 1;
       rawEvent.turnId = currentTurnId;
       turnCount += 1;
-      document.getElementById("f-turns").innerHTML = `Turns: <b>${turnCount}</b>`;
       resetReplyStream();
       recordEvent("turn_start", data, rawEvent);
     },
@@ -1810,7 +1826,6 @@
       event.data.total_ms = data.total_ms;
       event.label = previewText("assistant_reply", event.data);
       event.detail = detailText("assistant_reply", event.data);
-      document.getElementById("f-ttft").innerHTML = `TTFT: <b>${data.ttft_ms || 0}ms</b> | Total: <b>${data.total_ms || 0}ms</b>`;
       renderStream();
     },
 
@@ -1821,7 +1836,6 @@
 
     eval(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
-      document.getElementById("f-eval").innerHTML = `Eval: <b>${esc(data.script_status || "?")}</b>`;
       const event = ensureCompoundEvent("post_response", rawEvent, {
         script_status: "",
         eval_thought: "",
@@ -2028,6 +2042,7 @@
     },
 
     vision_snapshot(data, rawEvent) {
+      if (conversationPaused) return;
       const panel = document.getElementById("vision-panel");
       panel.style.display = "";
       const meta = document.getElementById("vision-meta");
@@ -2056,12 +2071,14 @@
     pause(data, rawEvent) {
       conversationPaused = true;
       recordEvent("pause", data, rawEvent);
+      updateRuntimeButtons();
       renderBootStatus();
     },
 
     resume(data, rawEvent) {
       conversationPaused = false;
       recordEvent("resume", data, rawEvent);
+      updateRuntimeButtons();
       renderBootStatus();
     },
 
@@ -2085,8 +2102,6 @@
       const status = document.getElementById("runtime-status");
       status.innerHTML = [
         `state: <b>${data.conversation_paused ? "paused" : "live"}</b>`,
-        `reconcile: <b>${runtimeControls.reconcile ? "on" : "off"}</b>`,
-        `vision: <b>${runtimeControls.vision ? "on" : "off"}</b>`,
         `auto-beat: <b>${runtimeControls.auto_beat ? "on" : "off"}</b>`,
         `filler: <b>${runtimeControls.filler ? "on" : "off"}</b>`,
         `voice: <b>${data.voice_active ? "on" : "off"}</b>`,
@@ -2095,13 +2110,7 @@
         `vision manager: <b>${data.vision_active ? "on" : "off"}</b>`,
         `reconcile thread: <b>${data.reconcile_thread_alive ? "running" : "idle"}</b>`,
       ].join("<br>");
-      document.querySelectorAll(".runtime-toggle").forEach((button) => {
-        const key = button.dataset.control.replace("-", "_");
-        const enabled = !!runtimeControls[key];
-        button.style.background = enabled ? "var(--advance)" : "var(--panel-hover)";
-        button.style.color = enabled ? "var(--bg)" : "var(--text)";
-        button.textContent = `${button.dataset.control} ${enabled ? "on" : "off"}`;
-      });
+      updateRuntimeButtons();
       updateVisionFeedUrl();
       renderVisionServiceStatus();
       pollVisionModelStatus();
@@ -2121,10 +2130,21 @@
   }
 
   function refreshState() {
+    if (statePollingSuspended) return;
     fetch("/state")
       .then((r) => r.json())
-      .then((events) => { events.forEach(handleEvent); })
-      .catch(() => {});
+      .then((events) => {
+        statePollFailures = 0;
+        sseConnected = true;
+        events.forEach(handleEvent);
+        renderBootStatus();
+      })
+      .catch(() => {
+        statePollFailures += 1;
+        if (statePollFailures >= 2) statePollingSuspended = true;
+        sseConnected = false;
+        renderBootStatus();
+      });
   }
 
   document.getElementById("stream-density").addEventListener("change", (e) => {
@@ -2133,47 +2153,24 @@
   });
   document.getElementById("time-zoom").addEventListener("input", (e) => {
     timeZoom = Number(e.target.value || 1);
-    document.getElementById("time-zoom-value").textContent = `${timeZoom.toFixed(1)}x`;
+    document.getElementById("time-zoom-value").textContent = `${timeZoom < 0.1 ? timeZoom.toFixed(2) : timeZoom.toFixed(1)}x`;
     renderStream();
   });
   document.getElementById("show-chronology").addEventListener("change", (e) => {
     detailChronologyWrap.style.display = e.target.checked ? "" : "none";
   });
 
-  document.querySelectorAll(".runtime-toggle").forEach((button) => {
-    button.addEventListener("click", () => sendThreadCommand(button.dataset.control));
-  });
-  document.getElementById("runtime-pause").addEventListener("click", () => sendInput("/pause"));
-  document.getElementById("runtime-resume").addEventListener("click", () => sendInput("/resume"));
-  document.getElementById("runtime-restart").addEventListener("click", () => sendInput("/restart"));
-  document.getElementById("vision-service-start").addEventListener("click", () => sendVisionServiceCommand("start"));
-  document.getElementById("vision-service-stop").addEventListener("click", () => sendVisionServiceCommand("stop"));
-  document.getElementById("vision-service-autostart").addEventListener("click", () => sendVisionServiceCommand("autostart toggle"));
+  runtimeToggleButton.addEventListener("click", () => sendInput(conversationPaused ? "/resume" : "/pause"));
+  runtimeRestartButton.addEventListener("click", requestRestart);
+  bootRestartButton.addEventListener("click", requestRestart);
 
   loadStreamSchema();
+  updateRuntimeButtons();
   renderBootStatus();
   refreshState();
-  setInterval(refreshState, 2000);
+  setInterval(refreshState, 1000);
   setInterval(pollVisionModelStatus, 4000);
   setInterval(renderBootStatus, 1000);
-
-  const es = new EventSource("/events");
-  es.onopen = () => {
-    sseConnected = true;
-    renderBootStatus();
-  };
-  es.onerror = () => {
-    sseConnected = false;
-    renderBootStatus();
-  };
-  es.onmessage = (e) => {
-    try {
-      handleEvent(JSON.parse(e.data));
-    } catch (err) {
-      console.error("SSE parse error:", err);
-    }
-  };
-  es.onerror = () => {};
 
   const visionFeed = document.getElementById("vision-feed");
   visionFeed.onerror = () => { visionFeed.style.display = "none"; };
