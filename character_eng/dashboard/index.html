@@ -231,6 +231,74 @@
     color: var(--text-dim);
     line-height: 1.5;
   }
+  .boot-panel {
+    margin-bottom: 0.65rem;
+    padding: 0.75rem 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background:
+      linear-gradient(135deg, color-mix(in srgb, var(--panel) 78%, var(--cyan) 22%), var(--panel)),
+      var(--panel);
+  }
+  .boot-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: baseline;
+    margin-bottom: 0.5rem;
+  }
+  .boot-title {
+    font-size: 0.92rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+  }
+  .boot-heartbeat {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+  }
+  .boot-summary {
+    font-size: 1rem;
+    color: var(--text);
+    margin-bottom: 0.55rem;
+  }
+  .boot-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+  .boot-chip {
+    display: grid;
+    gap: 0.16rem;
+    padding: 0.45rem 0.55rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--panel-hover) 84%, transparent);
+  }
+  .boot-chip-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    align-items: baseline;
+    font-size: 0.84rem;
+  }
+  .boot-chip-label {
+    color: var(--text);
+  }
+  .boot-chip-state {
+    text-transform: lowercase;
+    font-weight: 700;
+  }
+  .boot-chip-detail {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    line-height: 1.35;
+  }
+  .boot-state-ready { color: var(--advance); }
+  .boot-state-active { color: var(--cyan); }
+  .boot-state-waiting { color: var(--narrator); }
+  .boot-state-error { color: var(--error); }
+  .boot-state-off { color: var(--text-dim); }
   .stream-lane {
     display: grid;
     grid-template-columns: var(--sidebar-width) 1fr;
@@ -680,6 +748,14 @@
     <div class="sidebar-panel" id="runtime-panel">
       <h3>Runtime</h3>
       <div class="content">
+        <div id="boot-panel" class="boot-panel">
+          <div class="boot-head">
+            <div class="boot-title">Startup Monitor</div>
+            <div id="boot-heartbeat" class="boot-heartbeat">page live</div>
+          </div>
+          <div id="boot-summary" class="boot-summary">Connecting to the local runtime...</div>
+          <div id="boot-grid" class="boot-grid"></div>
+        </div>
         <div id="runtime-status" style="margin-bottom:0.5em;color:var(--text-dim);">Waiting for runtime state...</div>
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.45em;">
           <button class="runtime-toggle" data-control="reconcile" style="padding:0.35em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--text);cursor:pointer;">reconcile</button>
@@ -800,6 +876,15 @@
   let visionModels = null;
   let visionMemory = null;
   let visionFeedSrc = "";
+  let conversationPaused = false;
+  let voiceActive = false;
+  let visionManagerActive = false;
+  let lastEventAt = 0;
+  let runtimeStateSeen = false;
+  let sessionSeen = false;
+  let sseConnected = false;
+  let modelPollError = "";
+  const pageLoadedAt = Date.now();
 
   const hiddenLanes = new Set();
   const streamEvents = [];
@@ -915,6 +1000,101 @@
     }
   }
 
+  function formatAge(ms) {
+    if (!Number.isFinite(ms) || ms < 0) return "0s";
+    const seconds = Math.floor(ms / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const rem = seconds % 60;
+    return `${minutes}m${rem}s`;
+  }
+
+  function bootChip(label, state, detail) {
+    return `<div class="boot-chip">
+      <div class="boot-chip-head">
+        <span class="boot-chip-label">${esc(label)}</span>
+        <span class="boot-chip-state boot-state-${esc(state)}">${esc(state)}</span>
+      </div>
+      <div class="boot-chip-detail">${esc(detail || "")}</div>
+    </div>`;
+  }
+
+  function renderBootStatus() {
+    const heartbeatEl = document.getElementById("boot-heartbeat");
+    const summaryEl = document.getElementById("boot-summary");
+    const gridEl = document.getElementById("boot-grid");
+    const now = Date.now();
+    const lastEventText = lastEventAt ? `last event ${formatAge(now - lastEventAt)} ago` : "waiting for first event";
+    heartbeatEl.textContent = `${sseConnected ? "stream live" : "polling"} · page ${formatAge(now - pageLoadedAt)} · ${lastEventText}`;
+
+    const runtimeState = runtimeStateSeen ? (conversationPaused ? "ready" : "active") : "waiting";
+    const runtimeDetail = runtimeStateSeen
+      ? (conversationPaused ? "Warm and paused. Hit Resume when you want to start." : "Runtime is live and accepting turns.")
+      : "Waiting for the app to publish runtime controls.";
+
+    const voiceState = runtimeStateSeen
+      ? (voiceActive ? "ready" : "off")
+      : "waiting";
+    const voiceDetail = runtimeStateSeen
+      ? (voiceActive ? "Mic/STT/TTS path is active." : "Voice path is not active yet.")
+      : "Waiting for voice runtime info.";
+
+    let visionServiceState = "waiting";
+    let visionServiceDetail = "Waiting for runtime vision service info.";
+    if (runtimeStateSeen) {
+      if (visionService.state === "managed" || visionService.state === "external") {
+        visionServiceState = "ready";
+        visionServiceDetail = `${visionService.state} at ${visionService.url || "local service"}${visionManagerActive ? " · manager attached" : ""}`;
+      } else if (visionService.state === "starting") {
+        visionServiceState = "active";
+        visionServiceDetail = `Vision service is booting at ${visionService.url || "local service"}`;
+      } else {
+        visionServiceState = "off";
+        visionServiceDetail = "Vision service has not started yet.";
+      }
+    }
+
+    let modelState = "waiting";
+    let modelDetail = "Waiting for per-model status.";
+    if (modelPollError) {
+      modelState = "error";
+      modelDetail = modelPollError;
+    } else if (visionModels) {
+      const states = [];
+      const vllm = visionModels.vllm || "unknown";
+      states.push(`vllm ${vllm}`);
+      for (const key of ["sam3", "face", "person"]) {
+        const item = visionModels[key];
+        const state = item && typeof item === "object" ? item.status || "unknown" : item || "unknown";
+        states.push(`${key} ${state}`);
+      }
+      modelDetail = states.join(" · ");
+      const allReady = states.every((entry) => /\b(ready|off|unavailable)\b/.test(entry));
+      const anyLoading = states.some((entry) => /\bloading\b/.test(entry));
+      modelState = allReady ? "ready" : (anyLoading ? "active" : "waiting");
+    }
+
+    const sessionState = sessionSeen ? "ready" : "waiting";
+    const sessionDetail = sessionSeen
+      ? `Session ${document.getElementById("h-session").textContent || "--"} for ${document.getElementById("h-character").textContent || "character"}`
+      : "Waiting for session start.";
+
+    const summary =
+      !runtimeStateSeen ? "Connecting to the local runtime..." :
+      conversationPaused ? "Everything is warm. Resume when you want to start." :
+      "Runtime is live. You can speak or type now.";
+
+    summaryEl.textContent = summary;
+    gridEl.innerHTML = [
+      bootChip("dashboard", sseConnected ? "ready" : "active", sseConnected ? "Live event stream connected." : "Polling and waiting for server-side events."),
+      bootChip("session", sessionState, sessionDetail),
+      bootChip("runtime", runtimeState, runtimeDetail),
+      bootChip("voice", voiceState, voiceDetail),
+      bootChip("vision svc", visionServiceState, visionServiceDetail),
+      bootChip("models", modelState, modelDetail),
+    ].join("");
+  }
+
   function renderVisionModelCard(label, status, detail) {
     const color = statusColor(status);
     const suffix = detail ? `<div style="font-size:0.78em;color:var(--text-dim);margin-top:0.18em;">${esc(detail)}</div>` : "";
@@ -963,20 +1143,24 @@
       linkEl.style.pointerEvents = "none";
       linkEl.style.opacity = "0.55";
     }
+    renderBootStatus();
   }
 
   function renderVisionModelStatus() {
     const el = document.getElementById("vision-model-status");
     if (!visionService.url) {
       el.innerHTML = '<div style="color:var(--text-dim);font-size:0.85em;">No vision service configured.</div>';
+      renderBootStatus();
       return;
     }
     if (!visionModels) {
       el.innerHTML = '<div style="color:var(--text-dim);font-size:0.85em;">Waiting for model status...</div>';
+      renderBootStatus();
       return;
     }
     if (visionModels.error) {
       el.innerHTML = `<div style="color:var(--error);font-size:0.85em;">${esc(visionModels.error)}</div>`;
+      renderBootStatus();
       return;
     }
     const cards = [];
@@ -992,12 +1176,14 @@
       ));
     }
     el.innerHTML = cards.join("");
+    renderBootStatus();
   }
 
   async function pollVisionModelStatus() {
     if (!visionService.url) {
       visionModels = null;
       visionMemory = null;
+      modelPollError = "";
       renderVisionModelStatus();
       return;
     }
@@ -1010,9 +1196,11 @@
       if (!statusResp.ok) throw new Error(`model_status failed (${statusResp.status})`);
       visionModels = await statusResp.json();
       visionMemory = memoryResp && memoryResp.ok ? await memoryResp.json() : null;
+      modelPollError = "";
     } catch (err) {
       visionModels = {error: `Vision status unavailable: ${err.message}`};
       visionMemory = null;
+      modelPollError = `Vision status unavailable: ${err.message}`;
     }
     renderVisionModelStatus();
   }
@@ -1480,12 +1668,14 @@
   const handlers = {
     session_start(data, rawEvent) {
       sessionStart = Number(rawEvent.timestamp || Date.now() / 1000);
+      sessionSeen = true;
       document.getElementById("h-character").textContent = data.character || "--";
       document.getElementById("h-model").textContent = data.model || "--";
       document.getElementById("h-session").textContent = data.session_id || "--";
       if (data.stage) document.getElementById("h-stage").textContent = data.stage;
       document.title = `${data.character || "Character"} Dashboard`;
       recordEvent("session_start", data, rawEvent);
+      renderBootStatus();
     },
 
     turn_start(data, rawEvent) {
@@ -1760,15 +1950,23 @@
     },
 
     pause(data, rawEvent) {
+      conversationPaused = true;
       recordEvent("pause", data, rawEvent);
+      renderBootStatus();
     },
 
     resume(data, rawEvent) {
+      conversationPaused = false;
       recordEvent("resume", data, rawEvent);
+      renderBootStatus();
     },
 
     runtime_controls(data, rawEvent) {
       runtimeControls = data.controls || runtimeControls;
+      runtimeStateSeen = true;
+      conversationPaused = !!data.conversation_paused;
+      voiceActive = !!data.voice_active;
+      visionManagerActive = !!data.vision_active;
       visionService = {
         url: data.vision_service_url || "",
         health: !!data.vision_service_health,
@@ -1801,10 +1999,12 @@
       renderVisionServiceStatus();
       pollVisionModelStatus();
       recordEvent("runtime_controls", data, rawEvent);
+      renderBootStatus();
     }
   };
 
   function handleEvent(event) {
+    lastEventAt = Date.now();
     if (typeof event.seq === "number") {
       if (event.seq <= lastSeq) return;
       lastSeq = event.seq;
@@ -1844,11 +2044,21 @@
   document.getElementById("vision-service-autostart").addEventListener("click", () => sendVisionServiceCommand("autostart toggle"));
 
   loadStreamSchema();
+  renderBootStatus();
   refreshState();
   setInterval(refreshState, 2000);
   setInterval(pollVisionModelStatus, 4000);
+  setInterval(renderBootStatus, 1000);
 
   const es = new EventSource("/events");
+  es.onopen = () => {
+    sseConnected = true;
+    renderBootStatus();
+  };
+  es.onerror = () => {
+    sseConnected = false;
+    renderBootStatus();
+  };
   es.onmessage = (e) => {
     try {
       handleEvent(JSON.parse(e.data));
