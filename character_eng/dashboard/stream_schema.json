@@ -24,6 +24,7 @@
     "vision_focus": "vision",
     "vision_snapshot_read": "vision",
     "vision_snapshot": "vision",
+    "vision_pass": "vision",
     "vision_poll": "vision",
     "vision_models": "vision",
     "vision_poll_error": "vision",

@@ -242,9 +242,29 @@
   }
   #stream-main {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--inspector-width);
+    grid-template-columns: minmax(0, 1fr) 10px var(--inspector-width);
     gap: 0.6em;
     min-height: 0;
+  }
+  .pane-resizer {
+    position: relative;
+    min-width: 10px;
+    width: 10px;
+    cursor: col-resize;
+    user-select: none;
+    touch-action: none;
+  }
+  .pane-resizer::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--border) 70%, transparent) 20%, color-mix(in srgb, var(--border) 90%, transparent) 50%, color-mix(in srgb, var(--border) 70%, transparent) 80%, transparent 100%);
+    opacity: 0.8;
+  }
+  .pane-resizer:hover::before,
+  body.is-resizing-pane .pane-resizer::before {
+    background: linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--narrator) 70%, transparent) 20%, color-mix(in srgb, var(--narrator) 90%, transparent) 50%, color-mix(in srgb, var(--narrator) 70%, transparent) 80%, transparent 100%);
   }
   #stream-viewport {
     overflow: auto;
@@ -912,7 +932,7 @@
   }
   @media (max-width: 1400px) {
     #stream-main {
-      grid-template-columns: minmax(0, 1fr) 320px;
+      grid-template-columns: minmax(0, 1fr) 10px minmax(280px, var(--inspector-width));
     }
   }
   @media (max-width: 1180px) {
@@ -930,6 +950,9 @@
   @media (max-width: 980px) {
     #stream-main {
       grid-template-columns: 1fr;
+    }
+    .pane-resizer {
+      display: none;
     }
     #stream-inspector {
       max-height: 42vh;
@@ -1003,16 +1026,6 @@
           <span id="time-window-value">30s</span>
         </div>
         <div class="toolbar-group">
-          <label for="inspector-width">Inspector</label>
-          <input id="inspector-width" type="range" min="280" max="720" step="10" value="360">
-          <span id="inspector-width-value">360px</span>
-        </div>
-        <div class="toolbar-group">
-          <label for="sidebar-width">Right Panel</label>
-          <input id="sidebar-width" type="range" min="240" max="560" step="10" value="360">
-          <span id="sidebar-width-value">360px</span>
-        </div>
-        <div class="toolbar-group">
           <label for="show-chronology">Chronology</label>
           <input id="show-chronology" type="checkbox" checked>
         </div>
@@ -1033,6 +1046,7 @@
           <div id="stream-empty" class="stream-empty">Waiting for live events. The dashboard will populate as the session starts.</div>
           <div id="stream-lanes"></div>
         </div>
+        <div class="pane-resizer" id="inspector-resizer" role="separator" aria-label="Resize inspector"></div>
 
         <aside id="stream-inspector">
           <div class="detail-section">
@@ -1090,6 +1104,7 @@
       </div>
     </div>
   </div>
+  <div class="pane-resizer" id="sidebar-resizer" role="separator" aria-label="Resize right panel"></div>
 
   <div id="sidebar">
     <div class="sidebar-panel" id="runtime-panel">
@@ -1157,6 +1172,7 @@
       resume: "session",
       runtime_controls: "session",
       vision_snapshot: "vision",
+      vision_pass: "vision",
       world_update: "world",
       user_speech_started: "stt",
       user_transcript_final: "stt",
@@ -1185,6 +1201,7 @@
   let timelineWindowSeconds = 30;
   let followLive = true;
   let activeDetailTab = "chronology";
+  let visionPassKey = null;
   const promptTraceEvents = [];
   let isTimelineDragging = false;
   let dragStartX = 0;
@@ -1242,13 +1259,14 @@
   const bootRestartButton = document.getElementById("boot-restart");
   const timeWindowSlider = document.getElementById("time-window");
   const timeWindowValue = document.getElementById("time-window-value");
-  const inspectorWidthSlider = document.getElementById("inspector-width");
-  const inspectorWidthValue = document.getElementById("inspector-width-value");
-  const sidebarWidthSlider = document.getElementById("sidebar-width");
-  const sidebarWidthValue = document.getElementById("sidebar-width-value");
+  const inspectorResizer = document.getElementById("inspector-resizer");
+  const sidebarResizer = document.getElementById("sidebar-resizer");
   const detailOpenWindowButton = document.getElementById("detail-open-window");
   const detailExportJsonButton = document.getElementById("detail-export-json");
   const detailExportHtmlButton = document.getElementById("detail-export-html");
+  const INSPECTOR_WIDTH_STORAGE_KEY = "dashboard.inspector_width";
+  const SIDEBAR_WIDTH_STORAGE_KEY = "dashboard.sidebar_width";
+  let pendingPauseState = null;
 
   async function loadStreamSchema() {
     try {
@@ -1508,13 +1526,37 @@
     });
   }
 
-  function applyLayoutWidths() {
-    const inspector = `${inspectorWidthSlider.value}px`;
-    const sidebar = `${sidebarWidthSlider.value}px`;
-    document.documentElement.style.setProperty("--inspector-width", inspector);
-    document.documentElement.style.setProperty("--right-panel-width", sidebar);
-    inspectorWidthValue.textContent = inspector;
-    sidebarWidthValue.textContent = sidebar;
+  function clampNumber(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function setInspectorWidth(width) {
+    const clamped = clampNumber(width, 280, 720);
+    document.documentElement.style.setProperty("--inspector-width", `${clamped}px`);
+    try {
+      localStorage.setItem(INSPECTOR_WIDTH_STORAGE_KEY, String(clamped));
+    } catch (_) {}
+  }
+
+  function setSidebarWidth(width) {
+    const clamped = clampNumber(width, 240, 560);
+    document.documentElement.style.setProperty("--right-panel-width", `${clamped}px`);
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clamped));
+    } catch (_) {}
+  }
+
+  function restoreLayoutWidths() {
+    let inspector = 360;
+    let sidebar = 360;
+    try {
+      const storedInspector = parseFloat(localStorage.getItem(INSPECTOR_WIDTH_STORAGE_KEY) || "");
+      const storedSidebar = parseFloat(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) || "");
+      if (Number.isFinite(storedInspector)) inspector = storedInspector;
+      if (Number.isFinite(storedSidebar)) sidebar = storedSidebar;
+    } catch (_) {}
+    setInspectorWidth(inspector);
+    setSidebarWidth(sidebar);
   }
 
   function nearestVisualContext(event) {
@@ -1546,8 +1588,11 @@
     const chipList = [];
     const lines = [];
 
-    if (event.type === "perception") {
+    if (event.type === "perception" || event.type === "vision_pass") {
       lines.push(`source: ${event.data?.source || "unknown"}`);
+      if (event.type === "vision_pass") {
+        lines[0] = "source: visual";
+      }
       if (trace?.kind) lines.push(`derived by: ${trace.kind}`);
       if (trace?.identity) lines.push(`identity: ${trace.identity}`);
       if (trace?.object_labels?.length) chipList.push(...trace.object_labels.slice(0, 5).map((item) => `object ${item}`));
@@ -1560,7 +1605,7 @@
       if (trace?.focus?.ephemeral_sam_targets?.length) {
         chipList.push(...trace.focus.ephemeral_sam_targets.slice(0, 3).map((item) => `sam ${item}`));
       }
-      if (!trace && visualContext.snapshot) {
+      if ((!trace || event.type === "vision_pass") && visualContext.snapshot) {
         lines.push(`nearest vision snapshot: +${relativeTime(visualContext.snapshot.timestamp).toFixed(2)}s`);
         const answers = visualContext.snapshot.data?.vlm_answers || [];
         const labels = visualContext.snapshot.data?.object_labels || [];
@@ -1709,8 +1754,22 @@
   }
 
   function updateRuntimeButtons() {
-    runtimeToggleButton.textContent = conversationPaused ? "Resume" : "Pause";
-    runtimeToggleButton.style.background = conversationPaused ? "var(--advance)" : "var(--narrator)";
+    if (pendingPauseState === "pausing") {
+      runtimeToggleButton.textContent = "Pausing...";
+      runtimeToggleButton.style.background = "var(--hold)";
+      runtimeToggleButton.disabled = true;
+      runtimeToggleButton.style.opacity = "0.75";
+    } else if (pendingPauseState === "resuming") {
+      runtimeToggleButton.textContent = "Resuming...";
+      runtimeToggleButton.style.background = "var(--hold)";
+      runtimeToggleButton.disabled = true;
+      runtimeToggleButton.style.opacity = "0.75";
+    } else {
+      runtimeToggleButton.textContent = conversationPaused ? "Resume" : "Pause";
+      runtimeToggleButton.style.background = conversationPaused ? "var(--advance)" : "var(--narrator)";
+      runtimeToggleButton.disabled = false;
+      runtimeToggleButton.style.opacity = "1";
+    }
     runtimeToggleButton.style.color = "var(--bg)";
     runtimeRestartButton.textContent = "Restart Session";
     runtimeRestartButton.disabled = false;
@@ -1746,6 +1805,7 @@
     activeReplyKey = null;
     activePostResponseKey = null;
     activeWorldUpdateKey = null;
+    visionPassKey = null;
     selectedStreamKey = null;
     streamKey = 0;
     document.getElementById("h-session").textContent = "--";
@@ -1793,6 +1853,7 @@
     activeReplyKey = null;
     activePostResponseKey = null;
     activeWorldUpdateKey = null;
+    visionPassKey = null;
     selectedStreamKey = null;
     streamKey = 0;
     conversationPaused = true;
@@ -2015,6 +2076,13 @@
         if (data.ephemeral_sam_targets && data.ephemeral_sam_targets.length) bits.push(`${data.ephemeral_sam_targets.length} ephemeral sam`);
         return bits.length ? bits.join(" · ") : "Vision focus";
       }
+      case "vision_pass": {
+        const bits = [];
+        if (data.perception_count) bits.push(`${data.perception_count} perception${data.perception_count === 1 ? "" : "s"}`);
+        if (data.vlm_answer_count) bits.push(`${data.vlm_answer_count} answer${data.vlm_answer_count === 1 ? "" : "s"}`);
+        if (data.object_count) bits.push(`${data.object_count} object${data.object_count === 1 ? "" : "s"}`);
+        return bits.length ? bits.join(" · ") : "Vision pass";
+      }
       case "expression":
         return `${data.expression || "expression"} · ${data.gaze || "gaze"}`;
       case "eval":
@@ -2076,6 +2144,11 @@
           data.stage_goal || "",
           data.ephemeral_questions && data.ephemeral_questions.length ? `ask: ${data.ephemeral_questions.join(", ")}` : "",
           data.ephemeral_sam_targets && data.ephemeral_sam_targets.length ? `track: ${data.ephemeral_sam_targets.join(", ")}` : ""
+        ].filter(Boolean).join(" · ");
+      case "vision_pass":
+        return [
+          data.latest_answer || "",
+          data.latest_perception || "",
         ].filter(Boolean).join(" · ");
       case "post_response":
         return [
@@ -2327,6 +2400,30 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function setupPaneResizer(resizer, onMove) {
+    if (!resizer) return;
+    let activePointerId = null;
+    resizer.addEventListener("pointerdown", (event) => {
+      activePointerId = event.pointerId;
+      resizer.setPointerCapture(event.pointerId);
+      document.body.classList.add("is-resizing-pane");
+    });
+    resizer.addEventListener("pointermove", (event) => {
+      if (event.pointerId !== activePointerId) return;
+      onMove(event);
+    });
+    function finishResize(event) {
+      if (event.pointerId !== activePointerId) return;
+      activePointerId = null;
+      document.body.classList.remove("is-resizing-pane");
+      if (resizer.hasPointerCapture(event.pointerId)) {
+        resizer.releasePointerCapture(event.pointerId);
+      }
+    }
+    resizer.addEventListener("pointerup", finishResize);
+    resizer.addEventListener("pointercancel", finishResize);
+  }
+
   function addStreamEvent(type, data, rawEvent) {
     const key = `evt-${++streamKey}`;
     const event = {
@@ -2394,10 +2491,38 @@
     return event;
   }
 
+  function ensureVisionPassEvent(rawEvent, seedData = {}) {
+    let event = visionPassKey ? streamEventByKey.get(visionPassKey) : null;
+    const eventTs = Number(rawEvent.timestamp || Date.now() / 1000);
+    if (!event || Math.abs(Number(event.timestamp || 0) - eventTs) > 1.25) {
+      event = addStreamEvent("vision_pass", {
+        source: "visual",
+        perception_count: 0,
+        vlm_answer_count: 0,
+        object_count: 0,
+        object_labels: [],
+        latest_answer: "",
+        latest_perception: "",
+        perceptions: [],
+        constant_questions: [],
+        ephemeral_questions: [],
+        constant_sam_targets: [],
+        ephemeral_sam_targets: [],
+      }, rawEvent);
+      visionPassKey = event.key;
+    }
+    event.turnId = rawEvent.turnId || event.turnId;
+    event.timestamp = eventTs;
+    event.seq = rawEvent.seq || event.seq;
+    Object.assign(event.data, seedData);
+    return event;
+  }
+
   function resetReplyStream() {
     activeReplyKey = null;
     activePostResponseKey = null;
     activeWorldUpdateKey = null;
+    visionPassKey = null;
   }
 
   function selectEvent(key) {
@@ -2480,6 +2605,7 @@
   function cardHeight(event) {
     if (compactMode) return 24;
     if (event.type === "assistant_reply") return 92;
+    if (event.type === "vision_pass") return 118;
     if (event.type === "post_response" || event.type === "world_update") return 84;
     if (event.detail) return 72;
     return 58;
@@ -2564,6 +2690,20 @@
         <div class="stream-card-label">${esc(event.label)}</div>
         ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
         ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+      `;
+    }
+    if (event.type === "vision_pass") {
+      const chips = [
+        ...(event.data.ephemeral_questions || []).slice(0, 2).map((item) => `q ${item}`),
+        ...(event.data.ephemeral_sam_targets || []).slice(0, 2).map((item) => `sam ${item}`),
+        ...(event.data.object_labels || []).slice(0, 3).map((item) => `object ${item}`),
+      ];
+      const perceptions = (event.data.perceptions || []).slice(0, compactMode ? 1 : 4);
+      return `
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+        ${perceptions.length ? `<div class="stream-card-detail">${perceptions.map((item) => esc(item)).join("\n")}</div>` : ""}
       `;
     }
     if (event.type === "perception") {
@@ -2990,6 +3130,36 @@
 
     perception(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
+      if (data.source === "visual") {
+        const event = ensureVisionPassEvent(rawEvent);
+        const nextPerceptions = Array.isArray(event.data.perceptions) ? event.data.perceptions.slice() : [];
+        nextPerceptions.push(data.description || "visual perception");
+        event.data.perceptions = nextPerceptions.slice(-8);
+        event.data.perception_count = nextPerceptions.length;
+        event.data.latest_perception = data.description || event.data.latest_perception;
+        if (data.source_trace) {
+          event.data.source_trace = data.source_trace;
+          if (Array.isArray(data.source_trace.object_labels)) {
+            event.data.object_labels = data.source_trace.object_labels;
+            event.data.object_count = data.source_trace.object_labels.length;
+          }
+          if (Array.isArray(data.source_trace.vlm_answers) && data.source_trace.vlm_answers.length) {
+            const latestAnswer = data.source_trace.vlm_answers[data.source_trace.vlm_answers.length - 1];
+            event.data.vlm_answer_count = data.source_trace.vlm_answers.length;
+            event.data.latest_answer = `${latestAnswer.question || "vision"}: ${latestAnswer.answer || ""}`;
+          }
+          if (data.source_trace.focus) {
+            event.data.constant_questions = data.source_trace.focus.constant_questions || event.data.constant_questions || [];
+            event.data.ephemeral_questions = data.source_trace.focus.ephemeral_questions || event.data.ephemeral_questions || [];
+            event.data.constant_sam_targets = data.source_trace.focus.constant_sam_targets || event.data.constant_sam_targets || [];
+            event.data.ephemeral_sam_targets = data.source_trace.focus.ephemeral_sam_targets || event.data.ephemeral_sam_targets || [];
+          }
+        }
+        event.label = previewText("vision_pass", event.data);
+        event.detail = detailText("vision_pass", event.data);
+        renderStream();
+        return;
+      }
       recordEvent("perception", data, rawEvent);
     },
 
@@ -3009,11 +3179,39 @@
         }).join("<br>");
       }
       meta.innerHTML = html;
-      recordEvent("vision_snapshot", data, rawEvent);
+      rawEvent.turnId = currentTurnId || null;
+      const event = ensureVisionPassEvent(rawEvent);
+      event.data.object_labels = data.object_labels || event.data.object_labels || [];
+      event.data.object_count = (data.object_labels || []).length;
+      event.data.vlm_answer_count = (data.vlm_answers || []).length;
+      if (data.vlm_answers && data.vlm_answers.length) {
+        const latest = data.vlm_answers[data.vlm_answers.length - 1];
+        event.data.latest_answer = typeof latest === "string" ? latest : `${latest.question || "vision"}: ${latest.answer || ""}`;
+      }
+      if (data.focus) {
+        event.data.constant_questions = data.focus.constant_questions || [];
+        event.data.ephemeral_questions = data.focus.ephemeral_questions || [];
+        event.data.constant_sam_targets = data.focus.constant_sam_targets || [];
+        event.data.ephemeral_sam_targets = data.focus.ephemeral_sam_targets || [];
+      }
+      event.data.snapshot = data;
+      event.label = previewText("vision_pass", event.data);
+      event.detail = detailText("vision_pass", event.data);
+      renderStream();
     },
 
     vision_focus(data, rawEvent) {
-      recordEvent("vision_focus", data, rawEvent);
+      rawEvent.turnId = currentTurnId || null;
+      const event = ensureVisionPassEvent(rawEvent);
+      event.data.constant_questions = data.constant_questions || [];
+      event.data.ephemeral_questions = data.ephemeral_questions || [];
+      event.data.constant_sam_targets = data.constant_sam_targets || [];
+      event.data.ephemeral_sam_targets = data.ephemeral_sam_targets || [];
+      event.data.stage_goal = data.stage_goal || event.data.stage_goal || "";
+      event.data.focus = data;
+      event.label = previewText("vision_pass", event.data);
+      event.detail = detailText("vision_pass", event.data);
+      renderStream();
     },
 
     session_end(data, rawEvent) {
@@ -3022,6 +3220,7 @@
 
     pause(data, rawEvent) {
       conversationPaused = true;
+      pendingPauseState = null;
       recordEvent("pause", data, rawEvent);
       updateRuntimeButtons();
       renderBootStatus();
@@ -3029,6 +3228,7 @@
 
     resume(data, rawEvent) {
       conversationPaused = false;
+      pendingPauseState = null;
       recordEvent("resume", data, rawEvent);
       updateRuntimeButtons();
       renderBootStatus();
@@ -3038,6 +3238,9 @@
       runtimeControls = data.controls || runtimeControls;
       runtimeStateSeen = true;
       conversationPaused = !!data.conversation_paused;
+      if ((pendingPauseState === "pausing" && conversationPaused) || (pendingPauseState === "resuming" && !conversationPaused)) {
+        pendingPauseState = null;
+      }
       voiceActive = !!data.voice_active;
       voiceStatus = data.voice_status || voiceStatus;
       visionManagerActive = !!data.vision_active;
@@ -3116,8 +3319,6 @@
     timeWindowValue.textContent = formatWindow(timelineWindowSeconds);
     renderStream();
   });
-  inspectorWidthSlider.addEventListener("input", applyLayoutWidths);
-  sidebarWidthSlider.addEventListener("input", applyLayoutWidths);
   document.getElementById("show-chronology").addEventListener("change", (e) => {
     const show = e.target.checked;
     document.getElementById("tab-chronology").style.display = show ? "" : "none";
@@ -3183,7 +3384,12 @@
     }
   });
 
-  runtimeToggleButton.addEventListener("click", () => sendInput(conversationPaused ? "/resume" : "/pause"));
+  runtimeToggleButton.addEventListener("click", () => {
+    if (pendingPauseState) return;
+    pendingPauseState = conversationPaused ? "resuming" : "pausing";
+    updateRuntimeButtons();
+    sendInput(conversationPaused ? "/resume" : "/pause");
+  });
   runtimeRestartButton.addEventListener("click", requestRestart);
   bootRestartButton.addEventListener("click", requestRestart);
   detailOpenWindowButton.addEventListener("click", () => {
@@ -3212,11 +3418,23 @@
     if (!bundle) return;
     downloadBlob(`event-${typeClass(bundle.event.type)}-${bundle.event.seq || 0}.html`, "text/html", bundleToHtml(bundle));
   });
+  setupPaneResizer(inspectorResizer, (event) => {
+    const streamMain = document.getElementById("stream-main");
+    const rect = streamMain.getBoundingClientRect();
+    const width = rect.right - event.clientX;
+    setInspectorWidth(width);
+  });
+  setupPaneResizer(sidebarResizer, (event) => {
+    const main = document.getElementById("main");
+    const rect = main.getBoundingClientRect();
+    const width = rect.right - event.clientX;
+    setSidebarWidth(width);
+  });
 
   loadStreamSchema();
   timelineWindowSeconds = sliderToWindow(timeWindowSlider.value);
   timeWindowValue.textContent = formatWindow(timelineWindowSeconds);
-  applyLayoutWidths();
+  restoreLayoutWidths();
   setDetailTab("chronology");
   updateRuntimeButtons();
   renderBootStatus();
