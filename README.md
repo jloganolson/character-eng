@@ -72,7 +72,10 @@ The app works without `config.toml` — all settings have defaults. The `--voice
 ## Run
 
 ```bash
-./scripts/run_local.sh                  # one-command local stack: character + full vision auto-boot
+./scripts/run_local.sh                  # one-command local stack: voice + vision + paused-ready startup
+./scripts/run_heavy.sh                  # keep vLLM/vision/Pocket-TTS hot in the background
+./scripts/run_hot.sh                    # restart only the fast app/UI layer
+./scripts/stop_local.sh                 # stop the app plus heavy local services
 uv run -m character_eng                  # text mode (dashboard auto-opens at :7862)
 uv run -m character_eng --no-dashboard   # text mode without dashboard
 uv run -m character_eng --voice          # voice mode (speak to chat, hear responses)
@@ -86,7 +89,7 @@ uv run -m character_eng --character mara --sim curious  # run sim non-interactiv
 uv run -m character_eng --smoke          # smoke test (auto greg, scripted inputs, exit)
 ```
 
-`./scripts/run_local.sh` is the recommended hands-on entrypoint. By default it does a clean local restart first: it stops older character-eng app processes plus anything still bound to the usual local ports for dashboard/bridge (`:7862`), vision (`:7860`), vLLM (`:8000`), and Pocket-TTS (`:8003`), then launches the app with `--vision`.
+`./scripts/run_local.sh` is the recommended hands-on entrypoint. By default it does a clean local restart first: it stops older character-eng app processes plus anything still bound to the usual local ports for dashboard/bridge (`:7862`), vision (`:7860`), vLLM (`:8000`), and Pocket-TTS (`:8003`), then launches the app with voice, vision, and startup-paused enabled.
 
 Useful variants:
 
@@ -95,6 +98,19 @@ CHARACTER=mara ./scripts/run_local.sh    # pick a default character
 CLEAN_START=0 ./scripts/run_local.sh     # reuse existing local services
 KEEP_POCKET=1 ./scripts/run_local.sh     # keep an already-running Pocket-TTS server
 ./scripts/run_local.sh --no-dashboard    # same clean start, but CLI only
+```
+
+For the simplest persistent-dev loop:
+
+```bash
+./scripts/run_heavy.sh
+./scripts/run_hot.sh
+```
+
+`run_heavy.sh` starts or reuses the slow stack (`vLLM`, vision service, `Pocket-TTS`) and now waits until those services are actually reachable before it returns. `run_hot.sh` is intentionally strict: it only restarts the fast character app/dashboard layer and will fail fast unless the heavy stack is already up. When you are done:
+
+```bash
+./scripts/stop_local.sh
 ```
 
 Pick a character from the menu, then chat. After each response, synchronous microservices evaluate script progress and check scenario exits with immediate effect. In-session commands:

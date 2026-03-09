@@ -1200,16 +1200,20 @@
     const statusEl = document.getElementById("vision-service-status");
     const linkEl = document.getElementById("vision-service-link");
     const autoBtn = document.getElementById("vision-service-autostart");
+    const health = modelPollError ? "unreachable" : (visionService.health ? "ok" : "unknown");
+    const effectiveState = modelPollError ? "error" : (visionService.state || "stopped");
     const source = visionService.managed ? "managed by app"
       : visionService.external ? "external service"
       : "not running";
     statusEl.innerHTML = [
-      `service: <b style="color:${statusColor(visionService.state)}">${esc(visionService.state || "stopped")}</b>`,
+      `service: <b style="color:${statusColor(effectiveState)}">${esc(effectiveState)}</b>`,
+      `health: <b style="color:${statusColor(modelPollError ? "error" : (visionService.health ? "ready" : "waiting"))}">${esc(health)}</b>`,
       `auto-start: <b>${visionService.autostart ? "on" : "off"}</b>`,
       `ingest: <b>${runtimeControls.vision ? "on" : "off"}</b>`,
       `source: <b>${esc(source)}</b>`,
       visionService.url ? `url: <b>${esc(visionService.url)}</b>` : "",
-      visionService.mockReplay ? `mock: <b>${esc(visionService.mockReplay)}</b>` : ""
+      visionService.mockReplay ? `mock: <b>${esc(visionService.mockReplay)}</b>` : "",
+      modelPollError ? `error: <b style="color:var(--error)">${esc(modelPollError)}</b>` : "",
     ].filter(Boolean).join("<br>");
     autoBtn.textContent = `autostart ${visionService.autostart ? "on" : "off"}`;
     if (visionService.url) {
@@ -1229,17 +1233,17 @@
     const el = document.getElementById("vision-model-status");
     if (!visionService.url) {
       el.innerHTML = '<div style="color:var(--text-dim);font-size:0.85em;">No vision service configured.</div>';
-      renderBootStatus();
+      renderVisionServiceStatus();
       return;
     }
     if (!visionModels) {
       el.innerHTML = '<div style="color:var(--text-dim);font-size:0.85em;">Waiting for model status...</div>';
-      renderBootStatus();
+      renderVisionServiceStatus();
       return;
     }
     if (visionModels.error) {
       el.innerHTML = `<div style="color:var(--error);font-size:0.85em;">${esc(visionModels.error)}</div>`;
-      renderBootStatus();
+      renderVisionServiceStatus();
       return;
     }
     const cards = [];
@@ -1255,7 +1259,7 @@
       ));
     }
     el.innerHTML = cards.join("");
-    renderBootStatus();
+    renderVisionServiceStatus();
   }
 
   async function pollVisionModelStatus() {

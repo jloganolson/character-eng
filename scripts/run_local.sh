@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT/.uv-cache}"
+
 CHARACTER="${CHARACTER:-greg}"
 CLEAN_START="${CLEAN_START:-1}"
 KEEP_POCKET="${KEEP_POCKET:-0}"

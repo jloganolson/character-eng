@@ -17,6 +17,23 @@ from character_eng.dashboard.server import start_dashboard
 
 
 class _VisionHandler(BaseHTTPRequestHandler):
+    state = {
+        "fail": False,
+        "status": {
+            "vllm": "ready",
+            "vllm_model": "gemma-vision-test",
+            "sam3": {"status": "ready"},
+            "face": {"status": "ready"},
+            "person": {"status": "ready"},
+        },
+        "memory": {
+            "gpu": {
+                "allocated_mb": 2048,
+                "total_mb": 8192,
+            }
+        },
+    }
+
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
             body = b"<html><body><h1>Vision Test UI</h1></body></html>"
@@ -29,15 +46,10 @@ class _VisionHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/model_status":
-            body = json.dumps(
-                {
-                    "vllm": "ready",
-                    "vllm_model": "gemma-vision-test",
-                    "sam3": {"status": "ready"},
-                    "face": {"status": "ready"},
-                    "person": {"status": "ready"},
-                }
-            ).encode()
+            if self.state["fail"]:
+                self.send_error(HTTPStatus.SERVICE_UNAVAILABLE)
+                return
+            body = json.dumps(self.state["status"]).encode()
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -47,14 +59,10 @@ class _VisionHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/memory_status":
-            body = json.dumps(
-                {
-                    "gpu": {
-                        "allocated_mb": 2048,
-                        "total_mb": 8192,
-                    }
-                }
-            ).encode()
+            if self.state["fail"]:
+                self.send_error(HTTPStatus.SERVICE_UNAVAILABLE)
+                return
+            body = json.dumps(self.state["memory"]).encode()
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -67,6 +75,15 @@ class _VisionHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         pass
+
+
+class VisionServiceController:
+    def __init__(self, server: ThreadingHTTPServer):
+        self.server = server
+        self.url = f"http://127.0.0.1:{server.server_address[1]}"
+
+    def set_fail(self, value: bool) -> None:
+        _VisionHandler.state["fail"] = value
 
 
 @pytest.fixture()
@@ -82,12 +99,13 @@ def browser_page() -> Page:
 
 
 @pytest.fixture()
-def vision_service_url() -> str:
+def vision_service() -> VisionServiceController:
+    _VisionHandler.state["fail"] = False
     server = ThreadingHTTPServer(("127.0.0.1", 0), _VisionHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_address[1]}"
+        yield VisionServiceController(server)
     finally:
         server.shutdown()
         thread.join(timeout=2)
@@ -112,9 +130,10 @@ def dashboard_server():
 def test_runtime_panel_interactions_in_browser(
     browser_page: Page,
     dashboard_server,
-    vision_service_url: str,
+    vision_service: VisionServiceController,
 ):
     collector, input_queue, dashboard_url = dashboard_server
+    vision_service_url = vision_service.url
     page = browser_page
     page.goto(dashboard_url)
 
@@ -300,3 +319,9 @@ def test_runtime_panel_interactions_in_browser(
     assert input_queue.get(timeout=2) == "1"
 
     expect(page.locator("#vision-model-status")).to_contain_text(re.compile("ready|loading"))
+
+    vision_service.set_fail(True)
+    expect(page.locator("#vision-model-status")).to_contain_text("Vision status unavailable", timeout=7000)
+    expect(page.locator("#vision-service-status")).to_contain_text("health: unreachable")
+    expect(page.locator("#vision-service-status")).to_contain_text("service: error")
+    expect(page.locator("body")).to_have_class(re.compile(r"\bbooting\b"))
