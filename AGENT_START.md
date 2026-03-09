@@ -1,110 +1,61 @@
 You are continuing work in `/home/logan/Projects/character-eng` on branch `codex/full-automation-tinker`.
 
-Start by reading:
+Read first:
 
 1. `CURRENT_STATE.md`
-2. `character_eng/qa_full_stack.py`
-3. `logs/qa_full_stack_greg_groq-llama-8b_20260307_204917.html`
+2. `character_eng/dashboard/index.html`
+3. `character_eng/__main__.py`
 
-Context:
+What matters:
 
-- The committed work from tonight is the full-stack QA/viewer/runtime tracing path, not the whole dirty worktree.
-- Relevant commits:
-  - `868b38f` Clarify TTS start timing in QA handoff
-  - `e75e2b2` Prewarm filler clips and unify chat audio trace
-  - `fa3a6c9` Trace prompts and real voice path in QA viewer
-  - `d262700` Improve vision boot feedback
-  - `2ddf1ed` Split trace timing and tighten compact mode
-  - `697b285` Add compact trace mode and browser regression tests
-  - `2559cee` Add event inspector to full-stack trace viewer
-  - `2494d01` Improve full-stack trace viewer controls
+- This branch is now intentionally local-first.
+- The live dashboard and runtime path are the current product.
+- The remote/browser-bridge + deploy residue has been archived out of the repo worktree.
 
-What is already working:
+Archive references:
 
-- The strict live harness can boot the real local vision stack.
-- The QA trace viewer is stream-centric and browser-tested with Playwright.
-- Prompt/input/output blocks are visible in the inspector.
-- Vision question/SAM-target configuration is surfaced via `vision_focus`.
-- Real live assistant audio is traced.
-- Filler clips are prewarmed and visible in the live trace.
-- Latest validated live command:
+- filesystem: `/home/logan/Projects/character-eng-archive/remote-bridge-2026-03-09/`
+- stash: `stash@{0}` (`archive remote bridge and deploy residue`)
+
+Do not start by reviving that archive unless explicitly asked.
+
+Current live URLs at handoff time:
+
+- dashboard: `http://127.0.0.1:56029/`
+- vision UI: `http://127.0.0.1:7860/`
+
+Current validated commands:
 
 ```bash
-uv run -m character_eng.qa_full_stack \
-  --model groq-llama-8b \
-  --vision-source live \
-  --assistant-audio-path live \
-  --filler-lead-ms 1
+uv run pytest tests/test_dashboard.py tests/test_runtime_controls.py tests/test_dashboard_playwright.py
 ```
 
-Latest validated focused tests:
+Hot/heavy workflow:
 
 ```bash
-uv run pytest tests/test_filler_audio.py tests/test_voice.py tests/test_qa_full_stack.py tests/test_qa_full_stack_playwright.py
+./scripts/run_heavy.sh
+./scripts/run_hot.sh
+./scripts/stop_local.sh
 ```
 
-What not to do first:
+Primary next work:
 
-- Do not treat the entire dirty worktree as one feature.
-- Do not start with the browser/deploy stack unless you first classify the local-core files.
-- Do not commit `.claude/` or vision log files.
+1. Iterate on the core local experience.
+   Focus on:
+   - response quality
+   - vision grounding
+   - scenario/stage flow
+   - dashboard usability
 
-Primary goal for tomorrow:
+2. Update top-level docs for the actual workflow now in use.
+   Focus on:
+   - `README.md`
+   - `CURRENT_STATE.md`
+   - maybe `CLAUDE.md` later
 
-- Triage the remaining dirty files into:
-  - commit soon
-  - redesign/re-validate
-  - drop/ignore
+Still dirty and not yours:
 
-That triage has now been sketched in `CURRENT_STATE.md`; do not repeat it from scratch unless the worktree changes. Use it as the starting hypothesis and validate it file-by-file as you touch things.
+- `CLAUDE.md`
+- `.claude/`
 
-Then execute this burndown:
-
-1. Stabilize and commit the local core bucket:
-   - `character_eng/person.py`
-   - `character_eng/qa_chat.py`
-   - `character_eng/qa_world.py`
-   - `character_eng/scenario.py`
-   - `prompts/reconcile_system.txt`
-   - `prompts/global_rules.txt`
-   - `prompts/characters/greg/character.txt`
-   - `tests/test_e2e.py`
-   - `tests/test_world.py`
-   - `tests/test_perception.py`
-
-The expected shape of that first commit is:
-
-- reconcile/person sanitization
-- stricter QA checks
-- prompt de-meta cleanup
-- scenario filename support
-- related tests
-
-2. Re-evaluate the local dashboard/runtime visibility bucket:
-   - `character_eng/dashboard/index.html`
-   - `character_eng/dashboard/server.py`
-   - `character_eng/config.py`
-   - `config.example.toml`
-   - `tests/test_dashboard.py`
-   - `tests/test_config.py`
-   - `tests/test_runtime_controls.py`
-   - `character_eng/dashboard/system_map.html`
-   - `scripts/validate.sh`
-   - `scripts/vision_smoke.sh`
-
-Important: this bucket is mixed. Some parts are valuable local-runtime work, but the patch also contains unfinished bridge/remote logic. Split those concerns before committing anything here.
-
-3. Only then decide whether the browser/remote stack is worth finishing now:
-   - `character_eng/bridge.py`
-   - `character_eng/browser_voice.py`
-   - `Dockerfile`
-   - `.github/workflows/deploy.yml`
-   - `deploy/runpod.py`
-   - `deploy/runpod.toml`
-   - `tests/test_bridge.py`
-
-Desired output tomorrow:
-
-- A short review of the dirty tree with specific keep/redesign/drop calls.
-- At least one focused commit for the local-core bucket.
-- Updated `CURRENT_STATE.md` with what was actually kept and what was intentionally deferred.
+Do not commit `.claude/`.
