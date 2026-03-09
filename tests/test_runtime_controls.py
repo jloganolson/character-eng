@@ -46,6 +46,20 @@ def test_runtime_snapshot_includes_vision_service_metadata(monkeypatch):
     assert state["vision_service_health"] is True
     assert state["vision_service_state"] == "external"
     assert state["vision_service_autostart"] is True
+    assert state["conversation_paused"] is False
+
+
+def test_runtime_snapshot_includes_paused_state(monkeypatch):
+    previous = app._conversation_paused
+    cfg = AppConfig()
+    monkeypatch.setattr(app, "_vision_service_health", lambda vision_cfg=None: False)
+    monkeypatch.setitem(app._vision_runtime, "cfg", cfg.vision)
+    try:
+        app._conversation_paused = True
+        state = app._runtime_controls_snapshot(vision_cfg=cfg.vision)
+        assert state["conversation_paused"] is True
+    finally:
+        app._conversation_paused = previous
 
 
 def test_vision_service_autostart_command_updates_config(monkeypatch):

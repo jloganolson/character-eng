@@ -1133,6 +1133,7 @@
         ].filter(Boolean).join(" · ");
       case "runtime_controls":
         return [
+          `state ${data.conversation_paused ? "paused" : "live"}`,
           `voice ${data.voice_active ? "on" : "off"}`,
           `vision manager ${data.vision_active ? "on" : "off"}`,
           `reconcile ${data.reconcile_thread_alive ? "running" : "idle"}`
@@ -1780,6 +1781,7 @@
       };
       const status = document.getElementById("runtime-status");
       status.innerHTML = [
+        `state: <b>${data.conversation_paused ? "paused" : "live"}</b>`,
         `reconcile: <b>${runtimeControls.reconcile ? "on" : "off"}</b>`,
         `vision: <b>${runtimeControls.vision ? "on" : "off"}</b>`,
         `auto-beat: <b>${runtimeControls.auto_beat ? "on" : "off"}</b>`,

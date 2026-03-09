@@ -133,6 +133,7 @@ def test_runtime_panel_interactions_in_browser(
                 "auto_beat": False,
                 "filler": False,
             },
+            "conversation_paused": True,
             "voice_active": True,
             "vision_active": True,
             "reconcile_thread_alive": True,
@@ -151,6 +152,7 @@ def test_runtime_panel_interactions_in_browser(
     page.goto(dashboard_url)
 
     expect(page.locator("#h-character")).to_have_text("greg")
+    expect(page.locator("#runtime-status")).to_contain_text("state: paused")
     expect(page.locator("#runtime-status")).to_contain_text("reconcile: on")
     expect(page.locator("#runtime-status")).to_contain_text("auto-beat: off")
     expect(page.locator("button[data-control='vision']")).to_have_text("vision on")
@@ -216,6 +218,7 @@ def test_runtime_panel_interactions_in_browser(
                 "auto_beat": True,
                 "filler": True,
             },
+            "conversation_paused": False,
             "voice_active": True,
             "vision_active": False,
             "reconcile_thread_alive": False,
@@ -231,6 +234,7 @@ def test_runtime_panel_interactions_in_browser(
     )
 
     expect(page.locator("button[data-control='reconcile']")).to_have_text("reconcile off")
+    expect(page.locator("#runtime-status")).to_contain_text("state: live")
     expect(page.locator("button[data-control='auto-beat']")).to_have_text("auto-beat on")
     expect(page.locator("#vision-service-status")).to_contain_text("source: managed by app")
     expect(page.locator("#vision-service-status")).to_contain_text("mock: walkup.json")

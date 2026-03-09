@@ -7,6 +7,8 @@ cd "$ROOT"
 CHARACTER="${CHARACTER:-greg}"
 CLEAN_START="${CLEAN_START:-1}"
 KEEP_POCKET="${KEEP_POCKET:-0}"
+VOICE_ON_START="${VOICE_ON_START:-1}"
+START_PAUSED="${START_PAUSED:-1}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-7862}"
 VISION_PORT="${VISION_PORT:-7860}"
 VLLM_PORT="${VLLM_PORT:-8000}"
@@ -82,5 +84,13 @@ fi
 
 log "Starting local stack for ${CHARACTER}"
 log "Stack ports: dashboard=${DASHBOARD_PORT} vision=${VISION_PORT} vllm=${VLLM_PORT} pocket=${POCKET_PORT}"
+log "Startup mode: voice=${VOICE_ON_START} start_paused=${START_PAUSED}"
 log "Vision bootstrap logs will stream below once the app starts vision"
-exec uv run -m character_eng --character "$CHARACTER" --vision "$@"
+cmd=(uv run -m character_eng --character "$CHARACTER" --vision)
+if [[ "$VOICE_ON_START" == "1" ]]; then
+  cmd+=(--voice)
+fi
+if [[ "$START_PAUSED" == "1" ]]; then
+  cmd+=(--start-paused)
+fi
+exec "${cmd[@]}" "$@"

@@ -122,6 +122,7 @@ _runtime_controls = {
     "auto_beat": True,
     "filler": True,
 }
+_conversation_paused = False
 
 
 def _normalize_runtime_control_name(name: str) -> str | None:
@@ -187,6 +188,7 @@ def _runtime_controls_snapshot(voice_io=None, vision_mgr=None, vision_cfg=None) 
     vision_status = _vision_status_snapshot(vision_cfg=vision_cfg, vision_mgr=vision_mgr)
     return {
         "controls": dict(_runtime_controls),
+        "conversation_paused": bool(_conversation_paused),
         "voice_active": bool(voice_io is not None),
         "vision_active": bool(vision_mgr is not None),
         "reconcile_thread_alive": bool(_reconcile_thread and _reconcile_thread.is_alive()),
@@ -215,8 +217,9 @@ def _render_runtime_controls(voice_io=None, vision_mgr=None, vision_cfg=None) ->
     for key in ("reconcile", "vision", "auto_beat", "filler"):
         enabled = state["controls"][key]
         label = key.replace("_", " ")
-        lines.append(f"{label:<10} : {'on' if enabled else 'off'}")
+    lines.append(f"{label:<10} : {'on' if enabled else 'off'}")
     lines.append(f"voice      : {'on' if state['voice_active'] else 'off'}")
+    lines.append(f"state      : {'paused' if state['conversation_paused'] else 'live'}")
     lines.append(f"vision svc : {'on' if state['vision_active'] else 'off'}")
     lines.append(f"vision url : {state['vision_service_url'] or 'n/a'}")
     lines.append(f"vision proc: {state['vision_service_state']}")
@@ -1012,8 +1015,9 @@ def get_big_model_config():
 
 def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voice_cfg=None,
               vision_mode: bool = False, vision_cfg=None, auto_sim: str | None = None,
-              bridge=None, sim_speed: float = 1.0):
+              bridge=None, sim_speed: float = 1.0, start_paused: bool = False):
     """Run the chat loop for a character. Returns None normally, 'restart' to re-enter."""
+    global _conversation_paused
     label = character.replace("_", " ").title()
     session_id = uuid.uuid4().hex[:8]
     log: list[dict] = []
@@ -1131,6 +1135,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
         had_user_input = False
         _arm_auto_beat = True  # arm on startup so first beat fires without user input
+        _conversation_paused = bool(start_paused)
+        startup_pause_pending = bool(start_paused)
 
         mode_tag = " [green]voice[/green]" if voice_io is not None else ""
         console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]{mode_tag}  [dim]{session_id}[/dim]  (type /help for commands)\n")
@@ -1142,6 +1148,9 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             "goal": stage_goal,
         })
         _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
+        if _conversation_paused:
+            console.print("[yellow]Startup paused[/yellow] — use /resume or the dashboard Resume button when you're ready")
+            _push("pause", {"startup": True})
         # Push initial world/people/stage state
         if world is not None:
             _push("world_state", {
@@ -1168,6 +1177,55 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
         while True:
             # --- Get input (voice or text) ---
             show_stage_hud(scenario, voice_active=(voice_io is not None))
+            if _conversation_paused:
+                try:
+                    if voice_io is not None:
+                        user_input = voice_io.wait_for_input()
+                    else:
+                        user_input = _get_input(session_id)
+                except (EOFError, KeyboardInterrupt):
+                    console.print()
+                    if voice_io is not None:
+                        voice_io.stop()
+                        voice_io = None
+                    save_chat_log(character, model_config, log, session_id)
+                    save_chat_html(character, model_config, log, session_id)
+                    return
+                if not user_input:
+                    continue
+                cmd = user_input.lower()
+                if cmd == "/resume":
+                    console.print("[green]Resumed[/green]")
+                    _conversation_paused = False
+                    _push("resume", {})
+                    _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
+                    _arm_auto_beat = False if startup_pause_pending else True
+                    startup_pause_pending = False
+                    continue
+                if cmd == "/restart":
+                    console.print("[yellow]Restarting session...[/yellow]")
+                    if voice_io is not None:
+                        voice_io._cancel_auto_beat()
+                        voice_io.cancel_speech()
+                        voice_io.stop()
+                    _push("session_end", {"total_turns": len([e for e in log if e.get("type") in ("send", "beat", "world", "see")])})
+                    save_chat_log(character, model_config, log, session_id)
+                    save_chat_html(character, model_config, log, session_id)
+                    if vision_mgr is not None:
+                        vision_mgr.stop()
+                    log.clear()
+                    return "restart"
+                if cmd == "/quit":
+                    if voice_io is not None:
+                        voice_io.stop()
+                        voice_io = None
+                    _push("session_end", {"total_turns": len([e for e in log if e.get("type") in ("send", "beat", "world", "see")])})
+                    save_chat_log(character, model_config, log, session_id)
+                    save_chat_html(character, model_config, log, session_id)
+                    console.print("Goodbye!")
+                    sys.exit(0)
+                console.print("[yellow]Still paused[/yellow] — send /resume or click Resume in the dashboard when you're ready")
+                continue
             if voice_io is not None and _arm_auto_beat and _runtime_controls["auto_beat"]:
                 # Centralized auto-beat: start timer here so it fires after all
                 # console output is done and TTS echo has settled (avoids Deepgram
@@ -1278,7 +1336,9 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 break  # break inner loop, outer loop reloads
             elif cmd == "/pause":
                 console.print("[yellow]Paused[/yellow] — send /resume to continue")
+                _conversation_paused = True
                 _push("pause", {})
+                _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
                 if voice_io is not None:
                     voice_io._cancel_auto_beat()
                     voice_io.cancel_speech()
@@ -1296,7 +1356,9 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                         continue
                     if resume_input.lower() == "/resume":
                         console.print("[green]Resumed[/green]")
+                        _conversation_paused = False
                         _push("resume", {})
+                        _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
                         _arm_auto_beat = True
                         break
                     elif resume_input.lower() == "/restart":
@@ -2459,6 +2521,8 @@ def main():
     parser.add_argument("--voice", action="store_true", help="Start in voice mode (Deepgram STT + ElevenLabs TTS)")
     parser.add_argument("--vision", action="store_true", help="Enable vision (auto-starts vision service)")
     parser.add_argument("--vision-mock", metavar="REPLAY", help="Enable vision with mock server using a replay JSON file")
+    parser.add_argument("--start-paused", action="store_true",
+        help="Warm the runtime, then wait for /resume before beginning the conversation")
     parser.add_argument("--character", metavar="NAME", help="Auto-select character (skip menu)")
     parser.add_argument("--sim", metavar="NAME", help="Run a sim script non-interactively then exit")
     parser.add_argument("--sim-speed", type=float, default=1.0,
@@ -2553,7 +2617,8 @@ def main():
                 break
             result = chat_loop(character, model_config, voice_mode=voice_mode, voice_cfg=cfg.voice,
                        vision_mode=vision_mode, vision_cfg=cfg.vision,
-                       auto_sim=args.sim, bridge=bridge, sim_speed=args.sim_speed)
+                       auto_sim=args.sim, bridge=bridge, sim_speed=args.sim_speed,
+                       start_paused=args.start_paused)
             if result == "restart":
                 continue  # re-enter chat_loop with same character
             if args.sim or args.character:
