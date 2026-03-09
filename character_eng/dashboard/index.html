@@ -33,7 +33,7 @@
     --stream-vision: #34d399;
     --stream-other: #cbd5e1;
     --sidebar-width: 110px;
-    --time-zoom: 1;
+    --timeline-window-seconds: 30;
   }
   :root.light {
     --bg: #fbf1c7;
@@ -202,6 +202,14 @@
   }
   .toolbar-group input[type="range"] {
     width: 120px;
+  }
+  .toolbar-group button {
+    background: var(--bg-alt);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.28em 0.6em;
+    cursor: pointer;
   }
   .toolbar-group select {
     background: var(--bg-alt);
@@ -486,7 +494,7 @@
   .lane-other .stream-card { border-left: 3px solid var(--stream-other); }
   #stream-inspector {
     display: grid;
-    grid-template-rows: auto auto auto 1fr;
+    grid-template-rows: auto auto 1fr;
     gap: 0.75em;
     padding: 0.9em;
     min-height: 0;
@@ -534,11 +542,41 @@
     gap: 0.4em;
     min-height: 0;
   }
+  .detail-section.fill {
+    grid-template-rows: auto auto 1fr;
+  }
   .detail-section label {
     font-size: 0.76em;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-dim);
+  }
+  .detail-tabs {
+    display: flex;
+    gap: 0.4em;
+  }
+  .detail-tab {
+    background: var(--bg-alt);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.28em 0.62em;
+    cursor: pointer;
+    font-size: 0.72em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .detail-tab.active {
+    color: var(--text);
+    border-color: var(--narrator);
+    box-shadow: 0 0 0 1px var(--narrator);
+  }
+  .detail-pane {
+    display: none;
+    min-height: 0;
+  }
+  .detail-pane.active {
+    display: grid;
   }
   #detail-related button,
   .chronology-row {
@@ -577,11 +615,12 @@
     border-radius: 8px;
     background: var(--bg-alt);
     padding: 0.7em;
-    font-size: 0.8em;
+    font-size: 0.88em;
     line-height: 1.45;
     white-space: pre-wrap;
     overflow: auto;
-    max-height: 34vh;
+    min-height: 0;
+    height: 100%;
   }
   #sidebar {
     flex: 3;
@@ -722,13 +761,21 @@
           </select>
         </div>
         <div class="toolbar-group">
-          <label for="time-zoom">Time Zoom</label>
-          <input id="time-zoom" type="range" min="0.01" max="3" step="0.01" value="1">
-          <span id="time-zoom-value">1.0x</span>
+          <label for="time-window">Time Window</label>
+          <input id="time-window" type="range" min="0" max="100" step="1" value="50">
+          <span id="time-window-value">30s</span>
         </div>
         <div class="toolbar-group">
           <label for="show-chronology">Chronology</label>
           <input id="show-chronology" type="checkbox" checked>
+        </div>
+        <div class="toolbar-group">
+          <label for="follow-live">Follow</label>
+          <input id="follow-live" type="checkbox" checked>
+        </div>
+        <div class="toolbar-group">
+          <button id="timeline-start" type="button">Start</button>
+          <button id="timeline-end" type="button">Latest</button>
         </div>
         <div id="lane-toggle-grid"></div>
       </div>
@@ -760,14 +807,18 @@
             <div id="detail-related"><div style="color:var(--text-dim);">No event selected.</div></div>
           </div>
 
-          <div class="detail-section" id="detail-chronology-wrap">
-            <label>Chronology</label>
-            <div class="chronology-pane" id="detail-chronology"></div>
-          </div>
-
-          <div class="detail-section">
-            <label>Payload</label>
-            <pre id="detail-payload">{}</pre>
+          <div class="detail-section fill">
+            <label>Inspector Pane</label>
+            <div class="detail-tabs">
+              <button class="detail-tab active" id="tab-chronology" type="button" data-detail-tab="chronology">Chronology</button>
+              <button class="detail-tab" id="tab-payload" type="button" data-detail-tab="payload">Raw Event JSON</button>
+            </div>
+            <div class="detail-pane active" id="detail-chronology-pane">
+              <div class="chronology-pane" id="detail-chronology"></div>
+            </div>
+            <div class="detail-pane" id="detail-payload-pane">
+              <pre id="detail-payload">{}</pre>
+            </div>
           </div>
         </aside>
       </div>
@@ -862,7 +913,9 @@
   let streamKey = 0;
   let selectedStreamKey = null;
   let compactMode = false;
-  let timeZoom = 1;
+  let timelineWindowSeconds = 30;
+  let followLive = true;
+  let activeDetailTab = "chronology";
 
   let runtimeControls = {reconcile: true, vision: true, auto_beat: true, filler: true};
   let visionService = {
@@ -910,10 +963,11 @@
   const streamLanes = document.getElementById("stream-lanes");
   const streamEmpty = document.getElementById("stream-empty");
   const laneToggleGrid = document.getElementById("lane-toggle-grid");
-  const detailChronologyWrap = document.getElementById("detail-chronology-wrap");
   const runtimeToggleButton = document.getElementById("runtime-toggle");
   const runtimeRestartButton = document.getElementById("runtime-restart");
   const bootRestartButton = document.getElementById("boot-restart");
+  const timeWindowSlider = document.getElementById("time-window");
+  const timeWindowValue = document.getElementById("time-window-value");
 
   async function loadStreamSchema() {
     try {
@@ -1004,6 +1058,38 @@
     const minutes = Math.floor(seconds / 60);
     const rem = seconds % 60;
     return `${minutes}m${rem}s`;
+  }
+
+  function formatWindow(seconds) {
+    if (seconds < 10) return `${seconds.toFixed(1)}s`;
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    const minutes = Math.floor(seconds / 60);
+    const rem = Math.round(seconds % 60);
+    return rem ? `${minutes}m ${rem}s` : `${minutes}m`;
+  }
+
+  function sliderToWindow(value) {
+    const minSeconds = 1;
+    const maxSeconds = 900;
+    const ratio = Number(value || 0) / 100;
+    return minSeconds * Math.pow(maxSeconds / minSeconds, ratio);
+  }
+
+  function setDetailTab(tab) {
+    activeDetailTab = tab;
+    document.querySelectorAll(".detail-tab").forEach((button) => {
+      button.classList.toggle("active", button.dataset.detailTab === tab);
+    });
+    document.getElementById("detail-chronology-pane").classList.toggle("active", tab === "chronology");
+    document.getElementById("detail-payload-pane").classList.toggle("active", tab === "payload");
+  }
+
+  function scrollTimelineToStart() {
+    streamViewport.scrollLeft = 0;
+  }
+
+  function scrollTimelineToEnd() {
+    streamViewport.scrollLeft = streamViewport.scrollWidth;
   }
 
   function bootChip(label, state, detail) {
@@ -1198,9 +1284,10 @@
     document.getElementById("runtime-status").innerHTML = "Waiting for runtime state...";
     document.getElementById("detail-label").textContent = "Select a live event to inspect it.";
     document.getElementById("detail-detail").textContent = "The stream view groups interwoven activity by lane and highlights all events from the same turn when selected.";
-    document.getElementById("detail-payload").textContent = "{}";
+    document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Raw event JSON appears here for the selected item.\"\n}";
     document.getElementById("detail-related").innerHTML = '<div style="color:var(--text-dim);">No event selected.</div>';
     document.getElementById("detail-chronology").innerHTML = "";
+    setDetailTab(activeDetailTab);
     document.getElementById("boot-summary").textContent = message;
     document.getElementById("boot-overlay-summary").textContent = message;
     renderStream();
@@ -1692,16 +1779,26 @@
   }
 
   function renderRuler(maxRelative) {
-    const scale = 160 * timeZoom;
-    const baseWidth = Math.max(streamViewport.clientWidth - 24, Math.max(960, (maxRelative + 2) * scale));
+    const usableWidth = Math.max(720, streamViewport.clientWidth - 48);
+    const scale = usableWidth / Math.max(timelineWindowSeconds, 1);
+    const baseWidth = Math.max(usableWidth + 40, 40 + (maxRelative + 1.5) * scale);
     streamRulerInner.style.width = `${baseWidth}px`;
-    const tickCount = Math.max(4, Math.ceil(maxRelative) + 2);
+    const roughTickTarget = timelineWindowSeconds / 6;
+    const step = roughTickTarget <= 2 ? 0.5
+      : roughTickTarget <= 5 ? 1
+      : roughTickTarget <= 12 ? 2
+      : roughTickTarget <= 24 ? 5
+      : roughTickTarget <= 60 ? 10
+      : roughTickTarget <= 120 ? 20
+      : 30;
+    const tickCount = Math.max(4, Math.ceil((maxRelative + 1.5) / step));
     const ticks = [];
     for (let i = 0; i <= tickCount; i += 1) {
-      ticks.push(`<div class="ruler-tick" style="left:${20 + i * scale}px;"><span>+${i.toFixed(0)}s</span></div>`);
+      const time = i * step;
+      ticks.push(`<div class="ruler-tick" style="left:${20 + time * scale}px;"><span>+${esc(formatWindow(time))}</span></div>`);
     }
     streamRulerInner.innerHTML = ticks.join("");
-    return baseWidth;
+    return {baseWidth, scale};
   }
 
   function renderStream() {
@@ -1717,7 +1814,7 @@
 
     streamEmpty.style.display = "none";
     const maxRelative = Math.max(...streamEvents.map((event) => relativeTime(event.timestamp)));
-    const baseWidth = renderRuler(maxRelative);
+    const {baseWidth, scale} = renderRuler(maxRelative);
     const lanes = {};
     laneOrder.forEach((lane) => { lanes[lane] = []; });
     streamEvents.forEach((event) => {
@@ -1734,7 +1831,7 @@
       const cards = [];
       let trackHeight = compactMode ? 34 : 96;
       laneEvents.forEach((event) => {
-        const left = 20 + relativeTime(event.timestamp) * 160 * timeZoom;
+        const left = 20 + relativeTime(event.timestamp) * scale;
         const width = cardWidth(event);
         const height = cardHeight(event);
         let row = 0;
@@ -1773,7 +1870,7 @@
     } else {
       selectEvent(streamEvents[streamEvents.length - 1].key);
     }
-    streamViewport.scrollLeft = streamViewport.scrollWidth;
+    if (followLive) scrollTimelineToEnd();
   }
 
   function recordEvent(type, data, rawEvent) {
@@ -2151,13 +2248,41 @@
     compactMode = e.target.value === "compact";
     renderStream();
   });
-  document.getElementById("time-zoom").addEventListener("input", (e) => {
-    timeZoom = Number(e.target.value || 1);
-    document.getElementById("time-zoom-value").textContent = `${timeZoom < 0.1 ? timeZoom.toFixed(2) : timeZoom.toFixed(1)}x`;
+  timeWindowSlider.addEventListener("input", (e) => {
+    timelineWindowSeconds = sliderToWindow(e.target.value);
+    timeWindowValue.textContent = formatWindow(timelineWindowSeconds);
     renderStream();
   });
   document.getElementById("show-chronology").addEventListener("change", (e) => {
-    detailChronologyWrap.style.display = e.target.checked ? "" : "none";
+    const show = e.target.checked;
+    document.getElementById("tab-chronology").style.display = show ? "" : "none";
+    if (!show && activeDetailTab === "chronology") setDetailTab("payload");
+    if (show && activeDetailTab !== "chronology" && !selectedStreamKey) setDetailTab("chronology");
+  });
+  document.getElementById("follow-live").addEventListener("change", (e) => {
+    followLive = !!e.target.checked;
+    if (followLive) scrollTimelineToEnd();
+  });
+  document.getElementById("timeline-start").addEventListener("click", () => {
+    followLive = false;
+    document.getElementById("follow-live").checked = false;
+    scrollTimelineToStart();
+  });
+  document.getElementById("timeline-end").addEventListener("click", () => {
+    followLive = true;
+    document.getElementById("follow-live").checked = true;
+    scrollTimelineToEnd();
+  });
+  document.querySelectorAll(".detail-tab").forEach((button) => {
+    button.addEventListener("click", () => setDetailTab(button.dataset.detailTab));
+  });
+  streamViewport.addEventListener("scroll", () => {
+    if (streamViewport.scrollWidth <= streamViewport.clientWidth + 4) return;
+    const atEnd = (streamViewport.scrollLeft + streamViewport.clientWidth) >= (streamViewport.scrollWidth - 16);
+    if (!atEnd && followLive) {
+      followLive = false;
+      document.getElementById("follow-live").checked = false;
+    }
   });
 
   runtimeToggleButton.addEventListener("click", () => sendInput(conversationPaused ? "/resume" : "/pause"));
@@ -2165,6 +2290,9 @@
   bootRestartButton.addEventListener("click", requestRestart);
 
   loadStreamSchema();
+  timelineWindowSeconds = sliderToWindow(timeWindowSlider.value);
+  timeWindowValue.textContent = formatWindow(timelineWindowSeconds);
+  setDetailTab("chronology");
   updateRuntimeButtons();
   renderBootStatus();
   refreshState();
