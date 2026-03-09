@@ -142,87 +142,40 @@ def _prompt_trace_blocks_for_labels(labels: tuple[str, ...], *, anchor_ts: float
 def _get_input(session_id: str) -> str:
     """Get user input from console or dashboard queue.
 
-    When dashboard is active, starts a thread to read stdin so that both
-    stdin and the dashboard input queue can be polled.
+    When dashboard is active, poll only the dashboard queue.
     """
     import queue as _queue
 
     if _dashboard_input_queue is None:
         return console.input(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: ").strip()
 
-    # Both sources feed a merge queue
-    merge_q: _queue.Queue = _queue.Queue()
-
-    def _stdin_reader():
-        try:
-            line = console.input(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: ").strip()
-            merge_q.put(("stdin", line))
-        except (EOFError, KeyboardInterrupt) as e:
-            merge_q.put(("error", e))
-
-    reader = threading.Thread(target=_stdin_reader, daemon=True)
-    reader.start()
-
     while True:
-        # Check dashboard queue
         try:
             text = _dashboard_input_queue.get(timeout=0.1)
-            console.print(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: {text}")
             return text
         except _queue.Empty:
             pass
 
 
 def _get_live_input(session_id: str, voice_io) -> str:
-    """Get input from voice, dashboard, or stdin while voice mode is active."""
+    """Get input from voice or dashboard while voice mode is active."""
     import queue as _queue
 
     if voice_io is None:
         return _get_input(session_id)
 
-    merge_q: _queue.Queue = _queue.Queue()
-
-    def _stdin_reader():
-        try:
-            line = console.input(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: ").strip()
-            merge_q.put(("stdin", line))
-        except (EOFError, KeyboardInterrupt) as e:
-            merge_q.put(("error", e))
-
-    reader = threading.Thread(target=_stdin_reader, daemon=True)
-    reader.start()
-
     while True:
         if _dashboard_input_queue is not None:
             try:
                 text = _dashboard_input_queue.get(timeout=0.1)
-                console.print(f"[bold blue]You[/bold blue] [dim]{session_id}[/dim]: {text}")
                 return text
             except _queue.Empty:
                 pass
 
         try:
-            source, value = merge_q.get_nowait()
-            if source == "error":
-                raise value
-            if not value:
-                continue
-            return value
-        except _queue.Empty:
-            pass
-
-        try:
             return voice_io.wait_for_input(timeout=0.1)
         except _queue.Empty:
             continue
-        # Check stdin
-        try:
-            source, value = merge_q.get_nowait()
-            if source == "error":
-                raise value
-            return value
-        except _queue.Empty:
-            pass
 
 # --- Background reconciliation threading ---
 _reconcile_lock = threading.Lock()
@@ -1439,7 +1392,10 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print(f"[bold blue]You[/bold blue] [dim]{session_id} {_ts()}[/dim]: {user_input}")
             else:
                 try:
-                    user_input = _get_input(session_id)
+                    if voice_io is not None:
+                        user_input = _get_live_input(session_id, voice_io)
+                    else:
+                        user_input = _get_input(session_id)
                 except (EOFError, KeyboardInterrupt):
                     console.print()
                     if voice_io is not None:

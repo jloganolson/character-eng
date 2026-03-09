@@ -345,7 +345,7 @@ def test_runtime_panel_interactions_in_browser(
 
     page.locator("#boot-restart").click()
     assert input_queue.get(timeout=2) == "/restart"
-    expect(page.locator("#boot-summary")).to_contain_text("Restarting session...")
+    expect(page.locator("#boot-summary")).to_contain_text("Restarting conversation...")
     expect(page.locator(".stream-card")).to_have_count(0)
 
     collector.push(
