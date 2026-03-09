@@ -35,7 +35,7 @@ class _VisionHandler(BaseHTTPRequestHandler):
                     "vllm_model": "gemma-vision-test",
                     "sam3": {"status": "ready"},
                     "face": {"status": "ready"},
-                    "person": {"status": "loading"},
+                    "person": {"status": "ready"},
                 }
             ).encode()
             self.send_response(HTTPStatus.OK)
@@ -118,7 +118,10 @@ def test_runtime_panel_interactions_in_browser(
     page = browser_page
     page.goto(dashboard_url)
 
+    expect(page.locator("body")).to_have_class(re.compile(r"\bbooting\b"))
+    expect(page.locator("#boot-overlay")).to_be_visible()
     expect(page.locator("#boot-summary")).to_contain_text("Connecting to the local runtime")
+    expect(page.locator("#boot-overlay-summary")).to_contain_text("Connecting to the local runtime")
     expect(page.locator("#boot-grid")).to_contain_text("dashboard")
     expect(page.locator("#boot-grid")).to_contain_text("runtime")
     expect(page.locator("#boot-heartbeat")).to_contain_text("page")
@@ -157,8 +160,11 @@ def test_runtime_panel_interactions_in_browser(
     )
 
     expect(page.locator("#h-character")).to_have_text("greg")
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
+    expect(page.locator("#boot-overlay")).not_to_be_visible()
     expect(page.locator("#runtime-status")).to_contain_text("state: paused")
     expect(page.locator("#boot-summary")).to_contain_text("Everything is warm. Resume when you want to start.")
+    expect(page.locator("#boot-overlay-summary")).to_contain_text("Everything is warm. Resume when you want to start.")
     expect(page.locator("#boot-grid")).to_contain_text("voice")
     expect(page.locator("#boot-grid")).to_contain_text("models")
     expect(page.locator("#runtime-status")).to_contain_text("reconcile: on")

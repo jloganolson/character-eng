@@ -73,8 +73,52 @@
     flex-direction: column;
     overflow: hidden;
   }
+  body.booting #header,
+  body.booting #main,
+  body.booting #footer,
+  body.booting #input-bar {
+    filter: blur(1.5px) saturate(0.7);
+    opacity: 0.28;
+    pointer-events: none;
+    user-select: none;
+  }
   button, input, select {
     font: inherit;
+  }
+  #boot-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    background: color-mix(in srgb, var(--bg) 68%, transparent);
+    backdrop-filter: blur(10px);
+  }
+  body.booting #boot-overlay {
+    display: flex;
+  }
+  .boot-overlay-card {
+    width: min(920px, 100%);
+    padding: 1.2rem 1.25rem;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background:
+      linear-gradient(160deg, color-mix(in srgb, var(--panel) 74%, var(--cyan) 26%), var(--panel)),
+      var(--panel);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.32);
+  }
+  .boot-overlay-lede {
+    font-size: 1.35rem;
+    line-height: 1.25;
+    margin-bottom: 0.35rem;
+    color: var(--text);
+  }
+  .boot-overlay-sub {
+    color: var(--text-dim);
+    margin-bottom: 0.9rem;
+    line-height: 1.5;
   }
   #header {
     display: flex;
@@ -648,6 +692,12 @@
     }
   }
   @media (max-width: 760px) {
+    #boot-overlay {
+      padding: 1rem;
+    }
+    .boot-overlay-card {
+      padding: 1rem;
+    }
     #header {
       flex-wrap: wrap;
       gap: 0.8em;
@@ -670,6 +720,18 @@
 </style>
 </head>
 <body>
+
+<div id="boot-overlay">
+  <div class="boot-overlay-card">
+    <div class="boot-overlay-lede" id="boot-overlay-summary">Connecting to the local runtime...</div>
+    <div class="boot-overlay-sub" id="boot-overlay-sub">The stack is warming voice, vision, and models. This view will unlock as soon as the local runtime is actually ready.</div>
+    <div class="boot-head">
+      <div class="boot-title">Startup Monitor</div>
+      <div id="boot-overlay-heartbeat" class="boot-heartbeat">page live</div>
+    </div>
+    <div id="boot-overlay-grid" class="boot-grid"></div>
+  </div>
+</div>
 
 <div id="header">
   <span class="character" id="h-character">--</span>
@@ -1023,9 +1085,15 @@
     const heartbeatEl = document.getElementById("boot-heartbeat");
     const summaryEl = document.getElementById("boot-summary");
     const gridEl = document.getElementById("boot-grid");
+    const overlayHeartbeatEl = document.getElementById("boot-overlay-heartbeat");
+    const overlaySummaryEl = document.getElementById("boot-overlay-summary");
+    const overlaySubEl = document.getElementById("boot-overlay-sub");
+    const overlayGridEl = document.getElementById("boot-overlay-grid");
     const now = Date.now();
     const lastEventText = lastEventAt ? `last event ${formatAge(now - lastEventAt)} ago` : "waiting for first event";
-    heartbeatEl.textContent = `${sseConnected ? "stream live" : "polling"} · page ${formatAge(now - pageLoadedAt)} · ${lastEventText}`;
+    const heartbeatText = `${sseConnected ? "stream live" : "polling"} · page ${formatAge(now - pageLoadedAt)} · ${lastEventText}`;
+    heartbeatEl.textContent = heartbeatText;
+    overlayHeartbeatEl.textContent = heartbeatText;
 
     const runtimeState = runtimeStateSeen ? (conversationPaused ? "ready" : "active") : "waiting";
     const runtimeDetail = runtimeStateSeen
@@ -1084,8 +1152,17 @@
       conversationPaused ? "Everything is warm. Resume when you want to start." :
       "Runtime is live. You can speak or type now.";
 
+    const modelReady = modelState === "ready" || modelState === "off";
+    const visionReady = !visionService.url || visionServiceState === "ready" || visionServiceState === "off";
+    const bootReady = runtimeStateSeen && sessionSeen && visionReady && modelReady && !modelPollError;
+    document.body.classList.toggle("booting", !bootReady);
+
     summaryEl.textContent = summary;
-    gridEl.innerHTML = [
+    overlaySummaryEl.textContent = summary;
+    overlaySubEl.textContent = !bootReady
+      ? "The stack is warming voice, vision, and models. This view will unlock as soon as the local runtime is actually ready."
+      : "The runtime is ready. You can start from the dashboard or just speak when you are ready.";
+    const cardHtml = [
       bootChip("dashboard", sseConnected ? "ready" : "active", sseConnected ? "Live event stream connected." : "Polling and waiting for server-side events."),
       bootChip("session", sessionState, sessionDetail),
       bootChip("runtime", runtimeState, runtimeDetail),
@@ -1093,6 +1170,8 @@
       bootChip("vision svc", visionServiceState, visionServiceDetail),
       bootChip("models", modelState, modelDetail),
     ].join("");
+    gridEl.innerHTML = cardHtml;
+    overlayGridEl.innerHTML = cardHtml;
   }
 
   function renderVisionModelCard(label, status, detail) {
