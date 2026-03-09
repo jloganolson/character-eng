@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from character_eng.chat import ChatSession
+from character_eng.chat import ChatSession, set_chat_trace_hook
 from character_eng.config import load_config, save_config
 from character_eng.models import BIG_MODEL, CHAT_MODEL, MODELS
 from character_eng.utils import start_prefixed_output_thread, ts as _ts
@@ -39,6 +39,7 @@ from character_eng.world import (
     load_world_state,
     plan_call,
     reconcile_call,
+    set_llm_trace_hook,
     script_check_call,
     single_beat_call,
     thought_call,
@@ -64,6 +65,78 @@ def _push(event_type: str, data: dict) -> None:
     """Push an event to the dashboard collector (no-op if dashboard is off)."""
     if _collector is not None:
         _collector.push(event_type, data)
+
+
+def _record_prompt_trace(payload: dict) -> None:
+    """Forward captured prompt traces to the dashboard as hidden runtime events."""
+    if _collector is None:
+        return
+    trace = dict(payload)
+    trace.setdefault("messages", [])
+    trace.setdefault("inputs", [])
+    trace.setdefault("output", "")
+    _collector.push("prompt_trace", trace)
+
+
+def _render_messages_text(messages: list[dict]) -> str:
+    parts: list[str] = []
+    for message in messages:
+        role = str(message.get("role", "message")).upper()
+        content = str(message.get("content", ""))
+        parts.append(f"{role}:\n{content}")
+    return "\n\n".join(parts).strip()
+
+
+def _prompt_trace_blocks_for_labels(labels: tuple[str, ...], *, anchor_ts: float | None = None) -> list[dict]:
+    if _collector is None or not labels:
+        return []
+
+    events = _collector.get_all()
+    traces = [event for event in events if event.get("type") == "prompt_trace"]
+    selected: list[dict] = []
+    seen_labels: set[str] = set()
+    target_anchor = float(anchor_ts or time.time())
+
+    for label in labels:
+        for trace_event in reversed(traces):
+            trace = trace_event.get("data", {})
+            if trace.get("label") != label:
+                continue
+            started_at = float(trace.get("started_at", 0.0) or 0.0)
+            finished_at = float(trace.get("finished_at", started_at) or started_at)
+            if finished_at > target_anchor + 0.75:
+                continue
+            if target_anchor - started_at > 12.0:
+                continue
+            selected.append(trace)
+            seen_labels.add(label)
+            break
+
+    if not selected:
+        for label in labels:
+            for trace_event in reversed(traces):
+                trace = trace_event.get("data", {})
+                if trace.get("label") != label or label in seen_labels:
+                    continue
+                selected.append(trace)
+                seen_labels.add(label)
+                break
+
+    blocks: list[dict] = []
+    for trace in selected:
+        messages = [dict(message) for message in trace.get("messages", [])]
+        inputs = [str(item) for item in trace.get("inputs", []) if str(item).strip()]
+        blocks.append({
+            "title": str(trace.get("title") or trace.get("label") or "Prompt"),
+            "label": str(trace.get("label", "")),
+            "provider": str(trace.get("provider", "")),
+            "model": str(trace.get("model", "")),
+            "messages": messages,
+            "rendered_prompt": _render_messages_text(messages),
+            "inputs": inputs,
+            "output": str(trace.get("output", "")),
+        })
+    return blocks
 
 
 def _get_input(session_id: str) -> str:
@@ -580,6 +653,7 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
         _push("expression", {
             "gaze": expr_result.gaze, "gaze_type": expr_result.gaze_type,
             "expression": expr_result.expression,
+            "prompt_blocks": _prompt_trace_blocks_for_labels(("expression",)),
         })
         parts = []
         if expr_result.gaze:
@@ -607,6 +681,7 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
         _push("eval", {
             "thought": tresult.thought, "script_status": check.status,
             "plan_request": check.plan_request,
+            "prompt_blocks": _prompt_trace_blocks_for_labels(("thought", "script_check")),
         })
 
         if check.status == "advance":
@@ -636,6 +711,7 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
                             "thought": dir_result.thought, "status": "advance",
                             "exit_index": dir_result.exit_index,
                             "new_stage": new_stage.name if new_stage else None,
+                            "prompt_blocks": _prompt_trace_blocks_for_labels(("director",)),
                         })
                         if new_stage:
                             console.print(f"[bold cyan]{_ts()} Stage → {new_stage.name}: {new_stage.goal}[/bold cyan]")
@@ -656,6 +732,7 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
             _push("director", {
                 "thought": dir_result.thought or "", "status": dir_result.status or "hold",
                 "exit_index": dir_result.exit_index,
+                "prompt_blocks": _prompt_trace_blocks_for_labels(("director",)),
             })
 
     return needs_plan, plan_request, expr_result
@@ -1093,6 +1170,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
               bridge=None, sim_speed: float = 1.0, start_paused: bool = False):
     """Run the chat loop for a character. Returns None normally, 'restart' to re-enter."""
     global _conversation_paused
+    set_llm_trace_hook(_record_prompt_trace)
+    set_chat_trace_hook(_record_prompt_trace)
     label = character.replace("_", " ").title()
     session_id = uuid.uuid4().hex[:8]
     log: list[dict] = []
@@ -1758,6 +1837,7 @@ def run_expression(session, model_config, line=None):
         _push("expression", {
             "gaze": result.gaze, "gaze_type": result.gaze_type,
             "expression": result.expression,
+            "prompt_blocks": _prompt_trace_blocks_for_labels(("expression",)),
         })
 
     parts = []
@@ -1781,7 +1861,12 @@ def deliver_beat(session, beat, label, voice_io=None):
     console.print(beat.line)
     console.print()
     _push("response_chunk", {"text": beat.line})
-    _push("response_done", {"full_text": beat.line, "ttft_ms": 0, "total_ms": 0})
+    _push("response_done", {
+        "full_text": beat.line,
+        "ttft_ms": 0,
+        "total_ms": 0,
+        "prompt_blocks": [],
+    })
     if voice_io is not None:
         voice_io.speak_text(beat.line)
         if voice_io._barged_in:
@@ -1817,7 +1902,10 @@ def apply_plan(script, plan_result):
     for i, beat in enumerate(plan_result.beats):
         marker = "→" if i == 0 else " "
         console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"[/magenta]")
-    _push("plan", {"beats": [{"intent": b.intent, "line": b.line} for b in plan_result.beats]})
+    _push("plan", {
+        "beats": [{"intent": b.intent, "line": b.line} for b in plan_result.beats],
+        "prompt_blocks": _prompt_trace_blocks_for_labels(("plan_single", "plan")),
+    })
 
 
 def handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=None, people=None, scenario=None, vision_mgr=None):
@@ -2195,11 +2283,21 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
         first_audio_ms = int((t_first_audio - t_start) * 1000) if t_first_audio else 0
         spoken_ms = int((t_end - t_start) * 1000)
         console.print(f"\n[dim]  {ttft_ms}ms TTFT · {llm_ms}ms LLM · {first_audio_ms}ms first audio · {spoken_ms}ms spoken[/dim]\n")
-        _push("response_done", {"full_text": response_text, "ttft_ms": ttft_ms, "total_ms": spoken_ms})
+        _push("response_done", {
+            "full_text": response_text,
+            "ttft_ms": ttft_ms,
+            "total_ms": spoken_ms,
+            "prompt_blocks": _prompt_trace_blocks_for_labels(("chat",)),
+        })
     else:
         total_ms = int((t_end - t_start) * 1000)
         console.print(f"\n[dim]  {ttft_ms}ms TTFT · {total_ms}ms total[/dim]\n")
-        _push("response_done", {"full_text": response_text, "ttft_ms": ttft_ms, "total_ms": total_ms})
+        _push("response_done", {
+            "full_text": response_text,
+            "ttft_ms": ttft_ms,
+            "total_ms": total_ms,
+            "prompt_blocks": _prompt_trace_blocks_for_labels(("chat",)),
+        })
     return response_text
 
 

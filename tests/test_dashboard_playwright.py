@@ -221,6 +221,19 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator(".stream-card")).to_have_count(2)
 
     collector.push("turn_start", {"input_type": "send", "input_text": "Do you have water?"})
+    collector.push("prompt_trace", {
+        "label": "chat",
+        "title": "Chat prompt",
+        "provider": "Groq",
+        "model": "llama-test",
+        "messages": [
+            {"role": "system", "content": "Keep it short."},
+            {"role": "user", "content": "Do you have water?"},
+        ],
+        "output": "Free water. Want one?",
+        "started_at": time.time(),
+        "finished_at": time.time(),
+    })
     collector.push("response_chunk", {"text": "Free water. "})
     collector.push("response_chunk", {"text": "Want one?"})
     collector.push("response_done", {"full_text": "Free water. Want one?", "ttft_ms": 190, "total_ms": 780})
@@ -246,6 +259,10 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#detail-type")).to_have_text("assistant_reply")
     expect(page.locator("#detail-label")).to_contain_text("Free water. Want one?")
     expect(page.locator("#detail-detail")).to_contain_text("TTFT 190ms")
+    page.locator("#tab-prompts").click()
+    expect(page.locator("#detail-prompts")).to_contain_text("Chat prompt")
+    expect(page.locator("#detail-prompts")).to_contain_text("Keep it short.")
+    expect(page.locator("#detail-prompts")).to_contain_text("Do you have water?")
     page.locator("#tab-payload").click()
     expect(page.locator("#detail-payload")).to_contain_text("\"total_ms\": 780")
     page.locator("#tab-chronology").click()

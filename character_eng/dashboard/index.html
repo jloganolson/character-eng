@@ -388,6 +388,12 @@
     position: relative;
     min-height: 96px;
     overflow: hidden;
+    cursor: grab;
+  }
+  #stream-viewport.grabbing,
+  #stream-viewport.grabbing .lane-track,
+  #stream-ruler.grabbing {
+    cursor: grabbing;
   }
   .lane-track-inner {
     position: relative;
@@ -577,6 +583,67 @@
   }
   .detail-pane.active {
     display: grid;
+  }
+  .detail-prompts {
+    display: grid;
+    gap: 0.75em;
+    overflow: auto;
+    min-height: 0;
+    padding-right: 0.2em;
+  }
+  .prompt-block {
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.7em;
+    display: grid;
+    gap: 0.55em;
+  }
+  .prompt-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45em;
+    align-items: baseline;
+  }
+  .prompt-title {
+    font-weight: 700;
+  }
+  .prompt-meta {
+    color: var(--text-dim);
+    font-size: 0.76em;
+  }
+  .prompt-subsection {
+    display: grid;
+    gap: 0.32em;
+  }
+  .prompt-subsection strong {
+    font-size: 0.72em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+  }
+  .prompt-message-list {
+    display: grid;
+    gap: 0.35em;
+  }
+  .prompt-message {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5em 0.6em;
+    background: color-mix(in srgb, var(--panel-hover) 75%, transparent);
+  }
+  .prompt-message-role {
+    font-size: 0.72em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--narrator);
+    margin-bottom: 0.2em;
+  }
+  .prompt-message-content {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.86em;
+    line-height: 1.45;
   }
   #detail-related button,
   .chronology-row {
@@ -811,10 +878,14 @@
             <label>Inspector Pane</label>
             <div class="detail-tabs">
               <button class="detail-tab active" id="tab-chronology" type="button" data-detail-tab="chronology">Chronology</button>
+              <button class="detail-tab" id="tab-prompts" type="button" data-detail-tab="prompts">Prompt / IO</button>
               <button class="detail-tab" id="tab-payload" type="button" data-detail-tab="payload">Raw Event JSON</button>
             </div>
             <div class="detail-pane active" id="detail-chronology-pane">
               <div class="chronology-pane" id="detail-chronology"></div>
+            </div>
+            <div class="detail-pane" id="detail-prompts-pane">
+              <div class="detail-prompts" id="detail-prompts"></div>
             </div>
             <div class="detail-pane" id="detail-payload-pane">
               <pre id="detail-payload">{}</pre>
@@ -916,6 +987,10 @@
   let timelineWindowSeconds = 30;
   let followLive = true;
   let activeDetailTab = "chronology";
+  const promptTraceEvents = [];
+  let isTimelineDragging = false;
+  let dragStartX = 0;
+  let dragStartScrollLeft = 0;
 
   let runtimeControls = {reconcile: true, vision: true, auto_beat: true, filler: true};
   let visionService = {
@@ -1081,6 +1156,7 @@
       button.classList.toggle("active", button.dataset.detailTab === tab);
     });
     document.getElementById("detail-chronology-pane").classList.toggle("active", tab === "chronology");
+    document.getElementById("detail-prompts-pane").classList.toggle("active", tab === "prompts");
     document.getElementById("detail-payload-pane").classList.toggle("active", tab === "payload");
   }
 
@@ -1090,6 +1166,123 @@
 
   function scrollTimelineToEnd() {
     streamViewport.scrollLeft = streamViewport.scrollWidth;
+  }
+
+  function promptTraceBlocksForEvent(event) {
+    if (!event) return [];
+    if (Array.isArray(event.data?.prompt_blocks) && event.data.prompt_blocks.length) {
+      return event.data.prompt_blocks;
+    }
+    const desired = {
+      assistant_reply: ["chat"],
+      response_done: ["chat"],
+      expression: ["expression"],
+      eval: ["thought", "script_check"],
+      director: ["director"],
+      post_response: ["thought", "script_check", "director", "plan_single", "plan"],
+      plan: ["plan_single", "plan"],
+      vision_focus: ["visual_focus"],
+      vision_snapshot: ["vision_synthesis"],
+      world_update: ["reconcile"],
+    }[event.type] || [];
+    if (!desired.length) return [];
+    const anchorTs = Number(event.timestamp || 0);
+    const selected = [];
+    const seen = new Set();
+    for (const label of desired) {
+      for (let i = promptTraceEvents.length - 1; i >= 0; i -= 1) {
+        const trace = promptTraceEvents[i];
+        if (trace.label !== label) continue;
+        const startedAt = Number(trace.started_at || 0);
+        const finishedAt = Number(trace.finished_at || startedAt);
+        if (finishedAt > anchorTs + 0.75) continue;
+        if (anchorTs - startedAt > 12.0) continue;
+        selected.push(trace);
+        seen.add(label);
+        break;
+      }
+    }
+    if (!selected.length) {
+      for (const label of desired) {
+        for (let i = promptTraceEvents.length - 1; i >= 0; i -= 1) {
+          const trace = promptTraceEvents[i];
+          if (trace.label !== label || seen.has(label)) continue;
+          selected.push(trace);
+          seen.add(label);
+          break;
+        }
+      }
+    }
+    return selected.map((trace) => ({
+      title: trace.title || trace.label || "Prompt",
+      label: trace.label || "",
+      provider: trace.provider || "",
+      model: trace.model || "",
+      messages: Array.isArray(trace.messages) ? trace.messages : [],
+      inputs: Array.isArray(trace.inputs) ? trace.inputs : [],
+      rendered_prompt: trace.rendered_prompt || _renderMessagesText(trace.messages || []),
+      output: trace.output || "",
+    }));
+  }
+
+  function _renderMessagesText(messages) {
+    return (messages || []).map((message) => {
+      const role = String(message.role || "message").toUpperCase();
+      const content = String(message.content || "");
+      return `${role}:\n${content}`;
+    }).join("\n\n").trim();
+  }
+
+  function renderPromptBlocks(blocks) {
+    const root = document.getElementById("detail-prompts");
+    root.innerHTML = "";
+    if (!blocks || !blocks.length) {
+      root.innerHTML = '<div style="color:var(--text-dim);">No prompt snapshot captured for this event.</div>';
+      return;
+    }
+    blocks.forEach((block) => {
+      const wrap = document.createElement("div");
+      wrap.className = "prompt-block";
+      const head = document.createElement("div");
+      head.className = "prompt-head";
+      head.innerHTML = `<div class="prompt-title">${esc(block.title || "Prompt")}</div>${
+        block.provider || block.model ? `<div class="prompt-meta">${esc([block.provider, block.model].filter(Boolean).join(" · "))}</div>` : ""
+      }`;
+      wrap.appendChild(head);
+      if (block.inputs && block.inputs.length) {
+        const sec = document.createElement("div");
+        sec.className = "prompt-subsection";
+        sec.innerHTML = `<strong>Inputs</strong><div class="prompt-message-list">${
+          block.inputs.map((item) => `<div class="prompt-message"><div class="prompt-message-content">${esc(item)}</div></div>`).join("")
+        }</div>`;
+        wrap.appendChild(sec);
+      }
+      if (block.messages && block.messages.length) {
+        const sec = document.createElement("div");
+        sec.className = "prompt-subsection";
+        sec.innerHTML = `<strong>Messages</strong><div class="prompt-message-list">${
+          block.messages.map((message) => `
+            <div class="prompt-message">
+              <div class="prompt-message-role">${esc(message.role || "message")}</div>
+              <div class="prompt-message-content">${esc(message.content || "")}</div>
+            </div>`).join("")
+        }</div>`;
+        wrap.appendChild(sec);
+      }
+      if (block.rendered_prompt) {
+        const sec = document.createElement("div");
+        sec.className = "prompt-subsection";
+        sec.innerHTML = `<strong>Rendered Prompt</strong><div class="prompt-message"><div class="prompt-message-content">${esc(block.rendered_prompt)}</div></div>`;
+        wrap.appendChild(sec);
+      }
+      if (block.output) {
+        const sec = document.createElement("div");
+        sec.className = "prompt-subsection";
+        sec.innerHTML = `<strong>Output</strong><div class="prompt-message"><div class="prompt-message-content">${esc(block.output)}</div></div>`;
+        wrap.appendChild(sec);
+      }
+      root.appendChild(wrap);
+    });
   }
 
   function bootChip(label, state, detail) {
@@ -1236,6 +1429,7 @@
   function resetDashboardState(message = "Connecting to the local runtime...") {
     streamEvents.length = 0;
     streamEventByKey.clear();
+    promptTraceEvents.length = 0;
     hiddenLanes.clear();
     sessionStart = null;
     sessionSeen = false;
@@ -1285,6 +1479,7 @@
     document.getElementById("detail-label").textContent = "Select a live event to inspect it.";
     document.getElementById("detail-detail").textContent = "The stream view groups interwoven activity by lane and highlights all events from the same turn when selected.";
     document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Raw event JSON appears here for the selected item.\"\n}";
+    document.getElementById("detail-prompts").innerHTML = '<div style="color:var(--text-dim);">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-related").innerHTML = '<div style="color:var(--text-dim);">No event selected.</div>';
     document.getElementById("detail-chronology").innerHTML = "";
     setDetailTab(activeDetailTab);
@@ -1610,6 +1805,7 @@
     document.getElementById("detail-label").textContent = event.label || "";
     document.getElementById("detail-detail").textContent = event.detail || "No compact detail";
     document.getElementById("detail-payload").textContent = JSON.stringify(event.data || {}, null, 2);
+    renderPromptBlocks(promptTraceBlocksForEvent(event));
 
     const related = relatedKeysFor(event);
     const relatedEl = document.getElementById("detail-related");
@@ -2222,6 +2418,14 @@
       if (event.seq <= lastSeq) return;
       lastSeq = event.seq;
     }
+    if (event.type === "prompt_trace") {
+      const data = event.data || {};
+      promptTraceEvents.push({
+        ...data,
+        timestamp: Number(event.timestamp || Date.now() / 1000),
+      });
+      return;
+    }
     const handler = handlers[event.type];
     if (handler) handler(event.data, event);
   }
@@ -2276,6 +2480,33 @@
   document.querySelectorAll(".detail-tab").forEach((button) => {
     button.addEventListener("click", () => setDetailTab(button.dataset.detailTab));
   });
+  streamViewport.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) return;
+    if (event.target.closest(".stream-card")) return;
+    isTimelineDragging = true;
+    dragStartX = event.clientX;
+    dragStartScrollLeft = streamViewport.scrollLeft;
+    streamViewport.classList.add("grabbing");
+    document.getElementById("stream-ruler").classList.add("grabbing");
+    event.preventDefault();
+  });
+  window.addEventListener("mousemove", (event) => {
+    if (!isTimelineDragging) return;
+    const deltaX = event.clientX - dragStartX;
+    streamViewport.scrollLeft = dragStartScrollLeft - deltaX;
+  });
+  window.addEventListener("mouseup", () => {
+    if (!isTimelineDragging) return;
+    isTimelineDragging = false;
+    streamViewport.classList.remove("grabbing");
+    document.getElementById("stream-ruler").classList.remove("grabbing");
+  });
+  streamViewport.addEventListener("wheel", (event) => {
+    const hasHorizontalIntent = Math.abs(event.deltaX) > 0 || Math.abs(event.deltaY) > 0;
+    if (!hasHorizontalIntent) return;
+    streamViewport.scrollLeft += event.deltaX || event.deltaY;
+    if (Math.abs(event.deltaX || event.deltaY) > 0) event.preventDefault();
+  }, {passive: false});
   streamViewport.addEventListener("scroll", () => {
     if (streamViewport.scrollWidth <= streamViewport.clientWidth + 4) return;
     const atEnd = (streamViewport.scrollLeft + streamViewport.clientWidth) >= (streamViewport.scrollWidth - 16);
