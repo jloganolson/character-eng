@@ -460,7 +460,7 @@
   }
   .stream-card-type {
     color: var(--text-dim);
-    font-size: 0.68em;
+    font-size: 0.66em;
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
@@ -469,18 +469,25 @@
   }
   .stream-card-time {
     color: var(--text-dim);
-    font-size: 0.68em;
+    font-size: 0.66em;
     white-space: nowrap;
   }
+  .stream-card-kicker {
+    color: var(--text-dim);
+    font-size: 0.7em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.18em;
+  }
   .stream-card-label {
-    font-size: 0.8em;
-    line-height: 1.35;
+    font-size: 0.9em;
+    line-height: 1.42;
     white-space: pre-wrap;
     word-break: break-word;
   }
   .stream-card.compact .stream-card-label {
-    font-size: 0.74em;
-    line-height: 1.15;
+    font-size: 0.76em;
+    line-height: 1.2;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -488,10 +495,36 @@
   .stream-card-detail {
     margin-top: 0.25em;
     color: var(--text-dim);
-    font-size: 0.72em;
-    line-height: 1.35;
+    font-size: 0.78em;
+    line-height: 1.42;
+  }
+  .stream-card-subdetail {
+    margin-top: 0.22em;
+    color: color-mix(in srgb, var(--text) 72%, var(--text-dim));
+    font-size: 0.76em;
+    line-height: 1.42;
   }
   .stream-card.compact .stream-card-detail {
+    display: none;
+  }
+  .stream-card.compact .stream-card-subdetail,
+  .stream-card.compact .stream-card-kicker {
+    display: none;
+  }
+  .stream-card-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.28em;
+    margin-top: 0.34em;
+  }
+  .stream-metric {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.12em 0.42em;
+    color: var(--text-dim);
+    font-size: 0.66em;
+  }
+  .stream-card.compact .stream-card-metrics {
     display: none;
   }
   .reply-markers {
@@ -704,6 +737,78 @@
   #detail-trace.active {
     display: grid;
   }
+  #detail-structure {
+    display: none;
+    gap: 0.55em;
+    padding: 0.7em;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-alt);
+  }
+  #detail-structure.active {
+    display: grid;
+  }
+  .structure-title {
+    font-size: 0.74em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+  }
+  .structure-grid {
+    display: grid;
+    gap: 0.55em;
+  }
+  .structure-section {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--panel-hover) 78%, transparent);
+    padding: 0.65em 0.75em;
+    display: grid;
+    gap: 0.38em;
+  }
+  .structure-section-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.45em;
+  }
+  .structure-section-title {
+    font-size: 0.78em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+  }
+  .structure-section-meta {
+    font-size: 0.72em;
+    color: var(--text-dim);
+  }
+  .structure-list {
+    display: grid;
+    gap: 0.35em;
+  }
+  .structure-item {
+    border-left: 3px solid var(--border);
+    padding-left: 0.55em;
+    display: grid;
+    gap: 0.14em;
+  }
+  .structure-item.kind-input { border-left-color: #72b6ff; }
+  .structure-item.kind-answer { border-left-color: #79e1cb; }
+  .structure-item.kind-claim { border-left-color: #f5cf78; }
+  .structure-item.kind-effect { border-left-color: #c8b1ff; }
+  .structure-item.kind-meta { border-left-color: var(--text-dim); }
+  .structure-item-key {
+    font-size: 0.68em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+  }
+  .structure-item-value {
+    font-size: 0.88em;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
   .trace-title {
     font-size: 0.74em;
     text-transform: uppercase;
@@ -844,6 +949,7 @@
     color: var(--text);
     padding: 0.5em 0.6em;
     cursor: pointer;
+    font-size: 0.86em;
   }
   #detail-related {
     display: grid;
@@ -1074,6 +1180,10 @@
                 <div class="trace-title">Source Trace</div>
                 <div class="trace-line" id="detail-trace-summary"></div>
                 <div class="trace-chips" id="detail-trace-chips"></div>
+              </div>
+              <div id="detail-structure">
+                <div class="structure-title">Event Breakdown</div>
+                <div class="structure-grid" id="detail-structure-grid"></div>
               </div>
             </div>
           </div>
@@ -1567,11 +1677,171 @@
       const candidate = streamEvents[i];
       if (candidate.timestamp > event.timestamp) continue;
       const delta = event.timestamp - candidate.timestamp;
+      if (candidate.type === "vision_pass" && delta <= 12) {
+        if (!focus && candidate.data?.focus) focus = {data: candidate.data.focus, timestamp: candidate.timestamp};
+        if (!snapshot && candidate.data?.snapshot) snapshot = {data: candidate.data.snapshot, timestamp: candidate.timestamp};
+      }
       if (!focus && candidate.type === "vision_focus" && delta <= 12) focus = candidate;
       if (!snapshot && candidate.type === "vision_snapshot" && delta <= 12) snapshot = candidate;
       if (focus && snapshot) break;
     }
     return {focus, snapshot};
+  }
+
+  function visionPassFocus(event) {
+    const base = event?.data?.focus || null;
+    const traceFocus = event?.data?.source_trace?.focus || null;
+    if (!base && !traceFocus) return null;
+    return {
+      constant_questions: [...(base?.constant_questions || []), ...(traceFocus?.constant_questions || [])],
+      ephemeral_questions: [...(base?.ephemeral_questions || []), ...(traceFocus?.ephemeral_questions || [])],
+      constant_sam_targets: [...(base?.constant_sam_targets || []), ...(traceFocus?.constant_sam_targets || [])],
+      ephemeral_sam_targets: [...(base?.ephemeral_sam_targets || []), ...(traceFocus?.ephemeral_sam_targets || [])],
+    };
+  }
+
+  function visionPassSnapshot(event) {
+    return event?.data?.snapshot || null;
+  }
+
+  function visionPassAnswers(event) {
+    const traceAnswers = event?.data?.source_trace?.vlm_answers;
+    if (Array.isArray(traceAnswers) && traceAnswers.length) return traceAnswers;
+    const snapshotAnswers = event?.data?.snapshot?.vlm_answers;
+    if (Array.isArray(snapshotAnswers) && snapshotAnswers.length) return snapshotAnswers;
+    return [];
+  }
+
+  function visionPassClaims(event) {
+    return Array.isArray(event?.data?.perceptions) ? event.data.perceptions : [];
+  }
+
+  function visionPassEffects(event) {
+    const results = [];
+    const seen = new Set();
+    const eventTurn = event?.turnId || null;
+    streamEvents.forEach((candidate) => {
+      if (!candidate || candidate.key === event.key) return;
+      let linked = false;
+      if (eventTurn && candidate.turnId === eventTurn) linked = true;
+      if (!linked && !eventTurn && Math.abs(candidate.timestamp - event.timestamp) <= 1.5 && ["world_update", "assistant_reply", "post_response"].includes(candidate.type)) {
+        linked = true;
+      }
+      if (!linked) return;
+      if (!["world_update", "assistant_reply", "post_response"].includes(candidate.type)) return;
+      if (seen.has(candidate.key)) return;
+      seen.add(candidate.key);
+      results.push(candidate);
+    });
+    return results.slice(0, 6);
+  }
+
+  function structureSection(title, items, meta = "") {
+    if (!items || !items.length) return "";
+    return `<section class="structure-section">
+      <div class="structure-section-header">
+        <div class="structure-section-title">${esc(title)}</div>
+        ${meta ? `<div class="structure-section-meta">${esc(meta)}</div>` : ""}
+      </div>
+      <div class="structure-list">
+        ${items.map((item) => `
+          <div class="structure-item kind-${esc(item.kind || "meta")}">
+            ${item.key ? `<div class="structure-item-key">${esc(item.key)}</div>` : ""}
+            <div class="structure-item-value">${esc(item.value || "")}</div>
+          </div>`).join("")}
+      </div>
+    </section>`;
+  }
+
+  function structuredSectionsForEvent(event) {
+    if (!event) return [];
+    const sections = [];
+    if (event.type === "vision_pass") {
+      const focus = visionPassFocus(event);
+      const snapshot = visionPassSnapshot(event);
+      const answers = visionPassAnswers(event);
+      const claims = visionPassClaims(event);
+      const effects = visionPassEffects(event);
+      const inputItems = [];
+      if (snapshot) {
+        inputItems.push({
+          kind: "input",
+          key: "snapshot",
+          value: `faces ${snapshot.faces ?? 0} · people ${snapshot.persons ?? 0} · objects ${snapshot.objects ?? event.data.object_count ?? 0}`,
+        });
+      }
+      const questions = [
+        ...(focus?.constant_questions || []).map((item) => ({kind: "input", key: "constant q", value: item})),
+        ...(focus?.ephemeral_questions || []).map((item) => ({kind: "input", key: "active q", value: item})),
+      ];
+      const samTargets = [
+        ...(focus?.constant_sam_targets || []).map((item) => ({kind: "input", key: "constant sam", value: item})),
+        ...(focus?.ephemeral_sam_targets || []).map((item) => ({kind: "input", key: "active sam", value: item})),
+      ];
+      sections.push(structureSection("Inputs", [...inputItems, ...questions, ...samTargets], `${questions.length} q · ${samTargets.length} sam`));
+
+      sections.push(structureSection("Raw Answers", answers.map((item) => ({
+        kind: "answer",
+        key: typeof item === "string" ? "vision" : (item.question || "vision"),
+        value: typeof item === "string" ? item : (item.answer || ""),
+      })), `${answers.length} answer${answers.length === 1 ? "" : "s"}`));
+
+      sections.push(structureSection("Derived Claims", claims.map((item) => ({
+        kind: "claim",
+        key: "claim",
+        value: item,
+      })), `${claims.length} claim${claims.length === 1 ? "" : "s"}`));
+
+      sections.push(structureSection("Effects", effects.map((item) => ({
+        kind: "effect",
+        key: `${item.type} · +${relativeTime(item.timestamp).toFixed(2)}s`,
+        value: item.label || item.detail || item.type,
+      })), `${effects.length} linked`));
+    } else if (event.type === "assistant_reply") {
+      const inputItems = [];
+      if (event.data?.stt_text) inputItems.push({kind: "input", key: "heard", value: event.data.stt_text});
+      if (event.data?.input_source) inputItems.push({kind: "meta", key: "source", value: event.data.input_source});
+      const timingItems = [
+        event.data?.stt_ms != null ? {kind: "meta", key: "stt", value: `${event.data.stt_ms}ms`} : null,
+        event.data?.ttft_ms != null ? {kind: "meta", key: "ttft", value: `${event.data.ttft_ms}ms`} : null,
+        event.data?.llm_ms != null ? {kind: "meta", key: "llm", value: `${event.data.llm_ms}ms`} : null,
+        event.data?.first_audio_ms != null ? {kind: "meta", key: "first audio", value: `${event.data.first_audio_ms}ms`} : null,
+        event.data?.audio_ms != null ? {kind: "meta", key: "clip", value: `${event.data.audio_ms}ms`} : null,
+      ].filter(Boolean);
+      sections.push(structureSection("Input", inputItems));
+      sections.push(structureSection("Output", [{kind: "claim", key: "reply", value: event.data?.full_text || event.label || ""}]));
+      sections.push(structureSection("Timing", timingItems));
+    } else if (event.type === "post_response") {
+      const items = [
+        event.data?.eval_thought ? {kind: "meta", key: "eval", value: event.data.eval_thought} : null,
+        event.data?.director_thought ? {kind: "meta", key: "director", value: event.data.director_thought} : null,
+        event.data?.new_stage ? {kind: "effect", key: "stage", value: event.data.new_stage} : null,
+        event.data?.next_intent ? {kind: "effect", key: "next beat", value: event.data.next_intent} : null,
+      ].filter(Boolean);
+      sections.push(structureSection("Post Response", items));
+    } else if (event.type === "world_update") {
+      const items = [
+        event.data?.latest_event ? {kind: "effect", key: "event", value: event.data.latest_event} : null,
+        event.data?.latest_fact ? {kind: "effect", key: "fact", value: event.data.latest_fact} : null,
+        event.data?.fact_count != null ? {kind: "meta", key: "facts", value: String(event.data.fact_count)} : null,
+        event.data?.people_count != null ? {kind: "meta", key: "people", value: String(event.data.people_count)} : null,
+      ].filter(Boolean);
+      sections.push(structureSection("World Impact", items));
+    }
+    return sections.filter(Boolean);
+  }
+
+  function renderStructuredDetail(event) {
+    const root = document.getElementById("detail-structure");
+    const grid = document.getElementById("detail-structure-grid");
+    root.classList.remove("active");
+    grid.innerHTML = "";
+    if (!event) return;
+
+    const html = structuredSectionsForEvent(event).join("");
+    if (!html) return;
+    grid.innerHTML = html;
+    root.classList.add("active");
   }
 
   function renderSourceTrace(event) {
@@ -1594,6 +1864,7 @@
         lines[0] = "source: visual";
       }
       if (trace?.kind) lines.push(`derived by: ${trace.kind}`);
+      if (event.type === "vision_pass" && !trace?.kind) lines.push("derived by: vision_synthesis");
       if (trace?.identity) lines.push(`identity: ${trace.identity}`);
       if (trace?.object_labels?.length) chipList.push(...trace.object_labels.slice(0, 5).map((item) => `object ${item}`));
       if (trace?.vlm_answers?.length) {
@@ -1605,7 +1876,15 @@
       if (trace?.focus?.ephemeral_sam_targets?.length) {
         chipList.push(...trace.focus.ephemeral_sam_targets.slice(0, 3).map((item) => `sam ${item}`));
       }
-      if ((!trace || event.type === "vision_pass") && visualContext.snapshot) {
+      const passSnapshot = event.type === "vision_pass" ? visionPassSnapshot(event) : null;
+      const passFocus = event.type === "vision_pass" ? visionPassFocus(event) : null;
+      if (passSnapshot) {
+        lines.push(`snapshot: faces ${passSnapshot.faces ?? 0} · people ${passSnapshot.persons ?? 0} · objects ${passSnapshot.objects ?? event.data?.object_count ?? 0}`);
+        const answers = passSnapshot.vlm_answers || [];
+        const labels = passSnapshot.object_labels || [];
+        chipList.push(...labels.slice(0, 4).map((item) => `object ${item}`));
+        chipList.push(...answers.slice(0, 3).map((item) => typeof item === "string" ? item : `${item.question || "vision"}: ${item.answer || ""}`));
+      } else if ((!trace || event.type === "vision_pass") && visualContext.snapshot) {
         lines.push(`nearest vision snapshot: +${relativeTime(visualContext.snapshot.timestamp).toFixed(2)}s`);
         const answers = visualContext.snapshot.data?.vlm_answers || [];
         const labels = visualContext.snapshot.data?.object_labels || [];
@@ -1615,7 +1894,10 @@
           return `${item.question || "vision"}: ${item.answer || ""}`;
         }));
       }
-      if (visualContext.focus && !trace?.focus) {
+      if (passFocus && !trace?.focus) {
+        chipList.push(...(passFocus.ephemeral_questions || []).slice(0, 3).map((item) => `q ${item}`));
+        chipList.push(...(passFocus.ephemeral_sam_targets || []).slice(0, 3).map((item) => `sam ${item}`));
+      } else if (visualContext.focus && !trace?.focus) {
         const focusData = visualContext.focus.data || {};
         chipList.push(...(focusData.ephemeral_questions || []).slice(0, 3).map((item) => `q ${item}`));
         chipList.push(...(focusData.ephemeral_sam_targets || []).slice(0, 3).map((item) => `sam ${item}`));
@@ -1825,6 +2107,8 @@
     document.getElementById("detail-trace").classList.remove("active");
     document.getElementById("detail-trace-summary").textContent = "";
     document.getElementById("detail-trace-chips").innerHTML = "";
+    document.getElementById("detail-structure").classList.remove("active");
+    document.getElementById("detail-structure-grid").innerHTML = "";
     detailOpenWindowButton.disabled = true;
     detailExportJsonButton.disabled = true;
     detailExportHtmlButton.disabled = true;
@@ -1901,6 +2185,8 @@
     document.getElementById("detail-trace").classList.remove("active");
     document.getElementById("detail-trace-summary").textContent = "";
     document.getElementById("detail-trace-chips").innerHTML = "";
+    document.getElementById("detail-structure").classList.remove("active");
+    document.getElementById("detail-structure-grid").innerHTML = "";
     detailOpenWindowButton.disabled = true;
     detailExportJsonButton.disabled = true;
     detailExportHtmlButton.disabled = true;
@@ -2077,6 +2363,8 @@
         return bits.length ? bits.join(" · ") : "Vision focus";
       }
       case "vision_pass": {
+        if (data.latest_perception) return data.latest_perception;
+        if (data.latest_answer) return data.latest_answer;
         const bits = [];
         if (data.perception_count) bits.push(`${data.perception_count} perception${data.perception_count === 1 ? "" : "s"}`);
         if (data.vlm_answer_count) bits.push(`${data.vlm_answer_count} answer${data.vlm_answer_count === 1 ? "" : "s"}`);
@@ -2147,8 +2435,9 @@
         ].filter(Boolean).join(" · ");
       case "vision_pass":
         return [
-          data.latest_answer || "",
-          data.latest_perception || "",
+          data.perception_count ? `${data.perception_count} claim${data.perception_count === 1 ? "" : "s"}` : "",
+          data.vlm_answer_count ? `${data.vlm_answer_count} answer${data.vlm_answer_count === 1 ? "" : "s"}` : "",
+          data.object_count ? `${data.object_count} object${data.object_count === 1 ? "" : "s"}` : "",
         ].filter(Boolean).join(" · ");
       case "post_response":
         return [
@@ -2212,6 +2501,7 @@
         data: event.data || {},
       },
       prompt_blocks: promptBlocks,
+      structure_sections: structuredSectionsForEvent(event),
       related_events: relatedEvents,
     };
   }
@@ -2249,6 +2539,7 @@
         <div class="muted">${esc(item.lane)} · +${esc(item.time_s.toFixed(2))}s</div>
       </div>
     `).join("");
+    const structureHtml = (bundle.structure_sections || []).join("");
     return `<!doctype html>
 <html>
 <head>
@@ -2272,6 +2563,18 @@
     .prompt-message.role-input { border-left-color:#8b8b8b; background:rgba(255,255,255,0.04); }
     .prompt-message-role { font-size:12px; text-transform:uppercase; letter-spacing:0.04em; color:#c7bfae; margin-bottom:4px; }
     .prompt-message-content, pre { white-space:pre-wrap; word-break:break-word; line-height:1.45; }
+    .structure-section { border:1px solid #3a3835; border-radius:12px; padding:14px; margin-top:12px; background:#191816; display:grid; gap:8px; }
+    .structure-section-header { display:flex; justify-content:space-between; gap:10px; align-items:baseline; flex-wrap:wrap; }
+    .structure-section-title { font-size:12px; text-transform:uppercase; letter-spacing:0.05em; color:#c7bfae; }
+    .structure-section-meta { font-size:12px; color:#c7bfae; }
+    .structure-list { display:grid; gap:8px; }
+    .structure-item { border-left:3px solid #3a3835; padding-left:10px; display:grid; gap:3px; }
+    .structure-item.kind-input { border-left-color:#72b6ff; }
+    .structure-item.kind-answer { border-left-color:#79e1cb; }
+    .structure-item.kind-claim { border-left-color:#f5cf78; }
+    .structure-item.kind-effect { border-left-color:#c8b1ff; }
+    .structure-item-key { font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#c7bfae; }
+    .structure-item-value { white-space:pre-wrap; word-break:break-word; line-height:1.45; }
     .related-row { border:1px solid #3a3835; border-radius:10px; padding:10px 12px; margin-top:8px; background:#21201d; }
     pre { border:1px solid #3a3835; border-radius:12px; padding:14px; background:#111; }
   </style>
@@ -2290,6 +2593,10 @@
   <section class="panel">
     <h2>Prompt / IO</h2>
     ${promptHtml || '<div class="muted">No prompt snapshot captured for this event.</div>'}
+  </section>
+  <section class="panel">
+    <h2>Event Breakdown</h2>
+    ${structureHtml || '<div class="muted">No structured breakdown captured for this event.</div>'}
   </section>
   <section class="panel">
     <h2>Related In Turn</h2>
@@ -2542,6 +2849,7 @@
     renderPromptBlocks(promptTraceBlocksForEvent(event));
     renderLoopTiming(event);
     renderSourceTrace(event);
+    renderStructuredDetail(event);
 
     const related = relatedKeysFor(event);
     const relatedEl = document.getElementById("detail-related");
@@ -2596,6 +2904,9 @@
     if (event.type === "assistant_reply") {
       return Math.max(260, Math.min(520, 220 + event.label.length * 3));
     }
+    if (event.type === "vision_pass") {
+      return Math.max(240, Math.min(420, 210 + event.label.length * 2.4));
+    }
     if (event.type === "post_response" || event.type === "world_update") {
       return Math.max(220, Math.min(360, 180 + event.label.length * 2.4));
     }
@@ -2605,7 +2916,7 @@
   function cardHeight(event) {
     if (compactMode) return 24;
     if (event.type === "assistant_reply") return 92;
-    if (event.type === "vision_pass") return 118;
+    if (event.type === "vision_pass") return 132;
     if (event.type === "post_response" || event.type === "world_update") return 84;
     if (event.detail) return 72;
     return 58;
@@ -2693,17 +3004,24 @@
       `;
     }
     if (event.type === "vision_pass") {
-      const chips = [
-        ...(event.data.ephemeral_questions || []).slice(0, 2).map((item) => `q ${item}`),
-        ...(event.data.ephemeral_sam_targets || []).slice(0, 2).map((item) => `sam ${item}`),
-        ...(event.data.object_labels || []).slice(0, 3).map((item) => `object ${item}`),
+      const metricChips = [
+        event.data.perception_count ? `${event.data.perception_count} claim${event.data.perception_count === 1 ? "" : "s"}` : "",
+        event.data.vlm_answer_count ? `${event.data.vlm_answer_count} answer${event.data.vlm_answer_count === 1 ? "" : "s"}` : "",
+        event.data.object_count ? `${event.data.object_count} object${event.data.object_count === 1 ? "" : "s"}` : "",
+      ].filter(Boolean);
+      const focusBits = [
+        ...(event.data.ephemeral_questions || []).slice(0, 1).map((item) => `q ${item}`),
+        ...(event.data.ephemeral_sam_targets || []).slice(0, 1).map((item) => `sam ${item}`),
       ];
-      const perceptions = (event.data.perceptions || []).slice(0, compactMode ? 1 : 4);
+      const secondary = event.data.latest_answer || "";
+      const tertiary = (event.data.object_labels || []).slice(0, 3).join(", ");
       return `
+        <div class="stream-card-kicker">vision pass</div>
         <div class="stream-card-label">${esc(event.label)}</div>
         ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
-        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
-        ${perceptions.length ? `<div class="stream-card-detail">${perceptions.map((item) => esc(item)).join("\n")}</div>` : ""}
+        ${secondary ? `<div class="stream-card-subdetail">${esc(secondary)}</div>` : ""}
+        ${tertiary ? `<div class="stream-card-subdetail">objects: ${esc(tertiary)}</div>` : ""}
+        ${(metricChips.length || focusBits.length) ? `<div class="stream-card-metrics">${[...metricChips, ...focusBits].map((chip) => `<span class="stream-metric">${esc(chip)}</span>`).join("")}</div>` : ""}
       `;
     }
     if (event.type === "perception") {

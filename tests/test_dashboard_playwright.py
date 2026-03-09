@@ -348,9 +348,24 @@ def test_runtime_panel_interactions_in_browser(
     perception_card.click()
     expect(page.locator("#detail-type")).to_have_text("vision_pass")
     expect(page.locator("#detail-trace")).to_have_class(re.compile(r"\bactive\b"))
+    expect(page.locator("#detail-structure")).to_have_class(re.compile(r"\bactive\b"))
+    expect(page.locator("#detail-structure")).to_contain_text("Inputs")
+    expect(page.locator("#detail-structure")).to_contain_text("Raw Answers")
+    expect(page.locator("#detail-structure")).to_contain_text("Derived Claims")
+    expect(page.locator("#detail-structure")).to_contain_text("Effects")
+    expect(page.locator("#detail-structure")).to_contain_text("Is anyone holding a flier?")
+    expect(page.locator("#detail-structure")).to_contain_text("A flier.")
     expect(page.locator("#detail-trace-summary")).to_contain_text("source: visual")
     expect(page.locator("#detail-trace-chips")).to_contain_text("object flier")
     expect(page.locator("#detail-trace-chips")).to_contain_text("sam flier")
+
+    with page.expect_popup() as vision_detail_popup_info:
+        page.locator("#detail-open-window").click()
+    vision_detail_popup = vision_detail_popup_info.value
+    vision_detail_popup.wait_for_load_state("domcontentloaded")
+    expect(vision_detail_popup.locator("body")).to_contain_text("Event Breakdown")
+    expect(vision_detail_popup.locator("body")).to_contain_text("Derived Claims")
+    vision_detail_popup.close()
 
     inspector_resizer = page.locator("#inspector-resizer")
     inspector_box = inspector_resizer.bounding_box()
