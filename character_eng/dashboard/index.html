@@ -33,6 +33,8 @@
     --stream-vision: #34d399;
     --stream-other: #cbd5e1;
     --sidebar-width: 110px;
+    --inspector-width: 360px;
+    --right-panel-width: 360px;
     --timeline-window-seconds: 30;
   }
   :root.light {
@@ -161,7 +163,7 @@
     overflow: hidden;
   }
   #timeline {
-    flex: 7;
+    flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
     padding: 0.6em;
@@ -240,7 +242,7 @@
   }
   #stream-main {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 360px;
+    grid-template-columns: minmax(0, 1fr) var(--inspector-width);
     gap: 0.6em;
     min-height: 0;
   }
@@ -671,6 +673,40 @@
     font-size: 0.68em;
     color: var(--text-dim);
   }
+  #detail-trace {
+    display: none;
+    gap: 0.45em;
+    padding: 0.6em 0.7em;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-alt);
+  }
+  #detail-trace.active {
+    display: grid;
+  }
+  .trace-title {
+    font-size: 0.74em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+  }
+  .trace-line {
+    font-size: 0.78em;
+    line-height: 1.45;
+    white-space: pre-wrap;
+  }
+  .trace-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3em;
+  }
+  .trace-chip {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.14em 0.46em;
+    font-size: 0.68em;
+    color: var(--text-dim);
+  }
   .detail-section {
     display: grid;
     gap: 0.4em;
@@ -823,7 +859,8 @@
     height: 100%;
   }
   #sidebar {
-    flex: 3;
+    flex: 0 0 var(--right-panel-width);
+    width: var(--right-panel-width);
     min-width: 310px;
     overflow-y: auto;
     padding: 0.6em 0.6em 0.6em 0;
@@ -966,6 +1003,16 @@
           <span id="time-window-value">30s</span>
         </div>
         <div class="toolbar-group">
+          <label for="inspector-width">Inspector</label>
+          <input id="inspector-width" type="range" min="280" max="720" step="10" value="360">
+          <span id="inspector-width-value">360px</span>
+        </div>
+        <div class="toolbar-group">
+          <label for="sidebar-width">Right Panel</label>
+          <input id="sidebar-width" type="range" min="240" max="560" step="10" value="360">
+          <span id="sidebar-width-value">360px</span>
+        </div>
+        <div class="toolbar-group">
           <label for="show-chronology">Chronology</label>
           <input id="show-chronology" type="checkbox" checked>
         </div>
@@ -1008,6 +1055,11 @@
                 <div class="loop-title">Loop Timing</div>
                 <div class="loop-track" id="detail-loop-track"></div>
                 <div class="loop-chips" id="detail-loop-chips"></div>
+              </div>
+              <div id="detail-trace">
+                <div class="trace-title">Source Trace</div>
+                <div class="trace-line" id="detail-trace-summary"></div>
+                <div class="trace-chips" id="detail-trace-chips"></div>
               </div>
             </div>
           </div>
@@ -1190,6 +1242,10 @@
   const bootRestartButton = document.getElementById("boot-restart");
   const timeWindowSlider = document.getElementById("time-window");
   const timeWindowValue = document.getElementById("time-window-value");
+  const inspectorWidthSlider = document.getElementById("inspector-width");
+  const inspectorWidthValue = document.getElementById("inspector-width-value");
+  const sidebarWidthSlider = document.getElementById("sidebar-width");
+  const sidebarWidthValue = document.getElementById("sidebar-width-value");
   const detailOpenWindowButton = document.getElementById("detail-open-window");
   const detailExportJsonButton = document.getElementById("detail-export-json");
   const detailExportHtmlButton = document.getElementById("detail-export-html");
@@ -1452,6 +1508,88 @@
     });
   }
 
+  function applyLayoutWidths() {
+    const inspector = `${inspectorWidthSlider.value}px`;
+    const sidebar = `${sidebarWidthSlider.value}px`;
+    document.documentElement.style.setProperty("--inspector-width", inspector);
+    document.documentElement.style.setProperty("--right-panel-width", sidebar);
+    inspectorWidthValue.textContent = inspector;
+    sidebarWidthValue.textContent = sidebar;
+  }
+
+  function nearestVisualContext(event) {
+    if (!event) return {focus: null, snapshot: null};
+    let focus = null;
+    let snapshot = null;
+    for (let i = streamEvents.length - 1; i >= 0; i -= 1) {
+      const candidate = streamEvents[i];
+      if (candidate.timestamp > event.timestamp) continue;
+      const delta = event.timestamp - candidate.timestamp;
+      if (!focus && candidate.type === "vision_focus" && delta <= 12) focus = candidate;
+      if (!snapshot && candidate.type === "vision_snapshot" && delta <= 12) snapshot = candidate;
+      if (focus && snapshot) break;
+    }
+    return {focus, snapshot};
+  }
+
+  function renderSourceTrace(event) {
+    const root = document.getElementById("detail-trace");
+    const summary = document.getElementById("detail-trace-summary");
+    const chips = document.getElementById("detail-trace-chips");
+    root.classList.remove("active");
+    summary.textContent = "";
+    chips.innerHTML = "";
+    if (!event) return;
+
+    const trace = event.data?.source_trace || null;
+    const visualContext = nearestVisualContext(event);
+    const chipList = [];
+    const lines = [];
+
+    if (event.type === "perception") {
+      lines.push(`source: ${event.data?.source || "unknown"}`);
+      if (trace?.kind) lines.push(`derived by: ${trace.kind}`);
+      if (trace?.identity) lines.push(`identity: ${trace.identity}`);
+      if (trace?.object_labels?.length) chipList.push(...trace.object_labels.slice(0, 5).map((item) => `object ${item}`));
+      if (trace?.vlm_answers?.length) {
+        chipList.push(...trace.vlm_answers.slice(0, 3).map((item) => `${item.question || "vision"}: ${item.answer || ""}`));
+      }
+      if (trace?.focus?.ephemeral_questions?.length) {
+        chipList.push(...trace.focus.ephemeral_questions.slice(0, 3).map((item) => `q ${item}`));
+      }
+      if (trace?.focus?.ephemeral_sam_targets?.length) {
+        chipList.push(...trace.focus.ephemeral_sam_targets.slice(0, 3).map((item) => `sam ${item}`));
+      }
+      if (!trace && visualContext.snapshot) {
+        lines.push(`nearest vision snapshot: +${relativeTime(visualContext.snapshot.timestamp).toFixed(2)}s`);
+        const answers = visualContext.snapshot.data?.vlm_answers || [];
+        const labels = visualContext.snapshot.data?.object_labels || [];
+        chipList.push(...labels.slice(0, 4).map((item) => `object ${item}`));
+        chipList.push(...answers.slice(0, 3).map((item) => {
+          if (typeof item === "string") return item;
+          return `${item.question || "vision"}: ${item.answer || ""}`;
+        }));
+      }
+      if (visualContext.focus && !trace?.focus) {
+        const focusData = visualContext.focus.data || {};
+        chipList.push(...(focusData.ephemeral_questions || []).slice(0, 3).map((item) => `q ${item}`));
+        chipList.push(...(focusData.ephemeral_sam_targets || []).slice(0, 3).map((item) => `sam ${item}`));
+      }
+    } else if (event.type === "vision_snapshot") {
+      lines.push("source: live vision snapshot");
+      const focus = event.data?.focus || visualContext.focus?.data || null;
+      if (focus?.ephemeral_questions?.length) chipList.push(...focus.ephemeral_questions.slice(0, 3).map((item) => `q ${item}`));
+      if (focus?.ephemeral_sam_targets?.length) chipList.push(...focus.ephemeral_sam_targets.slice(0, 3).map((item) => `sam ${item}`));
+      const answers = event.data?.vlm_answers || [];
+      chipList.push(...answers.slice(0, 3).map((item) => typeof item === "string" ? item : `${item.question || "vision"}: ${item.answer || ""}`));
+    }
+
+    if (!lines.length && !chipList.length) return;
+    summary.textContent = lines.join(" · ");
+    chips.innerHTML = chipList.map((item) => `<span class="trace-chip">${esc(item)}</span>`).join("");
+    root.classList.add("active");
+  }
+
   function bootChip(label, state, detail) {
     return `<div class="boot-chip">
       <div class="boot-chip-head">
@@ -1624,6 +1762,9 @@
     document.getElementById("detail-loop").classList.remove("active");
     document.getElementById("detail-loop-track").innerHTML = "";
     document.getElementById("detail-loop-chips").innerHTML = "";
+    document.getElementById("detail-trace").classList.remove("active");
+    document.getElementById("detail-trace-summary").textContent = "";
+    document.getElementById("detail-trace-chips").innerHTML = "";
     detailOpenWindowButton.disabled = true;
     detailExportJsonButton.disabled = true;
     detailExportHtmlButton.disabled = true;
@@ -1696,6 +1837,9 @@
     document.getElementById("detail-loop").classList.remove("active");
     document.getElementById("detail-loop-track").innerHTML = "";
     document.getElementById("detail-loop-chips").innerHTML = "";
+    document.getElementById("detail-trace").classList.remove("active");
+    document.getElementById("detail-trace-summary").textContent = "";
+    document.getElementById("detail-trace-chips").innerHTML = "";
     detailOpenWindowButton.disabled = true;
     detailExportJsonButton.disabled = true;
     detailExportHtmlButton.disabled = true;
@@ -1943,6 +2087,12 @@
         return [
           data.latest_event || "",
           data.latest_fact || ""
+        ].filter(Boolean).join(" · ");
+      case "perception":
+        return [
+          data.source || "",
+          data.source_trace?.kind || "",
+          data.source_trace?.object_labels?.length ? `objects ${data.source_trace.object_labels.join(", ")}` : "",
         ].filter(Boolean).join(" · ");
       case "runtime_controls":
         return [
@@ -2266,6 +2416,7 @@
     document.getElementById("detail-payload").textContent = JSON.stringify(event.data || {}, null, 2);
     renderPromptBlocks(promptTraceBlocksForEvent(event));
     renderLoopTiming(event);
+    renderSourceTrace(event);
 
     const related = relatedKeysFor(event);
     const relatedEl = document.getElementById("detail-related");
@@ -2409,6 +2560,18 @@
         ...(event.data.ephemeral_questions || []).slice(0, 2).map((item) => `q ${item}`),
         ...(event.data.ephemeral_sam_targets || []).slice(0, 2).map((item) => `sam ${item}`)
       ];
+      return `
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+      `;
+    }
+    if (event.type === "perception") {
+      const chips = [
+        event.data.source ? `source ${event.data.source}` : "",
+        ...(event.data.source_trace?.object_labels || []).slice(0, 3).map((item) => `object ${item}`),
+        ...((event.data.source_trace?.vlm_answers || []).slice(0, 2).map((item) => `${item.question || "vision"}: ${item.answer || ""}`)),
+      ].filter(Boolean);
       return `
         <div class="stream-card-label">${esc(event.label)}</div>
         ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
@@ -2953,6 +3116,8 @@
     timeWindowValue.textContent = formatWindow(timelineWindowSeconds);
     renderStream();
   });
+  inspectorWidthSlider.addEventListener("input", applyLayoutWidths);
+  sidebarWidthSlider.addEventListener("input", applyLayoutWidths);
   document.getElementById("show-chronology").addEventListener("change", (e) => {
     const show = e.target.checked;
     document.getElementById("tab-chronology").style.display = show ? "" : "none";
@@ -3051,6 +3216,7 @@
   loadStreamSchema();
   timelineWindowSeconds = sliderToWindow(timeWindowSlider.value);
   timeWindowValue.textContent = formatWindow(timelineWindowSeconds);
+  applyLayoutWidths();
   setDetailTab("chronology");
   updateRuntimeButtons();
   renderBootStatus();

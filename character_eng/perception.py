@@ -15,6 +15,7 @@ class PerceptionEvent:
     description: str
     source: str = "manual"  # "manual", "sim", "persona"
     timestamp: float = field(default_factory=time.time)
+    trace: dict = field(default_factory=dict)
 
 
 def process_perception(event: PerceptionEvent, people, world) -> tuple[None, str]:

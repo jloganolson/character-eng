@@ -1423,7 +1423,11 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                         _, narrator_msg = process_perception(event, people, world)
                         console.print(f"[dim]{narrator_msg}[/dim]")
                         session.inject_system(narrator_msg)
-                        _push("perception", {"source": event.source, "description": event.description})
+                        _push("perception", {
+                            "source": event.source,
+                            "description": event.description,
+                            "source_trace": getattr(event, "trace", {}) or {},
+                        })
                 vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal)
 
             # --- Command dispatch ---

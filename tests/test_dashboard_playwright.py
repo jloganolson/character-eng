@@ -284,8 +284,23 @@ def test_runtime_panel_interactions_in_browser(
         "vlm_answers": [{"question": "Is there a bottle visible?", "answer": "Yes, a water bottle is on the table."}],
         "object_labels": ["water bottle"],
     })
+    collector.push("perception", {
+        "source": "visual",
+        "description": "A person is now holding a flier",
+        "source_trace": {
+            "kind": "vision_synthesis",
+            "object_labels": ["flier", "table"],
+            "vlm_answers": [
+                {"question": "What is the person holding?", "answer": "A flier.", "slot_type": "activity"},
+            ],
+            "focus": {
+                "ephemeral_questions": ["Is anyone holding a flier?"],
+                "ephemeral_sam_targets": ["flier"],
+            },
+        },
+    })
 
-    expect(page.locator(".stream-card")).to_have_count(8)
+    expect(page.locator(".stream-card")).to_have_count(9)
     expect(page.locator(".stream-card[data-event-type='user_speech_started']")).to_have_count(1)
     expect(page.locator(".stream-card[data-event-type='user_transcript_final']")).to_have_count(1)
     reply_card = page.locator(".stream-card").filter(has_text="Free water. Want one?").first
@@ -326,8 +341,21 @@ def test_runtime_panel_interactions_in_browser(
 
     page.locator("#stream-density").select_option("compact")
     reply_card.click()
-    expect(page.locator(".stream-card.compact")).to_have_count(8)
+    expect(page.locator(".stream-card.compact")).to_have_count(9)
     expect(page.locator("#detail-type")).to_have_text("assistant_reply")
+
+    perception_card = page.locator(".stream-card").filter(has_text="A person is now holding a flier").first
+    perception_card.click()
+    expect(page.locator("#detail-type")).to_have_text("perception")
+    expect(page.locator("#detail-trace")).to_have_class(re.compile(r"\bactive\b"))
+    expect(page.locator("#detail-trace-summary")).to_contain_text("source: visual")
+    expect(page.locator("#detail-trace-chips")).to_contain_text("object flier")
+    expect(page.locator("#detail-trace-chips")).to_contain_text("sam flier")
+
+    page.locator("#inspector-width").evaluate("(el) => { el.value = 520; el.dispatchEvent(new Event('input', { bubbles: true })); }")
+    expect(page.locator("#inspector-width-value")).to_have_text("520px")
+    page.locator("#sidebar-width").evaluate("(el) => { el.value = 280; el.dispatchEvent(new Event('input', { bubbles: true })); }")
+    expect(page.locator("#sidebar-width-value")).to_have_text("280px")
 
     page.locator("button[data-lane-toggle='vision']").click()
     expect(page.locator("[data-stream-lane='vision']")).to_have_class(re.compile(r"\bhidden\b"))

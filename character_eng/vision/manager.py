@@ -195,7 +195,11 @@ class VisionManager:
             if key not in self._recent_events:
                 self._recent_events[key] = now
                 self._event_history.append(event_text)
-                self._events.append(PerceptionEvent(description=event_text, source="visual"))
+                self._events.append(PerceptionEvent(
+                    description=event_text,
+                    source="visual",
+                    trace=self._trace_payload(snapshot, kind="vision_synthesis"),
+                ))
 
     @staticmethod
     def _normalize_event(text: str) -> str:
@@ -219,6 +223,7 @@ class VisionManager:
                 self._events.append(PerceptionEvent(
                     description=f"{vid} appeared in view",
                     source="visual",
+                    trace=self._trace_payload(snapshot, kind="person_presence", identity=vid),
                 ))
                 # Map to people state
                 if self._people is not None:
@@ -232,4 +237,29 @@ class VisionManager:
             self._events.append(PerceptionEvent(
                 description=f"{vid} is no longer visible",
                 source="visual",
+                trace=self._trace_payload(snapshot, kind="person_presence", identity=vid),
             ))
+
+    def _trace_payload(self, snapshot: RawVisualSnapshot, **extra) -> dict:
+        payload = {
+            "faces": len(snapshot.faces),
+            "persons": len(snapshot.persons),
+            "objects": len(snapshot.objects),
+            "object_labels": [obj.label for obj in snapshot.objects],
+            "vlm_answers": [
+                {
+                    "question": answer.question,
+                    "answer": answer.answer,
+                    "slot_type": answer.slot_type,
+                }
+                for answer in (snapshot.vlm_answers or [])
+            ],
+            "focus": {
+                "constant_questions": list(self._last_focus.constant_questions),
+                "ephemeral_questions": list(self._last_focus.ephemeral_questions),
+                "constant_sam_targets": list(self._last_focus.constant_sam_targets),
+                "ephemeral_sam_targets": list(self._last_focus.ephemeral_sam_targets),
+            } if self._last_focus is not None else None,
+        }
+        payload.update(extra)
+        return payload
