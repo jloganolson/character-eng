@@ -228,6 +228,28 @@ def test_load_world_state_static_only(tmp_path, monkeypatch):
     assert ws.dynamic == {}
 
 
+def test_load_world_state_prefers_situation_setup(tmp_path, monkeypatch):
+    char_dir = tmp_path / "characters" / "test_char"
+    char_dir.mkdir(parents=True)
+    scenarios_dir = char_dir / "scenarios"
+    scenarios_dir.mkdir()
+    (char_dir / "character_manifest.toml").write_text('[files]\ndefault_scenario_script = "scenarios/live.toml"\n')
+    (scenarios_dir / "live.toml").write_text("""
+[setup]
+static_facts = ["Setup static"]
+dynamic_facts = ["Setup dynamic"]
+""")
+    (char_dir / "world_static.txt").write_text("Legacy static\n")
+    (char_dir / "world_dynamic.txt").write_text("Legacy dynamic\n")
+
+    monkeypatch.setattr(world_mod, "CHARACTERS_DIR", tmp_path / "characters")
+
+    ws = load_world_state("test_char")
+    assert ws is not None
+    assert ws.static == ["Setup static"]
+    assert list(ws.dynamic.values()) == ["Setup dynamic"]
+
+
 # --- Script ---
 
 

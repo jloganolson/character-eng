@@ -29,17 +29,12 @@ This is the concrete control map for the local Greg experience.
   - Global behavior rules.
 - [prompts/characters/greg/character.txt](/home/logan/Projects/character-eng/prompts/characters/greg/character.txt)
   - Greg’s persona and speaking style.
-- [prompts/characters/greg/scenario.txt](/home/logan/Projects/character-eng/prompts/characters/greg/scenario.txt)
-  - Scenario framing.
-- [prompts/characters/greg/world_static.txt](/home/logan/Projects/character-eng/prompts/characters/greg/world_static.txt)
-  - Static world facts.
-- [prompts/characters/greg/world_dynamic.txt](/home/logan/Projects/character-eng/prompts/characters/greg/world_dynamic.txt)
-  - Dynamic world facts starter.
+- [prompts/characters/greg/scenario_script.toml](/home/logan/Projects/character-eng/prompts/characters/greg/scenario_script.toml)
+  - Greg’s default live scenario package.
+  - Holds both authored setup (`[setup]`) and stage flow.
 
 ### Scenario flow
 
-- [prompts/characters/greg/scenario_script.toml](/home/logan/Projects/character-eng/prompts/characters/greg/scenario_script.toml)
-  - Default live runtime scenario, selected by Greg's manifest.
 - [prompts/characters/greg/scenarios/punchy.toml](/home/logan/Projects/character-eng/prompts/characters/greg/scenarios/punchy.toml)
 - [prompts/characters/greg/scenarios/office_pov.toml](/home/logan/Projects/character-eng/prompts/characters/greg/scenarios/office_pov.toml)
   - Non-default scenario variants used by QA/full-stack harnesses.

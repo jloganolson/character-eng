@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from character_eng.creative import character_asset_path, load_prompt_asset
+from character_eng.creative import character_asset_path, load_character_setup, load_prompt_asset
 from character_eng.models import MODELS, get_fallback_chain
 from character_eng.utils import ts as _ts
 
@@ -338,7 +338,14 @@ def _detect_explicit_redirect(history: list[dict], beat: Beat) -> ScriptCheckRes
     return None
 
 
-def load_world_state(character: str) -> WorldState | None:
+def load_world_state(character: str, scenario_file: str | None = None) -> WorldState | None:
+    setup = load_character_setup(character, characters_dir=CHARACTERS_DIR, scenario_file=scenario_file)
+    if setup is not None and (setup.static_facts or setup.dynamic_facts):
+        ws = WorldState(static=list(setup.static_facts))
+        for line in setup.dynamic_facts:
+            ws.add_fact(line)
+        return ws
+
     static_path = character_asset_path(character, "world_static", characters_dir=CHARACTERS_DIR)
     dynamic_path = character_asset_path(character, "world_dynamic", characters_dir=CHARACTERS_DIR)
 

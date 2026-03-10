@@ -11,7 +11,9 @@ def _setup_char(tmp_path, name, prompt_txt, **extra_files):
     char_dir.mkdir(parents=True)
     (char_dir / "prompt.txt").write_text(prompt_txt)
     for filename, content in extra_files.items():
-        (char_dir / filename).write_text(content)
+        path = char_dir / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
     return prompts_dir, char_dir
 
 
@@ -175,3 +177,23 @@ def test_load_prompt_uses_character_manifest_files(tmp_path, monkeypatch):
     result = load_prompt("test_char")
     assert "Manifest-driven voice" in result
     assert "Manifest-driven scenario" in result
+
+
+def test_load_prompt_prefers_situation_setup_premise(tmp_path, monkeypatch):
+    prompts_dir, char_dir = _setup_char(
+        tmp_path,
+        "test_char",
+        "Scene: {{scenario}}",
+        **{
+            "character_manifest.toml": '[files]\ndefault_scenario_script = "scenarios/live.toml"\nscenario = "scene.txt"\n',
+            "scene.txt": "Legacy scenario text",
+            "scenarios/live.toml": '[setup]\npremise = "Setup-driven premise"\n',
+        },
+    )
+
+    monkeypatch.setattr(prompts_mod, "PROMPTS_DIR", prompts_dir)
+    monkeypatch.setattr(prompts_mod, "CHARACTERS_DIR", prompts_dir / "characters")
+
+    result = load_prompt("test_char")
+    assert "Setup-driven premise" in result
+    assert "Legacy scenario text" not in result

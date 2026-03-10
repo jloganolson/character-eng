@@ -384,12 +384,11 @@ Characters live in `prompts/characters/<name>/` with these files:
 |------|---------|
 | `prompt.txt` | Main template — uses `{{global_rules}}`, `{{character}}`, `{{scenario}}`, `{{world}}`, `{{people}}`, `{{vision}}` macros |
 | `character.txt` | Personality, voice, and goals (optional `Long-term goal:` line) |
-| `scenario.txt` | Situation and context |
-| `world_static.txt` | Permanent facts (one per line, optional) |
-| `world_dynamic.txt` | Initial mutable state (one per line, loaded with stable IDs `f1`, `f2`, ...) |
-| `scenario_script.toml` | Default live scenario stages for the character |
+| `scenario_script.toml` | Preferred live scenario package: authored setup (`[setup]`) plus stage graph (`[scenario]`, `[[stage]]`) |
 | `scenarios/*.toml` | Optional scenario variants used by QA/harness flows or alternate modes |
 | `sims/*.sim.txt` | Sim scripts for `/sim` command — `time_offset \| description` per line (optional) |
+
+Legacy `scenario.txt`, `world_static.txt`, and `world_dynamic.txt` are still supported as fallback for older characters, but the preferred authoring path is to keep setup and progression together inside `scenario_script.toml`.
 
 `prompts/global_rules.txt` contains rules shared across all characters.
 

@@ -19,6 +19,7 @@ If a CURRENT STAGE GOAL is present, the beat should advance that goal naturally.
 If a PEOPLE PRESENT section is present, the beat should acknowledge and interact with them.
 If someone has just appeared and the LIVE VISUAL STATE contains a clear concrete detail about their clothing, appearance, or what they are carrying, use one kind specific observation in the opening line.
 On first contact, try to learn who they are or what to call them quickly.
+Treat the LIVE VISUAL STATE as the character's own point of view unless the context clearly says otherwise. Do not talk like an outside bystander looking at somebody else's scene.
 
 ## Output format
 

@@ -5,7 +5,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from character_eng.creative import character_asset_path
+from character_eng.creative import resolve_character_scenario_path
 from rich.panel import Panel
 
 from character_eng.world import _llm_call, load_system_prompt
@@ -97,16 +97,7 @@ def match_visual_exit(scenario: ScenarioScript | None, events: list) -> int:
 def load_scenario_script(character: str, filename: str | None = None) -> ScenarioScript | None:
     """Load a character scenario TOML file. Returns None if not found."""
     char_dir = (CHARACTERS_DIR / character).resolve()
-    if filename is None:
-        requested = Path(
-            character_asset_path(character, "default_scenario_script", characters_dir=CHARACTERS_DIR)
-            .relative_to(CHARACTERS_DIR / character)
-        )
-    else:
-        requested = Path(filename)
-    if requested.name in {"", ".", ".."} or requested.is_absolute() or ".." in requested.parts:
-        raise ValueError(f"invalid scenario filename: {filename!r}")
-    path = (char_dir / requested).resolve()
+    path = resolve_character_scenario_path(character, filename, characters_dir=CHARACTERS_DIR)
     try:
         path.relative_to(char_dir)
     except ValueError as exc:

@@ -2122,14 +2122,14 @@ def main() -> None:
         vision_sampler = VisionSampler(vision_client, session_recorder)
         vision_sampler.start()
 
-        world = load_world_state(args.character)
+        world = load_world_state(args.character, scenario_file=scenario_file)
         goals = load_goals(args.character)
         people = PeopleState()
         scenario_file = args.scenario_file
         if args.vision_source == "live" and scenario_file == "scenarios/punchy.toml":
             scenario_file = "scenarios/office_pov.toml"
         scenario = load_scenario_script(args.character, scenario_file)
-        system_prompt = load_prompt(args.character, world_state=world, people_state=people)
+        system_prompt = load_prompt(args.character, world_state=world, people_state=people, scenario_file=scenario_file)
         session = ChatSession(system_prompt, model_config)
         script = Script()
         log: list[dict] = []

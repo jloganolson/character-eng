@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-from character_eng.creative import character_asset_path, prompt_asset_path
+from character_eng.creative import character_asset_path, load_character_setup, prompt_asset_path
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 CHARACTERS_DIR = PROMPTS_DIR / "characters"
@@ -27,7 +27,7 @@ def _read(path: Path) -> str:
         return ""
 
 
-def load_prompt(character: str, world_state=None, people_state=None, vision_context=None) -> str:
+def load_prompt(character: str, world_state=None, people_state=None, vision_context=None, scenario_file: str | None = None) -> str:
     """Load and resolve a character's prompt template.
 
     Substitutes {{key}} macros in prompt.txt with:
@@ -41,11 +41,12 @@ def load_prompt(character: str, world_state=None, people_state=None, vision_cont
     Unknown macros are left intact for debugging via /trace.
     """
     template = character_asset_path(character, "prompt", characters_dir=CHARACTERS_DIR).read_text()
+    setup = load_character_setup(character, characters_dir=CHARACTERS_DIR, scenario_file=scenario_file)
 
     macros = {
         "global_rules": _read(prompt_asset_path("global_rules", prompts_dir=PROMPTS_DIR, default_filename="global_rules.txt")),
         "character": _read(character_asset_path(character, "character", characters_dir=CHARACTERS_DIR)),
-        "scenario": _read(character_asset_path(character, "scenario", characters_dir=CHARACTERS_DIR)),
+        "scenario": setup.premise if setup and setup.premise else _read(character_asset_path(character, "scenario", characters_dir=CHARACTERS_DIR)),
         "world": world_state.render() if world_state else "",
         "people": people_state.render() if people_state else "",
         "vision": vision_context.render_for_prompt() if vision_context else "",

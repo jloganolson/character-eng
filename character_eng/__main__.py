@@ -2371,31 +2371,25 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
 
 
 def _inject_runtime_turn_guardrails(session, user_input: str = "", people=None, scenario=None, vision_mgr=None) -> None:
-    system_prompt = getattr(session, "system_prompt", "")
     parts = [
         "Turn guardrails:",
         "- Keep the spoken reply to one short sentence, or two short sentences max.",
         "- Prefer 8-16 words. Do not exceed about 22 words unless the user explicitly asks for detail.",
         "- Answer the user's most concrete question first.",
+        "- Treat the live view as your first-person perspective unless context clearly says otherwise.",
+        "- Do not talk like an outside bystander observing your own scene from afar.",
+        "- Stay grounded in what is currently visible or already established. Do not assume props, business, or setting details that are not in context.",
     ]
-    if "You are Greg" in system_prompt or "GREG'S: FREE WATER / FREE ADVICE" in system_prompt:
+    lowered = user_input.lower()
+    if any(token in lowered for token in ("i should get going", "got to go", "gotta go", "i should go", "goodbye", "bye", "see you")):
         parts.extend([
-            "- Greg is not making a sale. Do not mention prices, money, loans, upsells, premium options, or needing business.",
-            "- The water and the advice are free. If asked about price or the catch, say plainly that there is no catch.",
-            "- Flyers are optional background props, not the point of the interaction.",
-            "- Do not tell the user to take a flier unless they explicitly ask about the flier first.",
-            "- Do not invent flavors, specials, hidden deals, or business pressure.",
+            "- The user is leaving. Give one warm goodbye line, no follow-up question, and do not try to keep them there.",
         ])
-        lowered = user_input.lower()
-        if any(token in lowered for token in ("price", "cost", "free", "catch", "how much")):
-            parts.append("- For this turn, answer plainly: free water, free advice, no catch.")
-        if any(token in lowered for token in ("i should get going", "got to go", "gotta go", "i should go", "goodbye", "bye", "see you")):
-            parts.append("- The user is leaving. Give one warm goodbye line, no follow-up question, and do not try to keep them there.")
-        if people is not None and people.present_people() and (not user_input.strip()):
-            parts.extend([
-                "- If this is the first live moment with a visible person, open with one kind, concrete observation grounded in what they are wearing, carrying, or doing only if the visual context clearly supports it.",
-                "- After the opener, try to learn who they are or what to call them quickly.",
-            ])
+    if people is not None and people.present_people() and (not user_input.strip()):
+        parts.extend([
+            "- If this is the first live moment with a visible person, open with one kind, concrete observation grounded in what they are wearing, carrying, or doing only if the visual context clearly supports it.",
+            "- After the opener, try to learn who they are or what to call them quickly.",
+        ])
     session.upsert_system("runtime_turn_guardrails", "\n".join(parts))
 
 

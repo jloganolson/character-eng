@@ -15,6 +15,14 @@ class CharacterManifest:
     default_scenario_script: str = "scenario_script.toml"
 
 
+@dataclass(frozen=True)
+class SituationSetup:
+    premise: str = ""
+    static_facts: tuple[str, ...] = ()
+    dynamic_facts: tuple[str, ...] = ()
+    gaze_targets: tuple[str, ...] = ()
+
+
 def load_character_manifest(character: str, *, characters_dir: Path) -> CharacterManifest:
     char_dir = characters_dir / character
     manifest_path = char_dir / "character_manifest.toml"
@@ -70,3 +78,30 @@ def load_prompt_asset(
     default_filename: str | None = None,
 ) -> str:
     return prompt_asset_path(key, prompts_dir=prompts_dir, default_filename=default_filename).read_text()
+
+
+def resolve_character_scenario_path(
+    character: str,
+    filename: str | None = None,
+    *,
+    characters_dir: Path,
+) -> Path:
+    manifest = load_character_manifest(character, characters_dir=characters_dir)
+    requested = Path(filename or manifest.default_scenario_script)
+    if requested.name in {"", ".", ".."} or requested.is_absolute() or ".." in requested.parts:
+        raise ValueError(f"invalid scenario filename: {filename!r}")
+    return (characters_dir / character / requested).resolve()
+
+
+def load_character_setup(character: str, *, characters_dir: Path, scenario_file: str | None = None) -> SituationSetup | None:
+    path = resolve_character_scenario_path(character, scenario_file, characters_dir=characters_dir)
+    if not path.exists():
+        return None
+    data = tomllib.loads(path.read_text())
+    setup = data.get("setup", {})
+    return SituationSetup(
+        premise=str(setup.get("premise", "")).strip(),
+        static_facts=tuple(str(item).strip() for item in setup.get("static_facts", []) if str(item).strip()),
+        dynamic_facts=tuple(str(item).strip() for item in setup.get("dynamic_facts", []) if str(item).strip()),
+        gaze_targets=tuple(str(item).strip() for item in setup.get("gaze_targets", []) if str(item).strip()),
+    )
