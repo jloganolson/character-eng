@@ -2015,7 +2015,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Full-stack automation harness")
     parser.add_argument("--model", default=DEFAULT_MODEL, choices=MODELS.keys())
     parser.add_argument("--character", default="greg")
-    parser.add_argument("--scenario-file", default="scenarios/punchy.toml")
+    parser.add_argument("--scenario-file", default="scenario_script.toml")
     parser.add_argument("--vision-source", choices=("generated", "live"), default="generated")
     parser.add_argument("--vision-port", type=int, default=0)
     parser.add_argument("--pocket-server-url", default="http://127.0.0.1:8003")
@@ -2106,8 +2106,6 @@ def main() -> None:
         vision_client = VisionClient(vision_url)
         vision_ready = _wait_for_vision_models(vision_client)
         scenario_file = args.scenario_file
-        if args.vision_source == "live" and scenario_file == "scenarios/punchy.toml":
-            scenario_file = "scenarios/office_pov.toml"
 
         focus_constant_questions = list(CORE_CONSTANT_QUESTIONS)
         focus_ephemeral_questions = ["Is the nearest person interacting with any specific object in the room?"]

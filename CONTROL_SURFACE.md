@@ -9,7 +9,7 @@ This is the concrete control map for the local Greg experience.
 - [prompts/characters/greg/character_manifest.toml](/home/logan/Projects/character-eng/prompts/characters/greg/character_manifest.toml)
   - Greg’s central asset map.
 - [prompts/characters/mara/character_manifest.toml](/home/logan/Projects/character-eng/prompts/characters/mara/character_manifest.toml)
-  - Mara’s central asset map.
+  - Mara’s asset map, currently disabled for iteration.
 
 ## Prompt Count
 
@@ -31,13 +31,12 @@ This is the concrete control map for the local Greg experience.
   - Greg’s persona and speaking style.
 - [prompts/characters/greg/scenario_script.toml](/home/logan/Projects/character-eng/prompts/characters/greg/scenario_script.toml)
   - Greg’s default live scenario package.
-  - Holds both authored setup (`[setup]`) and stage flow.
+  - Holds authored setup (`[setup]`), static scenario facts, guardrails, and stage flow.
 
 ### Scenario flow
 
-- [prompts/characters/greg/scenarios/punchy.toml](/home/logan/Projects/character-eng/prompts/characters/greg/scenarios/punchy.toml)
-- [prompts/characters/greg/scenarios/office_pov.toml](/home/logan/Projects/character-eng/prompts/characters/greg/scenarios/office_pov.toml)
-  - Non-default scenario variants used by QA/full-stack harnesses.
+- [prompts/characters/greg/scenario_script.toml](/home/logan/Projects/character-eng/prompts/characters/greg/scenario_script.toml)
+  - Single canonical Greg live scenario package.
 
 ### Specialist prompt files
 
