@@ -84,8 +84,6 @@ uv run -m character_eng --voice --vision # voice + vision
 uv run -m character_eng --vision-mock walkup.json  # vision with mock replay (no camera)
 uv run -m character_eng --browser        # browser mic/camera via WebSocket (remote mode)
 uv run -m character_eng --browser --vision  # full remote: browser audio + camera → vision
-uv run -m character_eng --character mara           # auto-select character (skip menu)
-uv run -m character_eng --character mara --sim curious  # run sim non-interactively
 uv run -m character_eng --smoke          # smoke test (auto greg, scripted inputs, exit)
 ```
 
@@ -94,7 +92,6 @@ uv run -m character_eng --smoke          # smoke test (auto greg, scripted input
 Useful variants:
 
 ```bash
-CHARACTER=mara ./scripts/run_local.sh    # pick a default character
 CLEAN_START=0 ./scripts/run_local.sh     # reuse existing local services
 KEEP_POCKET=1 ./scripts/run_local.sh     # keep an already-running Pocket-TTS server
 ./scripts/run_local.sh --no-dashboard    # same clean start, but CLI only
@@ -407,10 +404,9 @@ System-level prompts are also editable files in `prompts/`:
 
 ### Adding a new character
 
-Create a directory under `prompts/characters/` with at least a `prompt.txt`. No code changes needed. Two characters are included:
+Create a directory under `prompts/characters/` with at least a `prompt.txt`. No code changes needed. The current built-in character is:
 
-- **Greg** (`greg/`) — Robot head at a lemonade stand. 6-stage scenario, walkup sim script.
-- **Mara** (`mara/`) — Fortune teller at a carnival booth. 5-stage scenario, curious visitor sim script.
+- **Greg** (`greg/`) — Robot head in the local live scenario, with mock walkup sim assets for testing.
 
 See **[docs/guide.md](docs/guide.md)** for a detailed guide on creating characters, writing scenarios, tuning prompts, and testing — designed for creative collaborators who may not be familiar with the codebase.
 

@@ -1,7 +1,0 @@
-[meta]
-enabled = false
-
-[files]
-prompt = "prompt.txt"
-character = "character.txt"
-default_scenario_script = "scenario_script.toml"

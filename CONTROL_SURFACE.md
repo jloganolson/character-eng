@@ -8,8 +8,6 @@ This is the concrete control map for the local Greg experience.
   - Central registry for subsystem prompt assets.
 - [prompts/characters/greg/character_manifest.toml](/home/logan/Projects/character-eng/prompts/characters/greg/character_manifest.toml)
   - Greg’s central asset map.
-- [prompts/characters/mara/character_manifest.toml](/home/logan/Projects/character-eng/prompts/characters/mara/character_manifest.toml)
-  - Mara’s asset map, currently disabled for iteration.
 
 ## Prompt Count
 
