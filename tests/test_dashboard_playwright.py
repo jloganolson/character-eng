@@ -423,6 +423,9 @@ def test_runtime_panel_interactions_in_browser(
     page.locator("button[data-runtime-control='thinker']").click()
     assert input_queue.get(timeout=2) == "/threads thinker toggle"
 
+    page.locator("button[data-runtime-control='guardrails']").click()
+    assert input_queue.get(timeout=2) == "/threads guardrails toggle"
+
     page.keyboard.press("KeyB")
     assert input_queue.get(timeout=2) == "/beat"
 

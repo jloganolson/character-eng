@@ -1318,7 +1318,7 @@
   let dragStartX = 0;
   let dragStartScrollLeft = 0;
 
-  let runtimeControls = {reconcile: true, vision: true, auto_beat: true, filler: true, thinker: true, director: true, expression: true, beat_guidance: true};
+  let runtimeControls = {reconcile: true, vision: true, auto_beat: true, filler: true, guardrails: true, thinker: true, director: true, expression: true, beat_guidance: true};
   let visionService = {
     url: "",
     health: false,
@@ -1467,6 +1467,7 @@
     {key: "vision", label: "vision"},
     {key: "auto_beat", label: "auto-beat"},
     {key: "filler", label: "filler"},
+    {key: "guardrails", label: "guardrails"},
     {key: "thinker", label: "thinker"},
     {key: "director", label: "director"},
     {key: "expression", label: "expression"},
@@ -2007,6 +2008,20 @@
     </div>`;
   }
 
+  function bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState) {
+    if (statePollingSuspended) return "dashboard disconnected";
+    if (!runtimeStateSeen) return "attaching app runtime";
+    if (!(sessionSeen || restartPending)) return restartPending ? "waiting for fresh session" : "waiting for session init";
+    if (voiceState === "error") return "voice needs attention";
+    if (voiceState === "waiting" || voiceState === "active") return "waiting for voice runtime";
+    if (visionServiceState === "error") return "vision service needs attention";
+    if (visionServiceState === "waiting" || visionServiceState === "active") return "waiting for vision service";
+    if (modelPollError) return "waiting for model status";
+    if (modelState === "waiting" || modelState === "active") return "waiting for model poll";
+    if (conversationPaused) return "ready and paused";
+    return "runtime live";
+  }
+
   function renderBootStatus() {
     const heartbeatEl = document.getElementById("boot-heartbeat");
     const summaryEl = document.getElementById("boot-summary");
@@ -2016,11 +2031,6 @@
     const overlaySubEl = document.getElementById("boot-overlay-sub");
     const overlayGridEl = document.getElementById("boot-overlay-grid");
     const now = Date.now();
-    const lastEventText = lastEventAt ? `last event ${formatAge(now - lastEventAt)} ago` : "waiting for first event";
-    const heartbeatText = `${sseConnected ? "stream live" : "polling"} · page ${formatAge(now - pageLoadedAt)} · ${lastEventText}`;
-    heartbeatEl.textContent = heartbeatText;
-    overlayHeartbeatEl.textContent = heartbeatText;
-
     const runtimeState = runtimeStateSeen ? (conversationPaused ? "ready" : "active") : "waiting";
     const runtimeDetail = runtimeStateSeen
       ? (conversationPaused ? "Warm and paused. Hit Resume when you want to start." : "Runtime is live and accepting turns.")
@@ -2081,8 +2091,14 @@
       ? `Session ${document.getElementById("h-session").textContent || "--"} for ${document.getElementById("h-character").textContent || "character"}`
       : (restartPending ? "Waiting for the fresh session to attach." : "Waiting for session start.");
 
+    const phase = bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState);
+    const lastEventText = lastEventAt ? `last event ${formatAge(now - lastEventAt)} ago` : "waiting for first event";
+    const heartbeatText = `${sseConnected ? "stream live" : "polling"} · ${phase} · page ${formatAge(now - pageLoadedAt)} · ${lastEventText}`;
+    heartbeatEl.textContent = heartbeatText;
+    overlayHeartbeatEl.textContent = heartbeatText;
+
     const summary =
-      !runtimeStateSeen ? "Connecting to the local runtime..." :
+      !runtimeStateSeen ? "Connecting to the local runtime... waiting for app runtime controls." :
       restartPending ? "Restarting conversation..." :
       statePollingSuspended ? "Dashboard disconnected. Refresh after the local runtime comes back." :
       modelPollError ? "Vision models need attention before the runtime is ready." :
@@ -2101,7 +2117,7 @@
     overlaySubEl.textContent = statePollingSuspended
       ? "The dashboard lost its connection to the local runtime. Restart the app if needed, then refresh this page."
       : !bootReady
-        ? "The stack is warming voice, vision, and models. This view will unlock as soon as the local runtime is actually ready."
+        ? `Current step: ${phase}. Heavy services may already be warm; this page unlocks once the app layer publishes runtime, session, voice, and model state.`
         : "The runtime is ready. You can start from the dashboard or just speak when you are ready.";
     const cardHtml = [
       bootChip("dashboard", sseConnected ? "ready" : "active", sseConnected ? "Live event stream connected." : "Polling and waiting for server-side events."),
@@ -3666,6 +3682,7 @@
         `state: <b>${data.conversation_paused ? "paused" : "live"}</b>`,
         `auto-beat: <b>${runtimeControls.auto_beat ? "on" : "off"}</b>`,
         `filler: <b>${runtimeControls.filler ? "on" : "off"}</b>`,
+        `guardrails: <b>${runtimeControls.guardrails ? "on" : "off"}</b>`,
         `thinker: <b>${runtimeControls.thinker ? "on" : "off"}</b>`,
         `director: <b>${runtimeControls.director ? "on" : "off"}</b>`,
         `expression: <b>${runtimeControls.expression ? "on" : "off"}</b>`,

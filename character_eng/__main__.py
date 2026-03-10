@@ -191,6 +191,7 @@ _runtime_controls = {
     "vision": True,
     "auto_beat": True,
     "filler": True,
+    "guardrails": True,
     "thinker": True,
     "director": True,
     "expression": True,
@@ -208,6 +209,8 @@ def _normalize_runtime_control_name(name: str) -> str | None:
         "autobeat": "auto_beat",
         "beat": "auto_beat",
         "filler": "filler",
+        "guardrails": "guardrails",
+        "guardrail": "guardrails",
         "thinker": "thinker",
         "thought": "thinker",
         "director": "director",
@@ -326,7 +329,7 @@ def _push_runtime_controls(voice_io=None, vision_mgr=None, vision_cfg=None) -> N
 def _render_runtime_controls(voice_io=None, vision_mgr=None, vision_cfg=None) -> str:
     state = _runtime_controls_snapshot(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
     lines = []
-    for key in ("reconcile", "vision", "auto_beat", "filler", "thinker", "director", "expression", "beat_guidance"):
+    for key in ("reconcile", "vision", "auto_beat", "filler", "guardrails", "thinker", "director", "expression", "beat_guidance"):
         enabled = state["controls"][key]
         label = key.replace("_", " ")
         lines.append(f"{label:<12} : {'on' if enabled else 'off'}")
@@ -371,7 +374,7 @@ def handle_runtime_control_command(command: str, voice_io=None, vision_mgr=None,
         return True
 
     if len(parts) < 3:
-        console.print("[yellow]Usage: /threads <reconcile|vision|auto-beat|filler|thinker|director|expression|beat-guidance> <on|off|toggle>[/yellow]")
+        console.print("[yellow]Usage: /threads <reconcile|vision|auto-beat|filler|guardrails|thinker|director|expression|beat-guidance> <on|off|toggle>[/yellow]")
         return True
 
     name = parts[1]
@@ -2373,6 +2376,9 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
 
 
 def _inject_runtime_turn_guardrails(session, user_input: str = "", people=None, scenario=None, vision_mgr=None) -> None:
+    if not _runtime_controls.get("guardrails", True):
+        session.remove_tagged_system("runtime_turn_guardrails")
+        return
     parts = [
         "Turn guardrails:",
         "- Keep the spoken reply to one short sentence, or two short sentences max.",
@@ -2602,7 +2608,7 @@ def show_help(voice_active: bool = False):
         "/vision         - Show current visual context and gaze targets\n"
         "/vision-service - Show vision service status\n"
         "/vision-service <start|stop|autostart on|off|toggle>\n"
-        "/threads        - Show runtime controls (reconcile, vision, auto-beat, filler, thinker, director, expression, beat-guidance)\n"
+        "/threads        - Show runtime controls (reconcile, vision, auto-beat, filler, guardrails, thinker, director, expression, beat-guidance)\n"
         "/threads <name> <on|off|toggle> - Toggle a runtime subsystem\n"
         "/voice          - Toggle voice mode on/off\n"
         "/devices        - List audio input/output devices\n"
