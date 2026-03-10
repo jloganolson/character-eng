@@ -147,6 +147,23 @@
   #header .value { font-weight: 600; }
   #header .character { color: var(--npc); font-size: 1.1em; }
   #header .stage { color: var(--narrator); }
+  #report-ref-button {
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    color: var(--text);
+    cursor: pointer;
+    padding: 0.22em 0.55em;
+    border-radius: 6px;
+    font-size: 0.92em;
+  }
+  #report-ref-status {
+    color: var(--text-dim);
+    font-size: 0.82em;
+    max-width: 40ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   #theme-toggle {
     margin-left: auto;
     background: none;
@@ -1110,6 +1127,8 @@
   <span class="character" id="h-character">--</span>
   <span><span class="label">model:</span> <span class="value" id="h-model">--</span></span>
   <span><span class="label">session:</span> <span class="value" id="h-session">--</span></span>
+  <button id="report-ref-button" type="button">Copy Report Ref</button>
+  <span id="report-ref-status"></span>
   <span><span class="label">stage:</span> <span class="value stage" id="h-stage">--</span></span>
   <span><span class="label">uptime:</span> <span class="value" id="h-uptime">0s</span></span>
   <button id="theme-toggle" title="Toggle light/dark">&#9789;</button>
@@ -1376,6 +1395,8 @@
   const detailOpenWindowButton = document.getElementById("detail-open-window");
   const detailExportJsonButton = document.getElementById("detail-export-json");
   const detailExportHtmlButton = document.getElementById("detail-export-html");
+  const reportRefButton = document.getElementById("report-ref-button");
+  const reportRefStatus = document.getElementById("report-ref-status");
   const INSPECTOR_WIDTH_STORAGE_KEY = "dashboard.inspector_width";
   const SIDEBAR_WIDTH_STORAGE_KEY = "dashboard.sidebar_width";
   let pendingPauseState = null;
@@ -1424,6 +1445,28 @@
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({text: text.trim()})
     });
+  }
+
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (_) {}
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "readonly");
+    area.style.position = "absolute";
+    area.style.left = "-9999px";
+    document.body.appendChild(area);
+    area.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch (_) {}
+    document.body.removeChild(area);
+    return ok;
   }
 
   document.addEventListener("keydown", (e) => {
@@ -2623,6 +2666,38 @@
       upstream_events: causal.upstream,
       downstream_events: causal.downstream,
     };
+  }
+
+  async function saveReportReference() {
+    const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
+    const payload = {
+      session_id: currentSessionId || "",
+      character: document.getElementById("h-character").textContent || "",
+      model: document.getElementById("h-model").textContent || "",
+      stage: document.getElementById("h-stage").textContent || "",
+      selected_event_key: event?.key || null,
+      selected_bundle: selectedEventBundle(event),
+      stream_events: streamEvents,
+      prompt_trace_events: promptTraceEvents,
+    };
+    reportRefButton.disabled = true;
+    reportRefStatus.textContent = "Saving report ref...";
+    try {
+      const response = await fetch("/report-snapshot", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || "Failed to save report ref");
+      await copyText(data.paste_text || `intermediate session log: ${data.path}`);
+      reportRefStatus.textContent = data.paste_text || `intermediate session log: ${data.path}`;
+      reportRefStatus.title = data.path || "";
+    } catch (error) {
+      reportRefStatus.textContent = `Report ref failed: ${error.message || error}`;
+    } finally {
+      reportRefButton.disabled = false;
+    }
   }
 
   function bundleToHtml(bundle) {
@@ -3862,6 +3937,7 @@
   });
   runtimeRestartButton.addEventListener("click", requestRestart);
   bootRestartButton.addEventListener("click", requestRestart);
+  reportRefButton.addEventListener("click", saveReportReference);
   runtimeControlGrid.addEventListener("click", (event) => {
     const button = event.target.closest("[data-runtime-control]");
     if (!button) return;

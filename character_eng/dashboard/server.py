@@ -6,6 +6,7 @@ import json
 import queue
 import socket
 import threading
+from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
@@ -15,11 +16,13 @@ from character_eng.dashboard.events import DashboardEventCollector
 HTML_PATH = Path(__file__).parent / "index.html"
 SYSTEM_MAP_PATH = Path(__file__).parent / "system_map.html"
 STREAM_SCHEMA_PATH = Path(__file__).parent / "stream_schema.json"
+REPORTS_DIR = Path(__file__).resolve().parent.parent.parent / "logs" / "intermediate"
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
     collector: DashboardEventCollector
     input_queue: queue.Queue
+    report_dir: Path
 
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
@@ -45,6 +48,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if text:
                     self.input_queue.put(text)
                 resp = json.dumps({"ok": True}).encode()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(resp)))
+                self.end_headers()
+                self.wfile.write(resp)
+            except Exception as e:
+                resp = json.dumps({"ok": False, "error": str(e)}).encode()
+                self.send_response(HTTPStatus.BAD_REQUEST)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(resp)))
+                self.end_headers()
+                self.wfile.write(resp)
+        elif self.path == "/report-snapshot":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length)
+            try:
+                data = json.loads(body)
+                session_id = str(data.get("session_id") or "unknown")
+                safe_session = "".join(ch for ch in session_id if ch.isalnum() or ch in {"-", "_"}) or "unknown"
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                report_dir = getattr(self, "report_dir", REPORTS_DIR)
+                report_dir.mkdir(parents=True, exist_ok=True)
+                path = report_dir / f"{safe_session}_{timestamp}.json"
+                path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                paste_text = f"intermediate session log: {path}"
+                resp = json.dumps({"ok": True, "path": str(path), "paste_text": paste_text}).encode()
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(resp)))
@@ -155,13 +184,14 @@ def _port_available(port: int) -> bool:
 
 
 def start_dashboard(collector: DashboardEventCollector, input_queue: queue.Queue,
-                    port: int = 7862) -> tuple[threading.Thread, int]:
+                    port: int = 7862, report_dir: Path | None = None) -> tuple[threading.Thread, int]:
     """Start the dashboard HTTP server as a daemon thread. Returns (thread, actual_port)."""
     if port <= 0 or not _port_available(port):
         port = _find_free_port()
 
     DashboardHandler.collector = collector
     DashboardHandler.input_queue = input_queue
+    DashboardHandler.report_dir = report_dir or REPORTS_DIR
 
     server = ThreadingHTTPServer(("0.0.0.0", port), DashboardHandler)
     server.daemon_threads = True

@@ -8,6 +8,7 @@ import time
 import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import Error, Page, expect, sync_playwright
@@ -116,14 +117,18 @@ def vision_service() -> VisionServiceController:
 def dashboard_server():
     collector = DashboardEventCollector()
     input_queue: queue.Queue[str] = queue.Queue()
-    _, port = start_dashboard(collector, input_queue, port=0)
+    report_dir = Path("/tmp/character-eng-dashboard-playwright-reports")
+    report_dir.mkdir(parents=True, exist_ok=True)
+    for child in report_dir.iterdir():
+        child.unlink()
+    _, port = start_dashboard(collector, input_queue, port=0, report_dir=report_dir)
     for _ in range(20):
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{port}/state")
             break
         except Exception:
             time.sleep(0.05)
-    yield collector, input_queue, f"http://127.0.0.1:{port}/"
+    yield collector, input_queue, f"http://127.0.0.1:{port}/", report_dir
     collector.shutdown()
 
 
@@ -132,7 +137,7 @@ def test_runtime_panel_interactions_in_browser(
     dashboard_server,
     vision_service: VisionServiceController,
 ):
-    collector, input_queue, dashboard_url = dashboard_server
+    collector, input_queue, dashboard_url, report_dir = dashboard_server
     vision_service_url = vision_service.url
     page = browser_page
     page.goto(dashboard_url)
@@ -308,6 +313,9 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator(".stream-card[data-event-type='user_transcript_final']")).to_have_count(1)
     reply_card = page.locator(".stream-card").filter(has_text="Free water. Want one?").first
     reply_card.click()
+    page.locator("#report-ref-button").click()
+    expect(page.locator("#report-ref-status")).to_contain_text("intermediate session log:")
+    assert list(report_dir.iterdir())
     expect(page.locator("#detail-type")).to_have_text("assistant_reply")
     expect(page.locator("#detail-label")).to_contain_text("Free water. Want one?")
     expect(page.locator("#detail-detail")).to_contain_text("STT 420ms")

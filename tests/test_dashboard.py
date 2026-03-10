@@ -5,6 +5,7 @@ import queue
 import threading
 import time
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -77,7 +78,13 @@ class TestDashboardServer:
     def server(self):
         c = DashboardEventCollector()
         iq = queue.Queue()
-        thread, port = start_dashboard(c, iq, port=0)
+        report_dir = Path("/tmp/character-eng-dashboard-test-reports")
+        if report_dir.exists():
+            for child in report_dir.iterdir():
+                child.unlink()
+        else:
+            report_dir.mkdir(parents=True)
+        thread, port = start_dashboard(c, iq, port=0, report_dir=report_dir)
         # Wait for server to be ready
         for _ in range(20):
             try:
@@ -85,18 +92,18 @@ class TestDashboardServer:
                 break
             except Exception:
                 time.sleep(0.05)
-        yield c, iq, port
+        yield c, iq, port, report_dir
         # Server thread is daemon, will die with test
 
     def test_root_returns_html(self, server):
-        _, _, port = server
+        _, _, port, _ = server
         resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/")
         body = resp.read().decode()
         assert "Character Dashboard" in body
         assert resp.status == 200
 
     def test_state_returns_json(self, server):
-        c, _, port = server
+        c, _, port, _ = server
         c.push("test_event", {"key": "value"})
         time.sleep(0.05)
         resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/state")
@@ -105,14 +112,14 @@ class TestDashboardServer:
         assert data[0]["type"] == "test_event"
 
     def test_system_map_returns_html(self, server):
-        _, _, port = server
+        _, _, port, _ = server
         resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/system-map.html")
         body = resp.read().decode()
         assert "Character Runtime & Design Map" in body
         assert resp.status == 200
 
     def test_stream_schema_returns_json(self, server):
-        _, _, port = server
+        _, _, port, _ = server
         resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/stream-schema.json")
         body = json.loads(resp.read())
         assert "lane_order" in body
@@ -120,7 +127,7 @@ class TestDashboardServer:
         assert resp.status == 200
 
     def test_send_injects_input(self, server):
-        _, iq, port = server
+        _, iq, port, _ = server
         body = json.dumps({"text": "hello world"}).encode()
         req = urllib.request.Request(
             f"http://127.0.0.1:{port}/send",
@@ -131,3 +138,27 @@ class TestDashboardServer:
         resp = urllib.request.urlopen(req)
         assert resp.status == 200
         assert iq.get(timeout=1) == "hello world"
+
+    def test_report_snapshot_saves_json(self, server):
+        _, _, port, report_dir = server
+        payload = {
+            "session_id": "sess-123",
+            "selected_event_key": "evt-9",
+            "selected_bundle": {"event": {"type": "assistant_reply", "label": "Hi"}},
+        }
+        body = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/report-snapshot",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        resp = urllib.request.urlopen(req)
+        data = json.loads(resp.read())
+        assert resp.status == 200
+        assert data["ok"] is True
+        saved = Path(data["path"])
+        assert saved.exists()
+        assert saved.parent == report_dir
+        written = json.loads(saved.read_text())
+        assert written["session_id"] == "sess-123"
