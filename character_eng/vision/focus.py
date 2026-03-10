@@ -14,7 +14,7 @@ CORE_CONSTANT_QUESTIONS = [
     "What is the nearest person doing with their body, hands, or gaze?",
     "What facial expression, mood, or energy does the nearest person seem to have?",
 ]
-CORE_CONSTANT_SAM_TARGETS = ["person"]
+CORE_CONSTANT_SAM_TARGETS = ["person", "rude gesture"]
 
 
 @dataclass

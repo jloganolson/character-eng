@@ -345,7 +345,7 @@ def test_vision_manager_update_focus_pushes_dashboard_event(monkeypatch):
         lambda *args, **kwargs: VisualFocusResult(
             constant_questions=["Who is here?"],
             ephemeral_questions=["Are they holding a bottle?"],
-            constant_sam_targets=["person"],
+            constant_sam_targets=["person", "rude gesture"],
             ephemeral_sam_targets=["bottle"],
         ),
     )
@@ -369,7 +369,7 @@ def test_vision_manager_update_focus_pushes_dashboard_event(monkeypatch):
 
     assert pushed_questions["constant"] == ["Who is here?"]
     assert pushed_questions["ephemeral"] == ["Are they holding a bottle?"]
-    assert pushed_targets["constant"] == ["person"]
+    assert pushed_targets["constant"] == ["person", "rude gesture"]
     assert pushed_targets["ephemeral"] == ["bottle"]
     event = collector.get_all()[-1]
     assert event["type"] == "vision_focus"
@@ -421,7 +421,7 @@ def test_vision_manager_dashboard_snapshot_includes_objects_and_focus(monkeypatc
     mgr._last_focus = VisualFocusResult(
         constant_questions=["Who is here?"],
         ephemeral_questions=["Are they holding a bottle?"],
-        constant_sam_targets=["person"],
+        constant_sam_targets=["person", "rude gesture"],
         ephemeral_sam_targets=["bottle"],
     )
 
