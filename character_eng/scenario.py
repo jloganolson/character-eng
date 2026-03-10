@@ -33,6 +33,12 @@ class ScenarioGuardrails:
 
 
 @dataclass
+class ScenarioVisualFocus:
+    constant_questions: list[str] = field(default_factory=list)
+    constant_sam_targets: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Stage:
     name: str
     goal: str
@@ -47,6 +53,7 @@ class ScenarioScript:
     current_stage: str = ""
     gaze_targets: list[str] = field(default_factory=list)
     guardrails: ScenarioGuardrails = field(default_factory=ScenarioGuardrails)
+    visual_focus: ScenarioVisualFocus = field(default_factory=ScenarioVisualFocus)
 
     @property
     def active_stage(self) -> Stage | None:
@@ -121,6 +128,7 @@ def load_scenario_script(character: str, filename: str | None = None) -> Scenari
     start = scenario_data.get("start", "")
     setup_data = data.get("setup", {})
     guardrail_data = data.get("guardrails", {})
+    visual_focus_data = data.get("visual_requirements", data.get("visual_focus", {}))
 
     stages: dict[str, Stage] = {}
     for stage_data in data.get("stage", []):
@@ -152,6 +160,18 @@ def load_scenario_script(character: str, filename: str | None = None) -> Scenari
             on_user_leaving=[
                 str(item).strip()
                 for item in guardrail_data.get("on_user_leaving", guardrail_data.get("leaving", []))
+                if str(item).strip()
+            ],
+        ),
+        visual_focus=ScenarioVisualFocus(
+            constant_questions=[
+                str(item).strip()
+                for item in visual_focus_data.get("constant_questions", [])
+                if str(item).strip()
+            ],
+            constant_sam_targets=[
+                str(item).strip()
+                for item in visual_focus_data.get("constant_sam_targets", [])
                 if str(item).strip()
             ],
         ),

@@ -41,13 +41,43 @@ def test_start_reconcile_drains_pending_changes():
     world = WorldState()
     world.add_pending("A person approaches the stand")
     previous_thread = app._reconcile_thread
+    previous_started = app._last_reconcile_started_at
     previous_controls = dict(app._runtime_controls)
     try:
         app._reconcile_thread = None
+        app._last_reconcile_started_at = 0.0
         app._runtime_controls["reconcile"] = True
         app._start_reconcile(world, {"name": "test"}, people=MagicMock())
         assert world.pending == []
     finally:
         app._reconcile_thread = previous_thread
+        app._last_reconcile_started_at = previous_started
+        app._runtime_controls.clear()
+        app._runtime_controls.update(previous_controls)
+
+
+def test_start_reconcile_batches_when_thread_alive_or_recent(monkeypatch):
+    world = WorldState()
+    world.add_pending("A person approaches the stand")
+    previous_thread = app._reconcile_thread
+    previous_started = app._last_reconcile_started_at
+    previous_controls = dict(app._runtime_controls)
+    fake_thread = MagicMock()
+    fake_thread.is_alive.return_value = True
+    try:
+        app._reconcile_thread = fake_thread
+        app._last_reconcile_started_at = 0.0
+        app._runtime_controls["reconcile"] = True
+        app._start_reconcile(world, {"name": "test"}, people=MagicMock())
+        assert world.pending == ["A person approaches the stand"]
+
+        app._reconcile_thread = None
+        app._last_reconcile_started_at = 100.0
+        monkeypatch.setattr(app.time, "time", lambda: 100.5)
+        app._start_reconcile(world, {"name": "test"}, people=MagicMock())
+        assert world.pending == ["A person approaches the stand"]
+    finally:
+        app._reconcile_thread = previous_thread
+        app._last_reconcile_started_at = previous_started
         app._runtime_controls.clear()
         app._runtime_controls.update(previous_controls)

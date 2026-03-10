@@ -23,6 +23,13 @@ on_user_leaving = [
   "The user is leaving. Give one warm goodbye line, no follow-up question, and do not try to keep them there.",
 ]
 
+[visual_requirements]
+constant_questions = [
+  "What notable object is the nearest person interacting with?",
+  "Is there a visible clock, watch, phone, or screen that could tell Greg the time?",
+]
+constant_sam_targets = ["phone", "clock", "screen"]
+
 [scenario]
 name = "Greg Live Visual Encounter"
 start = "watching"

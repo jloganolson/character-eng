@@ -183,6 +183,8 @@ goal = "Have a conversation"
     assert script.guardrails.always == ["Stay grounded."]
     assert script.guardrails.on_first_visible_person == ["Learn their name."]
     assert script.guardrails.on_user_leaving == ["Let them go."]
+    assert script.visual_focus.constant_questions == []
+    assert script.visual_focus.constant_sam_targets == []
 
 
 def test_load_scenario_script_not_found(tmp_path, monkeypatch):

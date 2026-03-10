@@ -181,6 +181,8 @@ def _get_live_input(session_id: str, voice_io) -> str:
 _reconcile_lock = threading.Lock()
 _reconcile_result: WorldUpdate | None = None
 _reconcile_thread: threading.Thread | None = None
+_last_reconcile_started_at = 0.0
+_RECONCILE_MIN_INTERVAL_S = 1.0
 
 # --- Context version counter (main thread only) ---
 _context_version: int = 0
@@ -461,14 +463,20 @@ def _run_reconcile(world: "WorldState", pending: list[str], model_config: dict, 
 
 def _start_reconcile(world, model_config, big_model_config=None, people=None):
     """Drain pending changes and spawn background reconcile thread."""
-    global _reconcile_thread
+    global _reconcile_thread, _last_reconcile_started_at
     if not _runtime_controls["reconcile"]:
+        return
+    if _reconcile_thread is not None and _reconcile_thread.is_alive():
+        return
+    now = time.time()
+    if now - _last_reconcile_started_at < _RECONCILE_MIN_INTERVAL_S:
         return
     pending = world.clear_pending()
     if not pending:
         return
     # 8B handles reconcile (86% vs 88% at 70B, experiment 5)
     cfg = model_config
+    _last_reconcile_started_at = now
     _reconcile_thread = threading.Thread(
         target=_run_reconcile, args=(world, pending, cfg, people), daemon=True
     )
@@ -1271,7 +1279,7 @@ def handle_trigger(trigger_num, scenario, session, world, goals, script, people,
         vision_mgr.update_context(beat=script.current_beat, stage_goal=stage_goal)
         vision_mgr.update_focus(
             beat=script.current_beat, stage_goal=stage_goal, thought="",
-            world=world, people=people, model_config=model_config,
+            world=world, people=people, model_config=model_config, scenario=scenario,
         )
 
 
@@ -2937,6 +2945,7 @@ def _ensure_vision_manager(
             world=world,
             people=people,
             model_config=model_config,
+            scenario=scenario,
         )
     except Exception:
         pass

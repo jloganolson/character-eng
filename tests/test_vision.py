@@ -408,6 +408,47 @@ def test_visual_focus_call_keeps_person_constants(monkeypatch):
     assert result.ephemeral_sam_targets == ["phone"]
 
 
+def test_visual_focus_call_includes_scenario_authored_constants(monkeypatch):
+    from types import SimpleNamespace
+    from character_eng.vision.focus import CORE_CONSTANT_QUESTIONS, CORE_CONSTANT_SAM_TARGETS, visual_focus_call
+
+    class Message:
+        content = json.dumps({
+            "ephemeral_questions": [],
+            "ephemeral_sam_targets": [],
+        })
+
+    class Choice:
+        message = Message()
+
+    class Response:
+        choices = [Choice()]
+
+    monkeypatch.setattr("character_eng.world._llm_call", lambda *args, **kwargs: Response())
+
+    scenario = SimpleNamespace(
+        visual_focus=SimpleNamespace(
+            constant_questions=["Is there a visible clock, watch, phone, or screen that could tell Greg the time?"],
+            constant_sam_targets=["phone", "clock", "screen"],
+        )
+    )
+
+    result = visual_focus_call(
+        beat=None,
+        stage_goal="Find the time.",
+        thought="Look for a time source.",
+        world=None,
+        people=None,
+        model_config={},
+        scenario=scenario,
+    )
+
+    assert result.constant_questions == CORE_CONSTANT_QUESTIONS + [
+        "Is there a visible clock, watch, phone, or screen that could tell Greg the time?"
+    ]
+    assert result.constant_sam_targets == CORE_CONSTANT_SAM_TARGETS + ["phone", "clock", "screen"]
+
+
 def test_vision_manager_dashboard_snapshot_includes_objects_and_focus(monkeypatch):
     from character_eng.vision.focus import VisualFocusResult
     from character_eng.vision.manager import VisionManager

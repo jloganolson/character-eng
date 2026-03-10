@@ -36,6 +36,7 @@ def visual_focus_call(
     world,
     people,
     model_config: dict,
+    scenario=None,
 ) -> VisualFocusResult:
     """Generate constant + ephemeral visual questions and SAM targets.
 
@@ -58,10 +59,20 @@ def visual_focus_call(
     if people:
         user_parts.append(f"People:\n{people.render()}")
 
+    authored_constant_questions = list(CORE_CONSTANT_QUESTIONS)
+    authored_constant_sam_targets = list(CORE_CONSTANT_SAM_TARGETS)
+    if scenario is not None and getattr(scenario, "visual_focus", None) is not None:
+        for question in scenario.visual_focus.constant_questions:
+            if question not in authored_constant_questions:
+                authored_constant_questions.append(question)
+        for target in scenario.visual_focus.constant_sam_targets:
+            if target not in authored_constant_sam_targets:
+                authored_constant_sam_targets.append(target)
+
     if not user_parts:
         return VisualFocusResult(
-            constant_questions=list(CORE_CONSTANT_QUESTIONS),
-            constant_sam_targets=list(CORE_CONSTANT_SAM_TARGETS),
+            constant_questions=authored_constant_questions,
+            constant_sam_targets=authored_constant_sam_targets,
         )
 
     user_msg = "\n\n".join(user_parts)
@@ -81,13 +92,13 @@ def visual_focus_call(
         data = json.loads(completion.choices[0].message.content)
     except json.JSONDecodeError:
         return VisualFocusResult(
-            constant_questions=list(CORE_CONSTANT_QUESTIONS),
-            constant_sam_targets=list(CORE_CONSTANT_SAM_TARGETS),
+            constant_questions=authored_constant_questions,
+            constant_sam_targets=authored_constant_sam_targets,
         )
 
     return VisualFocusResult(
-        constant_questions=list(CORE_CONSTANT_QUESTIONS),
+        constant_questions=authored_constant_questions,
         ephemeral_questions=data.get("ephemeral_questions", [])[:2],
-        constant_sam_targets=list(CORE_CONSTANT_SAM_TARGETS),
+        constant_sam_targets=authored_constant_sam_targets,
         ephemeral_sam_targets=data.get("ephemeral_sam_targets", [])[:2],
     )

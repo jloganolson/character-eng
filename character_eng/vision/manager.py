@@ -89,10 +89,10 @@ class VisionManager:
     def set_paused(self, paused: bool) -> None:
         self._paused = paused
 
-    def update_focus(self, beat, stage_goal: str, thought: str, world, people, model_config: dict) -> None:
+    def update_focus(self, beat, stage_goal: str, thought: str, world, people, model_config: dict, scenario=None) -> None:
         """Run visual_focus_call and update vision service questions/targets."""
         try:
-            result = visual_focus_call(beat, stage_goal, thought, world, people, model_config)
+            result = visual_focus_call(beat, stage_goal, thought, world, people, model_config, scenario=scenario)
         except Exception:
             return
         self._last_focus = result
