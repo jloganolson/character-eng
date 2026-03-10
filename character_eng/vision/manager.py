@@ -95,13 +95,6 @@ class VisionManager:
             result = visual_focus_call(beat, stage_goal, thought, world, people, model_config)
         except Exception:
             return
-        appearance_question = "What stands out about the nearest person's appearance, clothing, or what they're carrying?"
-        all_questions = list(result.constant_questions) + list(result.ephemeral_questions)
-        if appearance_question not in all_questions:
-            if len(result.constant_questions) < 3:
-                result.constant_questions.append(appearance_question)
-            elif len(result.ephemeral_questions) < 2:
-                result.ephemeral_questions.append(appearance_question)
         self._last_focus = result
 
         try:

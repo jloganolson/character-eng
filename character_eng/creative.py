@@ -7,6 +7,7 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class CharacterManifest:
+    enabled: bool = True
     prompt: str = "prompt.txt"
     character: str = "character.txt"
     scenario: str = "scenario.txt"
@@ -31,6 +32,7 @@ def load_character_manifest(character: str, *, characters_dir: Path) -> Characte
     data = tomllib.loads(manifest_path.read_text())
     files = data.get("files", {})
     return CharacterManifest(
+        enabled=bool(data.get("meta", {}).get("enabled", True)),
         prompt=str(files.get("prompt", "prompt.txt")),
         character=str(files.get("character", "character.txt")),
         scenario=str(files.get("scenario", "scenario.txt")),

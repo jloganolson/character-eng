@@ -9,6 +9,12 @@ from pathlib import Path
 from character_eng.creative import load_prompt_asset
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
+CORE_CONSTANT_QUESTIONS = [
+    "What stands out about the nearest person's appearance, clothing, or what they're carrying?",
+    "What is the nearest person doing with their body, hands, or gaze?",
+    "What is the nearest person's facial expression or apparent mood?",
+]
+CORE_CONSTANT_SAM_TARGETS = ["person"]
 
 
 @dataclass
@@ -54,8 +60,8 @@ def visual_focus_call(
 
     if not user_parts:
         return VisualFocusResult(
-            constant_questions=["How many people are visible?"],
-            constant_sam_targets=["person"],
+            constant_questions=list(CORE_CONSTANT_QUESTIONS),
+            constant_sam_targets=list(CORE_CONSTANT_SAM_TARGETS),
         )
 
     user_msg = "\n\n".join(user_parts)
@@ -75,13 +81,13 @@ def visual_focus_call(
         data = json.loads(completion.choices[0].message.content)
     except json.JSONDecodeError:
         return VisualFocusResult(
-            constant_questions=["How many people are visible?"],
-            constant_sam_targets=["person"],
+            constant_questions=list(CORE_CONSTANT_QUESTIONS),
+            constant_sam_targets=list(CORE_CONSTANT_SAM_TARGETS),
         )
 
     return VisualFocusResult(
-        constant_questions=data.get("constant_questions", ["How many people are visible?"])[:3],
+        constant_questions=list(CORE_CONSTANT_QUESTIONS),
         ephemeral_questions=data.get("ephemeral_questions", [])[:2],
-        constant_sam_targets=data.get("constant_sam_targets", ["person"])[:2],
+        constant_sam_targets=list(CORE_CONSTANT_SAM_TARGETS),
         ephemeral_sam_targets=data.get("ephemeral_sam_targets", [])[:2],
     )

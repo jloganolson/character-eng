@@ -125,6 +125,25 @@ def test_list_characters(tmp_path, monkeypatch):
     assert result == ["alpha", "beta"]
 
 
+def test_list_characters_skips_disabled_manifest(tmp_path, monkeypatch):
+    prompts_dir = tmp_path / "prompts"
+    chars_dir = prompts_dir / "characters"
+
+    enabled = chars_dir / "alpha"
+    enabled.mkdir(parents=True)
+    (enabled / "prompt.txt").write_text("hi")
+
+    disabled = chars_dir / "mara"
+    disabled.mkdir(parents=True)
+    (disabled / "prompt.txt").write_text("hi")
+    (disabled / "character_manifest.toml").write_text("[meta]\nenabled = false\n")
+
+    monkeypatch.setattr(prompts_mod, "CHARACTERS_DIR", chars_dir)
+
+    result = list_characters()
+    assert result == ["alpha"]
+
+
 def test_load_prompt_with_people_state(tmp_path, monkeypatch):
     prompts_dir, char_dir = _setup_char(
         tmp_path,

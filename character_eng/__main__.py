@@ -2383,13 +2383,13 @@ def _inject_runtime_turn_guardrails(session, user_input: str = "", people=None, 
         parts.extend(scenario.guardrails.always)
     lowered = user_input.lower()
     if any(token in lowered for token in ("i should get going", "got to go", "gotta go", "i should go", "goodbye", "bye", "see you")):
-        if scenario is not None and scenario.guardrails.leaving:
-            parts.extend(scenario.guardrails.leaving)
+        if scenario is not None and scenario.guardrails.on_user_leaving:
+            parts.extend(scenario.guardrails.on_user_leaving)
         else:
             parts.append("- The user is leaving. Give one warm goodbye line, no follow-up question, and do not try to keep them there.")
     if people is not None and people.present_people() and (not user_input.strip()):
-        if scenario is not None and scenario.guardrails.first_contact:
-            parts.extend(scenario.guardrails.first_contact)
+        if scenario is not None and scenario.guardrails.on_first_visible_person:
+            parts.extend(scenario.guardrails.on_first_visible_person)
         else:
             parts.extend([
                 "- If this is the first live moment with a visible person, open with one kind, concrete observation grounded in what they are wearing, carrying, or doing only if the visual context clearly supports it.",

@@ -250,6 +250,33 @@ dynamic_facts = ["Setup dynamic"]
     assert list(ws.dynamic.values()) == ["Setup dynamic"]
 
 
+def test_load_world_state_merges_character_static_facts(tmp_path, monkeypatch):
+    char_dir = tmp_path / "characters" / "test_char"
+    char_dir.mkdir(parents=True)
+    scenarios_dir = char_dir / "scenarios"
+    scenarios_dir.mkdir()
+    (char_dir / "character.txt").write_text(
+        "You are Test Char.\n\nStatic facts:\n- Test Char is a robot head\n- Test Char cannot walk\n\nLong-term goal: Learn things\n"
+    )
+    (char_dir / "character_manifest.toml").write_text('[files]\ncharacter = "character.txt"\ndefault_scenario_script = "scenarios/live.toml"\n')
+    (scenarios_dir / "live.toml").write_text("""
+[setup]
+static_facts = ["Test Char is indoors"]
+dynamic_facts = ["A person is nearby"]
+""")
+
+    monkeypatch.setattr(world_mod, "CHARACTERS_DIR", tmp_path / "characters")
+
+    ws = load_world_state("test_char")
+    assert ws is not None
+    assert ws.static == [
+        "Test Char is a robot head",
+        "Test Char cannot walk",
+        "Test Char is indoors",
+    ]
+    assert list(ws.dynamic.values()) == ["A person is nearby"]
+
+
 # --- Script ---
 
 

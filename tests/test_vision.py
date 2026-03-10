@@ -327,16 +327,45 @@ def test_vision_manager_update_focus_pushes_dashboard_event(monkeypatch):
         model_config={},
     )
 
-    assert pushed_questions["constant"] == [
-        "Who is here?",
-        "What stands out about the nearest person's appearance, clothing, or what they're carrying?",
-    ]
+    assert pushed_questions["constant"] == ["Who is here?"]
     assert pushed_questions["ephemeral"] == ["Are they holding a bottle?"]
     assert pushed_targets["constant"] == ["person"]
     assert pushed_targets["ephemeral"] == ["bottle"]
     event = collector.get_all()[-1]
     assert event["type"] == "vision_focus"
     assert event["data"]["ephemeral_sam_targets"] == ["bottle"]
+
+
+def test_visual_focus_call_keeps_person_constants(monkeypatch):
+    from character_eng.vision.focus import CORE_CONSTANT_QUESTIONS, CORE_CONSTANT_SAM_TARGETS, visual_focus_call
+
+    class Message:
+        content = json.dumps({
+            "ephemeral_questions": ["Is the person gesturing toward anything?"],
+            "ephemeral_sam_targets": ["phone"],
+        })
+
+    class Choice:
+        message = Message()
+
+    class Response:
+        choices = [Choice()]
+
+    monkeypatch.setattr("character_eng.world._llm_call", lambda *args, **kwargs: Response())
+
+    result = visual_focus_call(
+        beat=None,
+        stage_goal="Notice the person.",
+        thought="Look for behavior.",
+        world=None,
+        people=None,
+        model_config={},
+    )
+
+    assert result.constant_questions == CORE_CONSTANT_QUESTIONS
+    assert result.constant_sam_targets == CORE_CONSTANT_SAM_TARGETS
+    assert result.ephemeral_questions == ["Is the person gesturing toward anything?"]
+    assert result.ephemeral_sam_targets == ["phone"]
 
 
 def test_vision_manager_dashboard_snapshot_includes_objects_and_focus(monkeypatch):
@@ -440,30 +469,7 @@ def test_vision_manager_only_adds_synthesis_history_on_drain(monkeypatch):
     assert list(mgr._event_history) == descriptions
 
 
-def test_mara_character_loads():
-    """Verify the Mara character loads correctly."""
-    from character_eng.prompts import load_prompt
-    from character_eng.world import load_world_state, load_goals
-    from character_eng.scenario import load_scenario_script
-    from character_eng.perception import load_sim_script
-    from character_eng.person import PeopleState
+def test_disabled_character_is_hidden_from_selection():
+    from character_eng.prompts import list_characters
 
-    world = load_world_state("mara")
-    assert len(world.static) == 10
-    assert len(world.dynamic) == 6
-
-    goals = load_goals("mara")
-    assert "see themselves" in goals.long_term.lower() or "insight" in goals.long_term.lower()
-
-    scenario = load_scenario_script("mara")
-    assert scenario is not None
-    assert scenario.name == "Mystic Mara — Carnival Reading"
-    assert len(scenario.stages) == 5
-    assert scenario.current_stage == "idle"
-
-    prompt = load_prompt("mara", world_state=world, people_state=PeopleState())
-    assert "Mara" in prompt
-    assert "fortune" in prompt.lower() or "carnival" in prompt.lower()
-
-    sim = load_sim_script("mara", "curious")
-    assert len(sim.events) == 15
+    assert "mara" not in list_characters()

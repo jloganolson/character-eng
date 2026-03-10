@@ -45,6 +45,7 @@ from character_eng.pocket_tts import PocketTTS
 from character_eng.prompts import load_prompt
 from character_eng.scenario import load_scenario_script
 from character_eng.vision.client import VisionClient
+from character_eng.vision.focus import CORE_CONSTANT_QUESTIONS, CORE_CONSTANT_SAM_TARGETS
 from character_eng.world import Goals, Script, load_goals, load_world_state, single_beat_call
 from character_eng.utils import start_prefixed_output_thread
 
@@ -2104,10 +2105,14 @@ def main() -> None:
         vision_url = f"http://127.0.0.1:{port}"
         vision_client = VisionClient(vision_url)
         vision_ready = _wait_for_vision_models(vision_client)
-        focus_constant_questions = ["How many people are at Greg's stand?", "What is the nearest person doing?"]
-        focus_ephemeral_questions = ["What object is the visitor touching or looking at?"]
-        focus_constant_sam = ["person", "flier", "cup"]
-        focus_ephemeral_sam = ["hood", "sign"]
+        scenario_file = args.scenario_file
+        if args.vision_source == "live" and scenario_file == "scenarios/punchy.toml":
+            scenario_file = "scenarios/office_pov.toml"
+
+        focus_constant_questions = list(CORE_CONSTANT_QUESTIONS)
+        focus_ephemeral_questions = ["Is the nearest person interacting with any specific object in the room?"]
+        focus_constant_sam = list(CORE_CONSTANT_SAM_TARGETS)
+        focus_ephemeral_sam = ["phone", "bag"]
         vision_client.set_questions(focus_constant_questions, focus_ephemeral_questions)
         vision_client.set_sam_targets(focus_constant_sam, focus_ephemeral_sam)
         session_recorder.add(
@@ -2125,9 +2130,6 @@ def main() -> None:
         world = load_world_state(args.character, scenario_file=scenario_file)
         goals = load_goals(args.character)
         people = PeopleState()
-        scenario_file = args.scenario_file
-        if args.vision_source == "live" and scenario_file == "scenarios/punchy.toml":
-            scenario_file = "scenarios/office_pov.toml"
         scenario = load_scenario_script(args.character, scenario_file)
         system_prompt = load_prompt(args.character, world_state=world, people_state=people, scenario_file=scenario_file)
         session = ChatSession(system_prompt, model_config)

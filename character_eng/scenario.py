@@ -28,8 +28,8 @@ class StageExit:
 @dataclass
 class ScenarioGuardrails:
     always: list[str] = field(default_factory=list)
-    first_contact: list[str] = field(default_factory=list)
-    leaving: list[str] = field(default_factory=list)
+    on_first_visible_person: list[str] = field(default_factory=list)
+    on_user_leaving: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -144,8 +144,16 @@ def load_scenario_script(character: str, filename: str | None = None) -> Scenari
         gaze_targets=[str(item).strip() for item in setup_data.get("gaze_targets", []) if str(item).strip()],
         guardrails=ScenarioGuardrails(
             always=[str(item).strip() for item in guardrail_data.get("always", []) if str(item).strip()],
-            first_contact=[str(item).strip() for item in guardrail_data.get("first_contact", []) if str(item).strip()],
-            leaving=[str(item).strip() for item in guardrail_data.get("leaving", []) if str(item).strip()],
+            on_first_visible_person=[
+                str(item).strip()
+                for item in guardrail_data.get("on_first_visible_person", guardrail_data.get("first_contact", []))
+                if str(item).strip()
+            ],
+            on_user_leaving=[
+                str(item).strip()
+                for item in guardrail_data.get("on_user_leaving", guardrail_data.get("leaving", []))
+                if str(item).strip()
+            ],
         ),
     )
 

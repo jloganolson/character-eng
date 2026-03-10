@@ -340,8 +340,29 @@ def _detect_explicit_redirect(history: list[dict], beat: Beat) -> ScriptCheckRes
 
 def load_world_state(character: str, scenario_file: str | None = None) -> WorldState | None:
     setup = load_character_setup(character, characters_dir=CHARACTERS_DIR, scenario_file=scenario_file)
-    if setup is not None and (setup.static_facts or setup.dynamic_facts):
-        ws = WorldState(static=list(setup.static_facts))
+    char_static: list[str] = []
+    char_path = character_asset_path(character, "character", characters_dir=CHARACTERS_DIR)
+    if char_path.exists():
+        in_static_section = False
+        for raw_line in char_path.read_text().splitlines():
+            stripped = raw_line.strip()
+            lowered = stripped.lower()
+            if lowered == "static facts:":
+                in_static_section = True
+                continue
+            if in_static_section:
+                if not stripped:
+                    break
+                if stripped.startswith("- "):
+                    char_static.append(stripped[2:].strip())
+                else:
+                    break
+    if setup is not None and (setup.static_facts or setup.dynamic_facts or char_static):
+        combined_static = list(char_static)
+        for fact in setup.static_facts:
+            if fact not in combined_static:
+                combined_static.append(fact)
+        ws = WorldState(static=combined_static)
         for line in setup.dynamic_facts:
             ws.add_fact(line)
         return ws

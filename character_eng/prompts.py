@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-from character_eng.creative import character_asset_path, load_character_setup, prompt_asset_path
+from character_eng.creative import character_asset_path, load_character_manifest, load_character_setup, prompt_asset_path
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 CHARACTERS_DIR = PROMPTS_DIR / "characters"
@@ -12,6 +12,9 @@ def list_characters() -> list[str]:
     names: list[str] = []
     for d in CHARACTERS_DIR.iterdir():
         if not d.is_dir():
+            continue
+        manifest = load_character_manifest(d.name, characters_dir=CHARACTERS_DIR)
+        if not manifest.enabled:
             continue
         prompt_path = character_asset_path(d.name, "prompt", characters_dir=CHARACTERS_DIR)
         if prompt_path.exists():

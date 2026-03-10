@@ -1,3 +1,6 @@
+[meta]
+enabled = false
+
 [files]
 prompt = "prompt.txt"
 character = "character.txt"
