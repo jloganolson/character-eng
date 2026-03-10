@@ -70,7 +70,9 @@ class VisionManager:
         events = []
         while self._events:
             try:
-                events.append(self._events.popleft())
+                event = self._events.popleft()
+                events.append(event)
+                self._event_history.append(event.description)
             except IndexError:
                 break
         return events
@@ -200,7 +202,6 @@ class VisionManager:
                 if trace["contradicting_answers"] and not trace["supporting_answers"]:
                     continue
                 self._recent_events[key] = now
-                self._event_history.append(event_text)
                 self._events.append(PerceptionEvent(
                     description=event_text,
                     source="visual",

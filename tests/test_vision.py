@@ -401,6 +401,38 @@ def test_vision_manager_skips_contradicted_synthesis_event(monkeypatch):
     assert "Someone is holding a water bottle" not in descriptions
 
 
+def test_vision_manager_only_adds_synthesis_history_on_drain(monkeypatch):
+    from character_eng.vision.manager import VisionManager
+
+    mgr = VisionManager()
+    mgr._model_config = {"name": "test"}
+    snapshot = RawVisualSnapshot(
+        persons=[PersonObservation(identity="Person 1", bbox=(0, 0, 100, 200))],
+        vlm_answers=[
+            VLMAnswer(
+                question="Is anyone approaching the stand?",
+                answer="Yes, one person is near the stand.",
+                slot_type="ephemeral",
+            ),
+        ],
+    )
+
+    monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)
+    monkeypatch.setattr(
+        "character_eng.vision.manager.vision_synthesis_call",
+        lambda **kwargs: type("Synth", (), {"events": ["A person approaches the stand"]})(),
+    )
+
+    mgr._tick()
+
+    assert list(mgr._event_history) == []
+    drained = mgr.drain_events()
+    descriptions = [event.description for event in drained]
+    assert "A person approaches the stand" in descriptions
+    assert "Person 1 appeared in view" in descriptions
+    assert list(mgr._event_history) == descriptions
+
+
 def test_mara_character_loads():
     """Verify the Mara character loads correctly."""
     from character_eng.prompts import load_prompt

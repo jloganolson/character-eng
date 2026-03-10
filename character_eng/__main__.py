@@ -487,11 +487,16 @@ def _check_reconcile(world, log, people=None):
         "add_facts": result.add_facts,
         "events": result.events,
     })
-    _push("world_state", {
-        "static_facts": [{"id": "", "text": s} for s in (world.static or [])],
-        "dynamic_facts": [{"id": k, "text": v} for k, v in (world.dynamic or {}).items()],
-        "pending": list(world.pending),
-    })
+    _push_world_people_state(world, people)
+
+
+def _push_world_people_state(world, people=None):
+    if world is not None:
+        _push("world_state", {
+            "static_facts": [{"id": "", "text": s} for s in (world.static or [])],
+            "dynamic_facts": [{"id": k, "text": v} for k, v in (world.dynamic or {}).items()],
+            "pending": list(world.pending),
+        })
     if people is not None:
         _push("people_state", {"people": [
             {"id": p.person_id, "name": p.name, "facts": [{"id": k, "text": v} for k, v in p.facts.items()]}
@@ -1449,7 +1454,9 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             if vision_mgr is not None:
                 vision_events = vision_mgr.drain_events()
                 if _runtime_controls["vision"]:
+                    drained_any = False
                     for event in vision_events:
+                        drained_any = True
                         _, narrator_msg = process_perception(event, people, world)
                         console.print(f"[dim]{narrator_msg}[/dim]")
                         session.inject_system(narrator_msg)
@@ -1458,6 +1465,9 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                             "description": event.description,
                             "source_trace": getattr(event, "trace", {}) or {},
                         })
+                    if drained_any:
+                        _push_world_people_state(world, people)
+                        _start_reconcile(world, model_config, people=people)
                 vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal)
 
             # --- Command dispatch ---
