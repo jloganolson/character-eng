@@ -199,6 +199,8 @@ _runtime_controls = {
 }
 _conversation_paused = False
 _had_visible_people = False
+_last_visual_turn_at = 0.0
+_VISUAL_TURN_COOLDOWN_S = 7.0
 
 
 def _normalize_runtime_control_name(name: str) -> str | None:
@@ -229,6 +231,33 @@ def _should_apply_first_visible_guardrails(people=None) -> bool:
     should_apply = present and not _had_visible_people
     _had_visible_people = present
     return should_apply
+
+
+def _sync_visible_people_state(people=None) -> None:
+    global _had_visible_people
+    _had_visible_people = bool(people.present_people()) if people is not None else False
+
+
+def _should_trigger_visual_turn(signals: set[str], people=None, *, force: bool = False) -> bool:
+    global _last_visual_turn_at
+
+    now = time.time()
+    if force:
+        _last_visual_turn_at = now
+        _sync_visible_people_state(people)
+        return True
+
+    if "person_visible" in signals and _should_apply_first_visible_guardrails(people):
+        _last_visual_turn_at = now
+        return True
+
+    if "rude_gesture" in signals and now - _last_visual_turn_at >= _VISUAL_TURN_COOLDOWN_S:
+        _last_visual_turn_at = now
+        _sync_visible_people_state(people)
+        return True
+
+    _sync_visible_people_state(people)
+    return False
 
 
 def _vision_process_alive() -> bool:
@@ -599,8 +628,14 @@ def _consume_vision_updates(session, world, people, vision_mgr, scenario, script
         return False
 
     trigger_visual_turn = False
+    signals: set[str] = set()
     if _runtime_controls["vision"]:
         for event in vision_events:
+            payload = (getattr(event, "payload", {}) or {})
+            for item in payload.get("signals", []):
+                token = str(item).strip()
+                if token:
+                    signals.add(token)
             _, narrator_msg = process_perception(event, people, world)
             console.print(f"[dim]{narrator_msg}[/dim]")
             session.inject_system(narrator_msg)
@@ -608,7 +643,7 @@ def _consume_vision_updates(session, world, people, vision_mgr, scenario, script
                 "source": event.source,
                 "description": event.description,
                 "kind": getattr(event, "kind", ""),
-                "payload": getattr(event, "payload", {}) or {},
+                "payload": payload,
                 "source_trace": getattr(event, "trace", {}) or {},
             })
         _push_world_people_state(world, people)
@@ -618,7 +653,9 @@ def _consume_vision_updates(session, world, people, vision_mgr, scenario, script
             trigger_visual_turn = _advance_scenario_from_visual(
                 session, scenario, script, world, people, goals, model_config, exit_index, vision_mgr=vision_mgr
             )
-        if any("person_visible" in ((getattr(event, "payload", {}) or {}).get("signals", [])) for event in vision_events):
+            if trigger_visual_turn:
+                _should_trigger_visual_turn(signals, people, force=True)
+        elif _should_trigger_visual_turn(signals, people):
             trigger_visual_turn = True
     vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal)
     _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)

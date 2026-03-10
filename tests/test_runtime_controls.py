@@ -174,3 +174,26 @@ def test_first_visible_guardrails_only_fire_once_until_people_clear():
         assert app._should_apply_first_visible_guardrails(people) is True
     finally:
         app._had_visible_people = previous
+
+
+def test_visual_turn_trigger_is_edge_based_and_cooldown_gated(monkeypatch):
+    previous_seen = app._had_visible_people
+    previous_at = app._last_visual_turn_at
+    people = PeopleState()
+    try:
+        app._had_visible_people = False
+        app._last_visual_turn_at = 0.0
+
+        people.add_person(name="Visitor", presence="present")
+        monkeypatch.setattr(app.time, "time", lambda: 100.0)
+        assert app._should_trigger_visual_turn({"person_visible"}, people) is True
+        assert app._should_trigger_visual_turn({"person_visible"}, people) is False
+
+        monkeypatch.setattr(app.time, "time", lambda: 103.0)
+        assert app._should_trigger_visual_turn({"rude_gesture"}, people) is False
+
+        monkeypatch.setattr(app.time, "time", lambda: 108.0)
+        assert app._should_trigger_visual_turn({"rude_gesture"}, people) is True
+    finally:
+        app._had_visible_people = previous_seen
+        app._last_visual_turn_at = previous_at
