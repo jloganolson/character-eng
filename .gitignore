@@ -17,6 +17,7 @@ config.toml
 
 # QA logs
 logs/
+services/vision/*.log
 
 # Experiment artifacts (generated WAVs and recordings)
 experiments/*/samples/
