@@ -1249,7 +1249,7 @@
         </div>
         <div id="runtime-status" style="margin-bottom:0.5em;color:var(--text-dim);">Waiting for runtime state...</div>
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
-          <button id="runtime-toggle" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--narrator);color:var(--bg);cursor:pointer;">Resume</button>
+          <button id="runtime-toggle" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--narrator);color:var(--bg);cursor:pointer;">Start</button>
           <button id="runtime-stop" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--hold);color:var(--bg);cursor:pointer;">Stop Session</button>
           <button id="runtime-restart" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--error);color:var(--bg);cursor:pointer;">Restart Session</button>
         </div>
@@ -2068,8 +2068,8 @@
   function bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState) {
     if (statePollingSuspended) return "dashboard disconnected";
     if (!runtimeStateSeen) return "attaching app runtime";
-    if (!(sessionSeen || restartPending)) return restartPending ? "waiting for fresh session" : "waiting for session init";
     if (sessionStopped) return "ready to start";
+    if (!(sessionSeen || restartPending)) return restartPending ? "waiting for fresh session" : "waiting for session init";
     if (voiceState === "error") return "voice needs attention";
     if (voiceState === "waiting" || voiceState === "active") return "waiting for voice runtime";
     if (visionServiceState === "error") return "vision service needs attention";
@@ -2093,7 +2093,9 @@
     const runtimeDetail = runtimeStateSeen
       ? (sessionStopped
         ? "Fresh session is prepared. Hit Start when you want to begin."
-        : (conversationPaused ? "Warm and paused. Hit Resume when you want to continue." : "Runtime is live and accepting turns."))
+        : (conversationPaused
+          ? (startupPausePending ? "Fresh session is loaded. Hit Play when you want to begin." : "Conversation is paused. Hit Play when you want to continue.")
+          : "Runtime is live and accepting turns."))
       : "Waiting for the app to publish runtime controls.";
 
     const voiceState = runtimeStateSeen
@@ -2146,10 +2148,12 @@
       modelState = allReady ? "ready" : (anyLoading ? "active" : "waiting");
     }
 
-    const sessionState = sessionSeen ? "ready" : (restartPending ? "active" : "waiting");
+    const sessionState = sessionStopped ? "ready" : (sessionSeen ? "ready" : (restartPending ? "active" : "waiting"));
     const sessionDetail = sessionSeen
       ? `Session ${document.getElementById("h-session").textContent || "--"} for ${document.getElementById("h-character").textContent || "character"}`
-      : (restartPending ? "Waiting for the fresh session to attach." : "Waiting for session start.");
+      : (sessionStopped
+        ? "No active session. Hit Start to create a fresh one."
+        : (restartPending ? "Waiting for the fresh session to attach." : "Waiting for session start."));
 
     const phase = bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState);
     const lastEventText = lastEventAt ? `last event ${formatAge(now - lastEventAt)} ago` : "waiting for first event";
@@ -2164,13 +2168,13 @@
       modelPollError ? "Vision models need attention before the runtime is ready." :
       voiceState === "error" ? "Voice needs attention before the runtime is ready." :
       sessionStopped ? "Everything is warm. Start when you want to begin a fresh session." :
-      conversationPaused ? "Everything is warm. Resume when you want to continue." :
+      conversationPaused ? (startupPausePending ? "Fresh session is ready. Press Play when you want to begin." : "Conversation is paused. Press Play when you want to continue.") :
       "Runtime is live. You can speak or type now.";
 
     const modelReady = modelState === "ready" || modelState === "off";
     const voiceReady = voiceState === "ready" || voiceState === "off";
     const visionReady = !visionService.url || visionServiceState === "ready" || visionServiceState === "off";
-    const bootReady = runtimeStateSeen && (sessionSeen || restartPending) && visionReady && voiceReady && modelReady && !modelPollError;
+    const bootReady = runtimeStateSeen && (sessionStopped || sessionSeen || restartPending) && visionReady && voiceReady && modelReady && !modelPollError;
     document.body.classList.toggle("booting", !bootReady);
 
     summaryEl.textContent = summary;
@@ -2179,7 +2183,7 @@
       ? "The dashboard lost its connection to the local runtime. Restart the app if needed, then refresh this page."
       : !bootReady
         ? `Current step: ${phase}. Heavy services may already be warm; this page unlocks once the app layer publishes runtime, session, voice, and model state.`
-        : "The runtime is ready. You can start or continue from the dashboard whenever you are ready.";
+        : "The runtime is ready. Use Start to create a session, Play to begin, or Pause/Stop once it is live.";
     const cardHtml = [
       bootChip("dashboard", sseConnected ? "ready" : "active", sseConnected ? "Live event stream connected." : "Polling and waiting for server-side events."),
       bootChip("session", sessionState, sessionDetail),
@@ -2199,7 +2203,7 @@
       runtimeToggleButton.disabled = true;
       runtimeToggleButton.style.opacity = "0.75";
     } else if (pendingPauseState === "stopping") {
-      runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Resume" : "Pause");
+      runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Play" : "Pause");
       runtimeToggleButton.disabled = true;
       runtimeToggleButton.style.opacity = "0.75";
       runtimeToggleButton.style.background = sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)");
@@ -2208,13 +2212,13 @@
       runtimeToggleButton.style.background = "var(--advance)";
       runtimeToggleButton.disabled = true;
       runtimeToggleButton.style.opacity = "0.75";
-    } else if (pendingPauseState === "resuming") {
-      runtimeToggleButton.textContent = "Resuming...";
+    } else if (pendingPauseState === "playing") {
+      runtimeToggleButton.textContent = "Playing...";
       runtimeToggleButton.style.background = "var(--hold)";
       runtimeToggleButton.disabled = true;
       runtimeToggleButton.style.opacity = "0.75";
     } else {
-      runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Resume" : "Pause");
+      runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Play" : "Pause");
       runtimeToggleButton.style.background = sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)");
       runtimeToggleButton.disabled = false;
       runtimeToggleButton.style.opacity = "1";
@@ -3813,7 +3817,8 @@
       startupPausePending = !!data.startup_pause_pending;
       if (
         (pendingPauseState === "pausing" && conversationPaused && !sessionStopped) ||
-        ((pendingPauseState === "resuming" || pendingPauseState === "starting") && !conversationPaused && !sessionStopped) ||
+        (pendingPauseState === "playing" && !conversationPaused && !sessionStopped) ||
+        (pendingPauseState === "starting" && !sessionStopped && ((conversationPaused && startupPausePending) || !conversationPaused)) ||
         (pendingPauseState === "stopping" && sessionStopped)
       ) {
         pendingPauseState = null;
@@ -3972,9 +3977,9 @@
 
   runtimeToggleButton.addEventListener("click", () => {
     if (pendingPauseState) return;
-    pendingPauseState = sessionStopped ? "starting" : (conversationPaused ? "resuming" : "pausing");
+    pendingPauseState = sessionStopped ? "starting" : (conversationPaused ? "playing" : "pausing");
     updateRuntimeButtons();
-    sendInput(sessionStopped ? "/start" : (conversationPaused ? "/resume" : "/pause"));
+    sendInput(sessionStopped ? "/start" : (conversationPaused ? "/play" : "/pause"));
   });
   runtimeStopButton.addEventListener("click", requestStop);
   runtimeRestartButton.addEventListener("click", requestRestart);

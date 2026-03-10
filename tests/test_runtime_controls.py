@@ -56,7 +56,7 @@ def test_runtime_snapshot_includes_vision_service_metadata(monkeypatch):
     assert state["voice_status"]["stt"]["state"] == "off"
 
 
-def test_runtime_snapshot_includes_paused_state(monkeypatch):
+def test_runtime_snapshot_includes_ready_state(monkeypatch):
     previous_paused = app._conversation_paused
     previous_stopped = app._session_stopped
     previous_startup = app._startup_pause_pending
@@ -64,14 +64,14 @@ def test_runtime_snapshot_includes_paused_state(monkeypatch):
     monkeypatch.setattr(app, "_vision_service_health", lambda vision_cfg=None: False)
     monkeypatch.setitem(app._vision_runtime, "cfg", cfg.vision)
     try:
-        app._conversation_paused = True
+        app._conversation_paused = False
         app._session_stopped = True
-        app._startup_pause_pending = True
+        app._startup_pause_pending = False
         state = app._runtime_controls_snapshot(vision_cfg=cfg.vision)
-        assert state["conversation_paused"] is True
+        assert state["conversation_paused"] is False
         assert state["session_stopped"] is True
-        assert state["startup_pause_pending"] is True
-        assert state["session_state"] == "stopped"
+        assert state["startup_pause_pending"] is False
+        assert state["session_state"] == "ready"
     finally:
         app._conversation_paused = previous_paused
         app._session_stopped = previous_stopped
@@ -206,3 +206,33 @@ def test_visual_turn_trigger_is_edge_based_and_cooldown_gated(monkeypatch):
     finally:
         app._had_visible_people = previous_seen
         app._last_visual_turn_at = previous_at
+
+
+def test_voice_trace_is_suppressed_until_live(monkeypatch):
+    pushed = []
+    previous_paused = app._conversation_paused
+    previous_stopped = app._session_stopped
+
+    class FakeVoice:
+        def __init__(self, **kwargs):
+            self.trace_hook = kwargs["trace_hook"]
+
+    monkeypatch.setattr(app, "_push", lambda event_type, data: pushed.append((event_type, data)))
+    try:
+        app._session_stopped = True
+        app._conversation_paused = False
+        voice = app._create_voice_io(None, FakeVoice)
+        voice.trace_hook("user_speech_started", {})
+        assert pushed == []
+
+        app._session_stopped = False
+        app._conversation_paused = True
+        voice.trace_hook("user_transcript_final", {"text": "hello"})
+        assert pushed == []
+
+        app._conversation_paused = False
+        voice.trace_hook("user_transcript_final", {"text": "hello"})
+        assert pushed == [("user_transcript_final", {"text": "hello"})]
+    finally:
+        app._conversation_paused = previous_paused
+        app._session_stopped = previous_stopped
