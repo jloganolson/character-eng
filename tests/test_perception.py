@@ -45,6 +45,25 @@ def test_process_perception_narrator_format():
     assert narrator == "[The visitor picks up a glass]"
 
 
+def test_process_perception_applies_structured_person_presence():
+    world = WorldState()
+    people = PeopleState()
+    event = PerceptionEvent(
+        description="Person 1 appeared in view",
+        source="visual",
+        kind="person_presence",
+        payload={"identity": "Person 1", "presence": "present", "change": "appeared", "signals": ["person_visible"]},
+    )
+    _, narrator = process_perception(event, people, world)
+    assert narrator == "[Person 1 appeared in view]"
+    assert world.pending == []
+    present = people.present_people()
+    assert len(present) == 1
+    assert present[0].name == "Person 1"
+    assert present[0].presence == "present"
+    assert world.events[-1] == "Person 1 appeared in view"
+
+
 # --- SimScript loading ---
 
 

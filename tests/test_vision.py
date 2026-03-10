@@ -248,10 +248,9 @@ def test_vision_manager_event_dedup():
 
     mgr = VisionManager()
 
-    # Normalize strips articles and common verbs
-    assert mgr._normalize_event("A person is standing at the stand") == "person standing at stand"
-    assert mgr._normalize_event("The person is standing at the stand") == "person standing at stand"
-    assert mgr._normalize_event("A person is now standing at the stand") == "person standing at stand"
+    # Normalize lowers case and collapses whitespace only.
+    assert mgr._normalize_event("A person is standing at the stand") == "a person is standing at the stand"
+    assert mgr._normalize_event(" A person is   standing at the stand ") == "a person is standing at the stand"
 
     # Different events normalize differently
     assert mgr._normalize_event("Person walks away") != mgr._normalize_event("Person sits down")
@@ -273,6 +272,8 @@ def test_vision_manager_people_resolution():
     assert "Person 1" in mgr._known_persons
     assert len(mgr._events) == 1
     assert "appeared" in mgr._events[0].description
+    assert mgr._events[0].kind == "person_presence"
+    assert mgr._events[0].payload["signals"] == ["person_visible"]
     assert mgr._people.get_or_create("Person 1") == "p1"
 
     # Same person again — no new event
@@ -284,6 +285,7 @@ def test_vision_manager_people_resolution():
     mgr._resolve_people(empty_snap)
     assert len(mgr._events) == 2
     assert "no longer visible" in mgr._events[1].description
+    assert mgr._events[1].payload["signals"] == ["person_departed"]
 
 
 def test_vision_manager_update_focus_pushes_dashboard_event(monkeypatch):
@@ -325,7 +327,10 @@ def test_vision_manager_update_focus_pushes_dashboard_event(monkeypatch):
         model_config={},
     )
 
-    assert pushed_questions["constant"] == ["Who is here?"]
+    assert pushed_questions["constant"] == [
+        "Who is here?",
+        "What stands out about the nearest person's appearance, clothing, or what they're carrying?",
+    ]
     assert pushed_questions["ephemeral"] == ["Are they holding a bottle?"]
     assert pushed_targets["constant"] == ["person"]
     assert pushed_targets["ephemeral"] == ["bottle"]
@@ -373,7 +378,7 @@ def test_vision_manager_dashboard_snapshot_includes_objects_and_focus(monkeypatc
     assert event["data"]["focus"]["ephemeral_questions"] == ["Are they holding a bottle?"]
 
 
-def test_vision_manager_skips_contradicted_synthesis_event(monkeypatch):
+def test_vision_manager_carries_structured_synthesis_signals(monkeypatch):
     from character_eng.vision.manager import VisionManager
 
     mgr = VisionManager()
@@ -392,13 +397,15 @@ def test_vision_manager_skips_contradicted_synthesis_event(monkeypatch):
     monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)
     monkeypatch.setattr(
         "character_eng.vision.manager.vision_synthesis_call",
-        lambda **kwargs: type("Synth", (), {"events": ["Someone is holding a water bottle"]})(),
+        lambda **kwargs: type("Synth", (), {"events": ["Someone is holding a water bottle"], "signals": ["water_bottle_visible"]})(),
     )
 
     mgr._tick()
 
-    descriptions = [event.description for event in mgr.drain_events()]
-    assert "Someone is holding a water bottle" not in descriptions
+    drained = mgr.drain_events()
+    synthesis_event = next(event for event in drained if event.description == "Someone is holding a water bottle")
+    assert synthesis_event.kind == "visual_claim"
+    assert synthesis_event.payload["signals"] == ["water_bottle_visible"]
 
 
 def test_vision_manager_only_adds_synthesis_history_on_drain(monkeypatch):
@@ -420,7 +427,7 @@ def test_vision_manager_only_adds_synthesis_history_on_drain(monkeypatch):
     monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)
     monkeypatch.setattr(
         "character_eng.vision.manager.vision_synthesis_call",
-        lambda **kwargs: type("Synth", (), {"events": ["A person approaches the stand"]})(),
+        lambda **kwargs: type("Synth", (), {"events": ["A person approaches the stand"], "signals": ["person_at_stand"]})(),
     )
 
     mgr._tick()

@@ -840,6 +840,7 @@ def plan_call(
     recent_n: int = 10,
     people=None,
     stage_goal: str = "",
+    vision_context_text: str = "",
 ) -> PlanResult:
     """Ask the planner LLM to generate a multi-beat script."""
     if plan_model_config is None:
@@ -867,6 +868,10 @@ def plan_call(
     if stage_goal:
         context_parts.append("\n=== CURRENT STAGE GOAL ===")
         context_parts.append(stage_goal)
+
+    if vision_context_text.strip():
+        context_parts.append("\n=== LIVE VISUAL STATE ===")
+        context_parts.append(vision_context_text.strip())
 
     recent = history[-recent_n:] if len(history) > recent_n else history
     if recent:
@@ -919,6 +924,7 @@ def single_beat_call(
     people=None,
     stage_goal: str = "",
     recent_n: int = 6,
+    vision_context_text: str = "",
 ) -> PlanResult:
     """Generate a single beat using 8B. Returns PlanResult with 0-1 beats."""
     if model_config is None:
@@ -946,6 +952,10 @@ def single_beat_call(
     if stage_goal:
         context_parts.append("\n=== CURRENT STAGE GOAL ===")
         context_parts.append(stage_goal)
+
+    if vision_context_text.strip():
+        context_parts.append("\n=== LIVE VISUAL STATE ===")
+        context_parts.append(vision_context_text.strip())
 
     recent = history[-recent_n:] if len(history) > recent_n else history
     if recent:

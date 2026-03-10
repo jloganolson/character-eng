@@ -17,6 +17,7 @@ class SynthesisResult:
     events: list[str] = field(default_factory=list)
     gaze_candidates: list[str] = field(default_factory=list)
     thought: str = ""
+    signals: list[str] = field(default_factory=list)
 
 
 def _load_prompt() -> str:
@@ -78,4 +79,5 @@ def vision_synthesis_call(
         events=data.get("events", [])[:3],
         gaze_candidates=data.get("gaze_candidates", []),
         thought=data.get("thought", ""),
+        signals=[str(item).strip() for item in data.get("signals", []) if str(item).strip()],
     )

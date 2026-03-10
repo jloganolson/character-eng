@@ -34,6 +34,7 @@ def test_push_world_people_state_includes_pending_and_people():
     people_payload = next(data for event_type, data in pushed if event_type == "people_state")
     assert len(people_payload["people"]) == 1
     assert people_payload["people"][0]["name"] == "Person 1"
+    assert people_payload["people"][0]["presence"] == "present"
 
 
 def test_start_reconcile_drains_pending_changes():

@@ -9,6 +9,7 @@ from character_eng.scenario import (
     ScenarioScript,
     Stage,
     StageExit,
+    match_visual_exit,
     director_call,
     load_scenario_script,
 )
@@ -109,6 +110,34 @@ def test_stage_exit_label():
     assert exit_without.label == ""
 
 
+def test_match_visual_exit_uses_structured_signals():
+    class Event:
+        def __init__(self, signals):
+            self.payload = {"signals": signals}
+
+    scenario = ScenarioScript(
+        name="test",
+        stages={
+            "watching": Stage(
+                "watching",
+                "Notice someone",
+                exits=[
+                    StageExit("Someone is approaching", "spotted", visual_signals=["person_visible"]),
+                    StageExit("Someone left", "idle", visual_signals=["person_departed"]),
+                ],
+            ),
+            "spotted": Stage("spotted", "Talk"),
+            "idle": Stage("idle", "Reset"),
+        },
+        start="watching",
+        current_stage="watching",
+    )
+
+    assert match_visual_exit(scenario, [Event(["person_visible"])]) == 0
+    assert match_visual_exit(scenario, [Event(["person_departed"])]) == 1
+    assert match_visual_exit(scenario, [Event(["water_bottle_visible"])]) == -1
+
+
 def test_load_scenario_script(tmp_path, monkeypatch):
     char_dir = tmp_path / "characters" / "test_char"
     char_dir.mkdir(parents=True)
@@ -144,6 +173,7 @@ goal = "Have a conversation"
     assert script.stages["intro"].exits[0].condition == "The visitor said hello"
     assert script.stages["intro"].exits[0].goto == "chat"
     assert script.stages["intro"].exits[0].label == "says hello"
+    assert script.stages["intro"].exits[0].visual_signals == []
 
 
 def test_load_scenario_script_not_found(tmp_path, monkeypatch):
@@ -203,6 +233,7 @@ def test_load_scenario_script_greg():
     # Verify labels are parsed
     first_exit = script.stages["watching"].exits[0]
     assert first_exit.label != ""
+    assert "person_visible" in first_exit.visual_signals
 
 
 # --- director_call (mocked) ---

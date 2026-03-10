@@ -22,6 +22,7 @@ class StageExit:
     condition: str
     goto: str
     label: str = ""
+    visual_signals: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -68,6 +69,27 @@ class DirectorResult:
     status: str  # "hold" or "advance"
     exit_index: int = -1  # which exit matched (-1 for hold)
 
+def collect_visual_signals(events: list) -> set[str]:
+    signals: set[str] = set()
+    for event in events:
+        payload = getattr(event, "payload", {}) or {}
+        for item in payload.get("signals", []):
+            token = str(item).strip()
+            if token:
+                signals.add(token)
+    return signals
+
+
+def match_visual_exit(scenario: ScenarioScript | None, events: list) -> int:
+    """Fast-path configured visual exits using structured signal names."""
+    if scenario is None or scenario.active_stage is None or not events:
+        return -1
+    signals = collect_visual_signals(events)
+    for index, stage_exit in enumerate(scenario.active_stage.exits):
+        if stage_exit.visual_signals and set(stage_exit.visual_signals) & signals:
+            return index
+    return -1
+
 
 # --- File loading ---
 
@@ -100,6 +122,7 @@ def load_scenario_script(character: str, filename: str | None = None) -> Scenari
                 condition=exit_data.get("condition", ""),
                 goto=exit_data.get("goto", ""),
                 label=exit_data.get("label", ""),
+                visual_signals=[str(item).strip() for item in exit_data.get("visual_signals", []) if str(item).strip()],
             ))
         stages[sname] = Stage(name=sname, goal=goal, exits=exits)
 

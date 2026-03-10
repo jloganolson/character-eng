@@ -10,6 +10,7 @@ goal = "Greg is alone at his stand, watching foot traffic. He fidgets, scans the
 condition = "Someone is approaching or looking at the stand"
 goto = "spotted"
 label = "notices"
+visual_signals = ["person_visible", "person_looking_at_stand"]
 
 [[stage.exit]]
 condition = "Someone walks past without stopping"
@@ -24,6 +25,7 @@ goal = "Greg has noticed someone nearby. He perks up, tries to make eye contact,
 condition = "The person comes closer or engages with Greg"
 goto = "approaching"
 label = "comes over"
+visual_signals = ["person_at_stand", "person_looking_at_greg"]
 
 [[stage.exit]]
 condition = "The person ignores Greg or walks away"
@@ -61,6 +63,7 @@ goal = "The conversation is live. Greg keeps replies to one or two tight sentenc
 condition = "The interaction has wrapped up and the person is leaving or has left"
 goto = "watching"
 label = "wraps up"
+visual_signals = ["person_departed"]
 
 [[stage]]
 name = "declined"

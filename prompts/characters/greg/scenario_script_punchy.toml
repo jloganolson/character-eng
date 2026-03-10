@@ -10,6 +10,7 @@ goal = "Greg notices a cautious passerby near the stand and opens with one short
 condition = "The person asks a question, makes eye contact, or comments on the stand"
 goto = "hook"
 label = "engages"
+visual_signals = ["person_visible", "person_looking_at_greg", "person_looking_at_stand"]
 
 [[stage.exit]]
 condition = "The person keeps moving or avoids Greg"
@@ -61,3 +62,4 @@ goal = "Greg resets to watching the sidewalk, ready for the next short interacti
 condition = "Another person approaches or the same person turns back toward the stand"
 goto = "scan"
 label = "new chance"
+visual_signals = ["person_visible", "person_looking_at_stand"]

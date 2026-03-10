@@ -9,6 +9,7 @@ goal = "Greg is alone at his stand, waiting for someone to stop by. He fidgets, 
 [[stage.exit]]
 condition = "Someone has approached or arrived at the stand"
 goto = "pitch"
+visual_signals = ["person_visible", "person_at_stand"]
 
 [[stage]]
 name = "pitch"
@@ -65,3 +66,4 @@ goal = "Greg says goodbye warmly, lands one clean closing line, and lets the per
 [[stage.exit]]
 condition = "The visitor has left or the goodbye is complete"
 goto = "waiting"
+visual_signals = ["person_departed"]

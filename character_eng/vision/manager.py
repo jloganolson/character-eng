@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import collections
-import re
 import threading
 import time
 
@@ -96,6 +95,13 @@ class VisionManager:
             result = visual_focus_call(beat, stage_goal, thought, world, people, model_config)
         except Exception:
             return
+        appearance_question = "What stands out about the nearest person's appearance, clothing, or what they're carrying?"
+        all_questions = list(result.constant_questions) + list(result.ephemeral_questions)
+        if appearance_question not in all_questions:
+            if len(result.constant_questions) < 3:
+                result.constant_questions.append(appearance_question)
+            elif len(result.ephemeral_questions) < 2:
+                result.ephemeral_questions.append(appearance_question)
         self._last_focus = result
 
         try:
@@ -196,106 +202,20 @@ class VisionManager:
         for event_text in result.events:
             key = self._normalize_event(event_text)
             if key not in self._recent_events:
-                trace = self._trace_payload(snapshot, kind="vision_synthesis")
-                evidence = self._classify_event_evidence(snapshot, event_text)
-                trace.update(evidence)
-                if trace["contradicting_answers"] and not trace["supporting_answers"]:
-                    continue
+                trace = self._trace_payload(snapshot, kind="vision_synthesis", signals=list(result.signals))
                 self._recent_events[key] = now
                 self._events.append(PerceptionEvent(
                     description=event_text,
                     source="visual",
                     trace=trace,
+                    kind="visual_claim",
+                    payload={"signals": list(result.signals)},
                 ))
 
     @staticmethod
     def _normalize_event(text: str) -> str:
         """Normalize event text for dedup. Strips articles, lowercases, collapses whitespace."""
-        t = text.lower().strip()
-        t = re.sub(r'\b(a|an|the|is|are|now|still|just|has|have)\b', '', t)
-        t = re.sub(r'\s+', ' ', t).strip()
-        return t
-
-    @staticmethod
-    def _answer_polarity(answer_text: str) -> str:
-        text = (answer_text or "").strip().lower()
-        if not text:
-            return "unknown"
-        negative_patterns = [
-            r"\bno\b",
-            r"\bnot\b",
-            r"\bdoes not\b",
-            r"\bdo not\b",
-            r"\bthere (?:does|do) not appear\b",
-            r"\bthere is no\b",
-            r"\bthere are no\b",
-            r"\bcannot be determined\b",
-            r"\bimpossible to\b",
-            r"\bnot possible to determine\b",
-        ]
-        if any(re.search(pattern, text) for pattern in negative_patterns):
-            return "no"
-        positive_patterns = [
-            r"\byes\b",
-            r"\bthere is\b",
-            r"\bthere are\b",
-            r"\bone person\b",
-            r"\ba person\b",
-            r"\bsomeone is\b",
-            r"\bsomeone appears to be\b",
-        ]
-        if any(re.search(pattern, text) for pattern in positive_patterns):
-            return "yes"
-        return "unknown"
-
-    @staticmethod
-    def _event_keywords(text: str) -> set[str]:
-        lowered = re.sub(r"[^a-z0-9\s]+", " ", (text or "").lower())
-        words = {
-            word.rstrip("s")
-            for word in lowered.split()
-            if len(word) >= 4 and word not in {
-                "there", "with", "from", "that", "this", "into", "near",
-                "someone", "person", "people", "stand", "greg", "scene",
-            }
-        }
-        return words
-
-    @classmethod
-    def _question_matches_event(cls, question_text: str, event_text: str) -> bool:
-        question_keywords = cls._event_keywords(question_text)
-        event_keywords = cls._event_keywords(event_text)
-        if not question_keywords or not event_keywords:
-            return False
-        overlap = question_keywords & event_keywords
-        if overlap:
-            return True
-        # Handle small wording shifts like "approaching" vs "approaches".
-        softened = {word.rstrip("ing").rstrip("ed") for word in question_keywords}
-        event_softened = {word.rstrip("ing").rstrip("ed") for word in event_keywords}
-        return bool(softened & event_softened)
-
-    @classmethod
-    def _classify_event_evidence(cls, snapshot: RawVisualSnapshot, event_text: str) -> dict:
-        supporting_answers = []
-        contradicting_answers = []
-        for answer in snapshot.vlm_answers or []:
-            if not cls._question_matches_event(answer.question, event_text):
-                continue
-            answer_payload = {
-                "question": answer.question,
-                "answer": answer.answer,
-                "slot_type": answer.slot_type,
-            }
-            polarity = cls._answer_polarity(answer.answer)
-            if polarity == "yes":
-                supporting_answers.append(answer_payload)
-            elif polarity == "no":
-                contradicting_answers.append(answer_payload)
-        return {
-            "supporting_answers": supporting_answers,
-            "contradicting_answers": contradicting_answers,
-        }
+        return " ".join(text.lower().strip().split())
 
     def _resolve_people(self, snapshot: RawVisualSnapshot) -> None:
         """Map visual identities to PeopleState, emit presence-change events."""
@@ -307,24 +227,41 @@ class VisionManager:
         for vid in current_ids:
             if vid not in self._known_persons:
                 self._known_persons.add(vid)
+                person_id = None
+                if self._people is not None:
+                    person_id = self._people.get_or_create(vid)
+                    self._visual_to_person[vid] = person_id
                 self._events.append(PerceptionEvent(
                     description=f"{vid} appeared in view",
                     source="visual",
                     trace=self._trace_payload(snapshot, kind="person_presence", identity=vid),
+                    kind="person_presence",
+                    payload={
+                        "identity": vid,
+                        "person_id": person_id,
+                        "presence": "present",
+                        "change": "appeared",
+                        "signals": ["person_visible"],
+                    },
                 ))
-                # Map to people state
-                if self._people is not None:
-                    pid = self._people.get_or_create(vid)
-                    self._visual_to_person[vid] = pid
 
         # Departures (only if previously known)
         disappeared = self._known_persons - current_ids
         for vid in disappeared:
             self._known_persons.discard(vid)
+            person_id = self._visual_to_person.get(vid)
             self._events.append(PerceptionEvent(
                 description=f"{vid} is no longer visible",
                 source="visual",
                 trace=self._trace_payload(snapshot, kind="person_presence", identity=vid),
+                kind="person_presence",
+                payload={
+                    "identity": vid,
+                    "person_id": person_id,
+                    "presence": "gone",
+                    "change": "disappeared",
+                    "signals": ["person_departed"],
+                },
             ))
 
     def _trace_payload(self, snapshot: RawVisualSnapshot, **extra) -> dict:

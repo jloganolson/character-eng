@@ -19,6 +19,10 @@ Archive references:
 
 Do not start by reviving that archive unless explicitly asked.
 
+Behavior rule:
+
+- Do not add string-matching or regex heuristics for control flow if structured signals or model output can be used instead.
+
 Current live URLs at handoff time:
 
 - dashboard: `http://127.0.0.1:56029/`

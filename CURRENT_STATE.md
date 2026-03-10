@@ -105,3 +105,8 @@ What is actually left now:
 
 3. Later, decide whether to revive the archived remote/deploy bucket.
    That is now a deliberate future decision, not active branch clutter.
+
+## Guardrails
+
+- Do not use string matching or regex heuristics for behavior/control flow when structured signals or model output can carry the intent.
+- For visual/runtime triggers, prefer explicit structured fields in scenario/config/payloads over interpreting prose condition text.

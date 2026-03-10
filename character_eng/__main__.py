@@ -21,7 +21,7 @@ from character_eng.perception import PerceptionEvent, load_sim_script, process_p
 from character_eng.person import PeopleState
 from character_eng.prompts import list_characters, load_prompt
 from character_eng.qa_personas import _action_badge, _esc, annotation_assets
-from character_eng.scenario import DirectorResult, load_scenario_script, director_call
+from character_eng.scenario import DirectorResult, director_call, load_scenario_script, match_visual_exit
 from character_eng.world import (
     EvalResult,
     Goals,
@@ -499,9 +499,151 @@ def _push_world_people_state(world, people=None):
         })
     if people is not None:
         _push("people_state", {"people": [
-            {"id": p.person_id, "name": p.name, "facts": [{"id": k, "text": v} for k, v in p.facts.items()]}
+            {
+                "id": p.person_id,
+                "name": p.name,
+                "presence": p.presence,
+                "facts": [{"id": k, "text": v} for k, v in p.facts.items()],
+            }
             for p in people.people.values()
         ]})
+
+
+def _sync_runtime_prompt_context(session, world, people=None, scenario=None, vision_mgr=None) -> None:
+    world_text = world.render() if world is not None else ""
+    people_text = people.render() if people is not None else ""
+    visual_text = ""
+    if vision_mgr is not None:
+        try:
+            visual_text = vision_mgr.context.render_for_prompt()
+        except Exception:
+            visual_text = ""
+    stage_text = ""
+    if scenario is not None and scenario.active_stage is not None:
+        stage_text = f"Current stage: {scenario.active_stage.name}\nStage goal: {scenario.active_stage.goal}"
+
+    _set_runtime_context(session, "runtime_world_state", f"=== LIVE WORLD STATE ===\n{world_text}" if world_text else "")
+    _set_runtime_context(session, "runtime_people_state", f"=== LIVE PEOPLE STATE ===\n{people_text}" if people_text else "")
+    _set_runtime_context(session, "runtime_visual_state", f"=== LIVE VISUAL STATE ===\n{visual_text}" if visual_text else "")
+    _set_runtime_context(session, "runtime_stage_state", f"=== LIVE STAGE STATE ===\n{stage_text}" if stage_text else "")
+
+
+def _current_vision_text(vision_mgr) -> str:
+    if vision_mgr is None:
+        return ""
+    try:
+        return vision_mgr.context.render_for_prompt()
+    except Exception:
+        return ""
+
+
+def _advance_scenario_from_visual(session, scenario, script, world, people, goals, model_config, exit_index: int, vision_mgr=None) -> bool:
+    if scenario is None or scenario.active_stage is None:
+        return False
+    stage = scenario.active_stage
+    if exit_index < 0 or exit_index >= len(stage.exits):
+        return False
+    exit_obj = stage.exits[exit_index]
+    if not scenario.advance_to(exit_obj.goto):
+        return False
+    new_stage = scenario.active_stage
+    _push("director", {
+        "thought": f"visual fast-path matched structured signal for exit {exit_index}",
+        "status": "advance",
+        "exit_index": exit_index,
+        "source": "visual_fastpath",
+        "new_stage": new_stage.name if new_stage else None,
+        "prompt_blocks": [],
+    })
+    if new_stage is not None:
+        console.print(f"[bold cyan]{_ts()} Stage → {new_stage.name}: {new_stage.goal}[/bold cyan]")
+        _push("stage_change", {
+            "old_stage": stage.name,
+            "new_stage": new_stage.name,
+            "new_goal": new_stage.goal,
+        })
+        result = single_beat_call(
+            system_prompt=session.system_prompt,
+            world=world,
+            history=session.get_history(),
+            goals=goals,
+            model_config=model_config,
+            people=people,
+            stage_goal=new_stage.goal,
+            vision_context_text=_current_vision_text(vision_mgr),
+        )
+        if result.beats:
+            apply_plan(script, result)
+    return True
+
+
+def _consume_vision_updates(session, world, people, vision_mgr, scenario, script, goals, model_config) -> bool:
+    if vision_mgr is None:
+        return False
+    stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
+    vision_events = vision_mgr.drain_events()
+    if not vision_events:
+        vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal)
+        return False
+
+    trigger_visual_turn = False
+    if _runtime_controls["vision"]:
+        for event in vision_events:
+            _, narrator_msg = process_perception(event, people, world)
+            console.print(f"[dim]{narrator_msg}[/dim]")
+            session.inject_system(narrator_msg)
+            _push("perception", {
+                "source": event.source,
+                "description": event.description,
+                "kind": getattr(event, "kind", ""),
+                "payload": getattr(event, "payload", {}) or {},
+                "source_trace": getattr(event, "trace", {}) or {},
+            })
+        _push_world_people_state(world, people)
+        _start_reconcile(world, model_config, people=people)
+        exit_index = match_visual_exit(scenario, vision_events)
+        if exit_index >= 0:
+            trigger_visual_turn = _advance_scenario_from_visual(
+                session, scenario, script, world, people, goals, model_config, exit_index, vision_mgr=vision_mgr
+            )
+        if any("person_visible" in ((getattr(event, "payload", {}) or {}).get("signals", [])) for event in vision_events):
+            trigger_visual_turn = True
+    vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal)
+    _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
+    return trigger_visual_turn
+
+
+def _poll_live_input(session_id: str, voice_io):
+    import queue as _queue
+
+    if _dashboard_input_queue is not None:
+        try:
+            return _dashboard_input_queue.get_nowait()
+        except _queue.Empty:
+            pass
+    if voice_io is None:
+        return None
+    try:
+        return voice_io.wait_for_input(timeout=0.01)
+    except _queue.Empty:
+        return None
+
+
+def _wait_for_active_turn_input(session_id, voice_io, session, world, people, vision_mgr, scenario, script, goals, model_config, log):
+    if voice_io is None and _dashboard_input_queue is None:
+        return _get_input(session_id)
+
+    while True:
+        if world is not None:
+            _check_reconcile(world, log, people=people)
+        user_input = _poll_live_input(session_id, voice_io)
+        if user_input:
+            return user_input
+        if _consume_vision_updates(session, world, people, vision_mgr, scenario, script, goals, model_config):
+            if voice_io is not None:
+                voice_io._cancel_auto_beat()
+            return "/beat"
+        time.sleep(0.05)
 
 
 # --- Sync eval microservices (8B) ---
@@ -702,6 +844,7 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
                                 system_prompt=session.system_prompt, world=world,
                                 history=session.get_history(), goals=goals, model_config=model_config,
                                 people=people, stage_goal=new_stage.goal,
+                                vision_context_text=_current_vision_text(vision_mgr),
                             )
                             if result.beats:
                                 apply_plan(script, result)
@@ -751,6 +894,7 @@ def run_director_sync(scenario, world, people, session, model_config, script, go
                         system_prompt=session.system_prompt, world=world,
                         history=session.get_history(), goals=goals, model_config=model_config,
                         people=people, stage_goal=new_stage.goal,
+                        vision_context_text="",
                     )
                     if plan_result.beats:
                         apply_plan(script, plan_result)
@@ -1067,7 +1211,7 @@ def handle_trigger(trigger_num, scenario, session, world, goals, script, people,
         voice_io._cancel_auto_beat()
     script.replace([])
     stage_goal = new_stage.goal if new_stage else ""
-    plan_result = run_plan(session, world, goals, "", model_config, people=people, stage_goal=stage_goal)
+    plan_result = run_plan(session, world, goals, "", model_config, people=people, stage_goal=stage_goal, vision_mgr=vision_mgr)
     if plan_result and plan_result.beats:
         apply_plan(script, plan_result)
 
@@ -1270,9 +1414,10 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             )
         if vision_mgr is not None:
             console.print("[green]Vision active[/green]")
+        _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
 
         # Generate initial script at boot (synchronous, 8B single-beat)
-        plan_result = run_plan(session, world, goals, "", model_config, people=people, stage_goal=stage_goal)
+        plan_result = run_plan(session, world, goals, "", model_config, people=people, stage_goal=stage_goal, vision_mgr=vision_mgr)
         if plan_result and plan_result.beats:
             apply_plan(script, plan_result)
 
@@ -1382,7 +1527,10 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 voice_io._start_auto_beat()
                 _arm_auto_beat = False
                 try:
-                    user_input = _get_live_input(session_id, voice_io)
+                    user_input = _wait_for_active_turn_input(
+                        session_id, voice_io, session, world, people, vision_mgr,
+                        scenario, script, goals, model_config, log,
+                    )
                 except (EOFError, KeyboardInterrupt):
                     console.print()
                     voice_io.stop()
@@ -1428,8 +1576,11 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print(f"[bold blue]You[/bold blue] [dim]{session_id} {_ts()}[/dim]: {user_input}")
             else:
                 try:
-                    if voice_io is not None:
-                        user_input = _get_live_input(session_id, voice_io)
+                    if voice_io is not None or _dashboard_input_queue is not None:
+                        user_input = _wait_for_active_turn_input(
+                            session_id, voice_io, session, world, people, vision_mgr,
+                            scenario, script, goals, model_config, log,
+                        )
                     else:
                         user_input = _get_input(session_id)
                 except (EOFError, KeyboardInterrupt):
@@ -1446,29 +1597,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
             # --- Turn start: check background results ---
             stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
-
-            if world is not None:
-                _check_reconcile(world, log, people=people)
-
-            # Drain vision events
-            if vision_mgr is not None:
-                vision_events = vision_mgr.drain_events()
-                if _runtime_controls["vision"]:
-                    drained_any = False
-                    for event in vision_events:
-                        drained_any = True
-                        _, narrator_msg = process_perception(event, people, world)
-                        console.print(f"[dim]{narrator_msg}[/dim]")
-                        session.inject_system(narrator_msg)
-                        _push("perception", {
-                            "source": event.source,
-                            "description": event.description,
-                            "source_trace": getattr(event, "trace", {}) or {},
-                        })
-                    if drained_any:
-                        _push_world_people_state(world, people)
-                        _start_reconcile(world, model_config, people=people)
-                vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal)
+            _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
 
             # --- Command dispatch ---
             cmd = user_input.lower()
@@ -1688,7 +1817,16 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             # First user input: natural LLM response, then parallel eval + replan
             if not had_user_input:
                 had_user_input = True
-                response = stream_response(session, label, user_input, voice_io=voice_io, expr_model_config=model_config, input_timing=input_timing)
+                response = stream_response(
+                    session, label, user_input,
+                    voice_io=voice_io,
+                    expr_model_config=model_config,
+                    input_timing=input_timing,
+                    world=world,
+                    people=people,
+                    scenario=scenario,
+                    vision_mgr=vision_mgr,
+                )
                 expr = stream_response._last_expr
                 entry = {"type": "send", "input": user_input, "response": response}
                 if expr:
@@ -1703,6 +1841,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     system_prompt=session.system_prompt, world=world,
                     history=session.get_history(), goals=goals, model_config=model_config,
                     plan_request=plan_request, people=people, stage_goal=stage_goal,
+                    vision_context_text=_current_vision_text(vision_mgr),
                 )
                 if result.beats:
                     apply_plan(script, result)
@@ -1715,16 +1854,34 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     system_prompt=session.system_prompt, world=world,
                     history=session.get_history(), goals=goals, model_config=model_config,
                     people=people, stage_goal=stage_goal,
+                    vision_context_text=_current_vision_text(vision_mgr),
                 )
                 if result.beats:
                     apply_plan(script, result)
 
             if script.current_beat is not None:
                 # Normal path: LLM-guided beat delivery — reacts to user while serving intent
-                response = stream_guided_beat(session, script.current_beat, label, user_input, voice_io=voice_io, expr_model_config=model_config)
+                response = stream_guided_beat(
+                    session, script.current_beat, label, user_input,
+                    voice_io=voice_io,
+                    expr_model_config=model_config,
+                    world=world,
+                    people=people,
+                    scenario=scenario,
+                    vision_mgr=vision_mgr,
+                )
             else:
                 # No script available (planner unavailable/failed) — LLM generates response
-                response = stream_response(session, label, user_input, voice_io=voice_io, expr_model_config=model_config, input_timing=input_timing)
+                response = stream_response(
+                    session, label, user_input,
+                    voice_io=voice_io,
+                    expr_model_config=model_config,
+                    input_timing=input_timing,
+                    world=world,
+                    people=people,
+                    scenario=scenario,
+                    vision_mgr=vision_mgr,
+                )
             expr = stream_response._last_expr
             entry = {"type": "send", "input": user_input, "response": response}
             if expr:
@@ -1739,6 +1896,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     system_prompt=session.system_prompt, world=world,
                     history=session.get_history(), goals=goals, model_config=model_config,
                     plan_request=plan_request, people=people, stage_goal=stage_goal,
+                    vision_context_text=_current_vision_text(vision_mgr),
                 )
                 if result.beats:
                     apply_plan(script, result)
@@ -1762,7 +1920,7 @@ def run_eval(session, world, goals, script, model_config):
         return None
 
 
-def run_plan(session, world, goals, plan_request, model_config, people=None, stage_goal=""):
+def run_plan(session, world, goals, plan_request, model_config, people=None, stage_goal="", vision_mgr=None):
     """Run single_beat_call synchronously, return PlanResult or None on error."""
     if model_config is None:
         console.print("[dim]Planner unavailable, skipping.[/dim]")
@@ -1778,6 +1936,7 @@ def run_plan(session, world, goals, plan_request, model_config, people=None, sta
             plan_request=plan_request,
             people=people,
             stage_goal=stage_goal,
+            vision_context_text=_current_vision_text(vision_mgr),
         )
     except Exception as e:
         console.print(f"[red]Plan error: {e}[/red]")
@@ -1906,7 +2065,7 @@ def deliver_beat(session, beat, label, voice_io=None):
     return beat.line
 
 
-def stream_guided_beat(session, beat, label, user_input, voice_io=None, expr_model_config=None) -> str:
+def stream_guided_beat(session, beat, label, user_input, voice_io=None, expr_model_config=None, world=None, people=None, scenario=None, vision_mgr=None) -> str:
     """Use the beat's intent to guide an LLM response that reacts to user input.
 
     Injects beat guidance as a system message, then streams a real LLM response.
@@ -1924,6 +2083,10 @@ def stream_guided_beat(session, beat, label, user_input, voice_io=None, expr_mod
         voice_io=voice_io,
         expr_model_config=expr_model_config,
         keep_beat_guidance=True,
+        world=world,
+        people=people,
+        scenario=scenario,
+        vision_mgr=vision_mgr,
     )
 
 
@@ -1947,7 +2110,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
 
     # 1. If no current beat, replan (synchronous — user explicitly asked for a beat)
     if script.current_beat is None:
-        plan_result = run_plan(session, world, goals, "", model_config)
+        plan_result = run_plan(session, world, goals, "", model_config, vision_mgr=vision_mgr)
         if plan_result and plan_result.beats:
             apply_plan(script, plan_result)
         if script.current_beat is None:
@@ -2029,6 +2192,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
             system_prompt=session.system_prompt, world=world,
             history=session.get_history(), goals=goals, model_config=model_config,
             plan_request=plan_request, people=people, stage_goal=stage_goal,
+            vision_context_text=_current_vision_text(vision_mgr),
         )
         if result.beats:
             apply_plan(script, result)
@@ -2048,7 +2212,15 @@ def handle_world_change(session, world, goals, script, change_text, label, model
     session.inject_system(narrator_msg)
 
     # Character reacts (no synchronous eval — narrator injection provides enough context)
-    response = stream_response(session, label, "[React to what just happened.]", voice_io=voice_io, expr_model_config=model_config)
+    response = stream_response(
+        session, label, "[React to what just happened.]",
+        voice_io=voice_io,
+        expr_model_config=model_config,
+        world=world,
+        people=people,
+        scenario=scenario,
+        vision_mgr=vision_mgr,
+    )
     expr = stream_response._last_expr
 
     entry = {
@@ -2075,6 +2247,7 @@ def handle_world_change(session, world, goals, script, change_text, label, model
             system_prompt=session.system_prompt, world=world,
             history=session.get_history(), goals=goals, model_config=model_config,
             plan_request=plan_request, people=people, stage_goal=stage_goal,
+            vision_context_text=_current_vision_text(vision_mgr),
         )
         if result.beats:
             apply_plan(script, result)
@@ -2090,7 +2263,15 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
     session.inject_system(narrator_msg)
 
     # Character reacts
-    response = stream_response(session, label, "[React to what you just noticed.]", voice_io=voice_io, expr_model_config=model_config)
+    response = stream_response(
+        session, label, "[React to what you just noticed.]",
+        voice_io=voice_io,
+        expr_model_config=model_config,
+        world=world,
+        people=people,
+        scenario=scenario,
+        vision_mgr=vision_mgr,
+    )
     expr = stream_response._last_expr
 
     entry = {
@@ -2115,6 +2296,7 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
             system_prompt=session.system_prompt, world=world,
             history=session.get_history(), goals=goals, model_config=model_config,
             plan_request=plan_request, people=people, stage_goal=stage_goal,
+            vision_context_text=_current_vision_text(vision_mgr),
         )
         if result.beats:
             apply_plan(script, result)
@@ -2154,7 +2336,15 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
             # Quoted line → user message
             text = desc.strip('"')
             console.print(f"[bold blue]You[/bold blue]: {text}")
-            response = stream_response(session, label, text, voice_io=voice_io, expr_model_config=model_config)
+            response = stream_response(
+                session, label, text,
+                voice_io=voice_io,
+                expr_model_config=model_config,
+                world=world,
+                people=people,
+                scenario=scenario,
+                vision_mgr=vision_mgr,
+            )
             expr = stream_response._last_expr
             entry = {"type": "send", "input": text, "response": response}
             if expr:
@@ -2169,6 +2359,7 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
                     system_prompt=session.system_prompt, world=world,
                     history=session.get_history(), goals=goals, model_config=model_config,
                     plan_request=plan_request, people=people, stage_goal=stage_goal,
+                    vision_context_text=_current_vision_text(vision_mgr),
                 )
                 if result.beats:
                     apply_plan(script, result)
@@ -2179,7 +2370,7 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
     console.print(f"[cyan]Sim: complete[/cyan]")
 
 
-def _inject_runtime_turn_guardrails(session, user_input: str = "") -> None:
+def _inject_runtime_turn_guardrails(session, user_input: str = "", people=None, scenario=None, vision_mgr=None) -> None:
     system_prompt = getattr(session, "system_prompt", "")
     parts = [
         "Turn guardrails:",
@@ -2200,6 +2391,11 @@ def _inject_runtime_turn_guardrails(session, user_input: str = "") -> None:
             parts.append("- For this turn, answer plainly: free water, free advice, no catch.")
         if any(token in lowered for token in ("i should get going", "got to go", "gotta go", "i should go", "goodbye", "bye", "see you")):
             parts.append("- The user is leaving. Give one warm goodbye line, no follow-up question, and do not try to keep them there.")
+        if people is not None and people.present_people() and (not user_input.strip()):
+            parts.extend([
+                "- If this is the first live moment with a visible person, open with one kind, concrete observation grounded in what they are wearing, carrying, or doing only if the visual context clearly supports it.",
+                "- After the opener, try to learn who they are or what to call them quickly.",
+            ])
     session.upsert_system("runtime_turn_guardrails", "\n".join(parts))
 
 
@@ -2215,7 +2411,7 @@ def _consume_live_input_metadata(voice_io, user_input: str) -> dict:
     return {"input_source": "text"}
 
 
-def stream_response(session, label, message, voice_io=None, expr_model_config=None, input_timing: dict | None = None, keep_beat_guidance: bool = False) -> str:
+def stream_response(session, label, message, voice_io=None, expr_model_config=None, input_timing: dict | None = None, keep_beat_guidance: bool = False, world=None, people=None, scenario=None, vision_mgr=None) -> str:
     """Send a message and stream the response. Returns full response text.
 
     When voice_io is provided, also feeds chunks to TTS and checks for barge-in.
@@ -2226,7 +2422,8 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
     stream_response._last_expr = None
     if not keep_beat_guidance:
         _set_runtime_context(session, "runtime_beat_guidance", "")
-    _inject_runtime_turn_guardrails(session, message)
+    _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
+    _inject_runtime_turn_guardrails(session, message, people=people, scenario=scenario, vision_mgr=vision_mgr)
     npc_name = Text(f"{_ts()} {label}: ", style="bold magenta")
     console.print(npc_name, end="")
     full_response = []
@@ -2484,7 +2681,7 @@ def run_smoke():
         console.print(f"\n[yellow]▶ smoke: {action}" + (f" {text}" if text else "") + "[/yellow]")
         try:
             if action == "send":
-                response = stream_response(session, label, text)
+                response = stream_response(session, label, text, world=world, people=people, scenario=scenario)
                 log.append({"type": "send", "input": text, "response": response})
                 _bump_version()
                 if not response.strip():
