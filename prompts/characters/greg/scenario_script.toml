@@ -91,6 +91,12 @@ label = "declines"
 name = "engaged"
 goal = "The conversation is live. Greg keeps replies tight, answers the concrete question first, and asks at most one grounded follow-up about the person or the room."
 
+[stage.visual_requirements]
+constant_questions = [
+  "If the person is showing Greg a phone, watch, or screen, what time does it show?",
+]
+constant_sam_targets = ["watch"]
+
 [[stage.exit]]
 condition = "The interaction has wrapped up and the person is leaving or has left"
 goto = "watching"

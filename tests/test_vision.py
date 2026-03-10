@@ -427,7 +427,7 @@ def test_visual_focus_call_includes_scenario_authored_constants(monkeypatch):
     monkeypatch.setattr("character_eng.world._llm_call", lambda *args, **kwargs: Response())
 
     scenario = SimpleNamespace(
-        visual_focus=SimpleNamespace(
+        active_visual_requirements=lambda: SimpleNamespace(
             constant_questions=["Is there a visible clock, watch, phone, or screen that could tell Greg the time?"],
             constant_sam_targets=["phone", "clock", "screen"],
         )
@@ -447,6 +447,47 @@ def test_visual_focus_call_includes_scenario_authored_constants(monkeypatch):
         "Is there a visible clock, watch, phone, or screen that could tell Greg the time?"
     ]
     assert result.constant_sam_targets == CORE_CONSTANT_SAM_TARGETS + ["phone", "clock", "screen"]
+
+
+def test_visual_focus_call_merges_stage_specific_constants(monkeypatch):
+    from types import SimpleNamespace
+    from character_eng.vision.focus import visual_focus_call
+
+    class Message:
+        content = json.dumps({
+            "ephemeral_questions": [],
+            "ephemeral_sam_targets": [],
+        })
+
+    class Choice:
+        message = Message()
+
+    class Response:
+        choices = [Choice()]
+
+    monkeypatch.setattr("character_eng.world._llm_call", lambda *args, **kwargs: Response())
+
+    scenario = SimpleNamespace(
+        active_visual_requirements=lambda: SimpleNamespace(
+            constant_questions=["Is there a visible clock?", "If the person is showing Greg a phone, what time does it show?"],
+            constant_sam_targets=["clock", "phone"],
+        )
+    )
+
+    result = visual_focus_call(
+        beat=None,
+        stage_goal="Find the time.",
+        thought="",
+        world=None,
+        people=None,
+        model_config={},
+        scenario=scenario,
+    )
+
+    assert "Is there a visible clock?" in result.constant_questions
+    assert "If the person is showing Greg a phone, what time does it show?" in result.constant_questions
+    assert "clock" in result.constant_sam_targets
+    assert "phone" in result.constant_sam_targets
 
 
 def test_vision_manager_dashboard_snapshot_includes_objects_and_focus(monkeypatch):

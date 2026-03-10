@@ -33,7 +33,7 @@ class ScenarioGuardrails:
 
 
 @dataclass
-class ScenarioVisualFocus:
+class VisualRequirements:
     constant_questions: list[str] = field(default_factory=list)
     constant_sam_targets: list[str] = field(default_factory=list)
 
@@ -43,6 +43,7 @@ class Stage:
     name: str
     goal: str
     exits: list[StageExit] = field(default_factory=list)
+    visual_requirements: VisualRequirements = field(default_factory=VisualRequirements)
 
 
 @dataclass
@@ -53,7 +54,7 @@ class ScenarioScript:
     current_stage: str = ""
     gaze_targets: list[str] = field(default_factory=list)
     guardrails: ScenarioGuardrails = field(default_factory=ScenarioGuardrails)
-    visual_focus: ScenarioVisualFocus = field(default_factory=ScenarioVisualFocus)
+    visual_requirements: VisualRequirements = field(default_factory=VisualRequirements)
 
     @property
     def active_stage(self) -> Stage | None:
@@ -77,6 +78,22 @@ class ScenarioScript:
     def show(self) -> Panel:
         body = self.render() if self.stages else "[dim]No scenario loaded.[/dim]"
         return Panel(body, title="Scenario", border_style="cyan")
+
+    def active_visual_requirements(self) -> VisualRequirements:
+        merged_questions = list(self.visual_requirements.constant_questions)
+        merged_targets = list(self.visual_requirements.constant_sam_targets)
+        stage = self.active_stage
+        if stage is not None:
+            for question in stage.visual_requirements.constant_questions:
+                if question not in merged_questions:
+                    merged_questions.append(question)
+            for target in stage.visual_requirements.constant_sam_targets:
+                if target not in merged_targets:
+                    merged_targets.append(target)
+        return VisualRequirements(
+            constant_questions=merged_questions,
+            constant_sam_targets=merged_targets,
+        )
 
 
 @dataclass
@@ -128,7 +145,7 @@ def load_scenario_script(character: str, filename: str | None = None) -> Scenari
     start = scenario_data.get("start", "")
     setup_data = data.get("setup", {})
     guardrail_data = data.get("guardrails", {})
-    visual_focus_data = data.get("visual_requirements", data.get("visual_focus", {}))
+    visual_requirements_data = data.get("visual_requirements", data.get("visual_focus", {}))
 
     stages: dict[str, Stage] = {}
     for stage_data in data.get("stage", []):
@@ -142,7 +159,24 @@ def load_scenario_script(character: str, filename: str | None = None) -> Scenari
                 label=exit_data.get("label", ""),
                 visual_signals=[str(item).strip() for item in exit_data.get("visual_signals", []) if str(item).strip()],
             ))
-        stages[sname] = Stage(name=sname, goal=goal, exits=exits)
+        stage_visual_data = stage_data.get("visual_requirements", stage_data.get("visual_focus", {}))
+        stages[sname] = Stage(
+            name=sname,
+            goal=goal,
+            exits=exits,
+            visual_requirements=VisualRequirements(
+                constant_questions=[
+                    str(item).strip()
+                    for item in stage_visual_data.get("constant_questions", [])
+                    if str(item).strip()
+                ],
+                constant_sam_targets=[
+                    str(item).strip()
+                    for item in stage_visual_data.get("constant_sam_targets", [])
+                    if str(item).strip()
+                ],
+            ),
+        )
 
     return ScenarioScript(
         name=name,
@@ -163,15 +197,15 @@ def load_scenario_script(character: str, filename: str | None = None) -> Scenari
                 if str(item).strip()
             ],
         ),
-        visual_focus=ScenarioVisualFocus(
+        visual_requirements=VisualRequirements(
             constant_questions=[
                 str(item).strip()
-                for item in visual_focus_data.get("constant_questions", [])
+                for item in visual_requirements_data.get("constant_questions", [])
                 if str(item).strip()
             ],
             constant_sam_targets=[
                 str(item).strip()
-                for item in visual_focus_data.get("constant_sam_targets", [])
+                for item in visual_requirements_data.get("constant_sam_targets", [])
                 if str(item).strip()
             ],
         ),

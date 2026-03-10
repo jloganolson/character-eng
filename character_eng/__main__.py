@@ -200,6 +200,8 @@ _runtime_controls = {
     "beat_guidance": True,
 }
 _conversation_paused = False
+_session_stopped = False
+_startup_pause_pending = False
 _had_visible_people = False
 _last_visual_turn_at = 0.0
 _VISUAL_TURN_COOLDOWN_S = 7.0
@@ -340,9 +342,18 @@ def _voice_status_snapshot(voice_io=None) -> dict:
 def _runtime_controls_snapshot(voice_io=None, vision_mgr=None, vision_cfg=None) -> dict:
     vision_status = _vision_status_snapshot(vision_cfg=vision_cfg, vision_mgr=vision_mgr)
     voice_status = _voice_status_snapshot(voice_io=voice_io)
+    if _session_stopped:
+        session_state = "stopped"
+    elif _conversation_paused:
+        session_state = "paused"
+    else:
+        session_state = "live"
     return {
         "controls": dict(_runtime_controls),
         "conversation_paused": bool(_conversation_paused),
+        "session_stopped": bool(_session_stopped),
+        "startup_pause_pending": bool(_startup_pause_pending),
+        "session_state": session_state,
         "voice_active": bool(voice_io is not None),
         "voice_status": voice_status,
         "vision_active": bool(vision_mgr is not None),
@@ -374,7 +385,7 @@ def _render_runtime_controls(voice_io=None, vision_mgr=None, vision_cfg=None) ->
         label = key.replace("_", " ")
         lines.append(f"{label:<12} : {'on' if enabled else 'off'}")
     lines.append(f"voice      : {'on' if state['voice_active'] else 'off'}")
-    lines.append(f"state      : {'paused' if state['conversation_paused'] else 'live'}")
+    lines.append(f"state      : {state['session_state']}")
     lines.append(f"vision svc : {'on' if state['vision_active'] else 'off'}")
     lines.append(f"vision url : {state['vision_service_url'] or 'n/a'}")
     lines.append(f"vision proc: {state['vision_service_state']}")
@@ -1361,12 +1372,10 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
               vision_mode: bool = False, vision_cfg=None, auto_sim: str | None = None,
               bridge=None, sim_speed: float = 1.0, start_paused: bool = False):
     """Run the chat loop for a character. Returns None normally, 'restart' to re-enter."""
-    global _conversation_paused, _had_visible_people
+    global _conversation_paused, _session_stopped, _startup_pause_pending, _had_visible_people
     set_llm_trace_hook(_record_prompt_trace)
     set_chat_trace_hook(_record_prompt_trace)
     label = character.replace("_", " ").title()
-    session_id = uuid.uuid4().hex[:8]
-    log: list[dict] = []
     # All LLM calls now use 8B chat model (parallel microservices, single-beat planning)
     big_model_config = get_big_model_config()  # kept for API compat
     eval_model_config = model_config  # kept for API compat
@@ -1444,8 +1453,12 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             console.print(f"[red]Voice unavailable: {reason}[/red]")
             console.print("[dim]Falling back to text mode[/dim]")
 
+    next_session_start_paused = bool(start_paused)
+
     # Outer loop: handles /reload by restarting with fresh session
     while True:
+        session_id = uuid.uuid4().hex[:8]
+        log: list[dict] = []
         _had_visible_people = False
         world = load_world_state(character)
         goals = load_goals(character)
@@ -1482,9 +1495,11 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             apply_plan(script, plan_result)
 
         had_user_input = False
-        _arm_auto_beat = True  # arm on startup so first beat fires without user input
-        _conversation_paused = bool(start_paused)
-        startup_pause_pending = bool(start_paused)
+        _conversation_paused = bool(next_session_start_paused)
+        _session_stopped = bool(next_session_start_paused)
+        _startup_pause_pending = bool(next_session_start_paused)
+        _arm_auto_beat = not _conversation_paused
+        next_session_start_paused = False
 
         mode_tag = " [green]voice[/green]" if voice_io is not None else ""
         console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]{mode_tag}  [dim]{session_id}[/dim]  (type /help for commands)\n")
@@ -1501,7 +1516,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
         })
         _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
         if _conversation_paused:
-            console.print("[yellow]Startup paused[/yellow] — use /resume or the dashboard Resume button when you're ready")
+            console.print("[yellow]Startup paused[/yellow] — use /start or the dashboard Start button when you're ready")
             _push("pause", {"startup": True})
         # Push initial world/people/stage state
         if world is not None:
@@ -1526,6 +1541,13 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             return
 
         # Inner loop: conversation turns
+        def _finish_session() -> None:
+            total_turns = len([e for e in log if e.get("type") in ("send", "beat", "world", "see")])
+            _push("session_end", {"total_turns": total_turns})
+            save_chat_log(character, model_config, log, session_id)
+            save_chat_html(character, model_config, log, session_id)
+
+        session_action = None
         while True:
             # --- Get input (voice or text) ---
             show_stage_hud(scenario, voice_active=(voice_io is not None))
@@ -1546,25 +1568,36 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 if not user_input:
                     continue
                 cmd = user_input.lower()
-                if cmd == "/resume":
-                    console.print("[green]Resumed[/green]")
+                if cmd in ("/start", "/resume"):
+                    was_stopped = _session_stopped or _startup_pause_pending
+                    console.print("[green]Started[/green]" if was_stopped else "[green]Resumed[/green]")
                     _conversation_paused = False
+                    _session_stopped = False
+                    _startup_pause_pending = False
                     if vision_mgr is not None:
                         vision_mgr.set_paused(False)
-                    _push("resume", {})
+                    _push("resume", {"from_start": bool(was_stopped)})
                     _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
-                    _arm_auto_beat = False if startup_pause_pending else True
-                    startup_pause_pending = False
+                    _arm_auto_beat = True
                     continue
+                if cmd == "/stop":
+                    console.print("[yellow]Stopping session...[/yellow]")
+                    if voice_io is not None:
+                        voice_io._cancel_auto_beat()
+                        voice_io.cancel_speech()
+                        voice_io.cancel_and_drain_auto_beat()
+                    _finish_session()
+                    log.clear()
+                    next_session_start_paused = True
+                    session_action = "fresh"
+                    break
                 if cmd == "/restart":
                     console.print("[yellow]Restarting session...[/yellow]")
                     if voice_io is not None:
                         voice_io._cancel_auto_beat()
                         voice_io.cancel_speech()
                         voice_io.stop()
-                    _push("session_end", {"total_turns": len([e for e in log if e.get("type") in ("send", "beat", "world", "see")])})
-                    save_chat_log(character, model_config, log, session_id)
-                    save_chat_html(character, model_config, log, session_id)
+                    _finish_session()
                     if vision_mgr is not None:
                         vision_mgr.stop()
                     log.clear()
@@ -1578,7 +1611,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     save_chat_html(character, model_config, log, session_id)
                     console.print("Goodbye!")
                     sys.exit(0)
-                console.print("[yellow]Still paused[/yellow] — send /resume or click Resume in the dashboard when you're ready")
+                console.print("[yellow]Still paused[/yellow] — send /start or click Start in the dashboard when you're ready")
                 continue
             if voice_io is not None and _arm_auto_beat and _runtime_controls["auto_beat"]:
                 # Centralized auto-beat: start timer here so it fires after all
@@ -1595,8 +1628,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print()
                     voice_io.stop()
                     voice_io = None
-                    save_chat_log(character, model_config, log, session_id)
-                    save_chat_html(character, model_config, log, session_id)
+                    _finish_session()
                     return
 
                 # User/hotkey input arrived — cancel auto-beat timer and drain
@@ -1612,8 +1644,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     if voice_io is not None:
                         voice_io.stop()
                         voice_io = None
-                    save_chat_log(character, model_config, log, session_id)
-                    save_chat_html(character, model_config, log, session_id)
+                    _finish_session()
                     console.print("Goodbye!")
                     sys.exit(0)
                 elif user_input == VOICE_OFF:
@@ -1648,8 +1679,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     if voice_io is not None:
                         voice_io.stop()
                         voice_io = None
-                    save_chat_log(character, model_config, log, session_id)
-                    save_chat_html(character, model_config, log, session_id)
+                    _finish_session()
                     return
 
             if not user_input:
@@ -1665,18 +1695,14 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 if voice_io is not None:
                     voice_io.stop()
                     voice_io = None
-                _push("session_end", {"total_turns": len([e for e in log if e.get("type") in ("send", "beat", "world", "see")])})
-                save_chat_log(character, model_config, log, session_id)
-                save_chat_html(character, model_config, log, session_id)
+                _finish_session()
                 console.print("Goodbye!")
                 sys.exit(0)
             elif cmd == "/back":
                 if voice_io is not None:
                     voice_io.stop()
                     voice_io = None
-                _push("session_end", {"total_turns": len([e for e in log if e.get("type") in ("send", "beat", "world", "see")])})
-                save_chat_log(character, model_config, log, session_id)
-                save_chat_html(character, model_config, log, session_id)
+                _finish_session()
                 return
             elif cmd == "/reload":
                 console.print("[yellow]Reloading prompts...[/yellow]")
@@ -1684,6 +1710,22 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     vision_mgr.stop()
                 log.append({"type": "reload"})
                 break  # break inner loop, outer loop reloads
+            elif cmd == "/stop":
+                console.print("[yellow]Stopping session...[/yellow]")
+                _conversation_paused = True
+                _session_stopped = True
+                _startup_pause_pending = True
+                if vision_mgr is not None:
+                    vision_mgr.set_paused(True)
+                if voice_io is not None:
+                    voice_io._cancel_auto_beat()
+                    voice_io.cancel_speech()
+                    voice_io.cancel_and_drain_auto_beat()
+                _finish_session()
+                log.clear()
+                next_session_start_paused = True
+                session_action = "fresh"
+                break
             elif cmd == "/pause":
                 console.print("[yellow]Paused[/yellow] — send /resume to continue")
                 _conversation_paused = True
@@ -1706,14 +1748,26 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                         break
                     if not resume_input:
                         continue
-                    if resume_input.lower() == "/resume":
-                        console.print("[green]Resumed[/green]")
+                    if resume_input.lower() in ("/start", "/resume"):
+                        was_stopped = _session_stopped or _startup_pause_pending
+                        console.print("[green]Started[/green]" if was_stopped else "[green]Resumed[/green]")
                         _conversation_paused = False
+                        _session_stopped = False
+                        _startup_pause_pending = False
                         if vision_mgr is not None:
                             vision_mgr.set_paused(False)
-                        _push("resume", {})
+                        _push("resume", {"from_start": bool(was_stopped)})
                         _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
                         _arm_auto_beat = True
+                        break
+                    elif resume_input.lower() == "/stop":
+                        console.print("[yellow]Stopping session...[/yellow]")
+                        _session_stopped = True
+                        _startup_pause_pending = True
+                        _finish_session()
+                        log.clear()
+                        next_session_start_paused = True
+                        session_action = "fresh"
                         break
                     elif resume_input.lower() == "/restart":
                         # Fall through to /restart handler below
@@ -1722,6 +1776,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                         break
                 if cmd == "/restart":
                     pass  # fall through
+                elif session_action == "fresh":
+                    break
                 else:
                     continue
             if cmd == "/restart":
@@ -1730,9 +1786,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     voice_io._cancel_auto_beat()
                     voice_io.cancel_speech()
                     voice_io.stop()
-                _push("session_end", {"total_turns": len([e for e in log if e.get("type") in ("send", "beat", "world", "see")])})
-                save_chat_log(character, model_config, log, session_id)
-                save_chat_html(character, model_config, log, session_id)
+                _finish_session()
                 if vision_mgr is not None:
                     vision_mgr.stop()
                 log.clear()
@@ -1961,6 +2015,9 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 if result.beats:
                     apply_plan(script, result)
             _arm_auto_beat = True
+
+        if session_action == "fresh":
+            continue
 
 
 def run_eval(session, world, goals, script, model_config):
@@ -2667,6 +2724,8 @@ def show_help(voice_active: bool = False):
         "/threads <name> <on|off|toggle> - Toggle a runtime subsystem\n"
         "/voice          - Toggle voice mode on/off\n"
         "/devices        - List audio input/output devices\n"
+        "/start          - Start a fresh paused session\n"
+        "/stop           - Stop this session, save its log, prepare a fresh one\n"
         "/pause          - Pause the conversation loop\n"
         "/resume         - Resume after /pause\n"
         "/restart        - Restart this character session\n"

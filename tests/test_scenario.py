@@ -183,8 +183,42 @@ goal = "Have a conversation"
     assert script.guardrails.always == ["Stay grounded."]
     assert script.guardrails.on_first_visible_person == ["Learn their name."]
     assert script.guardrails.on_user_leaving == ["Let them go."]
-    assert script.visual_focus.constant_questions == []
-    assert script.visual_focus.constant_sam_targets == []
+    assert script.visual_requirements.constant_questions == []
+    assert script.visual_requirements.constant_sam_targets == []
+
+
+def test_load_scenario_script_stage_visual_requirements(tmp_path, monkeypatch):
+    char_dir = tmp_path / "characters" / "test_char"
+    char_dir.mkdir(parents=True)
+    (char_dir / "scenario_script.toml").write_text("""
+[visual_requirements]
+constant_questions = ["Is there a clock visible?"]
+constant_sam_targets = ["clock"]
+
+[scenario]
+name = "Test Scenario"
+start = "intro"
+
+[[stage]]
+name = "intro"
+goal = "Introduce yourself"
+
+[stage.visual_requirements]
+constant_questions = ["Is the person holding up a phone?"]
+constant_sam_targets = ["phone"]
+""")
+
+    monkeypatch.setattr(scenario_mod, "CHARACTERS_DIR", tmp_path / "characters")
+
+    script = load_scenario_script("test_char")
+    assert script is not None
+    assert script.visual_requirements.constant_questions == ["Is there a clock visible?"]
+    assert script.visual_requirements.constant_sam_targets == ["clock"]
+    assert script.active_stage.visual_requirements.constant_questions == ["Is the person holding up a phone?"]
+    assert script.active_stage.visual_requirements.constant_sam_targets == ["phone"]
+    merged = script.active_visual_requirements()
+    assert merged.constant_questions == ["Is there a clock visible?", "Is the person holding up a phone?"]
+    assert merged.constant_sam_targets == ["clock", "phone"]
 
 
 def test_load_scenario_script_not_found(tmp_path, monkeypatch):

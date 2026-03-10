@@ -169,6 +169,9 @@ def test_runtime_panel_interactions_in_browser(
                 "filler": False,
             },
             "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": True,
+            "session_state": "stopped",
             "voice_active": True,
             "voice_status": {
                 "active": True,
@@ -196,15 +199,16 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#h-character")).to_have_text("greg")
     expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
     expect(page.locator("#boot-overlay")).not_to_be_visible()
-    expect(page.locator("#runtime-status")).to_contain_text("state: paused")
-    expect(page.locator("#boot-summary")).to_contain_text("Everything is warm. Resume when you want to start.")
-    expect(page.locator("#boot-overlay-summary")).to_contain_text("Everything is warm. Resume when you want to start.")
+    expect(page.locator("#runtime-status")).to_contain_text("state: stopped")
+    expect(page.locator("#boot-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
+    expect(page.locator("#boot-overlay-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
     expect(page.locator("#boot-grid")).to_contain_text("voice")
     expect(page.locator("#boot-grid")).to_contain_text("models")
     expect(page.locator("#runtime-status")).to_contain_text("auto-beat: off")
     expect(page.locator("#runtime-status")).to_contain_text("stt: ready")
     expect(page.locator("#runtime-status")).to_contain_text("tts: ready")
-    expect(page.locator("#runtime-toggle")).to_have_text("Resume")
+    expect(page.locator("#runtime-toggle")).to_have_text("Start")
+    expect(page.locator("#runtime-stop")).to_be_disabled()
     expect(page.locator("#boot-grid")).to_contain_text("Deepgram socket open.")
     expect(page.locator("#boot-grid")).to_contain_text("Pocket-TTS reachable.")
     expect(page.locator("#vision-service-status")).to_contain_text("source: external service")
@@ -426,8 +430,108 @@ def test_runtime_panel_interactions_in_browser(
     vision_popup.close()
 
     page.locator("#runtime-toggle").click()
-    expect(page.locator("#runtime-toggle")).to_have_text("Resuming...")
-    assert input_queue.get(timeout=2) == "/resume"
+    expect(page.locator("#runtime-toggle")).to_have_text("Starting...")
+    assert input_queue.get(timeout=2) == "/start"
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": vision_service_url,
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    expect(page.locator("#runtime-status")).to_contain_text("state: live")
+    expect(page.locator("#runtime-toggle")).to_have_text("Pause")
+    expect(page.locator("#runtime-stop")).to_be_enabled()
+
+    page.locator("#runtime-stop").click()
+    expect(page.locator("#runtime-stop")).to_have_text("Stopping...")
+    assert input_queue.get(timeout=2) == "/stop"
+
+    collector.push("session_end", {"total_turns": 2})
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-stopped-fresh",
+            "stage": "watching",
+        },
+    )
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": True,
+            "session_state": "stopped",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": vision_service_url,
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    expect(page.locator("#runtime-status")).to_contain_text("state: stopped")
+    expect(page.locator("#runtime-toggle")).to_have_text("Start")
+    expect(page.locator("#runtime-stop")).to_be_disabled()
+    expect(page.locator("#h-session")).to_have_text("sess-stopped-fresh")
+
+    page.locator("#runtime-toggle").click()
+    expect(page.locator("#runtime-toggle")).to_have_text("Starting...")
+    assert input_queue.get(timeout=2) == "/start"
 
     page.locator("button[data-runtime-control='thinker']").click()
     assert input_queue.get(timeout=2) == "/threads thinker toggle"
@@ -453,6 +557,9 @@ def test_runtime_panel_interactions_in_browser(
                 "filler": True,
             },
             "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
             "voice_active": True,
             "voice_status": {
                 "active": True,
@@ -509,6 +616,9 @@ def test_runtime_panel_interactions_in_browser(
                 "filler": True,
             },
             "conversation_paused": True,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "paused",
             "voice_active": True,
             "voice_status": {
                 "active": True,

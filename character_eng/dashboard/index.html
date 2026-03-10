@@ -1248,8 +1248,9 @@
           <div id="boot-grid" class="boot-grid"></div>
         </div>
         <div id="runtime-status" style="margin-bottom:0.5em;color:var(--text-dim);">Waiting for runtime state...</div>
-        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
           <button id="runtime-toggle" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--narrator);color:var(--bg);cursor:pointer;">Resume</button>
+          <button id="runtime-stop" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--hold);color:var(--bg);cursor:pointer;">Stop Session</button>
           <button id="runtime-restart" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--error);color:var(--bg);cursor:pointer;">Restart Session</button>
         </div>
         <div id="runtime-control-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.35em;margin-top:0.55em;"></div>
@@ -1364,6 +1365,8 @@
     tts: {state: "off", detail: "Voice inactive.", backend: ""}
   };
   let visionManagerActive = false;
+  let sessionStopped = false;
+  let startupPausePending = false;
   let lastEventAt = 0;
   let runtimeStateSeen = false;
   let sessionSeen = false;
@@ -1385,6 +1388,7 @@
   const streamEmpty = document.getElementById("stream-empty");
   const laneToggleGrid = document.getElementById("lane-toggle-grid");
   const runtimeToggleButton = document.getElementById("runtime-toggle");
+  const runtimeStopButton = document.getElementById("runtime-stop");
   const runtimeRestartButton = document.getElementById("runtime-restart");
   const runtimeControlGrid = document.getElementById("runtime-control-grid");
   const bootRestartButton = document.getElementById("boot-restart");
@@ -2065,6 +2069,7 @@
     if (statePollingSuspended) return "dashboard disconnected";
     if (!runtimeStateSeen) return "attaching app runtime";
     if (!(sessionSeen || restartPending)) return restartPending ? "waiting for fresh session" : "waiting for session init";
+    if (sessionStopped) return "ready to start";
     if (voiceState === "error") return "voice needs attention";
     if (voiceState === "waiting" || voiceState === "active") return "waiting for voice runtime";
     if (visionServiceState === "error") return "vision service needs attention";
@@ -2084,9 +2089,11 @@
     const overlaySubEl = document.getElementById("boot-overlay-sub");
     const overlayGridEl = document.getElementById("boot-overlay-grid");
     const now = Date.now();
-    const runtimeState = runtimeStateSeen ? (conversationPaused ? "ready" : "active") : "waiting";
+    const runtimeState = runtimeStateSeen ? (sessionStopped ? "ready" : (conversationPaused ? "ready" : "active")) : "waiting";
     const runtimeDetail = runtimeStateSeen
-      ? (conversationPaused ? "Warm and paused. Hit Resume when you want to start." : "Runtime is live and accepting turns.")
+      ? (sessionStopped
+        ? "Fresh session is prepared. Hit Start when you want to begin."
+        : (conversationPaused ? "Warm and paused. Hit Resume when you want to continue." : "Runtime is live and accepting turns."))
       : "Waiting for the app to publish runtime controls.";
 
     const voiceState = runtimeStateSeen
@@ -2156,7 +2163,8 @@
       statePollingSuspended ? "Dashboard disconnected. Refresh after the local runtime comes back." :
       modelPollError ? "Vision models need attention before the runtime is ready." :
       voiceState === "error" ? "Voice needs attention before the runtime is ready." :
-      conversationPaused ? "Everything is warm. Resume when you want to start." :
+      sessionStopped ? "Everything is warm. Start when you want to begin a fresh session." :
+      conversationPaused ? "Everything is warm. Resume when you want to continue." :
       "Runtime is live. You can speak or type now.";
 
     const modelReady = modelState === "ready" || modelState === "off";
@@ -2171,7 +2179,7 @@
       ? "The dashboard lost its connection to the local runtime. Restart the app if needed, then refresh this page."
       : !bootReady
         ? `Current step: ${phase}. Heavy services may already be warm; this page unlocks once the app layer publishes runtime, session, voice, and model state.`
-        : "The runtime is ready. You can start from the dashboard or just speak when you are ready.";
+        : "The runtime is ready. You can start or continue from the dashboard whenever you are ready.";
     const cardHtml = [
       bootChip("dashboard", sseConnected ? "ready" : "active", sseConnected ? "Live event stream connected." : "Polling and waiting for server-side events."),
       bootChip("session", sessionState, sessionDetail),
@@ -2190,18 +2198,31 @@
       runtimeToggleButton.style.background = "var(--hold)";
       runtimeToggleButton.disabled = true;
       runtimeToggleButton.style.opacity = "0.75";
+    } else if (pendingPauseState === "stopping") {
+      runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Resume" : "Pause");
+      runtimeToggleButton.disabled = true;
+      runtimeToggleButton.style.opacity = "0.75";
+      runtimeToggleButton.style.background = sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)");
+    } else if (pendingPauseState === "starting") {
+      runtimeToggleButton.textContent = "Starting...";
+      runtimeToggleButton.style.background = "var(--advance)";
+      runtimeToggleButton.disabled = true;
+      runtimeToggleButton.style.opacity = "0.75";
     } else if (pendingPauseState === "resuming") {
       runtimeToggleButton.textContent = "Resuming...";
       runtimeToggleButton.style.background = "var(--hold)";
       runtimeToggleButton.disabled = true;
       runtimeToggleButton.style.opacity = "0.75";
     } else {
-      runtimeToggleButton.textContent = conversationPaused ? "Resume" : "Pause";
-      runtimeToggleButton.style.background = conversationPaused ? "var(--advance)" : "var(--narrator)";
+      runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Resume" : "Pause");
+      runtimeToggleButton.style.background = sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)");
       runtimeToggleButton.disabled = false;
       runtimeToggleButton.style.opacity = "1";
     }
     runtimeToggleButton.style.color = "var(--bg)";
+    runtimeStopButton.textContent = pendingPauseState === "stopping" ? "Stopping..." : "Stop Session";
+    runtimeStopButton.disabled = pendingPauseState === "stopping" || restartPending || sessionStopped;
+    runtimeStopButton.style.opacity = runtimeStopButton.disabled ? "0.6" : "1";
     runtimeRestartButton.textContent = "Restart Session";
     runtimeRestartButton.disabled = false;
     runtimeRestartButton.style.opacity = "1";
@@ -2221,6 +2242,13 @@
     currentSessionId = "";
     clearConversationState("Restarting conversation...");
     sendInput("/restart");
+  }
+
+  function requestStop() {
+    pendingPauseState = "stopping";
+    updateRuntimeButtons();
+    clearConversationState("Stopping session and preparing a fresh one...");
+    sendInput("/stop");
   }
 
   function clearConversationState(message = "Waiting for conversation...") {
@@ -3752,11 +3780,16 @@
 
     session_end(data, rawEvent) {
       recordEvent("session_end", data, rawEvent);
+      sessionSeen = false;
+      currentSessionId = "";
+      clearConversationState("Session ended.");
+      updateRuntimeButtons();
+      renderBootStatus();
     },
 
     pause(data, rawEvent) {
       conversationPaused = true;
-      pendingPauseState = null;
+      if (pendingPauseState === "pausing") pendingPauseState = null;
       recordEvent("pause", data, rawEvent);
       updateRuntimeButtons();
       renderBootStatus();
@@ -3764,6 +3797,8 @@
 
     resume(data, rawEvent) {
       conversationPaused = false;
+      sessionStopped = false;
+      startupPausePending = false;
       pendingPauseState = null;
       recordEvent("resume", data, rawEvent);
       updateRuntimeButtons();
@@ -3774,7 +3809,13 @@
       runtimeControls = {...runtimeControls, ...(data.controls || {})};
       runtimeStateSeen = true;
       conversationPaused = !!data.conversation_paused;
-      if ((pendingPauseState === "pausing" && conversationPaused) || (pendingPauseState === "resuming" && !conversationPaused)) {
+      sessionStopped = !!data.session_stopped;
+      startupPausePending = !!data.startup_pause_pending;
+      if (
+        (pendingPauseState === "pausing" && conversationPaused && !sessionStopped) ||
+        ((pendingPauseState === "resuming" || pendingPauseState === "starting") && !conversationPaused && !sessionStopped) ||
+        (pendingPauseState === "stopping" && sessionStopped)
+      ) {
         pendingPauseState = null;
       }
       voiceActive = !!data.voice_active;
@@ -3792,7 +3833,7 @@
       };
       const status = document.getElementById("runtime-status");
       status.innerHTML = [
-        `state: <b>${data.conversation_paused ? "paused" : "live"}</b>`,
+        `state: <b>${esc(data.session_state || (data.conversation_paused ? "paused" : "live"))}</b>`,
         `auto-beat: <b>${runtimeControls.auto_beat ? "on" : "off"}</b>`,
         `filler: <b>${runtimeControls.filler ? "on" : "off"}</b>`,
         `guardrails: <b>${runtimeControls.guardrails ? "on" : "off"}</b>`,
@@ -3931,10 +3972,11 @@
 
   runtimeToggleButton.addEventListener("click", () => {
     if (pendingPauseState) return;
-    pendingPauseState = conversationPaused ? "resuming" : "pausing";
+    pendingPauseState = sessionStopped ? "starting" : (conversationPaused ? "resuming" : "pausing");
     updateRuntimeButtons();
-    sendInput(conversationPaused ? "/resume" : "/pause");
+    sendInput(sessionStopped ? "/start" : (conversationPaused ? "/resume" : "/pause"));
   });
+  runtimeStopButton.addEventListener("click", requestStop);
   runtimeRestartButton.addEventListener("click", requestRestart);
   bootRestartButton.addEventListener("click", requestRestart);
   reportRefButton.addEventListener("click", saveReportReference);

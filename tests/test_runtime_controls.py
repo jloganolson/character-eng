@@ -57,16 +57,25 @@ def test_runtime_snapshot_includes_vision_service_metadata(monkeypatch):
 
 
 def test_runtime_snapshot_includes_paused_state(monkeypatch):
-    previous = app._conversation_paused
+    previous_paused = app._conversation_paused
+    previous_stopped = app._session_stopped
+    previous_startup = app._startup_pause_pending
     cfg = AppConfig()
     monkeypatch.setattr(app, "_vision_service_health", lambda vision_cfg=None: False)
     monkeypatch.setitem(app._vision_runtime, "cfg", cfg.vision)
     try:
         app._conversation_paused = True
+        app._session_stopped = True
+        app._startup_pause_pending = True
         state = app._runtime_controls_snapshot(vision_cfg=cfg.vision)
         assert state["conversation_paused"] is True
+        assert state["session_stopped"] is True
+        assert state["startup_pause_pending"] is True
+        assert state["session_state"] == "stopped"
     finally:
-        app._conversation_paused = previous
+        app._conversation_paused = previous_paused
+        app._session_stopped = previous_stopped
+        app._startup_pause_pending = previous_startup
 
 
 def test_runtime_snapshot_includes_voice_status(monkeypatch):

@@ -61,11 +61,12 @@ def visual_focus_call(
 
     authored_constant_questions = list(CORE_CONSTANT_QUESTIONS)
     authored_constant_sam_targets = list(CORE_CONSTANT_SAM_TARGETS)
-    if scenario is not None and getattr(scenario, "visual_focus", None) is not None:
-        for question in scenario.visual_focus.constant_questions:
+    if scenario is not None:
+        requirements = scenario.active_visual_requirements()
+        for question in requirements.constant_questions:
             if question not in authored_constant_questions:
                 authored_constant_questions.append(question)
-        for target in scenario.visual_focus.constant_sam_targets:
+        for target in requirements.constant_sam_targets:
             if target not in authored_constant_sam_targets:
                 authored_constant_sam_targets.append(target)
 
