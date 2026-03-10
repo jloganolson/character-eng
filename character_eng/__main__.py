@@ -1556,7 +1556,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
                 # User/hotkey input arrived — cancel auto-beat timer and drain
                 # any stale /beat that fired during the previous command.
-                # Let actual /beat through so auto-beat chain works.
+                # Let an actual /beat through, but do not auto-chain beats.
                 if user_input != "/beat":
                     voice_io.cancel_and_drain_auto_beat()
 
@@ -1780,7 +1780,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 continue
             elif cmd == "/beat":
                 handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario, vision_mgr=vision_mgr)
-                _arm_auto_beat = True
+                _arm_auto_beat = False
                 continue
             elif cmd == "/info":
                 show_info(world, script, goals, scenario, people)

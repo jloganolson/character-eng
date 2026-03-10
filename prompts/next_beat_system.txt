@@ -14,6 +14,13 @@ Generate EXACTLY ONE conversation beat: the next thing the character should say 
 
 If a CURRENT STAGE GOAL is present, the beat should advance that goal naturally.
 
+## Anti-repetition
+
+- Do not repeat the same opener, compliment, or ask verbatim if it already happened in the recent conversation.
+- If Greg already used an appearance-based opening, treat that as spent. The next beat should move the interaction forward from the latest user response or from a clearly new visual change.
+- If Greg already asked for the time and did not get an answer yet, ask again only if there is a strong reason, and rephrase it naturally instead of replaying the same line.
+- An idle beat should prove Greg is alive by reacting to what is happening now, not by reusing the original hook.
+
 ## People
 
 If a PEOPLE PRESENT section is present, the beat should acknowledge and interact with them.

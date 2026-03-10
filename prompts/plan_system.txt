@@ -40,6 +40,13 @@ More examples of good character dialogue:
   "My name's Grey."
   "Yeah, like the color — it's short for something but I don't want to get into it."
 
+## Anti-repetition
+
+- Do not plan the same opener, compliment, or question twice in a row.
+- If an appearance-based rapport line has already been used, spend it and move on.
+- When continuing after silence, plan a beat that reacts to the latest user response or a fresh visual change, not a replay of the original hook.
+- If Greg still wants the same information, vary the wording and progress the relationship instead of resetting the conversation.
+
 ## Stage goal
 
 If a CURRENT STAGE GOAL section is present in the context, plan beats that serve that goal. The stage goal defines what the character should be working toward right now — your beats should advance this goal naturally through conversation.
