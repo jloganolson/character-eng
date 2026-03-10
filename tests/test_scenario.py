@@ -142,6 +142,14 @@ def test_load_scenario_script(tmp_path, monkeypatch):
     char_dir = tmp_path / "characters" / "test_char"
     char_dir.mkdir(parents=True)
     (char_dir / "scenario_script.toml").write_text("""
+[setup]
+gaze_targets = ["person", "door"]
+
+[guardrails]
+always = ["Stay grounded."]
+first_contact = ["Learn their name."]
+leaving = ["Let them go."]
+
 [scenario]
 name = "Test Scenario"
 start = "intro"
@@ -174,6 +182,10 @@ goal = "Have a conversation"
     assert script.stages["intro"].exits[0].goto == "chat"
     assert script.stages["intro"].exits[0].label == "says hello"
     assert script.stages["intro"].exits[0].visual_signals == []
+    assert script.gaze_targets == ["person", "door"]
+    assert script.guardrails.always == ["Stay grounded."]
+    assert script.guardrails.first_contact == ["Learn their name."]
+    assert script.guardrails.leaving == ["Let them go."]
 
 
 def test_load_scenario_script_not_found(tmp_path, monkeypatch):

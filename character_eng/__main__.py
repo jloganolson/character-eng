@@ -718,6 +718,8 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
     """
     beat = script.current_beat if script else None
     gaze_targets = vision_mgr.get_gaze_targets() if vision_mgr else None
+    if not gaze_targets and scenario is not None and scenario.gaze_targets:
+        gaze_targets = scenario.gaze_targets
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         # Fire all LLM calls concurrently
@@ -1393,7 +1395,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
         scenario = load_scenario_script(character)
         system_prompt = load_prompt(character, world_state=world, people_state=people)
         session = ChatSession(system_prompt, model_config)
-        _inject_runtime_turn_guardrails(session)
+        _inject_runtime_turn_guardrails(session, scenario=scenario)
         script = Script()
 
         if scenario:
@@ -2376,20 +2378,23 @@ def _inject_runtime_turn_guardrails(session, user_input: str = "", people=None, 
         "- Keep the spoken reply to one short sentence, or two short sentences max.",
         "- Prefer 8-16 words. Do not exceed about 22 words unless the user explicitly asks for detail.",
         "- Answer the user's most concrete question first.",
-        "- Treat the live view as your first-person perspective unless context clearly says otherwise.",
-        "- Do not talk like an outside bystander observing your own scene from afar.",
-        "- Stay grounded in what is currently visible or already established. Do not assume props, business, or setting details that are not in context.",
     ]
+    if scenario is not None:
+        parts.extend(scenario.guardrails.always)
     lowered = user_input.lower()
     if any(token in lowered for token in ("i should get going", "got to go", "gotta go", "i should go", "goodbye", "bye", "see you")):
-        parts.extend([
-            "- The user is leaving. Give one warm goodbye line, no follow-up question, and do not try to keep them there.",
-        ])
+        if scenario is not None and scenario.guardrails.leaving:
+            parts.extend(scenario.guardrails.leaving)
+        else:
+            parts.append("- The user is leaving. Give one warm goodbye line, no follow-up question, and do not try to keep them there.")
     if people is not None and people.present_people() and (not user_input.strip()):
-        parts.extend([
-            "- If this is the first live moment with a visible person, open with one kind, concrete observation grounded in what they are wearing, carrying, or doing only if the visual context clearly supports it.",
-            "- After the opener, try to learn who they are or what to call them quickly.",
-        ])
+        if scenario is not None and scenario.guardrails.first_contact:
+            parts.extend(scenario.guardrails.first_contact)
+        else:
+            parts.extend([
+                "- If this is the first live moment with a visible person, open with one kind, concrete observation grounded in what they are wearing, carrying, or doing only if the visual context clearly supports it.",
+                "- After the opener, try to learn who they are or what to call them quickly.",
+            ])
     session.upsert_system("runtime_turn_guardrails", "\n".join(parts))
 
 
@@ -2651,7 +2656,7 @@ def run_smoke():
     scenario = load_scenario_script(character)
     system_prompt = load_prompt(character, world_state=world, people_state=people)
     session = ChatSession(system_prompt, model_config)
-    _inject_runtime_turn_guardrails(session)
+    _inject_runtime_turn_guardrails(session, scenario=scenario)
     script = Script()
 
     stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""

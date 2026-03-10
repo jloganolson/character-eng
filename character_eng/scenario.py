@@ -26,6 +26,13 @@ class StageExit:
 
 
 @dataclass
+class ScenarioGuardrails:
+    always: list[str] = field(default_factory=list)
+    first_contact: list[str] = field(default_factory=list)
+    leaving: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Stage:
     name: str
     goal: str
@@ -38,6 +45,8 @@ class ScenarioScript:
     stages: dict[str, Stage] = field(default_factory=dict)
     start: str = ""
     current_stage: str = ""
+    gaze_targets: list[str] = field(default_factory=list)
+    guardrails: ScenarioGuardrails = field(default_factory=ScenarioGuardrails)
 
     @property
     def active_stage(self) -> Stage | None:
@@ -110,6 +119,8 @@ def load_scenario_script(character: str, filename: str | None = None) -> Scenari
     scenario_data = data.get("scenario", {})
     name = scenario_data.get("name", character)
     start = scenario_data.get("start", "")
+    setup_data = data.get("setup", {})
+    guardrail_data = data.get("guardrails", {})
 
     stages: dict[str, Stage] = {}
     for stage_data in data.get("stage", []):
@@ -130,6 +141,12 @@ def load_scenario_script(character: str, filename: str | None = None) -> Scenari
         stages=stages,
         start=start,
         current_stage=start,
+        gaze_targets=[str(item).strip() for item in setup_data.get("gaze_targets", []) if str(item).strip()],
+        guardrails=ScenarioGuardrails(
+            always=[str(item).strip() for item in guardrail_data.get("always", []) if str(item).strip()],
+            first_contact=[str(item).strip() for item in guardrail_data.get("first_contact", []) if str(item).strip()],
+            leaving=[str(item).strip() for item in guardrail_data.get("leaving", []) if str(item).strip()],
+        ),
     )
 
 

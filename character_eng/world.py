@@ -1000,7 +1000,7 @@ def single_beat_call(
 # --- Expression post-processing LLM call ---
 
 
-DEFAULT_GAZE_TARGETS = ["person", "fliers", "stand"]
+DEFAULT_GAZE_TARGETS = ["person", "nearby object", "scene"]
 
 
 def expression_call(
