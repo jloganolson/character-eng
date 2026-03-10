@@ -1674,8 +1674,18 @@
     return Math.min(max, Math.max(min, value));
   }
 
+  function inspectorWidthBounds() {
+    const streamMain = document.getElementById("stream-main");
+    const total = streamMain ? streamMain.clientWidth : window.innerWidth;
+    return {
+      min: 200,
+      max: Math.max(420, total - 220),
+    };
+  }
+
   function setInspectorWidth(width) {
-    const clamped = clampNumber(width, 200, 760);
+    const bounds = inspectorWidthBounds();
+    const clamped = clampNumber(width, bounds.min, bounds.max);
     document.documentElement.style.setProperty("--inspector-width", `${clamped}px`);
     try {
       localStorage.setItem(INSPECTOR_WIDTH_STORAGE_KEY, String(clamped));
@@ -2568,21 +2578,33 @@
     return String(type || "event").toLowerCase().replace(/[^a-z0-9]+/g, "-");
   }
 
+  function causalEventsForBundle(event) {
+    if (!event || !event.turnId) return {upstream: [], downstream: []};
+    const upstream = [];
+    const downstream = [];
+    streamEvents.forEach((candidate) => {
+      if (!candidate || candidate.key === event.key || candidate.turnId !== event.turnId) return;
+      const payload = {
+        key: candidate.key,
+        type: candidate.type,
+        lane: candidate.lane,
+        time_s: Number(relativeTime(candidate.timestamp).toFixed(2)),
+        label: candidate.label,
+        detail: candidate.detail,
+        data: candidate.data,
+      };
+      if (candidate.timestamp <= event.timestamp) upstream.push(payload);
+      else downstream.push(payload);
+    });
+    upstream.sort((a, b) => a.time_s - b.time_s);
+    downstream.sort((a, b) => a.time_s - b.time_s);
+    return {upstream, downstream};
+  }
+
   function selectedEventBundle(event) {
     if (!event) return null;
     const promptBlocks = promptTraceBlocksForEvent(event);
-    const relatedEvents = relatedKeysFor(event)
-      .map((key) => streamEventByKey.get(key))
-      .filter(Boolean)
-      .map((item) => ({
-        key: item.key,
-        type: item.type,
-        lane: item.lane,
-        time_s: Number(relativeTime(item.timestamp).toFixed(2)),
-        label: item.label,
-        detail: item.detail,
-        data: item.data,
-      }));
+    const causal = causalEventsForBundle(event);
     return {
       exported_at: new Date().toISOString(),
       session_id: currentSessionId || "",
@@ -2598,7 +2620,8 @@
       },
       prompt_blocks: promptBlocks,
       structure_sections: structuredSectionsForEvent(event),
-      related_events: relatedEvents,
+      upstream_events: causal.upstream,
+      downstream_events: causal.downstream,
     };
   }
 
@@ -2629,7 +2652,13 @@
         </section>
       `;
     }).join("");
-    const relatedHtml = (bundle.related_events || []).map((item) => `
+    const upstreamHtml = (bundle.upstream_events || []).map((item) => `
+      <div class="related-row">
+        <div><strong>${esc(item.type)}</strong> · ${esc(item.label || "")}</div>
+        <div class="muted">${esc(item.lane)} · +${esc(item.time_s.toFixed(2))}s</div>
+      </div>
+    `).join("");
+    const downstreamHtml = (bundle.downstream_events || []).map((item) => `
       <div class="related-row">
         <div><strong>${esc(item.type)}</strong> · ${esc(item.label || "")}</div>
         <div class="muted">${esc(item.lane)} · +${esc(item.time_s.toFixed(2))}s</div>
@@ -2695,8 +2724,12 @@
     ${structureHtml || '<div class="muted">No structured breakdown captured for this event.</div>'}
   </section>
   <section class="panel">
-    <h2>Related In Turn</h2>
-    ${relatedHtml || '<div class="muted">No linked turn context captured for this event.</div>'}
+    <h2>Upstream Events</h2>
+    ${upstreamHtml || '<div class="muted">No upstream events captured for this event.</div>'}
+  </section>
+  <section class="panel">
+    <h2>Downstream Events</h2>
+    ${downstreamHtml || '<div class="muted">No downstream events captured for this event.</div>'}
   </section>
   <section class="panel">
     <h2>Raw Event JSON</h2>
@@ -2709,7 +2742,11 @@
   function relatedKeysFor(event) {
     if (!event.turnId) return [];
     return streamEvents
-      .filter((candidate) => candidate.turnId === event.turnId && candidate.key !== event.key)
+      .filter((candidate) => {
+        if (candidate.turnId !== event.turnId || candidate.key === event.key) return false;
+        if (event.type === "assistant_reply") return candidate.timestamp <= event.timestamp;
+        return true;
+      })
       .map((candidate) => candidate.key);
   }
 
@@ -3332,6 +3369,7 @@
       event.data.tts_synth_done_ms = data.tts_synth_done_ms ?? data.synth_ms ?? event.data.tts_synth_done_ms;
       event.data.first_audio_ms = data.first_audio_ms ?? event.data.first_audio_ms;
       event.data.audio_ms = data.audio_ms ?? event.data.audio_ms;
+      event.data.prompt_blocks = promptTraceBlocksForEvent(event);
       event.label = previewText("assistant_reply", event.data);
       event.detail = detailText("assistant_reply", event.data);
       renderStream();

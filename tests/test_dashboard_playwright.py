@@ -340,6 +340,7 @@ def test_runtime_panel_interactions_in_browser(
     page.locator("#tab-chronology").click()
     expect(page.locator("#detail-related")).to_contain_text("turn_start")
     expect(page.locator("#detail-related")).to_contain_text("user_transcript_final")
+    expect(page.locator("#detail-related")).not_to_contain_text("post_response")
     expect(page.locator(".chronology-row.selected")).to_have_count(1)
 
     page.locator("#stream-density").select_option("compact")
@@ -377,9 +378,9 @@ def test_runtime_panel_interactions_in_browser(
     assert inspector_box is not None
     page.mouse.move(inspector_box["x"] + inspector_box["width"] / 2, inspector_box["y"] + inspector_box["height"] / 2)
     page.mouse.down()
-    page.mouse.move(inspector_box["x"] - 140, inspector_box["y"] + inspector_box["height"] / 2)
+    page.mouse.move(inspector_box["x"] - 500, inspector_box["y"] + inspector_box["height"] / 2)
     page.mouse.up()
-    assert page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--inspector-width').trim()") != "360px"
+    assert int(page.evaluate("parseInt(getComputedStyle(document.documentElement).getPropertyValue('--inspector-width'))")) > 760
 
     sidebar_resizer = page.locator("#sidebar-resizer")
     sidebar_box = sidebar_resizer.bounding_box()
