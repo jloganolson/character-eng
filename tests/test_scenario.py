@@ -167,6 +167,31 @@ def test_load_scenario_script_rejects_path_traversal(tmp_path, monkeypatch):
         load_scenario_script("test_char", "../secret.toml")
 
 
+def test_load_scenario_script_uses_manifest_default(tmp_path, monkeypatch):
+    char_dir = tmp_path / "characters" / "test_char"
+    char_dir.mkdir(parents=True)
+    (char_dir / "character_manifest.toml").write_text("""
+[files]
+default_scenario_script = "custom_script.toml"
+""")
+    (char_dir / "custom_script.toml").write_text("""
+[scenario]
+name = "Custom Scenario"
+start = "intro"
+
+[[stage]]
+name = "intro"
+goal = "Open custom"
+""")
+
+    monkeypatch.setattr(scenario_mod, "CHARACTERS_DIR", tmp_path / "characters")
+
+    script = load_scenario_script("test_char")
+    assert script is not None
+    assert script.name == "Custom Scenario"
+    assert script.start == "intro"
+
+
 def test_load_scenario_script_greg():
     """Smoke test: load greg's actual scenario_script.toml."""
     script = load_scenario_script("greg")

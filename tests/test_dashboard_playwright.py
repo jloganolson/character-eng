@@ -420,6 +420,9 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#runtime-toggle")).to_have_text("Resuming...")
     assert input_queue.get(timeout=2) == "/resume"
 
+    page.locator("button[data-runtime-control='thinker']").click()
+    assert input_queue.get(timeout=2) == "/threads thinker toggle"
+
     page.keyboard.press("KeyB")
     assert input_queue.get(timeout=2) == "/beat"
 

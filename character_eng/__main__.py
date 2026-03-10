@@ -191,6 +191,10 @@ _runtime_controls = {
     "vision": True,
     "auto_beat": True,
     "filler": True,
+    "thinker": True,
+    "director": True,
+    "expression": True,
+    "beat_guidance": True,
 }
 _conversation_paused = False
 
@@ -204,6 +208,13 @@ def _normalize_runtime_control_name(name: str) -> str | None:
         "autobeat": "auto_beat",
         "beat": "auto_beat",
         "filler": "filler",
+        "thinker": "thinker",
+        "thought": "thinker",
+        "director": "director",
+        "expression": "expression",
+        "beat-guidance": "beat_guidance",
+        "beatguidance": "beat_guidance",
+        "guidance": "beat_guidance",
     }
     return aliases.get(key)
 
@@ -315,10 +326,10 @@ def _push_runtime_controls(voice_io=None, vision_mgr=None, vision_cfg=None) -> N
 def _render_runtime_controls(voice_io=None, vision_mgr=None, vision_cfg=None) -> str:
     state = _runtime_controls_snapshot(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
     lines = []
-    for key in ("reconcile", "vision", "auto_beat", "filler"):
+    for key in ("reconcile", "vision", "auto_beat", "filler", "thinker", "director", "expression", "beat_guidance"):
         enabled = state["controls"][key]
         label = key.replace("_", " ")
-    lines.append(f"{label:<10} : {'on' if enabled else 'off'}")
+        lines.append(f"{label:<12} : {'on' if enabled else 'off'}")
     lines.append(f"voice      : {'on' if state['voice_active'] else 'off'}")
     lines.append(f"state      : {'paused' if state['conversation_paused'] else 'live'}")
     lines.append(f"vision svc : {'on' if state['vision_active'] else 'off'}")
@@ -360,7 +371,7 @@ def handle_runtime_control_command(command: str, voice_io=None, vision_mgr=None,
         return True
 
     if len(parts) < 3:
-        console.print("[yellow]Usage: /threads <reconcile|vision|auto-beat|filler> <on|off|toggle>[/yellow]")
+        console.print("[yellow]Usage: /threads <reconcile|vision|auto-beat|filler|thinker|director|expression|beat-guidance> <on|off|toggle>[/yellow]")
         return True
 
     name = parts[1]
@@ -513,11 +524,15 @@ def run_eval_sync(session, world, script, model_config, log, people=None, stage_
 
     # Thought: inner monologue
     try:
-        tresult = thought_call(
-            system_prompt=session.system_prompt,
-            history=session.get_history(),
-            model_config=model_config,
-        )
+        if _runtime_controls.get("thinker", True):
+            tresult = thought_call(
+                system_prompt=session.system_prompt,
+                history=session.get_history(),
+                model_config=model_config,
+                world=world,
+            )
+        else:
+            tresult = ThoughtResult(thought="")
     except Exception as e:
         console.print(f"[dim]  thought error: {e}[/dim]")
         tresult = ThoughtResult(thought="")
@@ -561,11 +576,23 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
         # Fire all LLM calls concurrently
         fut_check = pool.submit(script_check_call, beat=beat, history=session.get_history(),
                                 model_config=model_config, world=world) if beat else None
-        fut_thought = pool.submit(thought_call, system_prompt=session.system_prompt,
-                                  history=session.get_history(), model_config=model_config) if beat else None
-        fut_director = pool.submit(director_call, scenario=scenario, world=world, people=people,
-                                   history=session.get_history(), model_config=model_config) if scenario else None
-        fut_expr = pool.submit(expression_call, expression_line, model_config, gaze_targets) if expression_line else None
+        fut_thought = pool.submit(
+            thought_call,
+            system_prompt=session.system_prompt,
+            history=session.get_history(),
+            model_config=model_config,
+            world=world,
+            goals=goals,
+        ) if beat and _runtime_controls.get("thinker", True) else None
+        fut_director = pool.submit(
+            director_call,
+            scenario=scenario,
+            world=world,
+            people=people,
+            history=session.get_history(),
+            model_config=model_config,
+        ) if scenario and _runtime_controls.get("director", True) else None
+        fut_expr = pool.submit(expression_call, expression_line, model_config, gaze_targets) if expression_line and _runtime_controls.get("expression", True) else None
 
         # Gather results
         check = None
@@ -608,16 +635,9 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
             "expression": expr_result.expression,
             "prompt_blocks": _prompt_trace_blocks_for_labels(("expression",)),
         })
-        parts = []
-        if expr_result.gaze:
-            if expr_result.gaze_type == "glance":
-                parts.append(f"[glance:{expr_result.gaze}]")
-            else:
-                parts.append(f"[gaze:{expr_result.gaze}]")
-        if expr_result.expression:
-            parts.append(f"[emote:{expr_result.expression}]")
-        if parts:
-            session.inject_system(" ".join(parts))
+        _apply_expression_runtime_context(session, expr_result)
+    elif not _runtime_controls.get("expression", True):
+        _set_runtime_context(session, "runtime_expression_tags", "")
 
     # Process eval result
     needs_plan = False
@@ -634,6 +654,7 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
         _push("eval", {
             "thought": tresult.thought, "script_status": check.status,
             "plan_request": check.plan_request,
+            "thinker_enabled": bool(_runtime_controls.get("thinker", True)),
             "prompt_blocks": _prompt_trace_blocks_for_labels(("thought", "script_check")),
         })
 
@@ -685,8 +706,17 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
             _push("director", {
                 "thought": dir_result.thought or "", "status": dir_result.status or "hold",
                 "exit_index": dir_result.exit_index,
+                "enabled": True,
                 "prompt_blocks": _prompt_trace_blocks_for_labels(("director",)),
             })
+    elif scenario is not None:
+        _push("director", {
+            "thought": "",
+            "status": "skipped",
+            "exit_index": -1,
+            "enabled": False,
+            "prompt_blocks": [],
+        })
 
     return needs_plan, plan_request, expr_result
 
@@ -1768,7 +1798,37 @@ def eval_to_dict(result):
 
 def inject_eval(session, result):
     """Inject eval result into session history so future evals can build on it."""
-    session.inject_system(f"[Inner thought: {result.thought}]")
+    if result.thought:
+        session.upsert_system("runtime_inner_thought", f"[Inner thought: {result.thought}]")
+    else:
+        session.remove_tagged_system("runtime_inner_thought")
+
+
+def _set_runtime_context(session, tag: str, content: str | None) -> None:
+    text = (content or "").strip()
+    if text:
+        session.upsert_system(tag, text)
+    else:
+        session.remove_tagged_system(tag)
+
+
+def _apply_expression_runtime_context(session, expr_result) -> None:
+    parts = []
+    if expr_result.gaze:
+        if expr_result.gaze_type == "glance":
+            parts.append(f"[glance:{expr_result.gaze}]")
+        else:
+            parts.append(f"[gaze:{expr_result.gaze}]")
+    if expr_result.expression:
+        parts.append(f"[emote:{expr_result.expression}]")
+    _set_runtime_context(session, "runtime_expression_tags", " ".join(parts))
+
+
+def _apply_beat_guidance(session, beat) -> None:
+    if not _runtime_controls.get("beat_guidance", True):
+        _set_runtime_context(session, "runtime_beat_guidance", "")
+        return
+    _set_runtime_context(session, "runtime_beat_guidance", load_beat_guide(beat.intent, beat.line))
 
 
 def run_expression(session, model_config, line=None):
@@ -1776,6 +1836,9 @@ def run_expression(session, model_config, line=None):
 
     If line is None, scans session history for the last assistant message.
     """
+    if not _runtime_controls.get("expression", True):
+        _set_runtime_context(session, "runtime_expression_tags", "")
+        return None
     if line is None:
         history = session.get_history()
         for msg in reversed(history):
@@ -1802,16 +1865,7 @@ def run_expression(session, model_config, line=None):
             "prompt_blocks": _prompt_trace_blocks_for_labels(("expression",)),
         })
 
-    parts = []
-    if result.gaze:
-        if result.gaze_type == "glance":
-            parts.append(f"[glance:{result.gaze}]")
-        else:
-            parts.append(f"[gaze:{result.gaze}]")
-    if result.expression:
-        parts.append(f"[emote:{result.expression}]")
-    if parts:
-        session.inject_system(" ".join(parts))
+    _apply_expression_runtime_context(session, result)
 
     return result
 
@@ -1850,11 +1904,17 @@ def stream_guided_beat(session, beat, label, user_input, voice_io=None, expr_mod
     acknowledges what the user said. Returns the full response text.
     """
     # Inject beat guidance so the LLM knows the intent
-    guidance = load_beat_guide(beat.intent, beat.line)
-    session.inject_system(guidance)
+    _apply_beat_guidance(session, beat)
 
     # Stream a real LLM response guided by the beat intent
-    return stream_response(session, label, user_input, voice_io=voice_io, expr_model_config=expr_model_config)
+    return stream_response(
+        session,
+        label,
+        user_input,
+        voice_io=voice_io,
+        expr_model_config=expr_model_config,
+        keep_beat_guidance=True,
+    )
 
 
 def apply_plan(script, plan_result):
@@ -2145,7 +2205,7 @@ def _consume_live_input_metadata(voice_io, user_input: str) -> dict:
     return {"input_source": "text"}
 
 
-def stream_response(session, label, message, voice_io=None, expr_model_config=None, input_timing: dict | None = None) -> str:
+def stream_response(session, label, message, voice_io=None, expr_model_config=None, input_timing: dict | None = None, keep_beat_guidance: bool = False) -> str:
     """Send a message and stream the response. Returns full response text.
 
     When voice_io is provided, also feeds chunks to TTS and checks for barge-in.
@@ -2154,6 +2214,8 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
     stream_response._last_expr for the caller to pick up.
     """
     stream_response._last_expr = None
+    if not keep_beat_guidance:
+        _set_runtime_context(session, "runtime_beat_guidance", "")
     _inject_runtime_turn_guardrails(session, message)
     npc_name = Text(f"{_ts()} {label}: ", style="bold magenta")
     console.print(npc_name, end="")
@@ -2334,7 +2396,7 @@ def show_help(voice_active: bool = False):
         "/vision         - Show current visual context and gaze targets\n"
         "/vision-service - Show vision service status\n"
         "/vision-service <start|stop|autostart on|off|toggle>\n"
-        "/threads        - Show runtime controls (reconcile, vision, auto-beat, filler)\n"
+        "/threads        - Show runtime controls (reconcile, vision, auto-beat, filler, thinker, director, expression, beat-guidance)\n"
         "/threads <name> <on|off|toggle> - Toggle a runtime subsystem\n"
         "/voice          - Toggle voice mode on/off\n"
         "/devices        - List audio input/output devices\n"

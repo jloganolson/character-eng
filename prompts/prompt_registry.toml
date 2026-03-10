@@ -1,0 +1,13 @@
+[prompts]
+global_rules = "global_rules.txt"
+director_system = "director_system.txt"
+reconcile_system = "reconcile_system.txt"
+eval_system = "eval_system.txt"
+think_system = "think_system.txt"
+condition_system = "condition_system.txt"
+plan_system = "plan_system.txt"
+plan_single_system = "plan_single_system.txt"
+expression_system = "expression_system.txt"
+beat_guide = "beat_guide.txt"
+visual_focus = "visual_focus.txt"
+vision_synthesis = "vision_synthesis.txt"

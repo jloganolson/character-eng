@@ -107,3 +107,17 @@ def test_upsert_system_replaces_tagged_message_without_duplication(mock_openai_c
 
     assert len(system_messages) == 2
     assert system_messages[1] == {"role": "system", "content": "Updated guardrail"}
+
+
+@patch("character_eng.chat.OpenAI")
+def test_remove_tagged_system_clears_runtime_context(mock_openai_cls):
+    session = ChatSession("You are Greg.", TEST_CONFIG)
+    session.upsert_system("runtime_turn_guardrails", "Guardrail")
+    session.add_assistant("hello")
+    session.remove_tagged_system("runtime_turn_guardrails")
+
+    history = session.get_history()
+    assert history == [
+        {"role": "system", "content": "You are Greg."},
+        {"role": "assistant", "content": "hello"},
+    ]

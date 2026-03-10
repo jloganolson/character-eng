@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
+from character_eng.creative import character_asset_path, load_prompt_asset
 from character_eng.models import MODELS, get_fallback_chain
 from character_eng.utils import ts as _ts
 
@@ -272,7 +273,12 @@ def _read_lines(path: Path) -> list[str]:
 
 def _load_prompt_file(filename: str) -> str:
     """Read a system prompt from prompts/ directory."""
-    return (PROMPTS_DIR / filename).read_text()
+    path = PROMPTS_DIR / filename
+    if path.exists():
+        return path.read_text()
+    key = filename[:-4] if filename.endswith(".txt") else filename
+    default = filename if "." in filename else f"{filename}.txt"
+    return load_prompt_asset(key, prompts_dir=PROMPTS_DIR, default_filename=default)
 
 
 def _clean_fact_text(text: str) -> str:
@@ -338,9 +344,8 @@ def _detect_explicit_redirect(history: list[dict], beat: Beat) -> ScriptCheckRes
 
 
 def load_world_state(character: str) -> WorldState | None:
-    char_dir = CHARACTERS_DIR / character
-    static_path = char_dir / "world_static.txt"
-    dynamic_path = char_dir / "world_dynamic.txt"
+    static_path = character_asset_path(character, "world_static", characters_dir=CHARACTERS_DIR)
+    dynamic_path = character_asset_path(character, "world_dynamic", characters_dir=CHARACTERS_DIR)
 
     if not static_path.exists() and not dynamic_path.exists():
         return None
@@ -353,8 +358,7 @@ def load_world_state(character: str) -> WorldState | None:
 
 def load_goals(character: str) -> Goals | None:
     """Parse Long-term goal line from character.txt."""
-    char_dir = CHARACTERS_DIR / character
-    char_path = char_dir / "character.txt"
+    char_path = character_asset_path(character, "character", characters_dir=CHARACTERS_DIR)
     try:
         text = char_path.read_text()
     except FileNotFoundError:
@@ -727,12 +731,25 @@ def thought_call(
     system_prompt: str,
     history: list[dict],
     model_config: dict,
+    world: WorldState | None = None,
+    goals: Goals | None = None,
     recent_n: int = 6,
 ) -> ThoughtResult:
     """Generate a brief inner monologue for the character. 8B-friendly."""
     recent = history[-recent_n:] if len(history) > recent_n else history
     parts: list[str] = []
+    parts.append("=== CHARACTER SYSTEM PROMPT ===")
+    parts.append(system_prompt)
+    if world:
+        parts.append("\n=== WORLD STATE ===")
+        parts.append(world.render())
+    if goals:
+        goals_text = goals.render()
+        if goals_text:
+            parts.append("\n=== CHARACTER GOALS ===")
+            parts.append(goals_text)
     if recent:
+        parts.append("\n=== RECENT CONVERSATION ===")
         for msg in recent:
             role = msg["role"].upper()
             content = msg["content"]
@@ -746,14 +763,7 @@ def thought_call(
         model_config,
         label="thought",
         messages=[
-            {"role": "system", "content": (
-                "You are the inner voice of a character in an interactive fiction.\n\n"
-                f"Character:\n{system_prompt[:500]}\n\n"
-                "Given the recent conversation, write 1-2 sentences of what the character "
-                "is thinking RIGHT NOW. First person. Be specific and emotional, not generic. "
-                "React to what just happened.\n\n"
-                'Return a JSON object: {"thought": "..."}'
-            )},
+            {"role": "system", "content": _load_prompt_file("think_system")},
             {"role": "user", "content": user_message},
         ],
         temperature=0.7,
@@ -899,35 +909,6 @@ def plan_call(
 # --- Single-beat planning (8B) ---
 
 
-_SINGLE_BEAT_SYSTEM = """You are a conversation planner for a character in an interactive fiction.
-
-Generate EXACTLY ONE conversation beat — the next thing the character should say or do.
-
-## Rules
-
-- Read the WORLD STATE and CONVERSATION carefully. Plan for the character's CURRENT situation.
-- Write dialogue in the character's authentic voice — match their personality and speech patterns.
-- The intent should be a short, achievable conversational move (one clause).
-- The line should be 1-2 sentences in the character's voice.
-- Only set a condition if the beat genuinely requires something to be true first. Most beats need no condition.
-
-## Stage goal
-
-If a CURRENT STAGE GOAL is present, the beat should advance that goal naturally.
-
-## People
-
-If a PEOPLE PRESENT section is present, the beat should acknowledge and interact with them.
-
-## Output format
-
-Return a JSON object with exactly this key:
-- "beats": An array with EXACTLY ONE object containing:
-  - "line": The dialogue line in the character's voice.
-  - "intent": Brief description of what this beat accomplishes.
-  - "condition": Precondition (empty string if none needed)."""
-
-
 def single_beat_call(
     system_prompt: str,
     world: WorldState | None,
@@ -983,7 +964,7 @@ def single_beat_call(
         model_config,
         label="plan_single",
         messages=[
-            {"role": "system", "content": _SINGLE_BEAT_SYSTEM},
+            {"role": "system", "content": _load_prompt_file("plan_single_system")},
             {"role": "user", "content": user_message},
         ],
         temperature=0.7,

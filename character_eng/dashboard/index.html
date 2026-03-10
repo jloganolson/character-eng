@@ -1233,6 +1233,7 @@
           <button id="runtime-toggle" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--narrator);color:var(--bg);cursor:pointer;">Resume</button>
           <button id="runtime-restart" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--error);color:var(--bg);cursor:pointer;">Restart Session</button>
         </div>
+        <div id="runtime-control-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.35em;margin-top:0.55em;"></div>
         <div id="vision-service-status" style="margin-top:0.7em;color:var(--text-dim);">Vision service: waiting for runtime state...</div>
         <div style="display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
           <a id="vision-service-link" href="#" target="_blank" style="padding:0.45em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--cyan);text-decoration:none;text-align:center;">vision ui</a>
@@ -1317,7 +1318,7 @@
   let dragStartX = 0;
   let dragStartScrollLeft = 0;
 
-  let runtimeControls = {reconcile: true, vision: true, auto_beat: true, filler: true};
+  let runtimeControls = {reconcile: true, vision: true, auto_beat: true, filler: true, thinker: true, director: true, expression: true, beat_guidance: true};
   let visionService = {
     url: "",
     health: false,
@@ -1366,6 +1367,7 @@
   const laneToggleGrid = document.getElementById("lane-toggle-grid");
   const runtimeToggleButton = document.getElementById("runtime-toggle");
   const runtimeRestartButton = document.getElementById("runtime-restart");
+  const runtimeControlGrid = document.getElementById("runtime-control-grid");
   const bootRestartButton = document.getElementById("boot-restart");
   const timeWindowSlider = document.getElementById("time-window");
   const timeWindowValue = document.getElementById("time-window-value");
@@ -1458,6 +1460,31 @@
       default:
         return "var(--text-dim)";
     }
+  }
+
+  const runtimeControlSpecs = [
+    {key: "reconcile", label: "reconcile"},
+    {key: "vision", label: "vision"},
+    {key: "auto_beat", label: "auto-beat"},
+    {key: "filler", label: "filler"},
+    {key: "thinker", label: "thinker"},
+    {key: "director", label: "director"},
+    {key: "expression", label: "expression"},
+    {key: "beat_guidance", label: "guidance"},
+  ];
+
+  function renderRuntimeControlButtons() {
+    runtimeControlGrid.innerHTML = runtimeControlSpecs.map((item) => {
+      const enabled = !!runtimeControls[item.key];
+      return `
+        <button
+          type="button"
+          class="runtime-control-chip"
+          data-runtime-control="${item.key}"
+          style="padding:0.38em 0.55em;border-radius:7px;border:1px solid var(--border);background:${enabled ? "var(--panel-hover)" : "var(--bg-alt)"};color:${enabled ? "var(--text)" : "var(--text-dim)"};cursor:pointer;text-align:left;"
+        >${esc(item.label)}: ${enabled ? "on" : "off"}</button>
+      `;
+    }).join("");
   }
 
   function formatAge(ms) {
@@ -3615,7 +3642,7 @@
     },
 
     runtime_controls(data, rawEvent) {
-      runtimeControls = data.controls || runtimeControls;
+      runtimeControls = {...runtimeControls, ...(data.controls || {})};
       runtimeStateSeen = true;
       conversationPaused = !!data.conversation_paused;
       if ((pendingPauseState === "pausing" && conversationPaused) || (pendingPauseState === "resuming" && !conversationPaused)) {
@@ -3639,12 +3666,17 @@
         `state: <b>${data.conversation_paused ? "paused" : "live"}</b>`,
         `auto-beat: <b>${runtimeControls.auto_beat ? "on" : "off"}</b>`,
         `filler: <b>${runtimeControls.filler ? "on" : "off"}</b>`,
+        `thinker: <b>${runtimeControls.thinker ? "on" : "off"}</b>`,
+        `director: <b>${runtimeControls.director ? "on" : "off"}</b>`,
+        `expression: <b>${runtimeControls.expression ? "on" : "off"}</b>`,
+        `guidance: <b>${runtimeControls.beat_guidance ? "on" : "off"}</b>`,
         `voice: <b>${data.voice_active ? "on" : "off"}</b>`,
         `stt: <b style="color:${statusColor(voiceStatus.stt?.state || "off")}">${esc(voiceStatus.stt?.state || "off")}</b>`,
         `tts: <b style="color:${statusColor(voiceStatus.tts?.state || "off")}">${esc(voiceStatus.tts?.state || "off")}</b>`,
         `vision manager: <b>${data.vision_active ? "on" : "off"}</b>`,
         `reconcile thread: <b>${data.reconcile_thread_alive ? "running" : "idle"}</b>`,
       ].join("<br>");
+      renderRuntimeControlButtons();
       updateRuntimeButtons();
       updateVisionFeedUrl();
       renderVisionServiceStatus();
@@ -3775,6 +3807,13 @@
   });
   runtimeRestartButton.addEventListener("click", requestRestart);
   bootRestartButton.addEventListener("click", requestRestart);
+  runtimeControlGrid.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-runtime-control]");
+    if (!button) return;
+    const key = button.dataset.runtimeControl || "";
+    if (!key) return;
+    sendInput(`/threads ${key.replace(/_/g, "-")} toggle`);
+  });
   detailOpenWindowButton.addEventListener("click", () => {
     const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
     const bundle = selectedEventBundle(event);
@@ -3822,6 +3861,7 @@
   updateRuntimeButtons();
   renderBootStatus();
   refreshState();
+  renderRuntimeControlButtons();
   setInterval(refreshState, 1000);
   setInterval(pollVisionModelStatus, 4000);
   setInterval(renderBootStatus, 1000);

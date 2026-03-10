@@ -174,6 +174,19 @@ class ChatSession:
         self._messages.append({"role": "system", "content": content})
         self._tagged_system_indices[tag] = len(self._messages) - 1
 
+    def remove_tagged_system(self, tag: str) -> None:
+        """Remove a tagged system message if it exists."""
+        index = self._tagged_system_indices.pop(tag, None)
+        if index is None or not (0 <= index < len(self._messages)):
+            return
+        message = self._messages[index]
+        if message.get("role") != "system":
+            return
+        self._messages.pop(index)
+        for key, value in list(self._tagged_system_indices.items()):
+            if value > index:
+                self._tagged_system_indices[key] = value - 1
+
     def get_history(self) -> list[dict]:
         """Return a copy of the message history."""
         return list(self._messages)

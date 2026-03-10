@@ -5,6 +5,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from character_eng.creative import character_asset_path
 from rich.panel import Panel
 
 from character_eng.world import _load_prompt_file, _llm_call
@@ -71,9 +72,12 @@ class DirectorResult:
 # --- File loading ---
 
 
-def load_scenario_script(character: str, filename: str = "scenario_script.toml") -> ScenarioScript | None:
+def load_scenario_script(character: str, filename: str | None = None) -> ScenarioScript | None:
     """Load a character scenario TOML file. Returns None if not found."""
-    requested = Path(filename)
+    if filename is None:
+        requested = Path(character_asset_path(character, "default_scenario_script", characters_dir=CHARACTERS_DIR).name)
+    else:
+        requested = Path(filename)
     if requested.name in {"", ".", ".."} or requested != Path(requested.name):
         raise ValueError(f"invalid scenario filename: {filename!r}")
     path = CHARACTERS_DIR / character / requested.name

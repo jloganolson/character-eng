@@ -6,6 +6,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from character_eng.creative import load_prompt_asset
+
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 
 
@@ -18,7 +20,7 @@ class VisualFocusResult:
 
 
 def _load_prompt() -> str:
-    return (PROMPTS_DIR / "visual_focus.txt").read_text()
+    return load_prompt_asset("visual_focus", prompts_dir=PROMPTS_DIR, default_filename="visual_focus.txt")
 
 
 def visual_focus_call(

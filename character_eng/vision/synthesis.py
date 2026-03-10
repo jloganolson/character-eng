@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from character_eng.creative import load_prompt_asset
 from character_eng.vision.context import VisualContext
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
@@ -19,7 +20,7 @@ class SynthesisResult:
 
 
 def _load_prompt() -> str:
-    return (PROMPTS_DIR / "vision_synthesis.txt").read_text()
+    return load_prompt_asset("vision_synthesis", prompts_dir=PROMPTS_DIR, default_filename="vision_synthesis.txt")
 
 
 def vision_synthesis_call(

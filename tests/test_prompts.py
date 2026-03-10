@@ -155,3 +155,23 @@ def test_load_prompt_people_macro_empty_when_no_people(tmp_path, monkeypatch):
 
     result = load_prompt("test_char")
     assert "People: \n" in result
+
+
+def test_load_prompt_uses_character_manifest_files(tmp_path, monkeypatch):
+    prompts_dir, char_dir = _setup_char(
+        tmp_path,
+        "test_char",
+        "Voice: {{character}}\nScene: {{scenario}}",
+        **{
+            "character_manifest.toml": '[files]\ncharacter = "voice.txt"\nscenario = "scene.txt"\n',
+            "voice.txt": "Manifest-driven voice",
+            "scene.txt": "Manifest-driven scenario",
+        },
+    )
+
+    monkeypatch.setattr(prompts_mod, "PROMPTS_DIR", prompts_dir)
+    monkeypatch.setattr(prompts_mod, "CHARACTERS_DIR", prompts_dir / "characters")
+
+    result = load_prompt("test_char")
+    assert "Manifest-driven voice" in result
+    assert "Manifest-driven scenario" in result

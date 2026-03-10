@@ -1,17 +1,22 @@
 import re
 from pathlib import Path
 
+from character_eng.creative import character_asset_path, prompt_asset_path
+
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 CHARACTERS_DIR = PROMPTS_DIR / "characters"
 
 
 def list_characters() -> list[str]:
     """Return sorted list of character directory names that contain a prompt.txt."""
-    return sorted(
-        d.name
-        for d in CHARACTERS_DIR.iterdir()
-        if d.is_dir() and (d / "prompt.txt").exists()
-    )
+    names: list[str] = []
+    for d in CHARACTERS_DIR.iterdir():
+        if not d.is_dir():
+            continue
+        prompt_path = character_asset_path(d.name, "prompt", characters_dir=CHARACTERS_DIR)
+        if prompt_path.exists():
+            names.append(d.name)
+    return sorted(names)
 
 
 def _read(path: Path) -> str:
@@ -35,13 +40,12 @@ def load_prompt(character: str, world_state=None, people_state=None, vision_cont
 
     Unknown macros are left intact for debugging via /trace.
     """
-    char_dir = CHARACTERS_DIR / character
-    template = (char_dir / "prompt.txt").read_text()
+    template = character_asset_path(character, "prompt", characters_dir=CHARACTERS_DIR).read_text()
 
     macros = {
-        "global_rules": _read(PROMPTS_DIR / "global_rules.txt"),
-        "character": _read(char_dir / "character.txt"),
-        "scenario": _read(char_dir / "scenario.txt"),
+        "global_rules": _read(prompt_asset_path("global_rules", prompts_dir=PROMPTS_DIR, default_filename="global_rules.txt")),
+        "character": _read(character_asset_path(character, "character", characters_dir=CHARACTERS_DIR)),
+        "scenario": _read(character_asset_path(character, "scenario", characters_dir=CHARACTERS_DIR)),
         "world": world_state.render() if world_state else "",
         "people": people_state.render() if people_state else "",
         "vision": vision_context.render_for_prompt() if vision_context else "",

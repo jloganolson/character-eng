@@ -11,6 +11,8 @@ def test_normalize_runtime_control_name_handles_aliases():
     assert app._normalize_runtime_control_name("auto-beat") == "auto_beat"
     assert app._normalize_runtime_control_name("autobeat") == "auto_beat"
     assert app._normalize_runtime_control_name("vision") == "vision"
+    assert app._normalize_runtime_control_name("thought") == "thinker"
+    assert app._normalize_runtime_control_name("guidance") == "beat_guidance"
     assert app._normalize_runtime_control_name("unknown") is None
 
 

@@ -1,0 +1,7 @@
+[files]
+prompt = "prompt.txt"
+character = "character.txt"
+scenario = "scenario.txt"
+world_static = "world_static.txt"
+world_dynamic = "world_dynamic.txt"
+default_scenario_script = "scenario_script.toml"
