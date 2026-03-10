@@ -24,6 +24,25 @@ log() {
   printf '==> %s\n' "$*"
 }
 
+kill_stale_vllm_gpu_compute() {
+  command -v nvidia-smi >/dev/null 2>&1 || return 0
+  local pids
+  pids="$(nvidia-smi --query-compute-apps=pid,process_name --format=csv,noheader,nounits 2>/dev/null | awk -F',' '/VLLM::EngineCore/ {gsub(/ /, "", $1); print $1}')"
+  if [[ -z "$pids" ]]; then
+    return 0
+  fi
+  log "Clearing stale vLLM GPU compute: ${pids//$'\n'/ }"
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    kill "$pid" >/dev/null 2>&1 || true
+  done <<< "$pids"
+  sleep 1
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    kill -9 "$pid" >/dev/null 2>&1 || true
+  done <<< "$(nvidia-smi --query-compute-apps=pid,process_name --format=csv,noheader,nounits 2>/dev/null | awk -F',' '/VLLM::EngineCore/ {gsub(/ /, "", $1); print $1}')"
+}
+
 start_bg() {
   local label="$1"
   local logfile="$2"
@@ -133,6 +152,8 @@ if [[ -z "$POCKET_BIN" ]]; then
     POCKET_BIN="$(command -v pocket-tts || true)"
   fi
 fi
+
+kill_stale_vllm_gpu_compute
 
 if curl -sf "http://127.0.0.1:${VISION_PORT}/" >/dev/null 2>&1; then
   log "Vision service already running on :${VISION_PORT}"

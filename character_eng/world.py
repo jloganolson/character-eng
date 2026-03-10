@@ -937,7 +937,7 @@ def plan_call(
 # --- Single-beat planning (8B) ---
 
 
-def single_beat_call(
+def next_beat_call(
     system_prompt: str,
     world: WorldState | None,
     history: list[dict],
@@ -949,7 +949,7 @@ def single_beat_call(
     recent_n: int = 6,
     vision_context_text: str = "",
 ) -> PlanResult:
-    """Generate a single beat using 8B. Returns PlanResult with 0-1 beats."""
+    """Generate the next beat using 8B. Returns PlanResult with 0-1 beats."""
     if model_config is None:
         return PlanResult()
 
@@ -995,9 +995,9 @@ def single_beat_call(
 
     response = _llm_call(
         model_config,
-        label="plan_single",
+        label="next_beat",
         messages=[
-            {"role": "system", "content": load_system_prompt("plan_single_system")},
+            {"role": "system", "content": load_system_prompt("next_beat_system")},
             {"role": "user", "content": user_message},
         ],
         temperature=0.7,

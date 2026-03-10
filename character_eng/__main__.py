@@ -36,12 +36,12 @@ from character_eng.world import (
     format_pending_narrator,
     load_beat_guide,
     load_goals,
+    next_beat_call,
     load_world_state,
     plan_call,
     reconcile_call,
     set_llm_trace_hook,
     script_check_call,
-    single_beat_call,
     thought_call,
 )
 
@@ -191,7 +191,7 @@ _runtime_controls = {
     "vision": True,
     "auto_beat": True,
     "filler": True,
-    "guardrails": True,
+    "guardrails": False,
     "thinker": True,
     "director": True,
     "expression": True,
@@ -574,7 +574,7 @@ def _advance_scenario_from_visual(session, scenario, script, world, people, goal
             "new_stage": new_stage.name,
             "new_goal": new_stage.goal,
         })
-        result = single_beat_call(
+        result = next_beat_call(
             system_prompt=session.system_prompt,
             world=world,
             history=session.get_history(),
@@ -854,7 +854,7 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
                                 "old_stage": stage.name, "new_stage": new_stage.name,
                                 "new_goal": new_stage.goal,
                             })
-                            result = single_beat_call(
+                            result = next_beat_call(
                                 system_prompt=session.system_prompt, world=world,
                                 history=session.get_history(), goals=goals, model_config=model_config,
                                 people=people, stage_goal=new_stage.goal,
@@ -904,7 +904,7 @@ def run_director_sync(scenario, world, people, session, model_config, script, go
                 console.print(f"[cyan]  {_ts()} director: {result.thought}[/cyan]")
                 if new_stage:
                     console.print(f"[bold cyan]{_ts()} Stage → {new_stage.name}: {new_stage.goal}[/bold cyan]")
-                    plan_result = single_beat_call(
+                    plan_result = next_beat_call(
                         system_prompt=session.system_prompt, world=world,
                         history=session.get_history(), goals=goals, model_config=model_config,
                         people=people, stage_goal=new_stage.goal,
@@ -1852,7 +1852,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 _bump_version()
                 needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
                 # Always replan after first user input
-                result = single_beat_call(
+                result = next_beat_call(
                     system_prompt=session.system_prompt, world=world,
                     history=session.get_history(), goals=goals, model_config=model_config,
                     plan_request=plan_request, people=people, stage_goal=stage_goal,
@@ -1865,7 +1865,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
             # Bootstrap: if no script, plan synchronously before responding
             if script.is_empty():
-                result = single_beat_call(
+                result = next_beat_call(
                     system_prompt=session.system_prompt, world=world,
                     history=session.get_history(), goals=goals, model_config=model_config,
                     people=people, stage_goal=stage_goal,
@@ -1907,7 +1907,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             _bump_version()
             needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
             if needs_plan:
-                result = single_beat_call(
+                result = next_beat_call(
                     system_prompt=session.system_prompt, world=world,
                     history=session.get_history(), goals=goals, model_config=model_config,
                     plan_request=plan_request, people=people, stage_goal=stage_goal,
@@ -1936,13 +1936,13 @@ def run_eval(session, world, goals, script, model_config):
 
 
 def run_plan(session, world, goals, plan_request, model_config, people=None, stage_goal="", vision_mgr=None):
-    """Run single_beat_call synchronously, return PlanResult or None on error."""
+    """Run next_beat_call synchronously, return PlanResult or None on error."""
     if model_config is None:
         console.print("[dim]Planner unavailable, skipping.[/dim]")
         return None
     console.print(f"[dim]{_ts()} Planning...[/dim]")
     try:
-        return single_beat_call(
+        return next_beat_call(
             system_prompt=session.system_prompt,
             world=world,
             history=session.get_history(),
@@ -2114,7 +2114,7 @@ def apply_plan(script, plan_result):
         console.print(f"[magenta]  {marker} {i}. [{beat.intent}] \"{beat.line}\"[/magenta]")
     _push("plan", {
         "beats": [{"intent": b.intent, "line": b.line} for b in plan_result.beats],
-        "prompt_blocks": _prompt_trace_blocks_for_labels(("plan_single", "plan")),
+        "prompt_blocks": _prompt_trace_blocks_for_labels(("next_beat", "plan")),
     })
 
 
@@ -2203,7 +2203,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
 
     # 6. Replan if needed (script complete or off_book)
     if needs_plan or not script.current_beat:
-        result = single_beat_call(
+        result = next_beat_call(
             system_prompt=session.system_prompt, world=world,
             history=session.get_history(), goals=goals, model_config=model_config,
             plan_request=plan_request, people=people, stage_goal=stage_goal,
@@ -2258,7 +2258,7 @@ def handle_world_change(session, world, goals, script, change_text, label, model
     _bump_version()
     needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
     if needs_plan:
-        result = single_beat_call(
+        result = next_beat_call(
             system_prompt=session.system_prompt, world=world,
             history=session.get_history(), goals=goals, model_config=model_config,
             plan_request=plan_request, people=people, stage_goal=stage_goal,
@@ -2307,7 +2307,7 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
     _bump_version()
     needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
     if needs_plan:
-        result = single_beat_call(
+        result = next_beat_call(
             system_prompt=session.system_prompt, world=world,
             history=session.get_history(), goals=goals, model_config=model_config,
             plan_request=plan_request, people=people, stage_goal=stage_goal,
@@ -2370,7 +2370,7 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
             _bump_version()
             needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
             if needs_plan:
-                result = single_beat_call(
+                result = next_beat_call(
                     system_prompt=session.system_prompt, world=world,
                     history=session.get_history(), goals=goals, model_config=model_config,
                     plan_request=plan_request, people=people, stage_goal=stage_goal,

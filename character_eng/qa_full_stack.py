@@ -46,7 +46,7 @@ from character_eng.prompts import load_prompt
 from character_eng.scenario import load_scenario_script
 from character_eng.vision.client import VisionClient
 from character_eng.vision.focus import CORE_CONSTANT_QUESTIONS, CORE_CONSTANT_SAM_TARGETS
-from character_eng.world import Goals, Script, load_goals, load_world_state, single_beat_call
+from character_eng.world import Goals, Script, load_goals, load_world_state, next_beat_call
 from character_eng.utils import start_prefixed_output_thread
 
 load_dotenv()
@@ -289,7 +289,7 @@ def _prompt_trace_blocks_for_event(event: dict, prompt_traces: list[dict]) -> li
         "response_done": ("chat",),
         "expression": ("expression",),
         "director": ("director",),
-        "plan": ("plan_single", "plan"),
+        "plan": ("next_beat", "plan"),
         "eval": ("script_check", "thought"),
         "scene_eval": ("scene_eval",),
         "scene_capture": ("scene_capture",),
@@ -944,7 +944,7 @@ def _run_user_turn(
         needs_plan, plan_request, _ = run_post_response(
             session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr,
         )
-        result = single_beat_call(
+        result = next_beat_call(
             system_prompt=session.system_prompt,
             world=world,
             history=session.get_history(),
@@ -959,7 +959,7 @@ def _run_user_turn(
         return response, True
 
     if script.is_empty():
-        result = single_beat_call(
+        result = next_beat_call(
             system_prompt=session.system_prompt,
             world=world,
             history=session.get_history(),
@@ -981,7 +981,7 @@ def _run_user_turn(
         session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr,
     )
     if needs_plan:
-        result = single_beat_call(
+        result = next_beat_call(
             system_prompt=session.system_prompt,
             world=world,
             history=session.get_history(),

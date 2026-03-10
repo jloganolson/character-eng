@@ -1318,7 +1318,7 @@
   let dragStartX = 0;
   let dragStartScrollLeft = 0;
 
-  let runtimeControls = {reconcile: true, vision: true, auto_beat: true, filler: true, guardrails: true, thinker: true, director: true, expression: true, beat_guidance: true};
+  let runtimeControls = {reconcile: true, vision: true, auto_beat: true, filler: true, guardrails: false, thinker: true, director: true, expression: true, beat_guidance: true};
   let visionService = {
     url: "",
     health: false,
@@ -1547,8 +1547,8 @@
       expression: ["expression"],
       eval: ["thought", "script_check"],
       director: ["director"],
-      post_response: ["thought", "script_check", "director", "plan_single", "plan"],
-      plan: ["plan_single", "plan"],
+      post_response: ["thought", "script_check", "director", "next_beat", "plan"],
+      plan: ["next_beat", "plan"],
       vision_focus: ["visual_focus"],
       vision_snapshot: ["vision_synthesis"],
       world_update: ["reconcile"],
