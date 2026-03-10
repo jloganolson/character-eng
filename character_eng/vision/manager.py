@@ -36,6 +36,7 @@ class VisionManager:
         # People resolver state: visual identity -> people_state person_id
         self._visual_to_person: dict[str, str] = {}
         self._known_persons: set[str] = set()  # visual identities we've seen
+        self._presence_visible = False
         # Recent event dedup: normalized text -> timestamp
         self._recent_events: dict[str, float] = {}
         self._event_cooldown = 15.0  # seconds before a similar event can fire again
@@ -210,52 +211,85 @@ class VisionManager:
         """Normalize event text for dedup. Strips articles, lowercases, collapses whitespace."""
         return " ".join(text.lower().strip().split())
 
+    @staticmethod
+    def _has_human_presence(snapshot: RawVisualSnapshot) -> bool:
+        if snapshot.persons or snapshot.faces:
+            return True
+        return any((obj.label or "").strip().lower() == "person" for obj in snapshot.objects)
+
+    @staticmethod
+    def _visible_identity_candidates(snapshot: RawVisualSnapshot) -> list[str]:
+        ids: list[str] = []
+        for person in snapshot.persons:
+            identity = str(person.identity or "").strip()
+            if identity and identity not in ids:
+                ids.append(identity)
+        for face in snapshot.faces:
+            identity = str(face.identity or "").strip()
+            if identity and identity.lower() != "unknown" and identity not in ids:
+                ids.append(identity)
+        return ids
+
     def _resolve_people(self, snapshot: RawVisualSnapshot) -> None:
-        """Map visual identities to PeopleState, emit presence-change events."""
-        current_ids = set()
-        for p in snapshot.persons:
-            current_ids.add(p.identity)
+        """Map visual presence to PeopleState, emit stable presence-change events."""
+        current_ids = self._visible_identity_candidates(snapshot)
+        visible_now = self._has_human_presence(snapshot)
 
-        # New arrivals
-        for vid in current_ids:
-            if vid not in self._known_persons:
-                self._known_persons.add(vid)
-                person_id = None
-                if self._people is not None:
-                    person_id = self._people.get_or_create(vid)
+        if self._people is not None and visible_now:
+            present_people = self._people.present_people()
+            reusable_person_id = present_people[0].person_id if len(present_people) == 1 else None
+            for vid in current_ids:
+                person_id = self._visual_to_person.get(vid)
+                if person_id is None:
+                    if reusable_person_id is not None:
+                        person_id = reusable_person_id
+                    else:
+                        person_id = self._people.get_or_create(vid)
                     self._visual_to_person[vid] = person_id
-                self._events.append(PerceptionEvent(
-                    description=f"{vid} appeared in view",
-                    source="visual",
-                    trace=self._trace_payload(snapshot, kind="person_presence", identity=vid),
-                    kind="person_presence",
-                    payload={
-                        "identity": vid,
-                        "person_id": person_id,
-                        "presence": "present",
-                        "change": "appeared",
-                        "signals": ["person_visible"],
-                    },
-                ))
+                person = self._people.people.get(person_id)
+                if person is not None:
+                    person.presence = "present"
+                    if not person.name:
+                        person.name = vid
 
-        # Departures (only if previously known)
-        disappeared = self._known_persons - current_ids
-        for vid in disappeared:
-            self._known_persons.discard(vid)
-            person_id = self._visual_to_person.get(vid)
+        if self._people is not None and not visible_now:
+            for person in self._people.present_people():
+                person.presence = "gone"
+
+        self._known_persons = set(current_ids)
+
+        if visible_now and not self._presence_visible:
+            identity = current_ids[0] if current_ids else ""
+            person_id = self._visual_to_person.get(identity) if identity else None
             self._events.append(PerceptionEvent(
-                description=f"{vid} is no longer visible",
+                description="A person appeared in view",
                 source="visual",
-                trace=self._trace_payload(snapshot, kind="person_presence", identity=vid),
+                trace=self._trace_payload(snapshot, kind="person_presence", identity=identity),
                 kind="person_presence",
                 payload={
-                    "identity": vid,
+                    "identity": identity,
                     "person_id": person_id,
+                    "presence": "present",
+                    "change": "appeared",
+                    "signals": ["person_visible"],
+                },
+            ))
+        elif not visible_now and self._presence_visible:
+            self._events.append(PerceptionEvent(
+                description="A person is no longer visible",
+                source="visual",
+                trace=self._trace_payload(snapshot, kind="person_presence"),
+                kind="person_presence",
+                payload={
+                    "identity": "",
+                    "person_id": None,
                     "presence": "gone",
                     "change": "disappeared",
                     "signals": ["person_departed"],
                 },
             ))
+
+        self._presence_visible = visible_now
 
     def _trace_payload(self, snapshot: RawVisualSnapshot, **extra) -> dict:
         payload = {

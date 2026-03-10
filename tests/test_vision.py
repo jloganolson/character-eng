@@ -311,7 +311,7 @@ def test_vision_manager_people_resolution():
     # Should create person and emit arrival event
     assert "Person 1" in mgr._known_persons
     assert len(mgr._events) == 1
-    assert "appeared" in mgr._events[0].description
+    assert mgr._events[0].description == "A person appeared in view"
     assert mgr._events[0].kind == "person_presence"
     assert mgr._events[0].payload["signals"] == ["person_visible"]
     assert mgr._people.get_or_create("Person 1") == "p1"
@@ -320,12 +320,39 @@ def test_vision_manager_people_resolution():
     mgr._resolve_people(snap)
     assert len(mgr._events) == 1
 
+    # Identity churn while a person is still visible should not produce fake leave/re-enter events.
+    churned_snap = RawVisualSnapshot(
+        persons=[PersonObservation(identity="Person 2", bbox=(0, 0, 100, 200))],
+    )
+    mgr._resolve_people(churned_snap)
+    assert len(mgr._events) == 1
+
     # Person disappears
     empty_snap = RawVisualSnapshot()
     mgr._resolve_people(empty_snap)
     assert len(mgr._events) == 2
-    assert "no longer visible" in mgr._events[1].description
+    assert mgr._events[1].description == "A person is no longer visible"
     assert mgr._events[1].payload["signals"] == ["person_departed"]
+
+
+def test_vision_manager_presence_uses_face_or_sam_person_backup():
+    from character_eng.vision.context import FaceObservation, ObjectDetection
+    from character_eng.vision.manager import VisionManager
+
+    mgr = VisionManager()
+
+    face_only = RawVisualSnapshot(
+        faces=[FaceObservation(identity="Visitor", bbox=(0, 0, 100, 100))],
+    )
+    mgr._resolve_people(face_only)
+    assert len(mgr._events) == 1
+    assert mgr._events[0].payload["signals"] == ["person_visible"]
+
+    sam_person_only = RawVisualSnapshot(
+        objects=[ObjectDetection(label="person", bbox=(0, 0, 50, 50), confidence=0.9)],
+    )
+    mgr._resolve_people(sam_person_only)
+    assert len(mgr._events) == 1
 
 
 def test_vision_manager_update_focus_pushes_dashboard_event(monkeypatch):
@@ -587,7 +614,7 @@ def test_vision_manager_only_adds_synthesis_history_on_drain(monkeypatch):
     drained = mgr.drain_events()
     descriptions = [event.description for event in drained]
     assert "A person approaches the stand" in descriptions
-    assert "Person 1 appeared in view" in descriptions
+    assert "A person appeared in view" in descriptions
     assert list(mgr._event_history) == descriptions
 
 

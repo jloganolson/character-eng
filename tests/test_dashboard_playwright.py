@@ -553,6 +553,11 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#runtime-toggle")).to_have_text("Start")
     expect(page.locator("#runtime-stop")).to_be_disabled()
     expect(page.locator("#boot-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
+    expect(page.locator("#report-ref-status")).to_contain_text("Last stopped session: intermediate session log:")
+    assert list(report_dir.iterdir())
+
+    page.locator("#report-ref-button").click()
+    expect(page.locator("#report-ref-status")).to_contain_text("Last stopped session: intermediate session log:")
 
     page.locator("#runtime-toggle").click()
     expect(page.locator("#runtime-toggle")).to_have_text("Starting...")
@@ -606,6 +611,7 @@ def test_runtime_panel_interactions_in_browser(
     collector.push("pause", {"startup": True, "fresh_session": True})
     expect(page.locator("#h-session")).to_have_text("sess-stopped-fresh")
     expect(page.locator("#runtime-toggle")).to_have_text("Play")
+    expect(page.locator("#report-ref-status")).to_have_text("")
 
     page.locator("button[data-runtime-control='thinker']").click()
     assert input_queue.get(timeout=2) == "/threads thinker toggle"

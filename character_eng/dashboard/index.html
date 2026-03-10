@@ -1404,6 +1404,8 @@
   const INSPECTOR_WIDTH_STORAGE_KEY = "dashboard.inspector_width";
   const SIDEBAR_WIDTH_STORAGE_KEY = "dashboard.sidebar_width";
   let pendingPauseState = null;
+  let lastStoppedReportRefText = "";
+  let lastStoppedReportRefPath = "";
 
   async function loadStreamSchema() {
     try {
@@ -1471,6 +1473,27 @@
     } catch (_) {}
     document.body.removeChild(area);
     return ok;
+  }
+
+  function setReportRefStatus(text = "", title = "") {
+    reportRefStatus.textContent = text;
+    reportRefStatus.title = title || "";
+  }
+
+  function clearStickyStoppedReportRef() {
+    lastStoppedReportRefText = "";
+    lastStoppedReportRefPath = "";
+    setReportRefStatus("", "");
+  }
+
+  function setStickyStoppedReportRef(pasteText, path) {
+    lastStoppedReportRefText = pasteText || "";
+    lastStoppedReportRefPath = path || "";
+    if (!lastStoppedReportRefText) {
+      setReportRefStatus("", "");
+      return;
+    }
+    setReportRefStatus(`Last stopped session: ${lastStoppedReportRefText}`, lastStoppedReportRefPath || "");
   }
 
   document.addEventListener("keydown", (e) => {
@@ -2700,10 +2723,9 @@
     };
   }
 
-  async function saveReportReference() {
-    const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
-    const payload = {
-      session_id: currentSessionId || "",
+  function buildReportSnapshotPayload(event = null, sessionIdOverride = null) {
+    return {
+      session_id: sessionIdOverride ?? currentSessionId ?? "",
       character: document.getElementById("h-character").textContent || "",
       model: document.getElementById("h-model").textContent || "",
       stage: document.getElementById("h-stage").textContent || "",
@@ -2712,21 +2734,45 @@
       stream_events: streamEvents,
       prompt_trace_events: promptTraceEvents,
     };
+  }
+
+  async function postReportSnapshot(payload) {
+    const response = await fetch("/report-snapshot", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Failed to save report ref");
+    return data;
+  }
+
+  async function saveReportReference() {
+    if (!currentSessionId && lastStoppedReportRefText) {
+      reportRefButton.disabled = true;
+      setReportRefStatus("Copying last stopped session ref...", lastStoppedReportRefPath || "");
+      try {
+        await copyText(lastStoppedReportRefText);
+        setStickyStoppedReportRef(lastStoppedReportRefText, lastStoppedReportRefPath);
+      } catch (error) {
+        setReportRefStatus(`Report ref failed: ${error.message || error}`, lastStoppedReportRefPath || "");
+      } finally {
+        reportRefButton.disabled = false;
+      }
+      return;
+    }
+
+    const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
+    const payload = buildReportSnapshotPayload(event);
     reportRefButton.disabled = true;
-    reportRefStatus.textContent = "Saving report ref...";
+    setReportRefStatus("Saving report ref...");
     try {
-      const response = await fetch("/report-snapshot", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify(payload),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data.error || "Failed to save report ref");
-      await copyText(data.paste_text || `intermediate session log: ${data.path}`);
-      reportRefStatus.textContent = data.paste_text || `intermediate session log: ${data.path}`;
-      reportRefStatus.title = data.path || "";
+      const data = await postReportSnapshot(payload);
+      const pasteText = data.paste_text || `intermediate session log: ${data.path}`;
+      await copyText(pasteText);
+      setReportRefStatus(pasteText, data.path || "");
     } catch (error) {
-      reportRefStatus.textContent = `Report ref failed: ${error.message || error}`;
+      setReportRefStatus(`Report ref failed: ${error.message || error}`);
     } finally {
       reportRefButton.disabled = false;
     }
@@ -3407,6 +3453,7 @@
         else resetDashboardState("Starting a fresh session...");
       }
       restartPending = false;
+      clearStickyStoppedReportRef();
       currentSessionId = data.session_id || currentSessionId;
       sessionStart = Number(rawEvent.timestamp || Date.now() / 1000);
       sessionSeen = true;
@@ -3782,13 +3829,28 @@
       renderStream();
     },
 
-    session_end(data, rawEvent) {
+    async session_end(data, rawEvent) {
       recordEvent("session_end", data, rawEvent);
+      const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
+      const finishedSessionId = data.session_id || currentSessionId || "";
+      const payload = buildReportSnapshotPayload(event, finishedSessionId);
       sessionSeen = false;
       currentSessionId = "";
       clearConversationState("Session ended.");
       updateRuntimeButtons();
       renderBootStatus();
+      reportRefButton.disabled = true;
+      setReportRefStatus("Saving last stopped session ref...");
+      try {
+        const result = await postReportSnapshot(payload);
+        const pasteText = result.paste_text || `intermediate session log: ${result.path}`;
+        await copyText(pasteText);
+        setStickyStoppedReportRef(pasteText, result.path || "");
+      } catch (error) {
+        setReportRefStatus(`Last stopped session ref failed: ${error.message || error}`);
+      } finally {
+        reportRefButton.disabled = false;
+      }
     },
 
     pause(data, rawEvent) {
