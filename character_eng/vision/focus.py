@@ -10,9 +10,9 @@ from character_eng.creative import load_prompt_asset
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 CORE_CONSTANT_QUESTIONS = [
-    "What stands out about the nearest person's appearance, clothing, or what they're carrying?",
+    "What stands out most about the nearest person's appearance, clothing, or accessories?",
     "What is the nearest person doing with their body, hands, or gaze?",
-    "What is the nearest person's facial expression or apparent mood?",
+    "What facial expression, mood, or energy does the nearest person seem to have?",
 ]
 CORE_CONSTANT_SAM_TARGETS = ["person"]
 

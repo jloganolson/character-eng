@@ -10,6 +10,8 @@ Rules:
 - ephemeral_sam_targets: 0-2 intent-specific objects to detect
 - Do not restate the runtime's constant person questions.
 - Do not ask generic counting or booth/stand bookkeeping questions like "How many people are near the stand?" or "Is anyone holding money?"
+- Do not name a specific object unless the current beat or visual context clearly makes that object salient already.
+- Prefer broad notable-detail questions over speculative object guesses. For example, prefer "What notable thing is the person interacting with?" over "Are they holding a robot?"
 - Prefer ephemeral questions that help Greg notice specific behavior, intent, or a transient object relevant to the current beat.
 
 Respond with JSON:

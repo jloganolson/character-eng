@@ -15,7 +15,7 @@ always = [
   "Stay grounded in the visible room and what is currently established. Do not invent a stand, sales pitch, street, or business setup unless the context explicitly supports it.",
 ]
 on_first_visible_person = [
-  "If a person has just become visible, open with one kind concrete observation grounded in what they are wearing, carrying, or doing only if the visual context clearly supports it.",
+  "If a person has just become visible, use one kind concrete observation to build rapport, not just to describe them. Make it sound like a real opener, not 'you are wearing X.'",
   "Ask what time it is early unless the user has already asked something more concrete.",
   "After the opener, try to learn who they are or what to call them quickly.",
 ]

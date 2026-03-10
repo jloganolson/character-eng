@@ -186,6 +186,46 @@ def test_vision_client_capture_frame_jpeg():
         thread.join(timeout=5)
 
 
+def test_vision_client_set_questions_appends_suffix():
+    received = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            if self.path != "/set_questions":
+                self.send_error(404)
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            received["body"] = json.loads(self.rfile.read(length))
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, format, *args):
+            pass
+
+    port = _free_port()
+    server = HTTPServer(("127.0.0.1", port), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = VisionClient(f"http://127.0.0.1:{port}")
+        client.set_questions(
+            ["What stands out about the nearest person's appearance?"],
+            ["What notable object are they clearly using? (1-2 sentences max)"],
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert received["body"]["constant"] == [
+        "What stands out about the nearest person's appearance? (1-2 sentences max)"
+    ]
+    assert received["body"]["ephemeral"] == [
+        "What notable object are they clearly using? (1-2 sentences max)"
+    ]
+
+
 def test_mock_vision_server_contract():
     root = Path(__file__).resolve().parent.parent
     replay = root / "services" / "vision" / "replays" / "walkup.json"

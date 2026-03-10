@@ -198,6 +198,7 @@ _runtime_controls = {
     "beat_guidance": True,
 }
 _conversation_paused = False
+_had_visible_people = False
 
 
 def _normalize_runtime_control_name(name: str) -> str | None:
@@ -220,6 +221,14 @@ def _normalize_runtime_control_name(name: str) -> str | None:
         "guidance": "beat_guidance",
     }
     return aliases.get(key)
+
+
+def _should_apply_first_visible_guardrails(people=None) -> bool:
+    global _had_visible_people
+    present = bool(people.present_people()) if people is not None else False
+    should_apply = present and not _had_visible_people
+    _had_visible_people = present
+    return should_apply
 
 
 def _vision_process_alive() -> bool:
@@ -1307,7 +1316,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
               vision_mode: bool = False, vision_cfg=None, auto_sim: str | None = None,
               bridge=None, sim_speed: float = 1.0, start_paused: bool = False):
     """Run the chat loop for a character. Returns None normally, 'restart' to re-enter."""
-    global _conversation_paused
+    global _conversation_paused, _had_visible_people
     set_llm_trace_hook(_record_prompt_trace)
     set_chat_trace_hook(_record_prompt_trace)
     label = character.replace("_", " ").title()
@@ -1392,6 +1401,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
     # Outer loop: handles /reload by restarting with fresh session
     while True:
+        _had_visible_people = False
         world = load_world_state(character)
         goals = load_goals(character)
         people = PeopleState()
@@ -2393,7 +2403,7 @@ def _inject_runtime_turn_guardrails(session, user_input: str = "", people=None, 
             parts.extend(scenario.guardrails.on_user_leaving)
         else:
             parts.append("- The user is leaving. Give one warm goodbye line, no follow-up question, and do not try to keep them there.")
-    if people is not None and people.present_people() and (not user_input.strip()):
+    if _should_apply_first_visible_guardrails(people):
         if scenario is not None and scenario.guardrails.on_first_visible_person:
             parts.extend(scenario.guardrails.on_first_visible_person)
         else:

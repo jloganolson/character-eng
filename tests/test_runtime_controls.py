@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import character_eng.__main__ as app
 from character_eng.config import AppConfig
+from character_eng.person import PeopleState
 
 
 def test_normalize_runtime_control_name_handles_aliases():
@@ -153,3 +154,23 @@ def test_get_live_input_falls_back_to_voice(monkeypatch):
         assert app._get_live_input("sess", FakeVoice()) == "/resume"
     finally:
         app._dashboard_input_queue = previous
+
+
+def test_first_visible_guardrails_only_fire_once_until_people_clear():
+    previous = app._had_visible_people
+    people = PeopleState()
+    try:
+        app._had_visible_people = False
+        assert app._should_apply_first_visible_guardrails(people) is False
+
+        people.add_person(name="Visitor", presence="present")
+        assert app._should_apply_first_visible_guardrails(people) is True
+        assert app._should_apply_first_visible_guardrails(people) is False
+
+        people.people["p1"].presence = "gone"
+        assert app._should_apply_first_visible_guardrails(people) is False
+
+        people.people["p1"].presence = "present"
+        assert app._should_apply_first_visible_guardrails(people) is True
+    finally:
+        app._had_visible_people = previous

@@ -42,8 +42,21 @@ class VisionClient:
         with urllib.request.urlopen(req, timeout=5) as resp:
             return resp.read()
 
+    @staticmethod
+    def _question_suffix(text: str) -> str:
+        suffix = "(1-2 sentences max)"
+        stripped = text.strip()
+        if not stripped:
+            return stripped
+        if stripped.endswith(suffix):
+            return stripped
+        return f"{stripped} {suffix}"
+
     def set_questions(self, constant: list[str], ephemeral: list[str]) -> None:
-        body = json.dumps({"constant": constant, "ephemeral": ephemeral}).encode()
+        body = json.dumps({
+            "constant": [self._question_suffix(item) for item in constant if str(item).strip()],
+            "ephemeral": [self._question_suffix(item) for item in ephemeral if str(item).strip()],
+        }).encode()
         req = urllib.request.Request(
             f"{self.base_url}/set_questions",
             data=body,
