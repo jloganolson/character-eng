@@ -222,6 +222,28 @@ goal = "Open custom"
     assert script.start == "intro"
 
 
+def test_load_scenario_script_supports_safe_relative_subpath(tmp_path, monkeypatch):
+    char_dir = tmp_path / "characters" / "test_char"
+    variant_dir = char_dir / "scenarios"
+    variant_dir.mkdir(parents=True)
+    (variant_dir / "punchy.toml").write_text("""
+[scenario]
+name = "Punchy Variant"
+start = "hook"
+
+[[stage]]
+name = "hook"
+goal = "Open punchy"
+""")
+
+    monkeypatch.setattr(scenario_mod, "CHARACTERS_DIR", tmp_path / "characters")
+
+    script = load_scenario_script("test_char", "scenarios/punchy.toml")
+    assert script is not None
+    assert script.name == "Punchy Variant"
+    assert script.start == "hook"
+
+
 def test_load_scenario_script_greg():
     """Smoke test: load greg's actual scenario_script.toml."""
     script = load_scenario_script("greg")

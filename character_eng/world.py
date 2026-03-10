@@ -271,14 +271,9 @@ def _read_lines(path: Path) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
-def _load_prompt_file(filename: str) -> str:
-    """Read a system prompt from prompts/ directory."""
-    path = PROMPTS_DIR / filename
-    if path.exists():
-        return path.read_text()
-    key = filename[:-4] if filename.endswith(".txt") else filename
-    default = filename if "." in filename else f"{filename}.txt"
-    return load_prompt_asset(key, prompts_dir=PROMPTS_DIR, default_filename=default)
+def load_system_prompt(key: str) -> str:
+    """Read a registry-backed system prompt from prompts/."""
+    return load_prompt_asset(key, prompts_dir=PROMPTS_DIR, default_filename=f"{key}.txt")
 
 
 def _clean_fact_text(text: str) -> str:
@@ -395,7 +390,7 @@ def format_pending_narrator(change_text: str) -> str:
 
 def load_beat_guide(intent: str, line: str) -> str:
     """Read beat_guide.txt and substitute {intent} and {line} placeholders."""
-    template = _load_prompt_file("beat_guide.txt")
+    template = load_system_prompt("beat_guide")
     return template.replace("{intent}", intent).replace("{line}", line)
 
 
@@ -508,7 +503,7 @@ def reconcile_call(world: WorldState, pending_changes: list[str], model_config: 
         model_config,
         label="reconcile",
         messages=[
-            {"role": "system", "content": _load_prompt_file("reconcile_system.txt")},
+            {"role": "system", "content": load_system_prompt("reconcile_system")},
             {"role": "user", "content": user_message},
         ],
         temperature=0.2,
@@ -598,7 +593,7 @@ def eval_call(
         model_config,
         label="eval",
         messages=[
-            {"role": "system", "content": _load_prompt_file("eval_system.txt")},
+            {"role": "system", "content": load_system_prompt("eval_system")},
             {"role": "user", "content": user_message},
         ],
         temperature=0.7,
@@ -763,7 +758,7 @@ def thought_call(
         model_config,
         label="thought",
         messages=[
-            {"role": "system", "content": _load_prompt_file("think_system")},
+            {"role": "system", "content": load_system_prompt("think_system")},
             {"role": "user", "content": user_message},
         ],
         temperature=0.7,
@@ -812,7 +807,7 @@ def condition_check_call(
         model_config,
         label="condition",
         messages=[
-            {"role": "system", "content": _load_prompt_file("condition_system.txt")},
+            {"role": "system", "content": load_system_prompt("condition_system")},
             {"role": "user", "content": user_message},
         ],
         temperature=0.3,
@@ -890,7 +885,7 @@ def plan_call(
         plan_model_config,
         label="plan",
         messages=[
-            {"role": "system", "content": _load_prompt_file("plan_system.txt")},
+            {"role": "system", "content": load_system_prompt("plan_system")},
             {"role": "user", "content": user_message},
         ],
         temperature=0.7,
@@ -974,7 +969,7 @@ def single_beat_call(
         model_config,
         label="plan_single",
         messages=[
-            {"role": "system", "content": _load_prompt_file("plan_single_system")},
+            {"role": "system", "content": load_system_prompt("plan_single_system")},
             {"role": "user", "content": user_message},
         ],
         temperature=0.7,
@@ -1008,7 +1003,7 @@ def expression_call(
 ) -> ExpressionResult:
     """Derive gaze target and facial expression from the character's latest dialogue."""
     targets = gaze_targets or DEFAULT_GAZE_TARGETS
-    system_prompt = _load_prompt_file("expression_system.txt").replace(
+    system_prompt = load_system_prompt("expression_system").replace(
         "{gaze_targets}", ", ".join(targets)
     )
 

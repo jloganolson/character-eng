@@ -8,7 +8,7 @@ from pathlib import Path
 from character_eng.creative import character_asset_path
 from rich.panel import Panel
 
-from character_eng.world import _load_prompt_file, _llm_call
+from character_eng.world import _llm_call, load_system_prompt
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 CHARACTERS_DIR = PROMPTS_DIR / "characters"
@@ -96,13 +96,21 @@ def match_visual_exit(scenario: ScenarioScript | None, events: list) -> int:
 
 def load_scenario_script(character: str, filename: str | None = None) -> ScenarioScript | None:
     """Load a character scenario TOML file. Returns None if not found."""
+    char_dir = (CHARACTERS_DIR / character).resolve()
     if filename is None:
-        requested = Path(character_asset_path(character, "default_scenario_script", characters_dir=CHARACTERS_DIR).name)
+        requested = Path(
+            character_asset_path(character, "default_scenario_script", characters_dir=CHARACTERS_DIR)
+            .relative_to(CHARACTERS_DIR / character)
+        )
     else:
         requested = Path(filename)
-    if requested.name in {"", ".", ".."} or requested != Path(requested.name):
+    if requested.name in {"", ".", ".."} or requested.is_absolute() or ".." in requested.parts:
         raise ValueError(f"invalid scenario filename: {filename!r}")
-    path = CHARACTERS_DIR / character / requested.name
+    path = (char_dir / requested).resolve()
+    try:
+        path.relative_to(char_dir)
+    except ValueError as exc:
+        raise ValueError(f"invalid scenario filename: {filename!r}") from exc
     if not path.exists():
         return None
 
@@ -184,7 +192,7 @@ def director_call(
         model_config,
         label="director",
         messages=[
-            {"role": "system", "content": _load_prompt_file("director_system.txt")},
+            {"role": "system", "content": load_system_prompt("director_system")},
             {"role": "user", "content": user_message},
         ],
         temperature=0.3,

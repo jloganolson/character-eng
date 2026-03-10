@@ -56,7 +56,7 @@ LOGS_DIR = PROJECT_ROOT / "logs"
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 SERVICES_DIR = PROJECT_ROOT / "services" / "vision"
 
-SHORT_TURN_PROMPT = (PROMPTS_DIR / "automation_short_turn.txt").read_text().strip()
+SHORT_TURN_PROMPT = (PROMPTS_DIR / "qa" / "automation_short_turn.txt").read_text().strip()
 
 
 SCENE_SPECS = [
@@ -2014,7 +2014,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Full-stack automation harness")
     parser.add_argument("--model", default=DEFAULT_MODEL, choices=MODELS.keys())
     parser.add_argument("--character", default="greg")
-    parser.add_argument("--scenario-file", default="scenario_script_punchy.toml")
+    parser.add_argument("--scenario-file", default="scenarios/punchy.toml")
     parser.add_argument("--vision-source", choices=("generated", "live"), default="generated")
     parser.add_argument("--vision-port", type=int, default=0)
     parser.add_argument("--pocket-server-url", default="http://127.0.0.1:8003")
@@ -2126,8 +2126,8 @@ def main() -> None:
         goals = load_goals(args.character)
         people = PeopleState()
         scenario_file = args.scenario_file
-        if args.vision_source == "live" and scenario_file == "scenario_script_punchy.toml":
-            scenario_file = "scenario_script_office_pov.toml"
+        if args.vision_source == "live" and scenario_file == "scenarios/punchy.toml":
+            scenario_file = "scenarios/office_pov.toml"
         scenario = load_scenario_script(args.character, scenario_file)
         system_prompt = load_prompt(args.character, world_state=world, people_state=people)
         session = ChatSession(system_prompt, model_config)

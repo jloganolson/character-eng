@@ -1,0 +1,7 @@
+Keep the exchange short and reviewable.
+
+Rules:
+- The simulated user speaks in one short sentence.
+- Prefer concrete reactions or questions tied to what is visible.
+- Avoid narration, backstory dumps, or multi-part asks.
+- Avoid introducing new objects or facts not already present in the scene.

@@ -12,7 +12,6 @@ from character_eng.world import (
     Script,
     WorldState,
     WorldUpdate,
-    _load_prompt_file,
     condition_check_call,
     eval_call,
     expression_call,
@@ -20,6 +19,7 @@ from character_eng.world import (
     format_pending_narrator,
     load_beat_guide,
     load_goals,
+    load_system_prompt,
     load_world_state,
     plan_call,
     reconcile_call,
@@ -1190,19 +1190,19 @@ def test_plan_call_no_people_no_stage_goal(mock_make_client):
     assert "CURRENT STAGE GOAL" not in user_msg
 
 
-# --- _load_prompt_file ---
+# --- load_system_prompt ---
 
 
-def test_load_prompt_file_reads_from_disk(tmp_path, monkeypatch):
+def test_load_system_prompt_reads_from_disk(tmp_path, monkeypatch):
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     (tmp_path / "test_prompt.txt").write_text("Hello from disk")
-    assert _load_prompt_file("test_prompt.txt") == "Hello from disk"
+    assert load_system_prompt("test_prompt") == "Hello from disk"
 
 
-def test_load_prompt_file_missing_raises(tmp_path, monkeypatch):
+def test_load_system_prompt_missing_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
     with pytest.raises(FileNotFoundError):
-        _load_prompt_file("nonexistent.txt")
+        load_system_prompt("nonexistent")
 
 
 # --- load_beat_guide ---

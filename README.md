@@ -387,7 +387,8 @@ Characters live in `prompts/characters/<name>/` with these files:
 | `scenario.txt` | Situation and context |
 | `world_static.txt` | Permanent facts (one per line, optional) |
 | `world_dynamic.txt` | Initial mutable state (one per line, loaded with stable IDs `f1`, `f2`, ...) |
-| `scenario_script.toml` | Branching scenario stages with exit conditions and optional HUD labels (parsed by director + number triggers) |
+| `scenario_script.toml` | Default live scenario stages for the character |
+| `scenarios/*.toml` | Optional scenario variants used by QA/harness flows or alternate modes |
 | `sims/*.sim.txt` | Sim scripts for `/sim` command — `time_offset \| description` per line (optional) |
 
 `prompts/global_rules.txt` contains rules shared across all characters.
@@ -403,7 +404,7 @@ System-level prompts are also editable files in `prompts/`:
 | `director_system.txt` | System prompt for the director microservice (evaluates stage exit conditions, 8B sync) |
 | `beat_guide.txt` | Template for beat guidance injected before LLM-guided delivery (`{intent}` and `{line}` placeholders) |
 
-**Live editing works** — edit any character prompt file in your editor, then type `/reload` in the chat to pick up changes without restarting. The conversation resets but you keep your place in the character menu. Reconciler, eval, plan, and director system prompts are re-read on every call, so edits take effect immediately without `/reload`.
+**Live editing works** — edit any character prompt file in your editor, then type `/reload` in the chat to pick up changes without restarting. The conversation resets but you keep your place in the character menu. Reconciler, eval, plan, director, expression, vision-focus, and vision-synthesis system prompts are re-read on every call, so edits take effect immediately without `/reload`.
 
 ### Adding a new character
 

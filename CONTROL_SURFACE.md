@@ -39,11 +39,10 @@ This is the concrete control map for the local Greg experience.
 ### Scenario flow
 
 - [prompts/characters/greg/scenario_script.toml](/home/logan/Projects/character-eng/prompts/characters/greg/scenario_script.toml)
-- [prompts/characters/greg/scenario_script_full.toml](/home/logan/Projects/character-eng/prompts/characters/greg/scenario_script_full.toml)
-- [prompts/characters/greg/scenario_script_office_pov.toml](/home/logan/Projects/character-eng/prompts/characters/greg/scenario_script_office_pov.toml)
-- [prompts/characters/greg/scenario_script_punchy.toml](/home/logan/Projects/character-eng/prompts/characters/greg/scenario_script_punchy.toml)
-  - Stage graph, exits, and beat scaffolding.
-  - One file is selected at runtime.
+  - Default live runtime scenario, selected by Greg's manifest.
+- [prompts/characters/greg/scenarios/punchy.toml](/home/logan/Projects/character-eng/prompts/characters/greg/scenarios/punchy.toml)
+- [prompts/characters/greg/scenarios/office_pov.toml](/home/logan/Projects/character-eng/prompts/characters/greg/scenarios/office_pov.toml)
+  - Non-default scenario variants used by QA/full-stack harnesses.
 
 ### Specialist prompt files
 
@@ -69,7 +68,7 @@ This is the concrete control map for the local Greg experience.
 
 ## Prompt Files That Exist But Are Not The Main Live Source Of Truth
 
-- [prompts/automation_short_turn.txt](/home/logan/Projects/character-eng/prompts/automation_short_turn.txt)
+- [prompts/qa/automation_short_turn.txt](/home/logan/Projects/character-eng/prompts/qa/automation_short_turn.txt)
   - QA harness asset.
 - [prompts/characters/greg/sims/walkup.sim.txt](/home/logan/Projects/character-eng/prompts/characters/greg/sims/walkup.sim.txt)
 - [prompts/characters/greg/sims/walkup_dialogue.sim.txt](/home/logan/Projects/character-eng/prompts/characters/greg/sims/walkup_dialogue.sim.txt)
