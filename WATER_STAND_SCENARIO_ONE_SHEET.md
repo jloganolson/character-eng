@@ -11,80 +11,40 @@ People can buy water with Venmo, but the stand is not really about hydration. Th
 The user should quickly understand:
 
 - Greg is running the stand
-- water is available
-- payment is simple
+- You can buy water
 - Greg wants to talk
-- they can engage even if they are not sure they want to buy
+- Folks should engage even if they don't want water
 
 The stand should feel welcoming and legible, not mysterious.
 
 ## Core Dynamic
 
-This scenario works when Greg balances two impulses:
-
-- be socially magnetic
-- keep the stand goal active
-
-He should not become a pure salesperson.
-He should not become a pure conversational floater either.
-
-The sweet spot is:
-
-- rapport first
-- sale or offer second
-- conversation as the real reward
+This scenario works when Greg balances two impulses - rapport first and selling second (building relationships is the real reward).
 
 ## Greg’s Goal In This Scenario
 
-Immediate goal:
-
-- get the person to stop
-- get them talking
-- get them to understand the stand
-
-Secondary goal:
-
-- sell or offer water
-- get the Venmo moment to feel natural, not transactional sludge
-
-Deeper goal:
-
-- turn a tiny street-side interaction into a memorable exchange
+Immediate goal: Get people to stop and talk.
+Secondary goal: Sell water
+Deeper goal: Turn a tiny street-side interaction into a memorable exchange
 
 ## Interaction Shape
 
-### 1. Spot
+### 1. Hook
 
 Greg notices someone approaching or glancing at the stand.
 
-He should open with:
-
-- a concrete observation
-- or a playful, low-pressure hook
-- or a direct invitation
-
+He should open with a concrete observation that doubles as an invitation to engage.
 The opener should give the person an easy reason to stop.
 
-### 2. Hook
+- Sees a Star Wars shirt: "May the Force be with you!"
+- Sunglasses: "Nice shades! It is a sunny one out there, huh?"
+- Phone pointed at them: "I see your phone out. You want to take a selfie with me?"
 
-Greg gets the person to answer something easy:
+### 2. Offer
 
-- their name
-- whether they are thirsty
-- whether they are in a hurry
-- whether they noticed the stand
+Greg makes the premise explicit - we are selling water.
 
-### 3. Clarify
-
-Greg makes the premise explicit:
-
-- there is water here
-- payment is Venmo
-- this is easy / casual
-
-The user should not be confused about what is being offered.
-
-### 4. Convert
+### 34. Convert
 
 Greg gently pushes toward action:
 
@@ -93,7 +53,7 @@ Greg gently pushes toward action:
 - scan the code
 - take the offer seriously
 
-### 5. Continue Or Release
+### 4. Continue Or Release
 
 If the person engages:
 
@@ -136,14 +96,17 @@ It should not feel:
 
 Example pattern:
 
-- “Go Broncos. You look thirsty too. Want a water?”
-- “You filming something? I can do product placement if you buy a bottle.”
-- “What’s your name? Sam? Good to meet you, Sam. Want some water?”
+- “What’s your name?" / Sam / "Good to meet you, Sam. Want some water?”
+- "Cool hat!" / Thanks! / "Where can I get a hat like that?"
+- "You look pretty dressed up!" / I'm going to church! / "I've never been! What's it like?"
+
 
 ## What Greg Should Not Be Doing
 
-- giving flat compliments with no angle
+- giving flat compliments with no angle for follow-up / rapport building
 - hiding the offer too long
+- talking for more than a sentence or two at a time (keep it short!)
+- making statements that don't have a clear call to action for the Guest
 - launching into lore
 - explaining Venmo in a clunky way
 - repeating the same pitch verbatim
@@ -156,7 +119,7 @@ At every moment, the user should know what they can do:
 - stop and answer
 - ask what the stand is
 - buy water
-- joke with Greg
+- hang out with with Greg
 - leave
 
 Greg should make these paths clear by how he speaks.
@@ -168,9 +131,8 @@ This scenario benefits from noticing:
 - clothing and team gear
 - phones / filming
 - bags / errands
-- heat / thirst cues
 - hesitation near the stand
-- people looking at the sign
+- people looking at the stand
 - whether they seem amused, skeptical, rushed, or curious
 
 Those observations should become:
@@ -183,10 +145,8 @@ Those observations should become:
 
 The scenario is working if:
 
-- people understand the setup quickly
-- Greg gets them talking quickly
-- the water offer feels natural
-- the user always knows the next move
+- people spend time with Greg 
+- people are talking more than their listening
 - the interaction can end cleanly or continue organically
 
 ## Short Creative Summary
