@@ -1,0 +1,4 @@
+# One constant VLM question per line.
+What stands out most about the nearest person's appearance, clothing, or accessories?
+What is the nearest person doing with their body, hands, or gaze?
+What facial expression, mood, or energy does the nearest person seem to have?

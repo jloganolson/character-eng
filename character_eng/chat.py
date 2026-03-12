@@ -152,6 +152,16 @@ class ChatSession:
         """Add an assistant message to history without making an LLM call."""
         self._messages.append({"role": "assistant", "content": content})
 
+    def replace_system_prompt(self, content: str):
+        """Update the base system prompt in place without resetting turn history."""
+        self.system_prompt = content
+        if self._messages and self._messages[0].get("role") == "system":
+            self._messages[0]["content"] = content
+            return
+        self._messages.insert(0, {"role": "system", "content": content})
+        for key, value in list(self._tagged_system_indices.items()):
+            self._tagged_system_indices[key] = value + 1
+
     def replace_last_assistant(self, content: str):
         """Replace or remove the most recent assistant message."""
         for i in range(len(self._messages) - 1, -1, -1):

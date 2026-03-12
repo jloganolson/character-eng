@@ -9,12 +9,14 @@ from pathlib import Path
 from character_eng.creative import load_prompt_asset
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
-CORE_CONSTANT_QUESTIONS = [
+DEFAULT_CONSTANT_QUESTIONS = [
     "What stands out most about the nearest person's appearance, clothing, or accessories?",
     "What is the nearest person doing with their body, hands, or gaze?",
     "What facial expression, mood, or energy does the nearest person seem to have?",
 ]
-CORE_CONSTANT_SAM_TARGETS = ["person", "rude gesture"]
+DEFAULT_CONSTANT_SAM_TARGETS = ["person", "rude gesture"]
+CORE_CONSTANT_QUESTIONS = DEFAULT_CONSTANT_QUESTIONS
+CORE_CONSTANT_SAM_TARGETS = DEFAULT_CONSTANT_SAM_TARGETS
 
 
 @dataclass
@@ -27,6 +29,19 @@ class VisualFocusResult:
 
 def _load_prompt() -> str:
     return load_prompt_asset("visual_focus", prompts_dir=PROMPTS_DIR, default_filename="visual_focus.txt")
+
+
+def _load_line_asset(key: str, default_filename: str, fallback: list[str]) -> list[str]:
+    try:
+        text = load_prompt_asset(key, prompts_dir=PROMPTS_DIR, default_filename=default_filename)
+    except FileNotFoundError:
+        return list(fallback)
+    items = [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    return items or list(fallback)
 
 
 def visual_focus_call(
@@ -59,8 +74,16 @@ def visual_focus_call(
     if people:
         user_parts.append(f"People:\n{people.render()}")
 
-    authored_constant_questions = list(CORE_CONSTANT_QUESTIONS)
-    authored_constant_sam_targets = list(CORE_CONSTANT_SAM_TARGETS)
+    authored_constant_questions = _load_line_asset(
+        "vision_constant_questions",
+        "vision_constant_questions.txt",
+        DEFAULT_CONSTANT_QUESTIONS,
+    )
+    authored_constant_sam_targets = _load_line_asset(
+        "vision_constant_sam_targets",
+        "vision_constant_sam_targets.txt",
+        DEFAULT_CONSTANT_SAM_TARGETS,
+    )
     if scenario is not None:
         requirements = scenario.active_visual_requirements()
         for question in requirements.constant_questions:

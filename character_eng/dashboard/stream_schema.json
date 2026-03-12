@@ -23,6 +23,7 @@
     "history_rewind": "session",
     "history_promoted": "session",
     "history_playback": "session",
+    "prompt_reload": "session",
     "vision_stack_ready": "vision",
     "scene_capture": "vision",
     "scene_eval": "vision",

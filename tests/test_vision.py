@@ -314,6 +314,8 @@ def test_vision_manager_people_resolution():
     assert mgr._events[0].description == "A person appeared in view"
     assert mgr._events[0].kind == "person_presence"
     assert mgr._events[0].payload["signals"] == ["person_visible"]
+    assert mgr._events[0].trace["provenance"]["label"] == "Presence tracker"
+    assert mgr._events[0].trace["provenance"]["primary"] == "person_tracker"
     assert mgr._people.get_or_create("Person 1") == "p1"
 
     # Same person again — no new event
@@ -333,6 +335,7 @@ def test_vision_manager_people_resolution():
     assert len(mgr._events) == 2
     assert mgr._events[1].description == "A person is no longer visible"
     assert mgr._events[1].payload["signals"] == ["person_departed"]
+    assert mgr._events[1].trace["provenance"]["label"] == "Presence tracker"
 
 
 def test_vision_manager_presence_uses_face_or_sam_person_backup():
@@ -584,6 +587,10 @@ def test_vision_manager_carries_structured_synthesis_signals(monkeypatch):
     synthesis_event = next(event for event in drained if event.description == "Someone is holding a water bottle")
     assert synthesis_event.kind == "visual_claim"
     assert synthesis_event.payload["signals"] == ["water_bottle_visible"]
+    assert synthesis_event.trace["provenance"]["label"] == "Vision synthesis LLM"
+    assert synthesis_event.trace["provenance"]["primary"] == "vision_synthesis_llm"
+    assert "person_tracker" in synthesis_event.trace["provenance"]["components"]
+    assert "vlm_answers" in synthesis_event.trace["provenance"]["components"]
 
 
 def test_vision_manager_only_adds_synthesis_history_on_drain(monkeypatch):

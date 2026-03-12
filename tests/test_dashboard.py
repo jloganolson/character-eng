@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from character_eng.dashboard.events import DashboardEventCollector
-from character_eng.dashboard.server import start_dashboard
+from character_eng.dashboard.server import DashboardHandler, start_dashboard
 from character_eng.history import HistoryService
 from character_eng.person import PeopleState
 from character_eng.world import Goals, Script, WorldState
@@ -113,7 +113,14 @@ class TestDashboardServer:
             context_version=0,
             had_user_input=False,
         )
-        thread, port = start_dashboard(c, iq, port=0, report_dir=report_dir, history_api=history)
+        thread, port = start_dashboard(
+            c,
+            iq,
+            port=0,
+            report_dir=report_dir,
+            history_api=history,
+            default_character="greg",
+        )
         # Wait for server to be ready
         for _ in range(20):
             try:
@@ -200,12 +207,45 @@ class TestDashboardServer:
         listing = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/history/list").read())
         assert listing[0]["session_id"] == "sess-test"
         assert listing[0]["ref"] == "sess-test"
+        assert listing[0]["title"]
 
         checkpoint = json.loads(
             urllib.request.urlopen(f"http://127.0.0.1:{port}/history/checkpoint?session_id=sess-test").read()
         )
         assert checkpoint["ok"] is True
         assert checkpoint["session_id"] == "sess-test"
+
+        prompt_assets = json.loads(
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/prompt-assets").read()
+        )
+        assert any(item["label"] == "Character prompt template" for item in prompt_assets)
+        assert any(item["label"] == "visual focus" for item in prompt_assets)
+        assert any(item["apply_command"] == "/refresh vision" for item in prompt_assets)
+
+        opened = {}
+
+        def fake_open_in_vscode(self, path):
+            opened["mode"] = "vscode"
+            opened["path"] = str(path)
+
+        original_open = DashboardHandler._open_in_vscode
+        DashboardHandler._open_in_vscode = fake_open_in_vscode
+        try:
+            open_req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/prompt-assets/action",
+                data=json.dumps({
+                    "action": "open",
+                    "path": prompt_assets[0]["path"],
+                }).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            open_resp = json.loads(urllib.request.urlopen(open_req).read())
+            assert open_resp["ok"] is True
+            assert opened["mode"] == "vscode"
+            assert opened["path"] == prompt_assets[0]["path"]
+        finally:
+            DashboardHandler._open_in_vscode = original_open
 
         annotation_req = urllib.request.Request(
             f"http://127.0.0.1:{port}/history/annotation",
@@ -232,6 +272,16 @@ class TestDashboardServer:
         promote_resp = json.loads(urllib.request.urlopen(promote_req).read())
         assert promote_resp["ok"] is True
         assert Path(promote_resp["path"]).exists()
+
+        rename_req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/history/rename",
+            data=json.dumps({"session_id": "sess-test", "title": "greg scarf retry"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        rename_resp = json.loads(urllib.request.urlopen(rename_req).read())
+        assert rename_resp["ok"] is True
+        assert rename_resp["manifest"]["title"] == "greg scarf retry"
 
         history.finalize_current()
         snippet_req = urllib.request.Request(
