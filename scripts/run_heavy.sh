@@ -9,6 +9,7 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT/.uv-cache}"
 VISION_PORT="${VISION_PORT:-7860}"
 VLLM_PORT="${VLLM_PORT:-8000}"
 POCKET_PORT="${POCKET_PORT:-8003}"
+VISION_NO_CAMERA="${VISION_NO_CAMERA:-0}"
 POCKET_VOICE="${POCKET_VOICE:-$ROOT/voices/greg.safetensors}"
 HEAVY_LOG_DIR="${HEAVY_LOG_DIR:-$ROOT/logs/heavy}"
 POCKET_BIN="${POCKET_BIN:-}"
@@ -158,7 +159,12 @@ kill_stale_vllm_gpu_compute
 if curl -sf "http://127.0.0.1:${VISION_PORT}/" >/dev/null 2>&1; then
   log "Vision service already running on :${VISION_PORT}"
 else
-  start_bg "vision stack" "$HEAVY_LOG_DIR/vision_stack.log" "$VISION_PIDFILE" "$ROOT/services/vision/start.sh"
+  vision_cmd=("$ROOT/services/vision/start.sh")
+  if [[ "$VISION_NO_CAMERA" == "1" ]]; then
+    vision_cmd+=(--no-camera)
+    log "Vision stack will start in no-camera mode"
+  fi
+  start_bg "vision stack" "$HEAVY_LOG_DIR/vision_stack.log" "$VISION_PIDFILE" "${vision_cmd[@]}"
 fi
 
 if curl -sf "http://127.0.0.1:${POCKET_PORT}/" >/dev/null 2>&1; then

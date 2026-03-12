@@ -110,6 +110,19 @@ For the simplest persistent-dev loop:
 ./scripts/stop_local.sh
 ```
 
+For repeatable cross-machine GPU benchmarking, prefer injected-frame mode instead of a live webcam:
+
+```bash
+VISION_NO_CAMERA=1 ./scripts/run_heavy.sh
+uv run -m character_eng.local_stack_benchmark
+```
+
+That benchmark feeds the same prerecorded frames from `services/vision/test_set` into the vision stack on every machine, then measures isolated and overlapped latency for vision polling, vision VLM queries, and Pocket-TTS. To compare two saved reports:
+
+```bash
+uv run -m character_eng.local_stack_benchmark compare logs/local_stack_benchmark_A.json logs/local_stack_benchmark_B.json
+```
+
 Pick a character from the menu, then chat. After each response, synchronous microservices evaluate script progress and check scenario exits with immediate effect. In-session commands:
 
 | Command | What it does |
