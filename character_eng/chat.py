@@ -153,11 +153,21 @@ class ChatSession:
         self._messages.append({"role": "assistant", "content": content})
 
     def replace_last_assistant(self, content: str):
-        """Replace the most recent assistant message (for barge-in truncation)."""
+        """Replace or remove the most recent assistant message."""
         for i in range(len(self._messages) - 1, -1, -1):
             if self._messages[i]["role"] == "assistant":
-                self._messages[i]["content"] = content
+                if content:
+                    self._messages[i]["content"] = content
+                else:
+                    self._messages.pop(i)
                 return
+
+    def rollback_last_turn(self) -> None:
+        """Remove the most recent user+assistant turn, if present."""
+        if self._messages and self._messages[-1]["role"] == "assistant":
+            self._messages.pop()
+        if self._messages and self._messages[-1]["role"] == "user":
+            self._messages.pop()
 
     def inject_system(self, content: str):
         """Append a system message to the conversation history."""

@@ -23,6 +23,7 @@ from character_eng.prompts import list_characters, load_prompt
 from character_eng.qa_personas import _action_badge, _esc, annotation_assets
 from character_eng.scenario import DirectorResult, director_call, load_scenario_script, match_visual_exit
 from character_eng.world import (
+    ContinueListeningResult,
     EvalResult,
     Goals,
     PlanResult,
@@ -31,6 +32,7 @@ from character_eng.world import (
     ThoughtResult,
     WorldUpdate,
     condition_check_call,
+    continue_listening_call,
     eval_call,
     expression_call,
     format_pending_narrator,
@@ -1757,6 +1759,12 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             if not user_input:
                 continue
 
+            if voice_io is not None and user_input and not user_input.startswith("/"):
+                merged_input = voice_io.merge_deferred_input(user_input)
+                if merged_input != user_input:
+                    voice_io.prune_stale_transcripts(merged_input)
+                user_input = merged_input
+
             # --- Turn start: check background results ---
             stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
             _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
@@ -2011,6 +2019,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     scenario=scenario,
                     vision_mgr=vision_mgr,
                 )
+                if stream_response._continue_listening:
+                    continue
                 expr = stream_response._last_expr
                 entry = {"type": "send", "input": user_input, "response": response}
                 if expr:
@@ -2066,6 +2076,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     scenario=scenario,
                     vision_mgr=vision_mgr,
                 )
+            if stream_response._continue_listening:
+                continue
             expr = stream_response._last_expr
             entry = {"type": "send", "input": user_input, "response": response}
             if expr:
@@ -2226,6 +2238,37 @@ def run_expression(session, model_config, line=None):
     return result
 
 
+def apply_listening_expression(session, expression: str = "focused"):
+    """Apply a lightweight listening expression while Greg keeps the floor open."""
+    result = ExpressionResult(gaze="person", gaze_type="hold", expression=expression or "focused")
+    _push("expression", {
+        "gaze": result.gaze,
+        "gaze_type": result.gaze_type,
+        "expression": result.expression,
+        "source": "continue_listening",
+        "prompt_blocks": [],
+    })
+    _apply_expression_runtime_context(session, result)
+    return result
+
+
+def _normalize_interrupted_reply(text: str) -> str:
+    """Keep only meaningful interrupted speech in history and traces."""
+    trimmed = " ".join((text or "").split()).strip()
+    if not trimmed:
+        return ""
+    if trimmed[-1].isalnum():
+        cutoff = trimmed.rfind(" ")
+        if cutoff <= 0:
+            return ""
+        trimmed = trimmed[:cutoff].rstrip(" ,;:-")
+    if len(trimmed) < 12 or len(trimmed.split()) < 2:
+        return ""
+    if trimmed.endswith("\u2014"):
+        return trimmed
+    return f"{trimmed} \u2014"
+
+
 def deliver_beat(session, beat, label, voice_io=None):
     """Deliver a pre-rendered beat as the character's response. Returns the beat line."""
     npc_name = Text(f"{_ts()} {label}: ", style="bold magenta")
@@ -2245,8 +2288,9 @@ def deliver_beat(session, beat, label, voice_io=None):
             ratio = voice_io.speaker_playback_ratio
             spoken_chars = max(int(len(beat.line) * ratio), 1)
             if spoken_chars < len(beat.line):
-                truncated = beat.line[:spoken_chars] + " \u2014"
-                session.add_assistant(truncated)
+                truncated = _normalize_interrupted_reply(beat.line[:spoken_chars])
+                if truncated:
+                    session.add_assistant(truncated)
                 return truncated
     session.add_assistant(beat.line)
     return beat.line
@@ -2339,8 +2383,9 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
                         ratio = voice_io.speaker_playback_ratio
                         spoken = max(int(len(idle_text) * ratio), 1)
                         if spoken < len(idle_text):
-                            idle_text = idle_text[:spoken] + " \u2014"
-                session.add_assistant(idle_text)
+                            idle_text = _normalize_interrupted_reply(idle_text[:spoken])
+                if idle_text:
+                    session.add_assistant(idle_text)
                 entry["idle"] = idle_text
                 expr = run_expression(session, model_config)
                 if expr:
@@ -2567,6 +2612,11 @@ def _inject_runtime_turn_guardrails(session, user_input: str = "", people=None, 
         "- Prefer 8-16 words. Do not exceed about 22 words unless the user explicitly asks for detail.",
         "- Answer the user's most concrete question first.",
     ]
+    stripped = user_input.strip()
+    if stripped and len(stripped) <= 40 and len(stripped.split()) <= 4:
+        parts.append(
+            "- If the user's reply is a short fragment or repeated phrase, first treat it as referring to your immediately previous line or question before assuming it is a new topic."
+        )
     if scenario is not None:
         parts.extend(scenario.guardrails.always)
     lowered = user_input.lower()
@@ -2607,6 +2657,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
     stream_response._last_expr for the caller to pick up.
     """
     stream_response._last_expr = None
+    stream_response._continue_listening = False
     if not keep_beat_guidance:
         _set_runtime_context(session, "runtime_beat_guidance", "")
     _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
@@ -2628,6 +2679,65 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
         if voice_io._speaker is not None:
             voice_io._speaker.reset_counters()
             voice_io._speaker._audio_started.clear()
+        should_gate_listening = (input_timing or {}).get("input_source") == "voice" and not message.startswith("/")
+        listening_future = None
+        listening_pool = None
+        listening_result: ContinueListeningResult | None = None
+        pending_chunks: list[str] = []
+        gated_output_released = not should_gate_listening
+        release_deadline = time.time() + 0.18
+
+        if should_gate_listening:
+            listening_pool = ThreadPoolExecutor(max_workers=1)
+            listening_future = listening_pool.submit(
+                continue_listening_call,
+                transcript=message,
+                system_prompt=session.system_prompt,
+                history=session.get_history(),
+                model_config=expr_model_config or CHAT_MODEL,
+                world=world,
+                people=people,
+                stage_goal=scenario.active_stage.goal if scenario and scenario.active_stage else "",
+                vision_context_text=_current_vision_text(vision_mgr),
+            )
+
+        def emit_chunk(text: str) -> None:
+            nonlocal t_tts_request
+            console.print(text, end="", highlight=False)
+            _push("response_chunk", {"text": text})
+            if t_tts_request is None:
+                t_tts_request = time.time()
+            if voice_io._tts is not None:
+                voice_io._tts.send_text(text)
+
+        def flush_pending_chunks() -> None:
+            nonlocal gated_output_released
+            if gated_output_released:
+                return
+            for pending in pending_chunks:
+                emit_chunk(pending)
+            pending_chunks.clear()
+            gated_output_released = True
+
+        def maybe_continue_listening() -> bool:
+            nonlocal listening_result
+            if listening_future is None or listening_result is not None or not listening_future.done():
+                return False
+            try:
+                listening_result = listening_future.result()
+            except Exception:
+                listening_result = ContinueListeningResult()
+            if listening_result.should_wait and not voice_io.audio_started:
+                voice_io.defer_next_user_turn(message)
+                voice_io.cancel_speech()
+                session.rollback_last_turn()
+                stream_response._continue_listening = True
+                stream_response._last_expr = apply_listening_expression(
+                    session,
+                    listening_result.expression or "focused",
+                )
+                return True
+            return False
 
         for chunk in gen:
             if voice_io._cancelled.is_set():
@@ -2635,31 +2745,44 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
             if t_first is None:
                 t_first = time.time()
             full_response.append(chunk)
-            console.print(chunk, end="", highlight=False)
-            _push("response_chunk", {"text": chunk})
-            if t_tts_request is None:
-                t_tts_request = time.time()
-            voice_io._tts.send_text(chunk)
+            if gated_output_released:
+                emit_chunk(chunk)
+            else:
+                pending_chunks.append(chunk)
+                if maybe_continue_listening():
+                    break
+                if listening_future is None or listening_future.done() or time.time() >= release_deadline:
+                    flush_pending_chunks()
 
         t_llm_done = time.time()
 
+        if maybe_continue_listening():
+            gated_output_released = True
+        elif not gated_output_released:
+            flush_pending_chunks()
+
         # Signal end of text input — must happen before expression call
         # so TTS can start generating while expression runs in parallel
-        if not voice_io._cancelled.is_set() and voice_io._tts is not None:
+        if not stream_response._continue_listening and not voice_io._cancelled.is_set() and voice_io._tts is not None:
             voice_io._tts.flush()
 
         # Fire expression after flush (overlaps with TTS generation + playback)
-        if expr_model_config is not None and full_response:
+        if not stream_response._continue_listening and expr_model_config is not None and full_response:
             line_text = "".join(full_response)
             stream_response._last_expr = run_expression(session, expr_model_config, line=line_text)
             voice_io.start_latency_filler(line_text, stream_response._last_expr.expression)
-        elif full_response:
+        elif not stream_response._continue_listening and full_response:
             voice_io.start_latency_filler("".join(full_response))
 
         # Wait for ElevenLabs to finish generating
         if not voice_io._cancelled.is_set() and voice_io._tts is not None:
-            voice_io._tts.wait_for_done(timeout=15.0)
-            t_tts_synth_done = time.time()
+            synth_deadline = time.time() + 15.0
+            while time.time() < synth_deadline:
+                if maybe_continue_listening():
+                    break
+                if voice_io._tts.wait_for_done(timeout=0.05):
+                    t_tts_synth_done = time.time()
+                    break
 
         # Wait for first audio to arrive at the speaker
         t_first_audio = None
@@ -2680,6 +2803,8 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
             voice_io._tts.close()
         voice_io._is_speaking = False
         voice_io._tts_done_at = time.time()
+        if listening_pool is not None:
+            listening_pool.shutdown(wait=False, cancel_futures=True)
     else:
         for chunk in gen:
             if t_first is None:
@@ -2697,6 +2822,9 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
     # Close generator to trigger chat.py's finally block (records partial response)
     gen.close()
 
+    if stream_response._continue_listening:
+        return ""
+
     response_text = "".join(full_response)
 
     # Truncate history to approximate what was actually spoken on barge-in
@@ -2704,7 +2832,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
         ratio = voice_io.speaker_playback_ratio
         spoken_chars = max(int(len(response_text) * ratio), 1)
         if spoken_chars < len(response_text):
-            truncated = response_text[:spoken_chars] + " \u2014"
+            truncated = _normalize_interrupted_reply(response_text[:spoken_chars])
             session.replace_last_assistant(truncated)
             response_text = truncated
 

@@ -208,6 +208,37 @@ def test_visual_turn_trigger_is_edge_based_and_cooldown_gated(monkeypatch):
         app._last_visual_turn_at = previous_at
 
 
+def test_normalize_interrupted_reply_drops_tiny_fragments():
+    assert app._normalize_interrupted_reply("N") == ""
+    assert app._normalize_interrupted_reply("You're look") == ""
+    assert app._normalize_interrupted_reply("Nice to meet you. What brings") == "Nice to meet you. What —"
+
+
+def test_turn_guardrails_add_short_fragment_reference_bias():
+    class DummySession:
+        def __init__(self):
+            self.messages = []
+
+        def upsert_system(self, tag, content):
+            self.messages.append((tag, content))
+
+        def remove_tagged_system(self, tag):
+            self.messages = [item for item in self.messages if item[0] != tag]
+
+    session = DummySession()
+    previous_controls = dict(app._runtime_controls)
+    try:
+        app._runtime_controls["guardrails"] = True
+        app._inject_runtime_turn_guardrails(session, "outside world")
+    finally:
+        app._runtime_controls.clear()
+        app._runtime_controls.update(previous_controls)
+
+    runtime_note = next(content for tag, content in session.messages if tag == "runtime_turn_guardrails")
+    assert "short fragment or repeated phrase" in runtime_note
+    assert "immediately previous line or question" in runtime_note
+
+
 def test_voice_trace_is_suppressed_until_live(monkeypatch):
     pushed = []
     previous_paused = app._conversation_paused

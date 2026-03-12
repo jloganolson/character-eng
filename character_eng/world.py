@@ -143,6 +143,14 @@ class ExpressionResult:
 
 
 @dataclass
+class ContinueListeningResult:
+    should_wait: bool = False
+    expression: str = "focused"
+    confidence: float = 0.0
+    reason: str = ""
+
+
+@dataclass
 class PlanResult:
     beats: list[Beat] = field(default_factory=list)
 
@@ -1054,4 +1062,77 @@ def expression_call(
         gaze=data.get("gaze", ""),
         gaze_type=gaze_type,
         expression=data.get("expression", "neutral"),
+    )
+
+
+def continue_listening_call(
+    *,
+    transcript: str,
+    system_prompt: str,
+    history: list[dict],
+    model_config: dict,
+    world: WorldState | None = None,
+    people=None,
+    stage_goal: str = "",
+    vision_context_text: str = "",
+    recent_n: int = 6,
+) -> ContinueListeningResult:
+    """Decide whether the user likely has more to say and Greg should keep listening."""
+    context_parts: list[str] = []
+    context_parts.append("=== CHARACTER SYSTEM PROMPT ===")
+    context_parts.append(system_prompt)
+
+    if world:
+        context_parts.append("\n=== WORLD STATE ===")
+        context_parts.append(world.render())
+
+    if people is not None:
+        people_text = people.render()
+        if people_text:
+            context_parts.append("\n=== PEOPLE PRESENT ===")
+            context_parts.append(people_text)
+
+    if stage_goal:
+        context_parts.append("\n=== CURRENT STAGE GOAL ===")
+        context_parts.append(stage_goal)
+
+    if vision_context_text.strip():
+        context_parts.append("\n=== LIVE VISUAL STATE ===")
+        context_parts.append(vision_context_text.strip())
+
+    recent = history[-recent_n:] if len(history) > recent_n else history
+    if recent:
+        context_parts.append("\n=== RECENT CONVERSATION ===")
+        for msg in recent:
+            role = msg["role"].upper()
+            context_parts.append(f"{role}: {msg['content']}")
+
+    context_parts.append("\n=== LATEST USER TRANSCRIPT ===")
+    context_parts.append(transcript.strip())
+
+    response = _llm_call(
+        model_config,
+        label="continue_listening",
+        messages=[
+            {"role": "system", "content": load_system_prompt("continue_listening_system")},
+            {"role": "user", "content": "\n".join(context_parts)},
+        ],
+        temperature=0.1,
+        response_format={"type": "json_object"},
+    )
+
+    data = json.loads(response.choices[0].message.content)
+    try:
+        confidence = float(data.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence = min(max(confidence, 0.0), 1.0)
+    expression = str(data.get("expression", "focused") or "focused").strip() or "focused"
+    if expression not in {"neutral", "curious", "focused", "expectant"}:
+        expression = "focused"
+    return ContinueListeningResult(
+        should_wait=bool(data.get("should_wait", False)),
+        expression=expression,
+        confidence=confidence,
+        reason=str(data.get("reason", "")).strip(),
     )

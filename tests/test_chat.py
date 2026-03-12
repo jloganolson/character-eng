@@ -96,6 +96,21 @@ def test_replace_last_assistant(mock_openai_cls):
 
 
 @patch("character_eng.chat.OpenAI")
+def test_replace_last_assistant_removes_message_when_content_empty(mock_openai_cls):
+    session = ChatSession("You are Greg.", TEST_CONFIG)
+    session.add_assistant("Tiny fragment")
+    session.inject_system("Runtime note")
+
+    session.replace_last_assistant("")
+
+    history = session.get_history()
+    assert history == [
+        {"role": "system", "content": "You are Greg."},
+        {"role": "system", "content": "Runtime note"},
+    ]
+
+
+@patch("character_eng.chat.OpenAI")
 def test_upsert_system_replaces_tagged_message_without_duplication(mock_openai_cls):
     session = ChatSession("You are Greg.", TEST_CONFIG)
     session.upsert_system("runtime_turn_guardrails", "First guardrail")
@@ -121,3 +136,21 @@ def test_remove_tagged_system_clears_runtime_context(mock_openai_cls):
         {"role": "system", "content": "You are Greg."},
         {"role": "assistant", "content": "hello"},
     ]
+
+
+@patch("character_eng.chat.OpenAI")
+def test_rollback_last_turn_removes_latest_user_and_assistant(mock_openai_cls):
+    session = ChatSession("You are Greg.", TEST_CONFIG)
+    session.add_assistant("First reply")
+    session.inject_system("Runtime note")
+    session.add_assistant("Second reply")
+    session.inject_system("Another note")
+    session._messages.append({"role": "user", "content": "half sentence"})
+    session._messages.append({"role": "assistant", "content": "partial reply"})
+
+    session.rollback_last_turn()
+
+    history = session.get_history()
+    assert history[-1] == {"role": "system", "content": "Another note"}
+    assert {"role": "user", "content": "half sentence"} not in history
+    assert {"role": "assistant", "content": "partial reply"} not in history

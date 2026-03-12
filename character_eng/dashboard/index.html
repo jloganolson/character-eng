@@ -3112,6 +3112,23 @@
     return event;
   }
 
+  function discardUnfinishedReply() {
+    if (!activeReplyKey) return;
+    const event = streamEventByKey.get(activeReplyKey);
+    if (!event) {
+      activeReplyKey = null;
+      return;
+    }
+    if (event.data && event.data.response_done_ts) return;
+    const index = streamEvents.findIndex((item) => item.key === activeReplyKey);
+    if (index >= 0) streamEvents.splice(index, 1);
+    streamEventByKey.delete(activeReplyKey);
+    if (selectedStreamKey === activeReplyKey) {
+      selectedStreamKey = null;
+    }
+    activeReplyKey = null;
+  }
+
   function resetReplyStream() {
     activeReplyKey = null;
     activePostResponseKey = null;
@@ -3479,6 +3496,7 @@
     },
 
     turn_start(data, rawEvent) {
+      discardUnfinishedReply();
       currentTurnId = pendingInputTurnId != null ? pendingInputTurnId : (currentTurnId + 1);
       pendingInputTurnId = null;
       rawEvent.turnId = currentTurnId;

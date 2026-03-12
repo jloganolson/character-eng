@@ -730,3 +730,171 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#vision-service-status")).to_contain_text("health: unreachable")
     expect(page.locator("#vision-service-status")).to_contain_text("service: error")
     expect(page.locator("body")).to_have_class(re.compile(r"\bbooting\b"))
+
+
+def test_dashboard_discards_unfinished_reply_when_new_turn_starts(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-ghost-reply",
+            "stage": "engaged",
+        },
+    )
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+
+    collector.push("user_transcript_final", {"text": "well hm"})
+    collector.push("turn_start", {
+        "input_type": "send",
+        "input_text": "well hm",
+        "input_source": "voice",
+    })
+    collector.push("response_chunk", {"text": "Let me think"})
+    expect(page.locator(".stream-card[data-event-type='assistant_reply']")).to_have_count(1)
+    expect(page.locator(".stream-card").filter(has_text="Let me think")).to_have_count(1)
+
+    collector.push("user_transcript_final", {"text": "i don't think so"})
+    collector.push("turn_start", {
+        "input_type": "send",
+        "input_text": "well hm i don't think so",
+        "input_source": "voice",
+    })
+    collector.push("response_chunk", {"text": "Okay, got it."})
+    collector.push("response_done", {
+        "full_text": "Okay, got it.",
+        "input_source": "voice",
+        "ttft_ms": 120,
+        "llm_ms": 260,
+        "total_ms": 900,
+    })
+
+    expect(page.locator(".stream-card").filter(has_text="Let me think")).to_have_count(0)
+    expect(page.locator(".stream-card[data-event-type='assistant_reply']")).to_have_count(1)
+    expect(page.locator(".stream-card").filter(has_text="Okay, got it.")).to_have_count(1)
+
+
+def test_dashboard_discards_unfinished_reply_when_new_turn_starts(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-ghost-reply",
+            "stage": "engaged",
+        },
+    )
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+
+    collector.push("user_transcript_final", {"text": "well hm"})
+    collector.push("turn_start", {
+        "input_type": "send",
+        "input_text": "well hm",
+        "input_source": "voice",
+    })
+    collector.push("response_chunk", {"text": "Let me think"})
+    expect(page.locator(".stream-card[data-event-type='assistant_reply']")).to_have_count(1)
+    expect(page.locator(".stream-card").filter(has_text="Let me think")).to_have_count(1)
+
+    collector.push("user_transcript_final", {"text": "i don't think so"})
+    collector.push("turn_start", {
+        "input_type": "send",
+        "input_text": "well hm i don't think so",
+        "input_source": "voice",
+    })
+    collector.push("response_chunk", {"text": "Okay, got it."})
+    collector.push("response_done", {
+        "full_text": "Okay, got it.",
+        "input_source": "voice",
+        "ttft_ms": 120,
+        "llm_ms": 260,
+        "total_ms": 900,
+    })
+
+    expect(page.locator(".stream-card").filter(has_text="Let me think")).to_have_count(0)
+    expect(page.locator(".stream-card[data-event-type='assistant_reply']")).to_have_count(1)
+    expect(page.locator(".stream-card").filter(has_text="Okay, got it.")).to_have_count(1)

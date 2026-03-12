@@ -588,6 +588,40 @@ def test_voice_io_consume_input_timing_captures_latest_speech_window():
     assert voice.consume_input_timing() == {}
 
 
+def test_voice_io_merge_deferred_input_prefix():
+    voice = VoiceIO(trace_hook=MagicMock())
+    voice.defer_next_user_turn("well hm")
+    assert voice.merge_deferred_input("i don't think so") == "well hm i don't think so"
+    assert voice.merge_deferred_input("next thing") == "next thing"
+
+
+def test_voice_io_prune_stale_transcripts_removes_covered_fragments_only():
+    voice = VoiceIO(trace_hook=MagicMock())
+    voice._event_queue.put("i don't think so")
+    voice._event_queue.put("/beat")
+    voice._event_queue.put("something else")
+
+    drained = voice.prune_stale_transcripts("well hm i don't think so")
+
+    assert drained == 1
+    assert voice._event_queue.get(timeout=0.1) == "/beat"
+    assert voice._event_queue.get(timeout=0.1) == "something else"
+    assert voice._event_queue.empty()
+
+
+def test_voice_io_turn_start_cancels_before_first_audio():
+    voice = VoiceIO(aec=True)
+    voice._started = True
+    voice._is_speaking = True
+    voice._speaker = MagicMock()
+    voice._speaker._audio_started.is_set.return_value = False
+    voice.cancel_speech = MagicMock()
+
+    voice._on_turn_start()
+
+    voice.cancel_speech.assert_called_once()
+
+
 # --- check_voice_available ---
 
 

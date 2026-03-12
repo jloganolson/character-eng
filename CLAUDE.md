@@ -15,6 +15,8 @@ uv run -m character_eng --vision     # Run with vision (auto-starts vision servi
 uv run -m character_eng --vision-mock walkup.json  # Vision with mock replay (no camera)
 uv run -m character_eng --character mara           # Auto-select character
 uv run -m character_eng --character mara --sim curious  # Run sim non-interactively
+uv run -m character_eng --browser    # Browser mic/camera via WebSocket (remote mode)
+uv run -m character_eng --browser --vision  # Full remote: browser audio + camera → vision
 uv run pytest                        # Unit tests (+ e2e smoke when API keys set)
 uv run -m character_eng --smoke      # E2e smoke test (real LLM calls)
 uv run -m character_eng.qa_world     # World reconciler integration test
@@ -33,6 +35,13 @@ lsof -ti:8000 | xargs kill -9       # Kill local vLLM server
 # Vision service (separate venv, separate process)
 cd services/vision && uv sync        # Install vision deps (first time)
 uv run --project services/vision python services/vision/app.py  # Manual start
+
+# Remote deployment
+docker build -t character-eng .      # Build container
+uv run deploy/runpod.py up           # Create/start RunPod GPU pod
+uv run deploy/runpod.py deploy       # Build + push + restart pod
+uv run deploy/runpod.py status       # Pod state + URLs
+uv run deploy/runpod.py ssh          # Print SSH tunnel command
 ```
 
 QA scripts accept `--model cerebras-llama|groq-llama|groq-gpt|gemini-3-flash|gemini-2.5-flash`. Persona QA accepts `--character greg --turns 10 --open`.
@@ -55,20 +64,23 @@ Configured in `models.py`. No model selection menu — auto-selects on startup.
 - **Vision mode** (`--vision`): Live visual intelligence via standalone vision service (`services/vision/`). Camera capture, face tracking (InsightFace), person tracking (SAM3 + torchreid ReID), VLM questioning (LFM2-VL-3B via vLLM). Vision service has its own venv/deps — zero conflict with main app. character-eng polls via HTTP, runs synthesis LLM call (8B) to distill visual data into perception events, and feeds dynamic gaze targets to expression system.
 - **Voice mode**: Deepgram STT + configurable TTS (ElevenLabs, Qwen3-TTS local, Pocket-TTS). WebRTC AEC3 (via LiveKit) keeps mic live during playback for barge-in. All TTS backends share 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`)
 - **Dashboard** (`--no-dashboard` to disable): Real-time HTML dashboard at `:7862` showing conversation timeline, world state, stage/script, people, expression/eval metadata, and timing. Served via stdlib `ThreadingHTTPServer` as a daemon thread. SSE for live updates, `/state` for reconnect catchup, `POST /send` for browser input. Gruvbox dark/light theme. No new dependencies. `index.html` is editable — refresh browser to see changes.
+- **Browser mode** (`--browser`): Remote audio/video via WebSocket bridge on `:7863`. Browser captures mic (getUserMedia, echoCancellation) → AudioWorklet → int16 PCM → WS. Camera → canvas → JPEG → WS at 5fps. Server sends TTS PCM back via WS → AudioWorklet playback. Uses `BrowserVoiceIO` instead of `VoiceIO` (no sounddevice, no AEC, no KeyListener). Vision frames injected via `/inject_frame` endpoint (vision service started with `--no-camera`). Works via RunPod proxy or SSH tunnel (`ssh -L 7862:localhost:7862 -L 7863:localhost:7863`).
 
-### Modules (25 total)
+### Modules (27 total)
 | Module | Purpose |
 |--------|---------|
 | `__main__.py` | TUI entry point, command dispatch, parallel microservice orchestration |
 | `chat.py` | ChatSession — OpenAI client wrapper, message history, streaming |
 | `models.py` | Model config registry, CHAT_MODEL/BIG_MODEL constants |
-| `config.py` | `config.toml` loader → AppConfig/VoiceConfig/VisionConfig/DashboardConfig dataclasses |
+| `config.py` | `config.toml` loader → AppConfig/VoiceConfig/VisionConfig/DashboardConfig/BridgeConfig dataclasses |
 | `prompts.py` | Filesystem template engine, `{{macro}}` substitution (incl. `{{vision}}`) |
 | `world.py` | WorldState, Script, Goals, Beat, reconcile/eval/plan/single_beat/condition/expression/script_check/thought LLM calls |
 | `person.py` | Person/PeopleState tracking with scoped fact IDs |
 | `scenario.py` | ScenarioScript (TOML stage graph), director_call |
 | `perception.py` | PerceptionEvent, SimScript, `/see` and `/sim` support |
 | `aec.py` | LiveKitAEC (WebRTC AEC3) + resample_to_16k helper |
+| `bridge.py` | BridgeServer (WS :7863), BrowserMicStream, BrowserSpeakerStream for remote audio/video |
+| `browser_voice.py` | BrowserVoiceIO — same API as VoiceIO, uses bridge instead of sounddevice |
 | `voice.py` | VoiceIO orchestrator, MicStream, SpeakerStream, DeepgramSTT, ElevenLabsTTS, KeyListener |
 | `local_tts.py` | Qwen3-TTS local GPU TTS (drop-in ElevenLabs replacement) |
 | `pocket_tts.py` | Pocket-TTS streaming HTTP client |
@@ -90,10 +102,10 @@ Configured in `models.py`. No model selection menu — auto-selects on startup.
 After each character response, `run_post_response` fires three 8B calls concurrently via `ThreadPoolExecutor`: `script_check_call` + `thought_call` (eval), `director_call` (stage transitions). For `/beat`, `expression_call` is also included in the parallel batch. ~350ms total instead of ~1050ms sequential. Results are immediate — no stale discard needed.
 
 ### Background threading
-Only reconcile uses a background thread. Planning is fully synchronous via `single_beat_call` (8B, ~350ms). When `--vision` is active, VisionManager runs a continuous background thread (poll + synthesis, min 750ms between cycles). Dashboard HTTP server runs as a daemon thread (`ThreadingHTTPServer`).
+Only reconcile uses a background thread. Planning is fully synchronous via `single_beat_call` (8B, ~350ms). When `--vision` is active, VisionManager runs a continuous background thread (poll + synthesis, min 750ms between cycles). Dashboard HTTP server runs as a daemon thread (`ThreadingHTTPServer`). When `--browser` is active, BridgeServer runs a WebSocket server in a daemon thread with its own asyncio event loop.
 
 ### Vision service (`services/vision/`)
-Standalone Flask service with its own `pyproject.toml` and `.venv`. Runs camera capture, InsightFace face tracking, SAM3 + torchreid person tracking, and VLM questioning. Exposes `/snapshot`, `/set_questions`, `/set_sam_targets`, `/health` endpoints. Auto-launched by `--vision` flag. Debug UI at `:7860`. ~10.5GB VRAM (SAM3 3.4GB + InsightFace 0.8GB + ReID 0.25GB + LFM2-VL-3B 6GB).
+Standalone Flask service with its own `pyproject.toml` and `.venv`. Runs camera capture, InsightFace face tracking, SAM3 + torchreid person tracking, and VLM questioning. Exposes `/snapshot`, `/set_questions`, `/set_sam_targets`, `/health`, `/inject_frame` endpoints. Auto-launched by `--vision` flag. `--no-camera` flag skips webcam (frames via `/inject_frame` from browser). Debug UI at `:7860`. ~10.5GB VRAM (SAM3 3.4GB + InsightFace 0.8GB + ReID 0.25GB + LFM2-VL-3B 6GB).
 
 ## Prompt system
 
@@ -120,7 +132,7 @@ Voice hotkeys: `i`=info, `b`=beat, `t`=trace, `1-4`=triggers, `q`=quit, `Escape`
 
 Three layers, fast to slow:
 
-**Unit tests** (`uv run pytest`) — Mocked, no API calls. Pre-push hook. Test files: `test_smoke`, `test_e2e`, `test_chat`, `test_prompts`, `test_serve`, `test_local_tts`, `test_voice`, `test_pocket_tts`, `test_person`, `test_scenario`, `test_perception`, `test_world`, `test_vision`, `test_dashboard`.
+**Unit tests** (`uv run pytest`) — Mocked, no API calls. Pre-push hook. Test files: `test_smoke`, `test_e2e`, `test_chat`, `test_prompts`, `test_serve`, `test_local_tts`, `test_voice`, `test_pocket_tts`, `test_person`, `test_scenario`, `test_perception`, `test_world`, `test_vision`, `test_dashboard`, `test_bridge`.
 
 **Integration QA** — Hit real LLMs. `qa_world` (4 reconcile scenarios), `qa_chat` (parses `test_plan.md`), `qa_voice` (API connectivity), `qa_personas` (7 parallel personas, HTML report).
 

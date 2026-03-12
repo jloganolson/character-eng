@@ -863,6 +863,7 @@ class VoiceIO:
         self._last_speech_started_at: float | None = None
         self._last_transcript_final_at: float | None = None
         self._last_transcript_text: str = ""
+        self._deferred_input_prefix: str = ""
 
     def _trace(self, event_type: str, data: dict) -> None:
         if self._trace_hook is None:
@@ -916,6 +917,55 @@ class VoiceIO:
             "stt": stt,
             "tts": tts,
         }
+
+    @property
+    def audio_started(self) -> bool:
+        return bool(self._speaker is not None and self._speaker._audio_started.is_set())
+
+    def defer_next_user_turn(self, prefix: str) -> None:
+        cleaned = (prefix or "").strip()
+        if not cleaned:
+            return
+        self._deferred_input_prefix = cleaned
+
+    def merge_deferred_input(self, text: str) -> str:
+        cleaned = (text or "").strip()
+        prefix = self._deferred_input_prefix.strip()
+        self._deferred_input_prefix = ""
+        if not prefix:
+            return cleaned
+        if not cleaned:
+            return prefix
+        return f"{prefix} {cleaned}"
+
+    def prune_stale_transcripts(self, accepted_text: str) -> int:
+        """Drop queued transcript fragments already covered by an accepted utterance."""
+        normalized = " ".join((accepted_text or "").lower().split()).strip()
+        if len(normalized) < 4:
+            return 0
+
+        drained = 0
+        items = []
+        while not self._event_queue.empty():
+            try:
+                item = self._event_queue.get_nowait()
+            except queue.Empty:
+                break
+            if not isinstance(item, str):
+                items.append(item)
+                continue
+            if item in (VOICE_OFF, EXIT, VOICE_ERROR) or item.startswith("/"):
+                items.append(item)
+                continue
+            candidate = " ".join(item.lower().split()).strip()
+            if len(candidate) >= 4 and candidate in normalized:
+                drained += 1
+                continue
+            items.append(item)
+
+        for item in items:
+            self._event_queue.put(item)
+        return drained
 
     def start(self):
         """Initialize and start all voice components."""
@@ -1373,6 +1423,12 @@ class VoiceIO:
         self._last_transcript_final_at = time.time()
         self._last_transcript_text = text
         self._trace("user_transcript_final", {"text": text})
+        if self._is_speaking and not self.audio_started:
+            self._cancel_auto_beat()
+            if self._started:
+                sys.stdout.write(f"\n  [{_ts()} keep-listening: transcript before first audio]\n")
+                sys.stdout.flush()
+            self.cancel_speech()
         if self._aec is not None and self._is_speaking:
             self._cancel_auto_beat()
             if self._started:
@@ -1391,6 +1447,13 @@ class VoiceIO:
         self._last_speech_started_at = time.time()
         self._trace("user_speech_started", {})
         if self._is_speaking:
+            if not self.audio_started:
+                self._cancel_auto_beat()
+                if self._started:
+                    sys.stdout.write(f"  \033[2m[{_ts()} keep-listening: speech-started before first audio]\033[0m\n")
+                    sys.stdout.flush()
+                self.cancel_speech()
+                return
             if self._aec is not None:
                 # AEC mode: ignore SpeechStarted during playback — barge-in
                 # only triggers on real transcript in _on_transcript()
