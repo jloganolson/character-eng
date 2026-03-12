@@ -1563,6 +1563,8 @@
   }
 
   function renderHistoryArchives(items) {
+    const previousIndex = Number(historySelect.value || 0);
+    const previousSelection = historyArchives[previousIndex] || null;
     historyArchives = Array.isArray(items) ? items : [];
     if (!historyArchives.length) {
       historySelect.innerHTML = '<option value="">No archives</option>';
@@ -1575,6 +1577,12 @@
       const label = `${item.bucket}: ${item.label || item.session_id || item.name} (${checkpointCount} ckpt)`;
       return `<option value="${esc(String(index))}">${esc(label)}</option>`;
     }).join("");
+    if (previousSelection) {
+      const nextIndex = historyArchives.findIndex((item) => item.ref === previousSelection.ref);
+      if (nextIndex >= 0) {
+        historySelect.value = String(nextIndex);
+      }
+    }
     historyLoadButton.disabled = false;
     historyReplayButton.disabled = false;
   }
@@ -4322,7 +4330,7 @@
       return;
     }
     const checkpoint = historyCheckpointInput.value.trim();
-    const target = selected.session_id || selected.path;
+    const target = selected.ref || selected.session_id || selected.path;
     sendInput(checkpoint ? `/restore ${target} ${checkpoint}` : `/restore ${target}`);
     annotationStatus.textContent = `Requested restore: ${target}${checkpoint ? ` @ ${checkpoint}` : ""}`;
   });
@@ -4338,7 +4346,7 @@
       return;
     }
     const checkpoint = historyCheckpointInput.value.trim();
-    const target = selected.session_id || selected.path;
+    const target = selected.ref || selected.session_id || selected.path;
     sendInput(checkpoint ? `/replay ${target} ${checkpoint}` : `/replay ${target}`);
     annotationStatus.textContent = `Requested replay: ${target}${checkpoint ? ` @ ${checkpoint}` : ""}`;
   });

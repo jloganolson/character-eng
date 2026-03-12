@@ -184,6 +184,7 @@ class TestDashboardServer:
         assert state["current_session"]["session_id"] == "sess-test"
         listing = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/history/list").read())
         assert listing[0]["session_id"] == "sess-test"
+        assert listing[0]["ref"] == "sess-test"
 
         annotation_req = urllib.request.Request(
             f"http://127.0.0.1:{port}/history/annotation",

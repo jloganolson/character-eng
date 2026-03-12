@@ -921,6 +921,7 @@ class HistoryService:
                         "bucket": bucket,
                         "path": str(child),
                         "name": child.name,
+                        "ref": child.name,
                         "session_id": manifest.get("session_id", ""),
                         "character": manifest.get("character", ""),
                         "label": manifest.get("title") or manifest.get("character") or child.name,
