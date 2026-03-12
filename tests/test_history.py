@@ -25,6 +25,8 @@ def _session_snapshot():
 def test_history_service_records_session_checkpoint_and_restore(tmp_path):
     service = HistoryService(root=tmp_path, free_warning_gib=0.0)
     archive = service.start_session(session_id="sess1", character="greg", model="test")
+    manifest = json.loads(archive.manifest_path.read_text())
+    assert manifest["title"].endswith("greg")
 
     world = WorldState(static=["robot"], dynamic={"f1": "cup on table"}, events=["boot"])
     people = PeopleState()
@@ -55,6 +57,13 @@ def test_history_service_records_session_checkpoint_and_restore(tmp_path):
     assert restored["people"].people["p1"].facts["p1f1"] == "holding phone"
     assert restored["goals"].long_term == "be helpful"
     assert restored["log_entries"][0]["response"] == "hello"
+
+
+def test_history_service_can_rename_archive(tmp_path):
+    service = HistoryService(root=tmp_path, free_warning_gib=0.0)
+    service.start_session(session_id="sess-rename", character="greg", model="test")
+    updated = service.rename(session_id="sess-rename", title="greg scarf retry")
+    assert updated["title"] == "greg scarf retry"
 
 
 def test_annotations_auto_promote_and_catalog(tmp_path):

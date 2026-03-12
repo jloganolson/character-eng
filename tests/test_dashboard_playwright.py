@@ -146,7 +146,14 @@ def dashboard_server():
         context_version=0,
         had_user_input=False,
     )
-    _, port = start_dashboard(collector, input_queue, port=0, report_dir=report_dir, history_api=history)
+    _, port = start_dashboard(
+        collector,
+        input_queue,
+        port=0,
+        report_dir=report_dir,
+        history_api=history,
+        default_character="greg",
+    )
     for _ in range(20):
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{port}/state")
@@ -174,6 +181,7 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#boot-grid")).to_contain_text("dashboard")
     expect(page.locator("#boot-grid")).to_contain_text("runtime")
     expect(page.locator("#boot-heartbeat")).to_contain_text("page")
+    expect(page.locator("#prompt-assets-panel")).to_contain_text("Character prompt template")
 
     collector.push(
         "runtime_controls",
@@ -218,7 +226,7 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#boot-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
     expect(page.locator("#boot-overlay-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
     expect(page.locator("#history-status")).to_contain_text("current:")
-    expect(page.locator("#history-select option")).to_have_count(1)
+    expect(page.locator("#archive-load-button")).to_be_visible()
     expect(page.locator("#boot-grid")).to_contain_text("voice")
     expect(page.locator("#boot-grid")).to_contain_text("models")
     expect(page.locator("#runtime-status")).to_contain_text("auto-beat: off")
@@ -408,6 +416,12 @@ def test_runtime_panel_interactions_in_browser(
         "description": "A person is now holding a flier",
         "source_trace": {
             "kind": "vision_synthesis",
+            "provenance": {
+                "label": "Vision synthesis LLM",
+                "primary": "vision_synthesis_llm",
+                "components": ["vlm_answers", "sam3_objects"],
+                "inference": "llm synthesis over visual snapshot",
+            },
             "object_labels": ["flier", "table"],
             "vlm_answers": [
                 {"question": "What is the person holding?", "answer": "A flier.", "slot_type": "activity"},
@@ -463,10 +477,13 @@ def test_runtime_panel_interactions_in_browser(
     page.locator("#history-checkpoint").fill("2")
     page.locator("#history-rewind").click()
     assert input_queue.get(timeout=2) == "/rewind 2"
-    page.locator("#history-load").click()
-    assert input_queue.get(timeout=2) == "/restore sess-playwright 2"
-    page.locator("#history-replay").click()
-    assert input_queue.get(timeout=2) == "/replay sess-playwright 2"
+    page.locator("#archive-load-button").click()
+    expect(page.locator("#archive-picker")).to_have_class(re.compile(r"\bopen\b"))
+    page.locator(".archive-row").filter(has=page.locator(".archive-kind", has_text="session")).locator(".archive-load-action").first.click()
+    assert input_queue.get(timeout=2) == "/restore sess-playwright"
+    page.locator("#archive-load-button").click()
+    page.locator(".archive-row").filter(has=page.locator(".archive-kind", has_text="session")).locator(".archive-replay-action").first.click()
+    assert input_queue.get(timeout=2) == "/replay sess-playwright"
     page.locator("#detail-continue-from-event").click()
     assert input_queue.get(timeout=2) == "/rewind 0"
     assert input_queue.get(timeout=2) == "Do you have water?"
@@ -490,6 +507,9 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#detail-structure")).to_contain_text("Vision Input")
     expect(page.locator("#detail-structure")).to_contain_text("Vision Synthesis Inputs")
     expect(page.locator("#detail-structure")).to_contain_text("Derived Claims")
+    expect(page.locator("#detail-structure")).to_contain_text("provenance")
+    expect(page.locator("#detail-trace-summary")).to_contain_text("Vision synthesis LLM")
+    expect(page.locator("#detail-trace-summary")).to_contain_text("vision_synthesis_llm")
     expect(page.locator("#detail-structure")).to_contain_text("Effects")
     expect(page.locator("#detail-structure")).to_contain_text("Is anyone holding a flier?")
     expect(page.locator("#detail-structure")).to_contain_text("A flier.")
@@ -1016,3 +1036,103 @@ def test_continue_from_beat_generated_assistant_line_rewinds_before_the_beat(
     assert input_queue.get(timeout=2) == "/rewind 0"
     assert input_queue.get(timeout=2) == "/play"
     assert input_queue.get(timeout=2) == "/beat"
+
+
+def test_rewind_keeps_new_active_path_visible_and_greys_out_superseded_events(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-playwright",
+            "stage": "watching",
+        },
+    )
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push("turn_start", {"input_type": "beat", "input_text": ""})
+    collector.push("response_done", {"full_text": "Nice scarf, what brings you here?"})
+    collector.push("turn_start", {"input_type": "send", "input_text": "what time is it"})
+    collector.push("response_done", {"full_text": "Right, my question was about the time."})
+
+    events = collector.get_all()
+    first_turn_timestamp = next(event["timestamp"] for event in events if event["type"] == "turn_start")
+
+    collector.push(
+        "history_status",
+        {
+            "enabled": True,
+            "free_gib": 100.0,
+            "sessions_count": 1,
+            "pinned_count": 0,
+            "moments_count": 0,
+            "current_session": {
+                "session_id": "sess-playwright",
+                "record_mode": "debug_only",
+                "replay_capture_enabled": False,
+                "debug_only_reason": "rewind made this run exploratory; replay/snippet capture is now off",
+            },
+        },
+    )
+    collector.push(
+        "history_rewind",
+        {
+            "source_session_id": "sess-playwright",
+            "checkpoint_index": 0,
+            "label": "beat",
+            "mode": "rewind",
+            "checkpoint_timestamp": first_turn_timestamp,
+            "debug_only_reason": "rewind made this run exploratory; replay/snippet capture is now off",
+        },
+    )
+    collector.push("turn_start", {"input_type": "beat", "input_text": ""})
+    collector.push("response_done", {"full_text": "Nice scarf, what brings you here? (rerun)"})
+
+    expect(page.locator("#history-recording-mode")).to_contain_text("Older future events are shown as superseded")
+    expect(page.locator(".stream-card.superseded").filter(has_text="Right, my question was about the time.")).to_have_count(1)
+    expect(page.locator(".stream-card").filter(has_text="Nice scarf, what brings you here? (rerun)")).to_have_count(1)
+    expect(page.locator(".stream-card.superseded").filter(has_text="Nice scarf, what brings you here? (rerun)")).to_have_count(0)
+    expect(
+        page.locator(".stream-card").filter(has_text="Nice scarf, what brings you here? (rerun)").locator(".reply-marker", has_text="Debug Only")
+    ).to_have_count(0)

@@ -196,7 +196,18 @@ class VisionManager:
         for event_text in result.events:
             key = self._normalize_event(event_text)
             if key not in self._recent_events:
-                trace = self._trace_payload(snapshot, kind="vision_synthesis", signals=list(result.signals))
+                trace = self._trace_payload(
+                    snapshot,
+                    kind="vision_synthesis",
+                    signals=list(result.signals),
+                    provenance={
+                        "primary": "vision_synthesis_llm",
+                        "label": "Vision synthesis LLM",
+                        "components": self._component_sources(snapshot),
+                        "inference": "llm synthesis over visual snapshot",
+                        "thought": getattr(result, "thought", ""),
+                    },
+                )
                 self._recent_events[key] = now
                 self._events.append(PerceptionEvent(
                     description=event_text,
@@ -264,7 +275,12 @@ class VisionManager:
             self._events.append(PerceptionEvent(
                 description="A person appeared in view",
                 source="visual",
-                trace=self._trace_payload(snapshot, kind="person_presence", identity=identity),
+                trace=self._trace_payload(
+                    snapshot,
+                    kind="person_presence",
+                    identity=identity,
+                    provenance=self._presence_provenance(snapshot, change="appeared"),
+                ),
                 kind="person_presence",
                 payload={
                     "identity": identity,
@@ -278,7 +294,11 @@ class VisionManager:
             self._events.append(PerceptionEvent(
                 description="A person is no longer visible",
                 source="visual",
-                trace=self._trace_payload(snapshot, kind="person_presence"),
+                trace=self._trace_payload(
+                    snapshot,
+                    kind="person_presence",
+                    provenance=self._presence_provenance(snapshot, change="disappeared"),
+                ),
                 kind="person_presence",
                 payload={
                     "identity": "",
@@ -314,3 +334,31 @@ class VisionManager:
         }
         payload.update(extra)
         return payload
+
+    @staticmethod
+    def _component_sources(snapshot: RawVisualSnapshot) -> list[str]:
+        sources: list[str] = []
+        if snapshot.persons:
+            sources.append("person_tracker")
+        if snapshot.faces:
+            sources.append("face_tracker")
+        if snapshot.objects:
+            sources.append("sam3_objects")
+        if snapshot.vlm_answers:
+            sources.append("vlm_answers")
+        return sources
+
+    def _presence_provenance(self, snapshot: RawVisualSnapshot, change: str) -> dict:
+        if snapshot.persons:
+            primary = "person_tracker"
+        elif snapshot.faces:
+            primary = "face_tracker"
+        else:
+            primary = "sam3_person_detection"
+        return {
+            "primary": primary,
+            "label": "Presence tracker",
+            "change": change,
+            "components": self._component_sources(snapshot) or [primary],
+            "inference": "direct presence heuristic",
+        }

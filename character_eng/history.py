@@ -45,6 +45,15 @@ def _iso(ts: float | None = None) -> str:
     return datetime.fromtimestamp(ts or _now_ts(), tz=timezone.utc).isoformat()
 
 
+def _display_stamp(ts: float | None = None) -> str:
+    return datetime.fromtimestamp(ts or _now_ts()).strftime("%Y-%m-%d %H:%M")
+
+
+def _default_session_title(character: str, ts: float | None = None) -> str:
+    label = (character or "session").replace("_", " ").strip()
+    return f"{_display_stamp(ts)} {label}".strip()
+
+
 def _slug(text: str, fallback: str = "item") -> str:
     cleaned = _SLUG_RE.sub("-", (text or "").strip().lower()).strip("-")
     return cleaned or fallback
@@ -638,6 +647,7 @@ class SessionArchive:
                 "version": 1,
                 "session_id": session_id,
                 "character": character,
+                "title": _default_session_title(character, self._started_at),
                 "model": model,
                 "model_name": model_name,
                 "started_at": self._started_at,
@@ -698,6 +708,7 @@ class SessionArchive:
             "root": str(self.root),
             "session_id": self.session_id,
             "session_path": str(self.path),
+            "title": str(manifest.get("title") or ""),
             "free_gib": manifest.get("free_gib", round(_disk_free_gib(self.root), 2)),
             "warning": manifest.get("disk_warning", ""),
             "event_count": manifest.get("event_count", 0),
@@ -743,6 +754,12 @@ class SessionArchive:
             rewind_count=rewind_count,
             last_rewind=rewind_meta,
         )
+
+    def rename(self, title: str) -> dict:
+        cleaned = str(title or "").strip()
+        if not cleaned:
+            raise ValueError("title is required")
+        return self.update_manifest(title=cleaned)
 
     def record_event(self, event_type: str, data: dict, *, timestamp: float | None = None) -> None:
         payload = {
@@ -1049,6 +1066,7 @@ class HistoryService:
                         "ref": child.name,
                         "session_id": manifest.get("session_id", ""),
                         "character": manifest.get("character", ""),
+                        "title": manifest.get("title", ""),
                         "label": manifest.get("title") or manifest.get("character") or child.name,
                         "started_at": manifest.get("started_at", 0.0),
                         "started_at_iso": manifest.get("started_at_iso") or manifest.get("captured_at", ""),
@@ -1148,6 +1166,10 @@ class HistoryService:
     def promote(self, *, session_id: str | None = None, kind: str = "pinned") -> Path:
         session = self._resolve_active_or_ref(session_id)
         return session.promote(kind)
+
+    def rename(self, *, session_id: str | None = None, title: str) -> dict:
+        session = self._resolve_active_or_ref(session_id)
+        return session.rename(title)
 
     def load_checkpoint_payload(self, session_ref: str, checkpoint_index: int | None = None) -> dict:
         session_path = resolve_session_path(self.root, session_ref)

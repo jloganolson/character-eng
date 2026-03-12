@@ -27,7 +27,7 @@ from character_eng.models import BIG_MODEL, CHAT_MODEL, MODELS
 from character_eng.utils import start_prefixed_output_thread, ts as _ts
 from character_eng.perception import PerceptionEvent, load_sim_script, process_perception
 from character_eng.person import PeopleState
-from character_eng.prompts import list_characters, load_prompt
+from character_eng.prompts import list_characters, load_prompt, prompt_source_signature
 from character_eng.qa_personas import _action_badge, _esc, annotation_assets
 from character_eng.scenario import DirectorResult, director_call, load_scenario_script, match_visual_exit
 from character_eng.world import (
@@ -704,6 +704,28 @@ def _sync_runtime_prompt_context(session, world, people=None, scenario=None, vis
     _set_runtime_context(session, "runtime_people_state", f"=== LIVE PEOPLE STATE ===\n{people_text}" if people_text else "")
     _set_runtime_context(session, "runtime_visual_state", f"=== LIVE VISUAL STATE ===\n{visual_text}" if visual_text else "")
     _set_runtime_context(session, "runtime_stage_state", f"=== LIVE STAGE STATE ===\n{stage_text}" if stage_text else "")
+
+
+def _refresh_session_prompt_from_disk(
+    session,
+    *,
+    character: str,
+    world,
+    people=None,
+    prompt_signature: dict[str, int] | None = None,
+    force: bool = False,
+) -> tuple[bool, dict[str, int]]:
+    next_signature = prompt_source_signature(character)
+    if not force and prompt_signature == next_signature:
+        return False, next_signature
+    refreshed_prompt = load_prompt(character, world_state=world, people_state=people)
+    session.replace_system_prompt(refreshed_prompt)
+    _push("prompt_reload", {
+        "character": character,
+        "reason": "forced" if force else "filesystem_change",
+        "files": sorted(next_signature.keys()),
+    })
+    return True, next_signature
 
 
 def _current_vision_text(vision_mgr) -> str:
@@ -1736,6 +1758,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
         people = PeopleState()
         scenario = load_scenario_script(character)
         system_prompt = load_prompt(character, world_state=world, people_state=people)
+        prompt_signature = prompt_source_signature(character)
         session = ChatSession(system_prompt, model_config)
         _inject_runtime_turn_guardrails(session, scenario=scenario)
         script = Script()
@@ -1835,7 +1858,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             source_event_time_s: float | None = None,
             replay_mode: str = "",
         ) -> None:
-            nonlocal world, people, scenario, script, goals, log, had_user_input, _arm_auto_beat
+            nonlocal world, people, scenario, script, goals, log, had_user_input, _arm_auto_beat, prompt_signature
             restored = _restore_runtime_checkpoint(session, payload)
             world = restored["world"]
             people = restored["people"] or PeopleState()
@@ -1844,6 +1867,14 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             goals = restored["goals"]
             log = restored["log_entries"]
             had_user_input = restored["had_user_input"]
+            _, prompt_signature = _refresh_session_prompt_from_disk(
+                session,
+                character=character,
+                world=world,
+                people=people,
+                prompt_signature=prompt_signature,
+                force=True,
+            )
             _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
             debug_status = {}
             if _history_service is not None and _history_service.current is not None:
@@ -1887,6 +1918,22 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     "new_goal": scenario.active_stage.goal,
                 })
             _push_history_status()
+
+        def _maybe_refresh_session_prompt(*, force: bool = False, reason: str = "") -> bool:
+            nonlocal prompt_signature
+            refreshed, prompt_signature = _refresh_session_prompt_from_disk(
+                session,
+                character=character,
+                world=world,
+                people=people,
+                prompt_signature=prompt_signature,
+                force=force,
+            )
+            if refreshed:
+                _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
+                if reason:
+                    console.print(f"[yellow]{reason}[/yellow]")
+            return refreshed
             _arm_auto_beat = False
 
         def _start_history_playback(session_ref: str, checkpoint_index: int | None = None) -> bool:
@@ -2360,6 +2407,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
             # --- Turn start: check background results ---
             stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
+            _maybe_refresh_session_prompt(reason="Prompt files changed on disk. Using refreshed prompt.")
             _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
 
             # --- Command dispatch ---
@@ -2383,6 +2431,36 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     vision_mgr.stop()
                 log.append({"type": "reload"})
                 break  # break inner loop, outer loop reloads
+            elif cmd == "/refresh":
+                _maybe_refresh_session_prompt(force=True, reason="Refreshed prompt files in place.")
+                console.print("[green]Prompt refresh applied[/green]")
+                continue
+            elif cmd == "/refresh vision":
+                if vision_mgr is None:
+                    console.print("[red]Vision is not active.[/red]")
+                    continue
+                vision_mgr.update_context(
+                    world=world,
+                    people=people,
+                    beat=script.current_beat if script.current_beat is not None else None,
+                    stage_goal=stage_goal,
+                )
+                vision_mgr.update_focus(
+                    script.current_beat if script.current_beat is not None else None,
+                    stage_goal,
+                    "",
+                    world,
+                    people,
+                    model_config,
+                    scenario=scenario,
+                )
+                _push("prompt_reload", {
+                    "character": character,
+                    "reason": "vision_refresh",
+                    "files": [],
+                })
+                console.print("[green]Vision prompt refresh applied[/green]")
+                continue
             elif cmd == "/stop":
                 console.print("[yellow]Stopping session...[/yellow]")
                 _conversation_paused = True
@@ -3732,6 +3810,8 @@ def show_help(voice_active: bool = False):
         "/restore <id> [n] - Restore checkpoint n from an archived session or snippet\n"
         "/replay <id> [n] - Restore checkpoint n and replay archived audio/video from there\n"
         "/restart        - Restart this character session\n"
+        "/refresh        - Refresh prompt files in place without restarting\n"
+        "/refresh vision - Recompute vision focus/questions immediately\n"
         "/reload         - Reload prompt files, restart conversation\n"
         "/trace          - Show system prompt, model, token usage\n"
         "/back           - Return to character selection\n"
@@ -4139,6 +4219,7 @@ def main():
     # --- Dashboard setup ---
     global _collector, _dashboard_input_queue
     dashboard_enabled = cfg.dashboard.enabled and not args.no_dashboard and not args.smoke
+    dashboard_default_character = args.character or "greg"
     if dashboard_enabled:
         import queue as _queue
         from character_eng.dashboard.events import DashboardEventCollector
@@ -4158,6 +4239,9 @@ def main():
                 _dashboard_input_queue,
                 port=cfg.dashboard.port,
                 history_api=_history_service,
+                default_character=dashboard_default_character,
+                prompt_asset_open_target=cfg.dashboard.prompt_asset_open_target,
+                prompt_asset_vscode_cmd=cfg.dashboard.prompt_asset_vscode_cmd,
             )
             dash_url = f"http://127.0.0.1:{dash_port}/"
             console.print(f"[bold green]Dashboard:[/bold green] {dash_url}")

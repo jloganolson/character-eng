@@ -133,6 +133,120 @@
     background: var(--panel-hover);
     color: var(--text);
   }
+  .app-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(8, 12, 18, 0.58);
+    backdrop-filter: blur(10px);
+  }
+  .app-modal.open {
+    display: flex;
+  }
+  .app-modal-card {
+    width: min(860px, 100%);
+    max-height: min(82vh, 900px);
+    overflow: auto;
+    border-radius: 18px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--panel) 88%, black 12%);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+    padding: 1rem;
+  }
+  .app-modal-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+  }
+  .app-modal-title {
+    font-size: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text);
+  }
+  .app-modal-sub {
+    color: var(--text-dim);
+    font-size: 0.82rem;
+    margin-top: 0.2rem;
+  }
+  .app-modal-close {
+    border: 1px solid var(--border);
+    background: var(--panel-hover);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 0.35em 0.7em;
+    cursor: pointer;
+  }
+  .archive-picker-search {
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 0.8rem;
+  }
+  .archive-picker-list {
+    display: grid;
+    gap: 0.55rem;
+  }
+  .archive-row {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--panel-hover);
+    padding: 0.7rem 0.8rem;
+  }
+  .archive-row-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.8rem;
+    align-items: flex-start;
+  }
+  .archive-row-title {
+    font-weight: 700;
+  }
+  .archive-row-meta {
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    margin-top: 0.2rem;
+  }
+  .archive-row-actions {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .archive-row-actions button {
+    padding: 0.3em 0.6em;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .archive-row-actions .primary {
+    background: var(--cyan);
+    color: var(--bg);
+  }
+  .archive-row-actions .secondary {
+    background: var(--ok);
+    color: var(--bg);
+  }
+  .archive-row-actions .ghost {
+    background: var(--panel);
+    color: var(--text);
+  }
+  .archive-kind {
+    display: inline-block;
+    margin-right: 0.45rem;
+    padding: 0.15em 0.5em;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
   #header {
     display: flex;
     align-items: center;
@@ -147,7 +261,8 @@
   #header .value { font-weight: 600; }
   #header .character { color: var(--npc); font-size: 1.1em; }
   #header .stage { color: var(--narrator); }
-  #report-ref-button {
+  #report-ref-button,
+  #archive-load-button {
     background: var(--bg-alt);
     border: 1px solid var(--border);
     color: var(--text);
@@ -156,7 +271,8 @@
     border-radius: 6px;
     font-size: 0.92em;
   }
-  #report-ref-status {
+  #report-ref-status,
+  #archive-load-status {
     color: var(--text-dim);
     font-size: 0.82em;
     max-width: 40ch;
@@ -461,9 +577,6 @@
   .stream-card.superseded {
     opacity: 0.56;
     border-style: dashed;
-  }
-  .stream-card.debug-only {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--error) 45%, var(--border));
   }
   .stream-card.compact {
     padding: 0.16em 0.45em;
@@ -1144,12 +1257,29 @@
   </div>
 </div>
 
+<div id="archive-picker" class="app-modal" aria-hidden="true">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div>
+        <div class="app-modal-title">Load Archive</div>
+        <div class="app-modal-sub">Choose a saved session or snippet by title, date, or character.</div>
+      </div>
+      <button id="archive-picker-close" class="app-modal-close" type="button">Close</button>
+    </div>
+    <input id="archive-picker-search" class="archive-picker-search" type="text" placeholder="Search archives by title, character, or date">
+    <div id="archive-picker-status" class="app-modal-sub">Loading archives...</div>
+    <div id="archive-picker-list" class="archive-picker-list"></div>
+  </div>
+</div>
+
 <div id="header">
   <span class="character" id="h-character">--</span>
   <span><span class="label">model:</span> <span class="value" id="h-model">--</span></span>
   <span><span class="label">session:</span> <span class="value" id="h-session">--</span></span>
   <button id="report-ref-button" type="button">Copy Replay Ref</button>
+  <button id="archive-load-button" type="button">Load Archive...</button>
   <span id="report-ref-status"></span>
+  <span id="archive-load-status"></span>
   <span><span class="label">stage:</span> <span class="value stage" id="h-stage">--</span></span>
   <span><span class="label">uptime:</span> <span class="value" id="h-uptime">0s</span></span>
   <button id="theme-toggle" title="Toggle light/dark">&#9789;</button>
@@ -1326,26 +1456,31 @@
     </div>
 
     <div class="sidebar-panel" id="history-panel">
-      <h3>Archived Replay Record</h3>
+      <h3>Replay Capture</h3>
       <div class="content">
         <div id="history-status"><span style="color:var(--text-dim)">Replay record loading...</span></div>
         <div id="history-recording-mode" style="margin-top:0.45em;color:var(--text-dim);font-size:0.78em;"></div>
         <div style="display:grid;gap:0.45em;margin-top:0.55em;">
-          <select id="history-select" style="width:100%;box-sizing:border-box;"></select>
-          <input id="history-checkpoint" type="number" min="0" placeholder="Optional checkpoint override" style="width:100%;box-sizing:border-box;">
+          <input id="history-checkpoint" type="number" min="0" placeholder="Optional rewind checkpoint override" style="width:100%;box-sizing:border-box;">
         </div>
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
-          <button id="history-load" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--cyan);color:var(--bg);cursor:pointer;">Load Archive</button>
           <button id="history-rewind" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--narrator);color:var(--bg);cursor:pointer;">Rewind Current</button>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.45em;margin-top:0.45em;">
-          <button id="history-replay" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--ok);color:var(--bg);cursor:pointer;">Replay Archive</button>
+        <div style="display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:0.45em;margin-top:0.45em;">
           <button id="history-pin" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--accent);color:var(--bg);cursor:pointer;">Pin Session</button>
         </div>
         <div style="display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:0.45em;margin-top:0.45em;">
           <button id="history-prune" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--warn);color:var(--bg);cursor:pointer;">Prune Unsaved</button>
         </div>
-        <div style="margin-top:0.45em;color:var(--text-dim);font-size:0.78em;">Archived replay record = raw debug events, checkpoints, media, annotations, and snippets. Use the checkpoint field only if you want an explicit override. For normal review, pick a timeline event and use <b>Continue From Here</b>.</div>
+        <div style="margin-top:0.45em;color:var(--text-dim);font-size:0.78em;">This panel tracks the current session’s replay/snippet capture status. For old sessions and snippets, use <b>Load Archive...</b> in the header.</div>
+      </div>
+    </div>
+
+    <div class="sidebar-panel" id="prompt-assets-panel">
+      <h3>Mutable Prompts</h3>
+      <div class="content">
+        <div id="prompt-assets-status" style="color:var(--text-dim);font-size:0.8em;">Scanning mutable prompt assets...</div>
+        <div id="prompt-assets-list" style="display:grid;gap:0.45em;margin-top:0.55em;"></div>
       </div>
     </div>
 
@@ -1386,6 +1521,7 @@
       history_rewind: "session",
       history_promoted: "session",
       history_playback: "session",
+      prompt_reload: "session",
       vision_snapshot: "vision",
       vision_pass: "vision",
       world_update: "world",
@@ -1485,6 +1621,13 @@
   const detailWarning = document.getElementById("detail-warning");
   const reportRefButton = document.getElementById("report-ref-button");
   const reportRefStatus = document.getElementById("report-ref-status");
+  const archiveLoadButton = document.getElementById("archive-load-button");
+  const archiveLoadStatus = document.getElementById("archive-load-status");
+  const archivePicker = document.getElementById("archive-picker");
+  const archivePickerCloseButton = document.getElementById("archive-picker-close");
+  const archivePickerSearchInput = document.getElementById("archive-picker-search");
+  const archivePickerStatus = document.getElementById("archive-picker-status");
+  const archivePickerList = document.getElementById("archive-picker-list");
   const annotationToggleButton = document.getElementById("annotation-toggle");
   const annotationSaveButton = document.getElementById("annotation-save");
   const annotationCancelButton = document.getElementById("annotation-cancel");
@@ -1503,11 +1646,10 @@
   const annotationStatus = document.getElementById("annotation-status");
   const historyStatusEl = document.getElementById("history-status");
   const historyRecordingModeEl = document.getElementById("history-recording-mode");
-  const historySelect = document.getElementById("history-select");
+  const promptAssetsStatusEl = document.getElementById("prompt-assets-status");
+  const promptAssetsListEl = document.getElementById("prompt-assets-list");
   const historyCheckpointInput = document.getElementById("history-checkpoint");
-  const historyLoadButton = document.getElementById("history-load");
   const historyRewindButton = document.getElementById("history-rewind");
-  const historyReplayButton = document.getElementById("history-replay");
   const historyPinButton = document.getElementById("history-pin");
   const historyPruneButton = document.getElementById("history-prune");
   const INSPECTOR_WIDTH_STORAGE_KEY = "dashboard.inspector_width";
@@ -1517,6 +1659,7 @@
   let lastStoppedReportRefPath = "";
   let historyState = {enabled: false, current_session: {}};
   let historyArchives = [];
+  let archivePickerOpen = false;
   let annotationFormOpen = false;
   let snippetFormOpen = false;
   let loadedAnnotationSessionId = "";
@@ -1525,6 +1668,7 @@
   let historyRecordMode = "full";
   let pendingPauseSince = 0;
   const pendingPauseTimeoutMs = 6000;
+  let promptAssets = [];
 
   async function loadStreamSchema() {
     try {
@@ -1629,23 +1773,21 @@
   function renderHistoryState(state) {
     historyState = state || {enabled: false, current_session: {}};
     if (!historyState.enabled) {
-      historyStatusEl.innerHTML = '<span style="color:var(--text-dim)">Archived replay record disabled.</span>';
+      historyStatusEl.innerHTML = '<span style="color:var(--text-dim)">Replay capture disabled.</span>';
       historyRecordingModeEl.textContent = "";
-      historySelect.innerHTML = '<option value="">No replay records</option>';
-      historyLoadButton.disabled = true;
       historyRewindButton.disabled = true;
-      historyReplayButton.disabled = true;
       historyPinButton.disabled = true;
       historyPruneButton.disabled = true;
       return;
     }
     const current = historyState.current_session || {};
+    const currentTitle = current.title || current.session_id || "--";
     historyRecordMode = String(current.record_mode || "full");
     const captureEnabled = current.replay_capture_enabled !== false;
     const lines = [
       `free: <b>${Number(historyState.free_gib || 0).toFixed(1)} GiB</b>`,
       `sessions: <b>${historyState.sessions_count || 0}</b> · pinned: <b>${historyState.pinned_count || 0}</b> · snippets: <b>${historyState.moments_count || 0}</b>`,
-      `current: <b>${current.session_id || "--"}</b>`,
+      `current: <b>${esc(currentTitle)}</b>`,
       current.session_path ? `path: <span style="color:var(--text-dim)">${esc(current.session_path)}</span>` : "",
       historyState.playback?.active
         ? `playback: <b>${esc(historyState.playback.source_kind || "archive")}</b> @ <b>${esc(String(historyState.playback.checkpoint_index ?? "--"))}</b>`
@@ -1656,13 +1798,63 @@
     historyStatusEl.innerHTML = lines.join("<br>");
     historyRecordingModeEl.innerHTML = captureEnabled
       ? `Recording mode: <b>${esc(historyRecordMode)}</b> · replay/snippet capture <b>on</b>`
-      : `Recording mode: <b>${esc(historyRecordMode)}</b> · replay/snippet capture <b style="color:var(--warn)">off</b>${current.debug_only_reason ? `<br><span style="color:var(--warn)">${esc(current.debug_only_reason)}</span>` : ""}`;
+      : `Recording mode: <b>${esc(historyRecordMode)}</b> · replay/snippet capture <b style="color:var(--warn)">off</b>${current.debug_only_reason ? `<br><span style="color:var(--warn)">${esc(current.debug_only_reason)}</span>` : ""}<br><span style="color:var(--text-dim)">The active timeline continues below. Older future events are shown as superseded.</span>`;
     historyRewindButton.disabled = !current.session_id;
     historyPinButton.disabled = !current.session_id;
-    historyReplayButton.disabled = !historyArchives.length;
     historyPruneButton.disabled = false;
     renderSelectedEventAnnotations();
     if (selectedStreamKey) selectEvent(selectedStreamKey);
+  }
+
+  function promptApplyModeLabel(mode) {
+    switch (mode) {
+      case "refresh_or_continue":
+        return "via /refresh or Continue";
+      case "next_call_auto":
+        return "next model call";
+      case "next_vision_cycle":
+        return "next vision cycle";
+      case "restart_required":
+        return "needs /reload";
+      default:
+        return mode || "unknown";
+    }
+  }
+
+  function renderPromptAssets(items) {
+    promptAssets = Array.isArray(items) ? items : [];
+    if (!promptAssets.length) {
+      promptAssetsStatusEl.textContent = "No mutable prompt assets discovered yet.";
+      promptAssetsListEl.innerHTML = "";
+      return;
+    }
+    promptAssetsStatusEl.innerHTML = "Edit these files locally, then use <b>Apply</b> to push the relevant refresh action.";
+    promptAssetsListEl.innerHTML = promptAssets.map((item) => `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:0.5em 0.6em;background:var(--panel-hover);">
+        <div style="display:flex;justify-content:space-between;gap:0.75em;align-items:flex-start;">
+          <div><b>${esc(item.label || item.path || "asset")}</b></div>
+          <div style="display:flex;gap:0.35em;align-items:center;flex-wrap:wrap;">
+            <button type="button" class="prompt-asset-open" data-prompt-path="${esc(item.path || "")}" style="padding:0.24em 0.5em;border-radius:999px;border:1px solid var(--border);background:var(--panel);color:var(--text);cursor:pointer;">Open</button>
+            <button type="button" class="prompt-asset-apply" data-prompt-command="${esc(item.apply_command || "")}" style="padding:0.24em 0.5em;border-radius:999px;border:1px solid var(--border);background:var(--accent);color:var(--bg);cursor:pointer;">${esc(item.apply_mode === "restart_required" ? "Reload" : "Apply")}</button>
+          </div>
+        </div>
+        <div style="margin-top:0.25em;color:var(--text-dim);font-size:0.76em;">${esc(item.path || "")}</div>
+        ${item.note ? `<div style="margin-top:0.3em;color:var(--text-dim);font-size:0.78em;">${esc(item.note)}</div>` : ""}
+      </div>
+    `).join("");
+  }
+
+  async function refreshPromptAssets() {
+    const character = (document.getElementById("h-character").textContent || "").trim();
+    const query = character && character !== "--" ? `?character=${encodeURIComponent(character)}` : "";
+    try {
+      const response = await fetch(`/prompt-assets${query}`);
+      if (!response.ok) throw new Error(`prompt assets ${response.status}`);
+      renderPromptAssets(await response.json());
+    } catch (error) {
+      promptAssetsStatusEl.textContent = `Prompt asset inventory unavailable: ${error.message || error}`;
+      promptAssetsListEl.innerHTML = "";
+    }
   }
 
   async function refreshHistoryState() {
@@ -1676,30 +1868,92 @@
     }
   }
 
-  function renderHistoryArchives(items) {
-    const previousIndex = Number(historySelect.value || 0);
-    const previousSelection = historyArchives[previousIndex] || null;
-    historyArchives = Array.isArray(items) ? items : [];
+  function archiveBucketLabel(item) {
+    if (!item) return "archive";
+    if (item.bucket === "sessions") return "session";
+    if (item.bucket === "moments") return "snippet";
+    if (item.bucket === "pinned") return "saved";
+    return item.bucket || "session";
+  }
+
+  function archiveDisplayTitle(item) {
+    return item?.title || item?.label || item?.session_id || item?.name || "archive";
+  }
+
+  function archiveDisplayTime(item) {
+    if (item?.started_at_iso) {
+      const parsed = new Date(item.started_at_iso);
+      if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleString();
+    }
+    if (item?.started_at) {
+      const parsed = new Date(Number(item.started_at) * 1000);
+      if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleString();
+    }
+    return "unknown time";
+  }
+
+  function archiveMatchesQuery(item, query) {
+    if (!query) return true;
+    const haystack = [
+      archiveDisplayTitle(item),
+      item?.character || "",
+      item?.session_id || "",
+      item?.started_at_iso || "",
+      archiveBucketLabel(item),
+    ].join(" ").toLowerCase();
+    return haystack.includes(query.toLowerCase());
+  }
+
+  function setArchivePickerOpen(open) {
+    archivePickerOpen = !!open;
+    archivePicker.classList.toggle("open", archivePickerOpen);
+    archivePicker.setAttribute("aria-hidden", archivePickerOpen ? "false" : "true");
+    if (archivePickerOpen) {
+      archivePickerSearchInput.focus();
+      archivePickerSearchInput.select();
+    }
+  }
+
+  function renderArchivePicker() {
     if (!historyArchives.length) {
-      historySelect.innerHTML = '<option value="">No replay records</option>';
-      historyLoadButton.disabled = true;
-      historyReplayButton.disabled = true;
+      archivePickerStatus.textContent = "No saved sessions or snippets yet.";
+      archivePickerList.innerHTML = "";
       return;
     }
-    historySelect.innerHTML = historyArchives.map((item, index) => {
-      const checkpointCount = Number(item.checkpoint_count || 0);
-      const bucketLabel = item.bucket === "moments" ? "snippets" : item.bucket;
-      const label = `${bucketLabel}: ${item.label || item.session_id || item.name} (${checkpointCount} ckpt)`;
-      return `<option value="${esc(String(index))}">${esc(label)}</option>`;
-    }).join("");
-    if (previousSelection) {
-      const nextIndex = historyArchives.findIndex((item) => item.ref === previousSelection.ref);
-      if (nextIndex >= 0) {
-        historySelect.value = String(nextIndex);
-      }
+    const query = (archivePickerSearchInput.value || "").trim();
+    const filtered = historyArchives.filter((item) => archiveMatchesQuery(item, query));
+    archivePickerStatus.textContent = query
+      ? `${filtered.length} match${filtered.length === 1 ? "" : "es"}`
+      : `${historyArchives.length} archive${historyArchives.length === 1 ? "" : "s"}`;
+    if (!filtered.length) {
+      archivePickerList.innerHTML = '<div style="color:var(--text-dim);">No archives match that search.</div>';
+      return;
     }
-    historyLoadButton.disabled = false;
-    historyReplayButton.disabled = false;
+    archivePickerList.innerHTML = filtered.map((item) => {
+      const checkpointCount = Number(item.checkpoint_count || 0);
+      const notes = Number(item.annotation_count || 0);
+      const bucket = archiveBucketLabel(item);
+      return `
+        <div class="archive-row">
+          <div class="archive-row-head">
+            <div>
+              <div class="archive-row-title"><span class="archive-kind">${esc(bucket)}</span>${esc(archiveDisplayTitle(item))}</div>
+              <div class="archive-row-meta">${esc(archiveDisplayTime(item))} · ${esc(item.character || "unknown")} · ${esc(item.session_id || item.ref || "")} · ${checkpointCount} ckpt · ${notes} note${notes === 1 ? "" : "s"}</div>
+            </div>
+            <div class="archive-row-actions">
+              <button type="button" class="ghost archive-rename-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}" data-title="${esc(archiveDisplayTitle(item))}">Rename</button>
+              <button type="button" class="secondary archive-replay-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}">Replay</button>
+              <button type="button" class="primary archive-load-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}">Load</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function renderHistoryArchives(items) {
+    historyArchives = Array.isArray(items) ? items : [];
+    renderArchivePicker();
   }
 
   async function refreshHistoryArchives() {
@@ -1756,6 +2010,10 @@
   }
 
   document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && archivePickerOpen) {
+      setArchivePickerOpen(false);
+      return;
+    }
     switch (e.key) {
       case "b": sendInput("/beat"); break;
       case "i": sendInput("/info"); break;
@@ -2093,6 +2351,10 @@
     return Array.isArray(event?.data?.claim_traces) ? event.data.claim_traces : [];
   }
 
+  function traceProvenance(trace) {
+    return trace?.provenance || null;
+  }
+
   function visionPassEffects(event) {
     const results = [];
     const seen = new Set();
@@ -2174,7 +2436,10 @@
       const claimItems = (claimTraces.length ? claimTraces : claims.map((item) => ({description: item}))).map((item) => {
         const support = (item.supporting_answers || []).map((answer) => `${answer.question} -> ${answer.answer}`).join("\n");
         const contradiction = (item.contradicting_answers || []).map((answer) => `${answer.question} -> ${answer.answer}`).join("\n");
+        const provenance = item.provenance;
         const suffix = [
+          provenance?.label ? `provenance:\n${provenance.label}${provenance.primary ? ` (${provenance.primary})` : ""}` : "",
+          provenance?.components?.length ? `components:\n${provenance.components.join(", ")}` : "",
           support ? `support:\n${support}` : "",
           contradiction ? `contradicted by:\n${contradiction}` : "",
         ].filter(Boolean).join("\n\n");
@@ -2193,10 +2458,17 @@
       })), `${effects.length} linked`));
     } else if (event.type === "perception") {
       const trace = event.data?.source_trace || {};
+      const provenance = traceProvenance(trace);
       sections.push(structureSection("Vision Input", [
         trace.object_labels?.length ? {kind: "input", key: "objects", value: trace.object_labels.join(", ")} : null,
         ...(trace.focus?.ephemeral_questions || []).map((item) => ({kind: "input", key: "active q", value: item})),
         ...(trace.focus?.ephemeral_sam_targets || []).map((item) => ({kind: "input", key: "active sam", value: item})),
+      ].filter(Boolean)));
+      sections.push(structureSection("Claim Provenance", [
+        provenance?.label ? {kind: "meta", key: "source", value: provenance.label} : null,
+        provenance?.primary ? {kind: "meta", key: "primary", value: provenance.primary} : null,
+        provenance?.components?.length ? {kind: "meta", key: "components", value: provenance.components.join(", ")} : null,
+        provenance?.inference ? {kind: "meta", key: "inference", value: provenance.inference} : null,
       ].filter(Boolean)));
       const evidenceItems = [
         ...(trace.supporting_answers || []).map((answer) => ({
@@ -2283,14 +2555,20 @@
     const lines = [];
 
     if (event.type === "perception" || event.type === "vision_pass") {
+      const provenance = traceProvenance(trace);
       lines.push(`source: ${event.data?.source || "unknown"}`);
       if (event.type === "vision_pass") {
         lines[0] = "source: visual";
       }
       if (trace?.kind) lines.push(`derived by: ${trace.kind}`);
       if (event.type === "vision_pass" && !trace?.kind) lines.push("derived by: vision_synthesis");
+      if (provenance?.label) lines.push(`provenance: ${provenance.label}`);
+      if (provenance?.primary) lines.push(`primary: ${provenance.primary}`);
+      if (provenance?.components?.length) lines.push(`components: ${provenance.components.join(", ")}`);
       if (trace?.identity) lines.push(`identity: ${trace.identity}`);
       if (trace?.object_labels?.length) chipList.push(...trace.object_labels.slice(0, 5).map((item) => `object ${item}`));
+      if (provenance?.label) chipList.push(`prov ${provenance.label}`);
+      if (provenance?.primary) chipList.push(`via ${provenance.primary}`);
       if (trace?.vlm_answers?.length) {
         chipList.push(...trace.vlm_answers.slice(0, 3).map((item) => `${item.question || "vision"}: ${item.answer || ""}`));
       }
@@ -2921,6 +3199,9 @@
         return `${data.mode || "restore"} · checkpoint ${data.checkpoint_index ?? "latest"}`;
       case "history_rewind":
         return `debug-only boundary · checkpoint ${data.checkpoint_index ?? "latest"}`;
+      case "prompt_reload":
+        if (data.reason === "vision_refresh") return "vision prompt assets refreshed";
+        return data.reason === "forced" ? "prompt files refreshed in place" : "prompt files reloaded from disk";
       case "history_promoted":
         return `saved to ${data.kind || "pinned"}`;
       default:
@@ -2970,6 +3251,11 @@
           data.vlm_answer_count ? `${data.vlm_answer_count} answer${data.vlm_answer_count === 1 ? "" : "s"}` : "",
           data.object_count ? `${data.object_count} object${data.object_count === 1 ? "" : "s"}` : "",
         ].filter(Boolean).join(" · ");
+      case "prompt_reload":
+        return [
+          data.reason === "vision_refresh" ? "vision focus refresh" : (data.reason || "filesystem change"),
+          Array.isArray(data.files) ? `${data.files.length} file${data.files.length === 1 ? "" : "s"}` : "",
+        ].filter(Boolean).join(" · ");
       case "post_response":
         return [
           data.eval_thought || "",
@@ -2984,7 +3270,7 @@
       case "perception":
         return [
           data.source || "",
-          data.source_trace?.kind || "",
+          data.source_trace?.provenance?.label || data.source_trace?.kind || "",
           data.source_trace?.object_labels?.length ? `objects ${data.source_trace.object_labels.join(", ")}` : "",
         ].filter(Boolean).join(" · ");
       case "runtime_controls":
@@ -3200,9 +3486,6 @@
       annotationList.innerHTML = '<div style="color:var(--text-dim);">Select a debug timeline event to inspect or annotate it.</div>';
       return;
     }
-    if (event.debugOnly) {
-      annotationStatus.textContent = "This event was created after rewind in debug-only mode. It stays visible in the timeline, but it is not part of the replay/snippet corpus.";
-    }
     const entries = annotationEntriesForEvent(event);
     if (!entries.length) {
       annotationList.innerHTML = '<div style="color:var(--text-dim);">No annotations saved for this event yet.</div>';
@@ -3221,7 +3504,6 @@
   function renderStateBadges(event) {
     const badges = [];
     if (event.superseded) badges.push('<span class="reply-marker">Superseded</span>');
-    if (event.debugOnly) badges.push('<span class="reply-marker">Debug Only</span>');
     return badges.join("");
   }
 
@@ -3855,7 +4137,7 @@
     document.getElementById("detail-detail").textContent = event.detail || "No compact detail";
     const warnings = [];
     if (event.superseded) warnings.push("This event is on the superseded pre-rewind path. It stays visible for debugging, but it is not the active conversation path.");
-    if (event.debugOnly) warnings.push("This event was created after rewind in debug-only mode. It is logged for observability only and is not replay/snippet-capturable.");
+    if (event.debugOnly) warnings.push("This event is on the active exploratory path after rewind. It remains visible in the timeline, but it is not replay/snippet-capturable.");
     if (warnings.length) {
       detailWarning.style.display = "";
       detailWarning.textContent = warnings.join(" ");
@@ -4158,7 +4440,7 @@
         const top = compactMode ? 6 + row * rowStep : 8 + row * rowStep;
         trackHeight = Math.max(trackHeight, top + height + 10);
         cards.push(
-          `<article class="stream-card type-${esc(typeClass(event.type))}${compactMode ? " compact" : ""}${event.superseded ? " superseded" : ""}${event.debugOnly ? " debug-only" : ""}" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;">
+          `<article class="stream-card type-${esc(typeClass(event.type))}${compactMode ? " compact" : ""}${event.superseded ? " superseded" : ""}" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;">
             <div class="stream-card-head">
               <span class="stream-card-type">${esc(event.type)}</span>
               <span style="display:flex;align-items:center;gap:0.35em;">
@@ -4218,6 +4500,7 @@
       document.getElementById("h-session").textContent = data.session_id || "--";
       if (data.stage) document.getElementById("h-stage").textContent = data.stage;
       document.title = `${data.character || "Character"} Dashboard`;
+      refreshPromptAssets();
       recordEvent("session_start", data, rawEvent);
       renderBootStatus();
     },
@@ -4536,6 +4819,7 @@
           description: data.description || "visual perception",
           supporting_answers: data.source_trace?.supporting_answers || [],
           contradicting_answers: data.source_trace?.contradicting_answers || [],
+          provenance: data.source_trace?.provenance || null,
         });
         event.data.claim_traces = nextClaimTraces.slice(-8);
         event.data.perception_count = nextPerceptions.length;
@@ -4754,6 +5038,16 @@
       refreshAnnotations(currentSessionId);
       annotationStatus.textContent = `Playback started from ${data.session_id || "history"} @ ${data.checkpoint_index ?? "--"}`;
       refreshHistoryState();
+    },
+
+    prompt_reload(data, rawEvent) {
+      recordEvent("prompt_reload", data, rawEvent);
+      refreshPromptAssets();
+      annotationStatus.textContent = data.reason === "vision_refresh"
+        ? "Vision prompt assets refreshed."
+        : (data.reason === "forced"
+          ? "Prompt files refreshed in place."
+          : "Prompt files changed on disk and were reloaded.");
     }
   };
 
@@ -4913,6 +5207,53 @@
   });
   snippetSaveButton.addEventListener("click", captureSelectedMoment);
   snippetCancelButton.addEventListener("click", () => setSnippetFormOpen(false));
+  archiveLoadButton.addEventListener("click", async () => {
+    await refreshHistoryArchives();
+    setArchivePickerOpen(true);
+  });
+  archivePickerCloseButton.addEventListener("click", () => setArchivePickerOpen(false));
+  archivePicker.addEventListener("click", (event) => {
+    if (event.target === archivePicker) setArchivePickerOpen(false);
+  });
+  archivePickerSearchInput.addEventListener("input", renderArchivePicker);
+  archivePickerList.addEventListener("click", async (event) => {
+    const loadButton = event.target.closest(".archive-load-action");
+    const replayButton = event.target.closest(".archive-replay-action");
+    const renameButton = event.target.closest(".archive-rename-action");
+    if (loadButton) {
+      const target = loadButton.dataset.sessionRef || "";
+      if (!target) return;
+      sendInput(`/restore ${target}`);
+      archiveLoadStatus.textContent = `Loaded archive: ${target}`;
+      annotationStatus.textContent = `Requested restore: ${target}`;
+      setArchivePickerOpen(false);
+      return;
+    }
+    if (replayButton) {
+      const target = replayButton.dataset.sessionRef || "";
+      if (!target) return;
+      sendInput(`/replay ${target}`);
+      archiveLoadStatus.textContent = `Replaying archive: ${target}`;
+      annotationStatus.textContent = `Requested replay: ${target}`;
+      setArchivePickerOpen(false);
+      return;
+    }
+    if (renameButton) {
+      const target = renameButton.dataset.sessionRef || "";
+      if (!target) return;
+      const currentTitle = renameButton.dataset.title || "";
+      const title = window.prompt("Archive title", currentTitle);
+      if (title == null) return;
+      try {
+        await postJson("/history/rename", {session_id: target, title});
+        archiveLoadStatus.textContent = `Renamed archive: ${(title || currentTitle).trim()}`;
+        refreshHistoryArchives();
+        refreshHistoryState();
+      } catch (error) {
+        archiveLoadStatus.textContent = `Rename failed: ${error.message || error}`;
+      }
+    }
+  });
   historyPinButton.addEventListener("click", async () => {
     try {
       const result = await postJson("/history/promote", {
@@ -4926,32 +5267,10 @@
       annotationStatus.textContent = `Pin failed: ${error.message || error}`;
     }
   });
-  historyLoadButton.addEventListener("click", () => {
-    const selected = historyArchives[Number(historySelect.value || 0)];
-    if (!selected) {
-      annotationStatus.textContent = "Select an archive to load.";
-      return;
-    }
-    const checkpoint = historyCheckpointInput.value.trim();
-    const target = selected.ref || selected.session_id || selected.path;
-    sendInput(checkpoint ? `/restore ${target} ${checkpoint}` : `/restore ${target}`);
-    annotationStatus.textContent = `Requested restore: ${target}${checkpoint ? ` @ ${checkpoint}` : ""}`;
-  });
   historyRewindButton.addEventListener("click", () => {
     const checkpoint = historyCheckpointInput.value.trim();
     sendInput(checkpoint ? `/rewind ${checkpoint}` : "/rewind");
     annotationStatus.textContent = `Requested rewind${checkpoint ? ` @ ${checkpoint}` : ""}`;
-  });
-  historyReplayButton.addEventListener("click", () => {
-    const selected = historyArchives[Number(historySelect.value || 0)];
-    if (!selected) {
-      annotationStatus.textContent = "Select an archive to replay.";
-      return;
-    }
-    const checkpoint = historyCheckpointInput.value.trim();
-    const target = selected.ref || selected.session_id || selected.path;
-    sendInput(checkpoint ? `/replay ${target} ${checkpoint}` : `/replay ${target}`);
-    annotationStatus.textContent = `Requested replay: ${target}${checkpoint ? ` @ ${checkpoint}` : ""}`;
   });
   historyPruneButton.addEventListener("click", async () => {
     try {
@@ -4971,6 +5290,30 @@
     const key = button.dataset.runtimeControl || "";
     if (!key) return;
     sendInput(`/threads ${key.replace(/_/g, "-")} toggle`);
+  });
+  promptAssetsListEl.addEventListener("click", async (event) => {
+    const openButton = event.target.closest(".prompt-asset-open");
+    if (openButton) {
+      const path = openButton.dataset.promptPath || "";
+      try {
+        await postJson("/prompt-assets/action", {action: "open", path});
+        annotationStatus.textContent = "Opened prompt asset.";
+      } catch (error) {
+        annotationStatus.textContent = `Open failed: ${error.message || error}`;
+      }
+      return;
+    }
+    const applyButton = event.target.closest(".prompt-asset-apply");
+    if (applyButton) {
+      const command = (applyButton.dataset.promptCommand || "").trim();
+      if (!command) return;
+      try {
+        await sendInput(command);
+        annotationStatus.textContent = `Applied prompt action: ${command}`;
+      } catch (error) {
+        annotationStatus.textContent = `Apply failed: ${error.message || error}`;
+      }
+    }
   });
   detailContinueFromEventButton.addEventListener("click", startFromSelectedEvent);
   detailOpenJsonButton.addEventListener("click", () => setDetailTab("payload"));
@@ -4997,6 +5340,8 @@
   refreshState();
   refreshHistoryState();
   refreshHistoryArchives();
+  refreshPromptAssets();
+  pollVisionModelStatus();
   renderRuntimeControlButtons();
   setInterval(refreshState, 1000);
   setInterval(refreshHistoryArchives, 4000);

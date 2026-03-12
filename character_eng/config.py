@@ -37,6 +37,8 @@ class VisionConfig:
 class DashboardConfig:
     enabled: bool = True
     port: int = 7862
+    prompt_asset_open_target: str = "vscode"  # "vscode" or "folder"
+    prompt_asset_vscode_cmd: str = "code"
 
 
 @dataclass
@@ -92,6 +94,8 @@ def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
         "[dashboard]",
         f"enabled = {'true' if config.dashboard.enabled else 'false'}",
         f"port = {int(config.dashboard.port)}",
+        f"prompt_asset_open_target = {_toml_string(config.dashboard.prompt_asset_open_target)}",
+        f"prompt_asset_vscode_cmd = {_toml_string(config.dashboard.prompt_asset_vscode_cmd)}",
         "",
         "[bridge]",
         f"enabled = {'true' if config.bridge.enabled else 'false'}",
@@ -153,6 +157,8 @@ def load_config() -> AppConfig:
     dashboard = DashboardConfig(
         enabled=dashboard_data.get("enabled", True),
         port=dashboard_data.get("port", 7862),
+        prompt_asset_open_target=dashboard_data.get("prompt_asset_open_target", "vscode"),
+        prompt_asset_vscode_cmd=dashboard_data.get("prompt_asset_vscode_cmd", "code"),
     )
 
     bridge_data = data.get("bridge", {})
