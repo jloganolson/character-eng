@@ -201,6 +201,27 @@ class ChatSession:
         """Return a copy of the message history."""
         return list(self._messages)
 
+    def snapshot_state(self) -> dict:
+        """Serialize the mutable session state for rewind/replay checkpoints."""
+        return {
+            "system_prompt": self.system_prompt,
+            "messages": [dict(message) for message in self._messages],
+            "tagged_system_indices": dict(self._tagged_system_indices),
+        }
+
+    def restore_state(self, payload: dict) -> None:
+        """Replace the mutable session state from a prior checkpoint snapshot."""
+        self.system_prompt = payload.get("system_prompt", self.system_prompt)
+        messages = payload.get("messages", [])
+        if messages:
+            self._messages = [dict(message) for message in messages]
+        else:
+            self._messages = [{"role": "system", "content": self.system_prompt}]
+        self._tagged_system_indices = {
+            str(key): int(value)
+            for key, value in payload.get("tagged_system_indices", {}).items()
+        }
+
     def trace_info(self) -> dict:
         """Return diagnostic info about the session."""
         info = {

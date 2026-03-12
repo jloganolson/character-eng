@@ -559,6 +559,18 @@ def test_voice_io_speaker_playback_ratio_no_speaker():
     assert voice.speaker_playback_ratio == 1.0
 
 
+def test_voice_io_inject_input_audio_uses_live_mic_path():
+    voice = VoiceIO()
+    seen = []
+    voice._input_audio_hook = seen.append
+    voice._stt = MagicMock()
+
+    voice.inject_input_audio(b"\x00\x01" * 4)
+
+    assert seen == [b"\x00\x01" * 4]
+    voice._stt.send_audio.assert_called_once_with(b"\x00\x01" * 4)
+
+
 def test_voice_io_turn_start_cancels_auto_beat_when_not_speaking():
     """_on_turn_start should cancel auto-beat timer even when _is_speaking is False."""
     voice = VoiceIO()
