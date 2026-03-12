@@ -463,8 +463,16 @@ class DeepgramSTT:
         self._socket.on(EventType.ERROR, self._on_error)
 
         # start_listening() BLOCKS (infinite WebSocket receive loop) — run on daemon thread
+        def _listen():
+            try:
+                self._socket.start_listening()
+            except Exception as exc:
+                self._last_error = str(exc)
+            finally:
+                self._ws_open.clear()
+
         self._listener_thread = threading.Thread(
-            target=self._socket.start_listening, daemon=True
+            target=_listen, daemon=True
         )
         self._listener_thread.start()
         self._ws_open.wait(timeout=5)
@@ -473,8 +481,9 @@ class DeepgramSTT:
         if self._socket is not None:
             try:
                 self._socket.send_media(data)
-            except Exception:
-                pass
+            except Exception as exc:
+                self._last_error = str(exc)
+                self._ws_open.clear()
 
     def _on_message(self, message):
         """Called for each message from Deepgram.
@@ -559,6 +568,7 @@ class DeepgramSTT:
     def _on_error(self, error):
         """Called on Deepgram errors."""
         self._last_error = str(error)
+        self._ws_open.clear()
 
     def status_snapshot(self) -> dict:
         return {
@@ -588,6 +598,7 @@ class DeepgramSTT:
             self._listener_thread = None
         self._pending_transcript = ""
         self._is_speaking = False
+        self._ws_open.clear()
 
 
 class ElevenLabsTTS:

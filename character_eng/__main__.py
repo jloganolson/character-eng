@@ -1648,7 +1648,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                             f"threshold   : {status.get('warning_threshold_gib', 0.0):.1f} GiB",
                             f"sessions    : {status.get('sessions_count', 0)}",
                             f"pinned      : {status.get('pinned_count', 0)}",
-                            f"moments     : {status.get('moments_count', 0)}",
+                            f"snippets    : {status.get('moments_count', 0)}",
                         ]),
                         title="History",
                         border_style="dim",
@@ -1827,7 +1827,14 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             log=log,
         )
 
-        def _apply_history_payload(payload: dict, *, source_session_id: str, mode: str) -> None:
+        def _apply_history_payload(
+            payload: dict,
+            *,
+            source_session_id: str,
+            mode: str,
+            source_event_time_s: float | None = None,
+            replay_mode: str = "",
+        ) -> None:
             nonlocal world, people, scenario, script, goals, log, had_user_input, _arm_auto_beat
             restored = _restore_runtime_checkpoint(session, payload)
             world = restored["world"]
@@ -1838,11 +1845,39 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             log = restored["log_entries"]
             had_user_input = restored["had_user_input"]
             _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
+            debug_status = {}
+            if _history_service is not None and _history_service.current is not None:
+                debug_reason = (
+                    "rewind made this run exploratory; replay/snippet capture is now off"
+                    if mode == "rewind"
+                    else "continuing from history keeps this run debug-only; replay/snippet capture is now off"
+                )
+                debug_status = _history_service.current.mark_debug_after_rewind(
+                    checkpoint_payload=payload,
+                    source_session_id=source_session_id,
+                    reason=debug_reason,
+                    source_event_time_s=source_event_time_s,
+                )
             _push("history_restore", {
                 "source_session_id": source_session_id,
                 "checkpoint_index": restored["checkpoint_index"],
                 "label": restored["label"],
                 "mode": mode,
+                "checkpoint_timestamp": float(payload.get("timestamp", 0.0) or 0.0),
+                "source_event_time_s": source_event_time_s,
+                "record_mode": str(debug_status.get("record_mode", "debug_only")) if debug_status else "debug_only",
+                "debug_only_reason": str(debug_status.get("debug_only_reason", "")),
+                "replay_mode": replay_mode,
+            })
+            _push("history_rewind", {
+                "source_session_id": source_session_id,
+                "checkpoint_index": restored["checkpoint_index"],
+                "label": restored["label"],
+                "mode": mode,
+                "checkpoint_timestamp": float(payload.get("timestamp", 0.0) or 0.0),
+                "source_event_time_s": source_event_time_s,
+                "debug_only_reason": str(debug_status.get("debug_only_reason", "")),
+                "replay_mode": replay_mode,
             })
             _push_world_people_state(world, people)
             if scenario and scenario.active_stage:
@@ -1851,17 +1886,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     "new_stage": scenario.active_stage.name,
                     "new_goal": scenario.active_stage.goal,
                 })
-            _capture_history_checkpoint(
-                f"{mode}_{restored['checkpoint_index']}",
-                character=character,
-                session=session,
-                world=world,
-                people=people,
-                scenario=scenario,
-                script=script,
-                goals=goals,
-                log=log,
-            )
+            _push_history_status()
             _arm_auto_beat = False
 
         def _start_history_playback(session_ref: str, checkpoint_index: int | None = None) -> bool:
@@ -1871,7 +1896,12 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 console.print("[red]History recording is disabled.[/red]")
                 return False
             plan = _history_service.prepare_playback(session_ref, checkpoint_index)
-            _apply_history_payload(plan.checkpoint_payload, source_session_id=plan.session_id, mode="historical_replay")
+            _apply_history_payload(
+                plan.checkpoint_payload,
+                source_session_id=plan.session_id,
+                mode="historical_replay",
+                replay_mode="archive_playback",
+            )
 
             audio_enabled = False
             video_enabled = False
@@ -1963,6 +1993,98 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 console.print(f"[yellow]{warning}[/yellow]")
             return True
 
+        def _start_history_event_playback(
+            session_ref: str,
+            event_time_s: float,
+            *,
+            replay_mode: str = "vision_full_stack",
+        ) -> bool:
+            nonlocal _arm_auto_beat
+            global _conversation_paused, _session_stopped, _startup_pause_pending, _history_playback_runner
+            if _history_service is None:
+                console.print("[red]History recording is disabled.[/red]")
+                return False
+            plan = _history_service.prepare_event_playback(
+                session_ref,
+                event_time_s=event_time_s,
+                include_audio=False,
+            )
+            _apply_history_payload(
+                plan.checkpoint_payload,
+                source_session_id=plan.session_id,
+                mode="continue_from_event",
+                source_event_time_s=event_time_s,
+                replay_mode=replay_mode,
+            )
+
+            if not plan.video_frames or vision_cfg is None:
+                warning = "vision event replay unavailable; no replayable frame context found"
+                _set_history_playback_state(
+                    active=False,
+                    source=session_ref,
+                    source_kind="event",
+                    checkpoint_index=plan.checkpoint_index,
+                    checkpoint_label=plan.checkpoint_label,
+                    audio=False,
+                    video=False,
+                    warning=warning,
+                )
+                console.print(f"[yellow]{warning}[/yellow]")
+                return False
+
+            from character_eng.vision.client import VisionClient
+            vision_client = VisionClient(vision_cfg.service_url)
+
+            def _video_callback(jpeg_bytes: bytes, meta: dict) -> None:
+                try:
+                    vision_client.inject_frame(jpeg_bytes)
+                    _push("history_playback_frame", {
+                        "source_session_id": plan.session_id,
+                        "checkpoint_index": plan.checkpoint_index,
+                        "relative_s": meta.get("relative_s", 0.0),
+                        "path": meta.get("path", ""),
+                        "replay_mode": replay_mode,
+                    })
+                except Exception:
+                    pass
+
+            _stop_history_playback()
+            _history_playback_runner = PlaybackRunner(
+                plan,
+                audio_callback=None,
+                video_callback=_video_callback,
+            )
+            _history_playback_runner.start()
+            _conversation_paused = False
+            _session_stopped = False
+            _startup_pause_pending = False
+            if vision_mgr is not None:
+                vision_mgr.set_paused(False)
+            _arm_auto_beat = False
+            _set_history_playback_state(
+                active=True,
+                source=str(plan.source_path),
+                source_kind="event",
+                checkpoint_index=plan.checkpoint_index,
+                checkpoint_label=plan.checkpoint_label,
+                audio=False,
+                video=True,
+                warning="",
+            )
+            _push("history_playback", {
+                **plan.summary(),
+                "audio": False,
+                "video": True,
+                "warning": "",
+                "mode": "event_replay_started",
+                "replay_mode": replay_mode,
+                "event_time_s": event_time_s,
+            })
+            console.print(
+                f"[green]Event replay started[/green] from {plan.session_id} @ checkpoint {plan.checkpoint_index}"
+            )
+            return True
+
         if pending_history_action is not None:
             action = dict(pending_history_action)
             pending_history_action = None
@@ -2042,7 +2164,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                         f"threshold   : {status.get('warning_threshold_gib', 0.0):.1f} GiB",
                         f"sessions    : {status.get('sessions_count', 0)}",
                         f"pinned      : {status.get('pinned_count', 0)}",
-                        f"moments     : {status.get('moments_count', 0)}",
+                        f"snippets    : {status.get('moments_count', 0)}",
                         f"path        : {current.get('session_path', '') or 'n/a'}",
                     ]
                     playback = status.get("playback", {}) or {}
@@ -2111,6 +2233,18 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                             console.print("[red]checkpoint_index must be an integer[/red]")
                             continue
                     _start_history_playback(parts[1], checkpoint_index)
+                    continue
+                if cmd.startswith("/replay_event "):
+                    parts = user_input.split()
+                    if len(parts) < 3:
+                        console.print("[red]Usage: /replay_event <session_id|path> <event_time_s> [replay_mode][/red]")
+                        continue
+                    try:
+                        event_time_s = float(parts[2])
+                    except ValueError:
+                        console.print("[red]event_time_s must be numeric[/red]")
+                        continue
+                    _start_history_event_playback(parts[1], event_time_s, replay_mode=parts[3] if len(parts) > 3 else "vision_full_stack")
                     continue
                 if cmd == "/stop":
                     console.print("[yellow]Stopping session...[/yellow]")
@@ -2182,11 +2316,13 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print("\n[yellow]Voice off — text mode[/yellow]")
                     voice_io.stop()
                     voice_io = None
+                    _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
                     continue
                 elif user_input == VOICE_ERROR:
                     console.print("\n[red]Voice error — switching to text mode[/red]")
                     voice_io.stop()
                     voice_io = None
+                    _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
                     continue
 
                 # Show what was transcribed or which hotkey was pressed
@@ -2338,7 +2474,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     f"threshold   : {status.get('warning_threshold_gib', 0.0):.1f} GiB",
                     f"sessions    : {status.get('sessions_count', 0)}",
                     f"pinned      : {status.get('pinned_count', 0)}",
-                    f"moments     : {status.get('moments_count', 0)}",
+                    f"snippets    : {status.get('moments_count', 0)}",
                     f"path        : {current.get('session_path', '') or 'n/a'}",
                 ]
                 playback = status.get("playback", {}) or {}
@@ -2407,6 +2543,18 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                         console.print("[red]checkpoint_index must be an integer[/red]")
                         continue
                 _start_history_playback(parts[1], checkpoint_index)
+                continue
+            elif cmd.startswith("/replay_event "):
+                parts = user_input.split()
+                if len(parts) < 3:
+                    console.print("[red]Usage: /replay_event <session_id|path> <event_time_s> [replay_mode][/red]")
+                    continue
+                try:
+                    event_time_s = float(parts[2])
+                except ValueError:
+                    console.print("[red]event_time_s must be numeric[/red]")
+                    continue
+                _start_history_event_playback(parts[1], event_time_s, replay_mode=parts[3] if len(parts) > 3 else "vision_full_stack")
                 continue
             elif handle_runtime_control_command(
                 user_input,
@@ -2882,6 +3030,23 @@ def _normalize_interrupted_reply(text: str) -> str:
     return f"{trimmed} \u2014"
 
 
+def _push_response_interrupted(
+    *,
+    raw_text: str,
+    truncated_text: str,
+    spoken_chars: int,
+    playback_ratio: float,
+    reason: str = "barge_in",
+) -> None:
+    _push("response_interrupted", {
+        "reason": reason,
+        "raw_full_text": raw_text,
+        "truncated_text": truncated_text,
+        "spoken_chars": spoken_chars,
+        "playback_ratio": round(playback_ratio, 4),
+    })
+
+
 def deliver_beat(session, beat, label, voice_io=None):
     """Deliver a pre-rendered beat as the character's response. Returns the beat line."""
     npc_name = Text(f"{_ts()} {label}: ", style="bold magenta")
@@ -2902,6 +3067,13 @@ def deliver_beat(session, beat, label, voice_io=None):
             spoken_chars = max(int(len(beat.line) * ratio), 1)
             if spoken_chars < len(beat.line):
                 truncated = _normalize_interrupted_reply(beat.line[:spoken_chars])
+                _push_response_interrupted(
+                    raw_text=beat.line,
+                    truncated_text=truncated,
+                    spoken_chars=spoken_chars,
+                    playback_ratio=ratio,
+                    reason="beat_barge_in",
+                )
                 if truncated:
                     session.add_assistant(truncated)
                 return truncated
@@ -2996,7 +3168,15 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
                         ratio = voice_io.speaker_playback_ratio
                         spoken = max(int(len(idle_text) * ratio), 1)
                         if spoken < len(idle_text):
-                            idle_text = _normalize_interrupted_reply(idle_text[:spoken])
+                            truncated_idle = _normalize_interrupted_reply(idle_text[:spoken])
+                            _push_response_interrupted(
+                                raw_text=idle_text,
+                                truncated_text=truncated_idle,
+                                spoken_chars=spoken,
+                                playback_ratio=ratio,
+                                reason="idle_barge_in",
+                            )
+                            idle_text = truncated_idle
                 if idle_text:
                     session.add_assistant(idle_text)
                 entry["idle"] = idle_text
@@ -3446,6 +3626,12 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
         spoken_chars = max(int(len(response_text) * ratio), 1)
         if spoken_chars < len(response_text):
             truncated = _normalize_interrupted_reply(response_text[:spoken_chars])
+            _push_response_interrupted(
+                raw_text=response_text,
+                truncated_text=truncated,
+                spoken_chars=spoken_chars,
+                playback_ratio=ratio,
+            )
             session.replace_last_assistant(truncated)
             response_text = truncated
 
@@ -3543,7 +3729,7 @@ def show_help(voice_active: bool = False):
         "/history        - Show history storage + disk status\n"
         "/pin            - Pin the current session so cleanup will keep it\n"
         "/rewind [n]     - Restore checkpoint n from the current session (latest if omitted)\n"
-        "/restore <id> [n] - Restore checkpoint n from an archived session or moment\n"
+        "/restore <id> [n] - Restore checkpoint n from an archived session or snippet\n"
         "/replay <id> [n] - Restore checkpoint n and replay archived audio/video from there\n"
         "/restart        - Restart this character session\n"
         "/reload         - Reload prompt files, restart conversation\n"

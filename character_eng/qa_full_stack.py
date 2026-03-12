@@ -1496,6 +1496,7 @@ def _build_action_timeline(events: list[dict]) -> tuple[list[str], float]:
         detail = html.escape(_timeline_detail(event))
         turn = event.get("turn")
         turn_label = f"Turn {turn}" if turn else "Session"
+        detail_html = f"<div class='timeline-detail'>{detail}</div>" if detail else ""
         rows.append(
             "<div class='timeline-row'>"
             f"<div class='timeline-time'>+{rel:0.3f}s</div>"
@@ -1503,7 +1504,7 @@ def _build_action_timeline(events: list[dict]) -> tuple[list[str], float]:
             f"<div class='timeline-lane lane-{lane}'>{lane}</div>"
             f"<div class='timeline-turn'>{turn_label}</div>"
             f"<div class='timeline-main'><div class='timeline-type'>{event_type}</div><div class='timeline-label'>{label}</div>"
-            f"{f'<div class=\"timeline-detail\">{detail}</div>' if detail else ''}</div>"
+            f"{detail_html}</div>"
             "</div>"
         )
     total_duration = flat[-1].get("timestamp", start_ts) - start_ts
@@ -1672,9 +1673,10 @@ def _build_stream_board(events: list[dict], prompt_traces: list[dict]) -> tuple[
             })
 
             prompt_badge = " <span class='prompt-chip'>prompt</span>" if prompt_blocks else ""
+            detail_html = f"<div class='stream-card-detail'>{html.escape(detail)}</div>" if detail else ""
             body_html = (
                 f"<div class='stream-card-label'>{html.escape(label)}{prompt_badge}</div>"
-                f"{f'<div class=\"stream-card-detail\">{html.escape(detail)}</div>' if detail else ''}"
+                f"{detail_html}"
             )
             if event_type == "vision_poll":
                 data = event.get("data", {})
@@ -1691,6 +1693,7 @@ def _build_stream_board(events: list[dict], prompt_traces: list[dict]) -> tuple[
                     )
                     for answer in answers
                 )
+                answers_block = answers_html or "<div class='vision-answer muted'>No VLM answers</div>"
                 body_html = (
                     "<div class='vision-strip'>"
                     f"<img src='data:{mime_type};base64,{raw_b64}' alt='raw vision sample'>"
@@ -1699,7 +1702,7 @@ def _build_stream_board(events: list[dict], prompt_traces: list[dict]) -> tuple[
                     "<div class='vision-meta'>"
                     f"<div><b>counts</b> faces {data.get('faces', 0)} · persons {data.get('persons', 0)} · objects {data.get('objects', 0)}</div>"
                     f"<div><b>objects</b> {html.escape(objects)}</div>"
-                    f"{answers_html or '<div class=\"vision-answer muted\">No VLM answers</div>'}"
+                    f"{answers_block}"
                     "</div>"
                 )
             elif event_type == "assistant_reply":
@@ -1953,15 +1956,15 @@ def _write_report(
         + "<section class='viewer-grid'>"
         + stream_board_html
         + "<aside class='detail-panel'>"
-        + "<h2 style='margin:0 0 6px 0;color:#f4b942;'>Event Detail</h2>"
-        + "<p class='detail-empty' id='detail-empty'>Select a stream card to inspect its inputs, prompts, outputs, payload, and note.</p>"
+        + "<h2 style='margin:0 0 6px 0;color:#f4b942;'>Debug Timeline Event</h2>"
+        + "<p class='detail-empty' id='detail-empty'>Select a stream card to inspect debug timeline state, conversation memory / prompt IO, payload, and note.</p>"
         + "<div id='detail-body' style='display:none;'>"
         + "<div class='detail-meta'><span class='detail-chip' id='detail-time'>+0.00s</span><span class='detail-chip' id='detail-type'>type</span><span class='detail-chip' id='detail-lane'>lane</span><span class='detail-chip' id='detail-seq'>seq</span></div>"
         + "<div class='detail-section'><label>Summary</label><div id='detail-label'></div></div>"
         + "<div class='detail-section'><label>Compact Detail</label><div id='detail-detail' style='color:#9fb3c8;white-space:pre-wrap;word-break:break-word;'></div></div>"
         + "<div class='detail-section'><label>Input Context</label><div class='detail-related' id='detail-related'></div></div>"
-        + "<div class='detail-section'><label>Prompt / IO</label><div class='detail-prompts' id='detail-prompts'></div></div>"
-        + "<div class='detail-section'><label>Payload</label><pre class='detail-payload' id='detail-payload'></pre></div>"
+        + "<div class='detail-section'><label>Conversation Memory / Prompt IO</label><div class='detail-prompts' id='detail-prompts'></div></div>"
+        + "<div class='detail-section'><label>Debug Event JSON</label><pre class='detail-payload' id='detail-payload'></pre></div>"
         + "<div class='detail-section'><label>Annotation</label><textarea id='detail-note' placeholder='Add an iteration note for this event...' oninput='updateSelectedAnnotation(this.value)'></textarea></div>"
         + "<div class='detail-section'><label>Chronology</label><div class='chronology-pane' id='detail-chronology'></div></div>"
         + "</div></aside></section>"
