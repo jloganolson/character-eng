@@ -33,6 +33,7 @@ PINNED_DIR = HISTORY_ROOT / "pinned"
 CATALOG_DIR = HISTORY_ROOT / "catalog"
 DEFAULT_FREE_WARNING_GIB = 50.0
 DEFAULT_VISION_CAPTURE_FPS = 2.0
+DEFAULT_EVENT_PLAYBACK_WINDOW_S = 0.85
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -51,7 +52,9 @@ def _slug(text: str, fallback: str = "item") -> str:
 
 def _json_dump(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    tmp_path.replace(path)
 
 
 def _json_load(path: Path) -> dict:
@@ -334,6 +337,28 @@ def load_checkpoint(session_path: Path, index: int | None = None) -> dict:
     return _json_load(selected)
 
 
+def resolve_checkpoint_for_event_time(session_path: Path, event_time_s: float | None = None) -> dict:
+    direct_checkpoint = session_path / "checkpoint.json"
+    if direct_checkpoint.exists():
+        return _json_load(direct_checkpoint)
+    checkpoints = list_checkpoints(session_path)
+    if not checkpoints:
+        raise FileNotFoundError(f"no checkpoints in {session_path}")
+    if event_time_s is None:
+        return _json_load(checkpoints[-1])
+    manifest = _json_load(session_path / "manifest.json")
+    started_at = float(manifest.get("started_at", 0.0) or 0.0)
+    anchor = started_at + float(event_time_s or 0.0)
+    selected = checkpoints[0]
+    for candidate in checkpoints:
+        payload = _json_load(candidate)
+        if float(payload.get("timestamp", 0.0) or 0.0) <= anchor:
+            selected = candidate
+        else:
+            break
+    return _json_load(selected)
+
+
 def _parse_frames_jsonl(path: Path) -> list[dict]:
     if not path.exists():
         return []
@@ -372,6 +397,32 @@ class PlaybackPlan:
             "audio_start_s": self.audio_start_s,
             "video_frame_count": len(self.video_frames),
         }
+
+
+def _nearest_frame_entry(session_path: Path, *, event_time_s: float) -> dict | None:
+    manifest_path = session_path / "manifest.json"
+    if not manifest_path.exists():
+        return None
+    manifest = _json_load(manifest_path)
+    started_at = float(manifest.get("started_at", 0.0) or 0.0)
+    anchor = started_at + float(event_time_s or 0.0)
+    media_dir = session_path / "media"
+    best_entry = None
+    best_delta = None
+    for entry in _parse_frames_jsonl(media_dir / "video" / "frames.jsonl"):
+        frame_ts = float(entry.get("timestamp", 0.0) or 0.0)
+        delta = abs(frame_ts - anchor)
+        if best_delta is None or delta < best_delta:
+            frame_path = media_dir / "video" / str(entry.get("path", ""))
+            if not frame_path.exists():
+                continue
+            best_entry = {
+                **entry,
+                "abs_path": str(frame_path),
+                "relative_to_event_s": round(frame_ts - anchor, 3),
+            }
+            best_delta = delta
+    return best_entry
 
 
 class PlaybackRunner:
@@ -571,6 +622,7 @@ class SessionArchive:
         self.events_path = self.path / "events.jsonl"
         self.manifest_path = self.path / "manifest.json"
         self._event_lock = threading.Lock()
+        self._manifest_lock = threading.RLock()
         self._checkpoint_count = 0
         self._event_count = 0
         self._video_index = 0
@@ -598,6 +650,11 @@ class SessionArchive:
                 "moment_count": 0,
                 "promoted": False,
                 "pinned_path": "",
+                "record_mode": "full",
+                "replay_capture_enabled": True,
+                "debug_only_reason": "",
+                "rewind_count": 0,
+                "last_rewind": {},
                 "disk_warning": self.disk_warning(),
                 "free_gib": round(_disk_free_gib(self.root), 2),
                 "media": {
@@ -619,18 +676,21 @@ class SessionArchive:
         return ""
 
     def _manifest(self) -> dict:
-        return _json_load(self.manifest_path)
+        with self._manifest_lock:
+            return _json_load(self.manifest_path)
 
     def _write_manifest(self, payload: dict) -> None:
-        _json_dump(self.manifest_path, payload)
+        with self._manifest_lock:
+            _json_dump(self.manifest_path, payload)
 
     def update_manifest(self, **updates: Any) -> dict:
-        manifest = self._manifest()
-        manifest.update(updates)
-        manifest["free_gib"] = round(_disk_free_gib(self.root), 2)
-        manifest["disk_warning"] = self.disk_warning()
-        self._write_manifest(manifest)
-        return manifest
+        with self._manifest_lock:
+            manifest = _json_load(self.manifest_path)
+            manifest.update(updates)
+            manifest["free_gib"] = round(_disk_free_gib(self.root), 2)
+            manifest["disk_warning"] = self.disk_warning()
+            _json_dump(self.manifest_path, manifest)
+            return manifest
 
     def status(self) -> dict:
         manifest = self._manifest()
@@ -645,8 +705,44 @@ class SessionArchive:
             "annotation_count": manifest.get("annotation_count", 0),
             "moment_count": manifest.get("moment_count", 0),
             "promoted": bool(manifest.get("promoted", False)),
+            "record_mode": str(manifest.get("record_mode", "full")),
+            "replay_capture_enabled": bool(manifest.get("replay_capture_enabled", True)),
+            "debug_only_reason": str(manifest.get("debug_only_reason", "")),
+            "rewind_count": int(manifest.get("rewind_count", 0)),
+            "last_rewind": dict(manifest.get("last_rewind", {}) or {}),
             "media": manifest.get("media", {}),
         }
+
+    def replay_capture_enabled(self) -> bool:
+        manifest = self._manifest()
+        return bool(manifest.get("replay_capture_enabled", True))
+
+    def mark_debug_after_rewind(
+        self,
+        *,
+        checkpoint_payload: dict,
+        source_session_id: str,
+        reason: str,
+        source_event_time_s: float | None = None,
+    ) -> dict:
+        manifest = self._manifest()
+        rewind_count = int(manifest.get("rewind_count", 0)) + 1
+        rewind_meta = {
+            "at_iso": _iso(),
+            "source_session_id": source_session_id,
+            "checkpoint_index": int(checkpoint_payload.get("checkpoint_index", 0)),
+            "checkpoint_label": str(checkpoint_payload.get("label", "")),
+            "checkpoint_timestamp": float(checkpoint_payload.get("timestamp", 0.0) or 0.0),
+            "source_event_time_s": None if source_event_time_s is None else float(source_event_time_s),
+            "reason": reason,
+        }
+        return self.update_manifest(
+            record_mode="debug_only",
+            replay_capture_enabled=False,
+            debug_only_reason=reason,
+            rewind_count=rewind_count,
+            last_rewind=rewind_meta,
+        )
 
     def record_event(self, event_type: str, data: dict, *, timestamp: float | None = None) -> None:
         payload = {
@@ -675,13 +771,17 @@ class SessionArchive:
         context_version: int,
         had_user_input: bool,
     ) -> Path:
-        path = self.checkpoints_dir / f"{self._checkpoint_count:04d}_{_slug(label, 'checkpoint')}.json"
+        if not self.replay_capture_enabled():
+            return self.checkpoints_dir / "disabled.debug-only"
+        with self._manifest_lock:
+            checkpoint_index = self._checkpoint_count
+            path = self.checkpoints_dir / f"{checkpoint_index:04d}_{_slug(label, 'checkpoint')}.json"
         payload = {
             "version": 1,
             "session_id": self.session_id,
             "character": character,
             "label": label,
-            "checkpoint_index": self._checkpoint_count,
+            "checkpoint_index": checkpoint_index,
             "timestamp": _now_ts(),
             "timestamp_iso": _iso(),
             "context_version": context_version,
@@ -695,37 +795,47 @@ class SessionArchive:
             "log_entries": log_entries,
         }
         _json_dump(path, payload)
-        self._checkpoint_count += 1
-        self.update_manifest(checkpoint_count=self._checkpoint_count)
+        with self._manifest_lock:
+            self._checkpoint_count += 1
+            next_count = self._checkpoint_count
+        self.update_manifest(checkpoint_count=next_count)
         return path
 
     def record_user_audio(self, pcm: bytes) -> None:
+        if not self.replay_capture_enabled():
+            return
         self._user_audio.append(pcm)
 
     def record_assistant_audio(self, pcm: bytes) -> None:
+        if not self.replay_capture_enabled():
+            return
         self._assistant_audio.append(pcm)
 
     def record_video_frame(self, jpeg_bytes: bytes, *, timestamp: float | None = None, source: str = "vision") -> Path | None:
+        if not self.replay_capture_enabled():
+            return None
         if not jpeg_bytes:
             return None
-        frame_name = f"frame_{self._video_index:06d}.jpg"
-        frame_path = self.video_dir / frame_name
-        frame_path.write_bytes(jpeg_bytes)
-        _append_jsonl(
-            self.video_dir / "frames.jsonl",
-            {
-                "frame_index": self._video_index,
-                "timestamp": float(timestamp or _now_ts()),
-                "timestamp_iso": _iso(timestamp),
-                "source": source,
-                "path": frame_name,
-            },
-        )
-        self._video_index += 1
-        manifest = self._manifest()
-        media = dict(manifest.get("media", {}))
-        media["video_frame_count"] = self._video_index
-        media["video_frames_path"] = str(self.video_dir / "frames.jsonl")
+        with self._manifest_lock:
+            frame_index = self._video_index
+            frame_name = f"frame_{frame_index:06d}.jpg"
+            frame_path = self.video_dir / frame_name
+            frame_path.write_bytes(jpeg_bytes)
+            _append_jsonl(
+                self.video_dir / "frames.jsonl",
+                {
+                    "frame_index": frame_index,
+                    "timestamp": float(timestamp or _now_ts()),
+                    "timestamp_iso": _iso(timestamp),
+                    "source": source,
+                    "path": frame_name,
+                },
+            )
+            self._video_index += 1
+            manifest = _json_load(self.manifest_path)
+            media = dict(manifest.get("media", {}))
+            media["video_frame_count"] = self._video_index
+            media["video_frames_path"] = str(self.video_dir / "frames.jsonl")
         self.update_manifest(media=media)
         return frame_path
 
@@ -765,6 +875,19 @@ class SessionArchive:
         if auto_promote:
             self.promote("pinned")
         return self.annotations_path
+
+    def list_annotations(self) -> list[dict]:
+        if not self.annotations_path.exists():
+            return []
+        entries: list[dict] = []
+        for line in self.annotations_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return entries
 
     def capture_moment(
         self,
@@ -836,7 +959,7 @@ class SessionArchive:
 
         metadata = {
             "version": 1,
-            "type": "moment",
+            "type": "snippet",
             "title": title,
             "session_id": self.session_id,
             "source_session_path": str(self.path),
@@ -845,6 +968,8 @@ class SessionArchive:
             "window_before_s": window_before_s,
             "window_after_s": window_after_s,
             "bundle": bundle or {},
+            "capture_mode": str((bundle or {}).get("capture_mode", "turn_context")),
+            "vision_inputs": dict((bundle or {}).get("vision_inputs", {}) or {}),
         }
         _json_dump(moment_dir / "manifest.json", metadata)
         manifest = self._manifest()
@@ -935,6 +1060,10 @@ class HistoryService:
         items.sort(key=lambda item: str(item.get("started_at_iso") or item.get("started_at") or ""), reverse=True)
         return items[:limit]
 
+    def list_annotations(self, session_id: str | None = None) -> list[dict]:
+        session = self._resolve_active_or_ref(session_id)
+        return session.list_annotations()
+
     def start_session(self, *, session_id: str, character: str, model: str, model_name: str = "") -> SessionArchive:
         with self._lock:
             self.current = SessionArchive(
@@ -1010,6 +1139,12 @@ class HistoryService:
             window_after_s=float(payload.get("window_after_s", 10.0)),
         )
 
+    def capture_snippet(self, payload: dict) -> Path:
+        bundle = dict(payload.get("bundle") or {})
+        bundle["capture_mode"] = str(payload.get("capture_mode") or bundle.get("capture_mode") or "turn_context")
+        payload = {**payload, "bundle": bundle}
+        return self.capture_moment(payload)
+
     def promote(self, *, session_id: str | None = None, kind: str = "pinned") -> Path:
         session = self._resolve_active_or_ref(session_id)
         return session.promote(kind)
@@ -1019,6 +1154,20 @@ class HistoryService:
         if session_path is None:
             raise FileNotFoundError(f"unknown session: {session_ref}")
         return load_checkpoint(session_path, checkpoint_index)
+
+    def resolve_checkpoint_for_event(self, session_ref: str, event_time_s: float | None = None) -> dict:
+        session_path = resolve_session_path(self.root, session_ref)
+        if session_path is None:
+            raise FileNotFoundError(f"unknown session: {session_ref}")
+        return resolve_checkpoint_for_event_time(session_path, event_time_s)
+
+    def nearest_frame_for_event(self, session_ref: str, event_time_s: float | None = None) -> dict:
+        session_path = resolve_session_path(self.root, session_ref)
+        if session_path is None:
+            raise FileNotFoundError(f"unknown session: {session_ref}")
+        if event_time_s is None:
+            return {}
+        return _nearest_frame_entry(session_path, event_time_s=float(event_time_s)) or {}
 
     def prepare_playback(self, session_ref: str, checkpoint_index: int | None = None) -> PlaybackPlan:
         session_path = resolve_session_path(self.root, session_ref)
@@ -1037,7 +1186,7 @@ class HistoryService:
         audio_start_s = 0.0
         video_frames: list[dict] = []
 
-        if source_kind == "moment":
+        if source_kind in {"moment", "snippet"}:
             candidate_audio_paths = (
                 media_dir / "audio" / "user_input_clip.wav",
                 media_dir / "audio" / "user_input_clip.wav.gz",
@@ -1105,6 +1254,61 @@ class HistoryService:
             checkpoint_label=checkpoint_label,
             audio_path=audio_path,
             audio_start_s=audio_start_s,
+            video_frames=video_frames,
+        )
+
+    def prepare_event_playback(
+        self,
+        session_ref: str,
+        *,
+        event_time_s: float,
+        window_before_s: float = DEFAULT_EVENT_PLAYBACK_WINDOW_S,
+        window_after_s: float = DEFAULT_EVENT_PLAYBACK_WINDOW_S,
+        include_audio: bool = False,
+    ) -> PlaybackPlan:
+        session_path = resolve_session_path(self.root, session_ref)
+        if session_path is None:
+            raise FileNotFoundError(f"unknown session: {session_ref}")
+        manifest = _json_load(session_path / "manifest.json")
+        checkpoint_payload = resolve_checkpoint_for_event_time(session_path, event_time_s)
+        checkpoint_idx = int(checkpoint_payload.get("checkpoint_index", 0))
+        checkpoint_label = str(checkpoint_payload.get("label", "checkpoint"))
+        started_at = float(manifest.get("started_at", 0.0) or 0.0)
+        anchor = started_at + float(event_time_s or 0.0)
+        media_dir = session_path / "media"
+
+        audio_path = None
+        if include_audio:
+            candidate_audio_paths = [
+                Path(str((manifest.get("media", {}) or {}).get("user_audio_path", ""))),
+                media_dir / "audio" / "user_input.wav.gz",
+                media_dir / "audio" / "user_input.wav",
+            ]
+            audio_path = next((path for path in candidate_audio_paths if path and path.exists()), None)
+
+        video_frames: list[dict] = []
+        for entry in _parse_frames_jsonl(media_dir / "video" / "frames.jsonl"):
+            frame_ts = float(entry.get("timestamp", 0.0) or 0.0)
+            if frame_ts < anchor - window_before_s or frame_ts > anchor + window_after_s:
+                continue
+            frame_path = media_dir / "video" / str(entry.get("path", ""))
+            if not frame_path.exists():
+                continue
+            video_frames.append({
+                **entry,
+                "relative_s": max(0.0, frame_ts - anchor + window_before_s),
+                "abs_path": str(frame_path),
+            })
+
+        return PlaybackPlan(
+            source_path=session_path,
+            source_kind="event",
+            session_id=str(manifest.get("session_id") or session_path.name),
+            checkpoint_payload=checkpoint_payload,
+            checkpoint_index=checkpoint_idx,
+            checkpoint_label=checkpoint_label,
+            audio_path=audio_path,
+            audio_start_s=max(0.0, float(event_time_s or 0.0) - window_before_s) if audio_path is not None else 0.0,
             video_frames=video_frames,
         )
 
@@ -1179,6 +1383,7 @@ class HistoryService:
         archive.events_path = session_path / "events.jsonl"
         archive.manifest_path = session_path / "manifest.json"
         archive._event_lock = threading.Lock()
+        archive._manifest_lock = threading.RLock()
         archive._checkpoint_count = int(manifest.get("checkpoint_count", 0))
         archive._event_count = int(manifest.get("event_count", 0))
         archive._video_index = int(manifest.get("media", {}).get("video_frame_count", 0))

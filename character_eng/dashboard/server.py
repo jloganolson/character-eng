@@ -10,6 +10,7 @@ from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from character_eng.dashboard.events import DashboardEventCollector
 
@@ -40,6 +41,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_history_state()
         elif self.path == "/history/list":
             self._serve_history_list()
+        elif self.path.startswith("/history/checkpoint"):
+            self._serve_history_checkpoint()
+        elif self.path.startswith("/history/frame"):
+            self._serve_history_frame()
+        elif self.path.startswith("/history/annotations"):
+            self._serve_history_annotations()
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -93,8 +100,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.wfile.write(resp)
         elif self.path == "/history/annotation":
             self._handle_history_annotation()
-        elif self.path == "/history/moment":
-            self._handle_history_moment()
+        elif self.path == "/history/moment" or self.path == "/history/snippet":
+            self._handle_history_snippet()
         elif self.path == "/history/promote":
             self._handle_history_promote()
         elif self.path == "/history/prune":
@@ -203,6 +210,62 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_history_annotations(self):
+        history_api = getattr(self, "history_api", None)
+        payload = []
+        if history_api is not None:
+            query = parse_qs(urlparse(self.path).query)
+            session_id = (query.get("session_id") or [None])[0]
+            try:
+                payload = history_api.list_annotations(session_id=session_id)
+            except FileNotFoundError:
+                payload = []
+        body = json.dumps(payload).encode()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_history_checkpoint(self):
+        history_api = getattr(self, "history_api", None)
+        if history_api is None:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "history disabled"})
+            return
+        query = parse_qs(urlparse(self.path).query)
+        session_id = (query.get("session_id") or [None])[0]
+        event_time_raw = (query.get("event_time_s") or [None])[0]
+        try:
+            event_time_s = None if event_time_raw in (None, "") else float(event_time_raw)
+            payload = history_api.resolve_checkpoint_for_event(session_id, event_time_s=event_time_s)
+            self._respond_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "checkpoint_index": int(payload.get("checkpoint_index", 0)),
+                    "label": str(payload.get("label", "checkpoint")),
+                    "session_id": str(payload.get("session_id", session_id or "")),
+                },
+            )
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
+
+    def _serve_history_frame(self):
+        history_api = getattr(self, "history_api", None)
+        if history_api is None:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "history disabled"})
+            return
+        query = parse_qs(urlparse(self.path).query)
+        session_id = (query.get("session_id") or [None])[0]
+        event_time_raw = (query.get("event_time_s") or [None])[0]
+        try:
+            event_time_s = None if event_time_raw in (None, "") else float(event_time_raw)
+            payload = history_api.nearest_frame_for_event(session_id, event_time_s=event_time_s)
+            self._respond_json(HTTPStatus.OK, {"ok": True, "frame": payload})
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
+
     def _read_json_body(self) -> dict:
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
@@ -228,14 +291,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
 
-    def _handle_history_moment(self):
+    def _handle_history_snippet(self):
         history_api = getattr(self, "history_api", None)
         if history_api is None:
             self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "history disabled"})
             return
         try:
             data = self._read_json_body()
-            path = history_api.capture_moment(data)
+            path = history_api.capture_snippet(data)
             self._respond_json(HTTPStatus.OK, {"ok": True, "path": str(path), "status": history_api.status()})
         except Exception as e:
             self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})

@@ -157,9 +157,9 @@ def test_write_report_includes_dashboard_trace(tmp_path: Path):
     assert "Row Scale" in body
     assert "Reset View" in body
     assert "Compact" in body
-    assert "Event Detail" in body
+    assert "Debug Timeline Event" in body
     assert "Input Context" in body
-    assert "Prompt / IO" in body
+    assert "Conversation Memory / Prompt IO" in body
     assert "Chronology" in body
     assert "Assistant first token" in body
     assert "tts start +" in body

@@ -12,6 +12,8 @@ import pytest
 from character_eng.dashboard.events import DashboardEventCollector
 from character_eng.dashboard.server import start_dashboard
 from character_eng.history import HistoryService
+from character_eng.person import PeopleState
+from character_eng.world import Goals, Script, WorldState
 
 
 class TestEventCollector:
@@ -97,7 +99,20 @@ class TestDashboardServer:
                             nested.rmdir()
                     child.rmdir()
         history = HistoryService(root=history_root, free_warning_gib=0.0)
-        history.start_session(session_id="sess-test", character="greg", model="test")
+        archive = history.start_session(session_id="sess-test", character="greg", model="test")
+        archive.capture_checkpoint(
+            label="start",
+            character="greg",
+            session_snapshot={"system_prompt": "system", "messages": [], "tagged_system_indices": {}},
+            world=WorldState(),
+            people=PeopleState(),
+            scenario=None,
+            script=Script(),
+            goals=Goals(),
+            log_entries=[],
+            context_version=0,
+            had_user_input=False,
+        )
         thread, port = start_dashboard(c, iq, port=0, report_dir=report_dir, history_api=history)
         # Wait for server to be ready
         for _ in range(20):
@@ -186,6 +201,12 @@ class TestDashboardServer:
         assert listing[0]["session_id"] == "sess-test"
         assert listing[0]["ref"] == "sess-test"
 
+        checkpoint = json.loads(
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/history/checkpoint?session_id=sess-test").read()
+        )
+        assert checkpoint["ok"] is True
+        assert checkpoint["session_id"] == "sess-test"
+
         annotation_req = urllib.request.Request(
             f"http://127.0.0.1:{port}/history/annotation",
             data=json.dumps({"session_id": "sess-test", "note": "slow response"}).encode(),
@@ -195,6 +216,12 @@ class TestDashboardServer:
         annotation_resp = json.loads(urllib.request.urlopen(annotation_req).read())
         assert annotation_resp["ok"] is True
         assert Path(annotation_resp["path"]).exists()
+
+        annotations = json.loads(
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/history/annotations?session_id=sess-test").read()
+        )
+        assert len(annotations) == 1
+        assert annotations[0]["note"] == "slow response"
 
         promote_req = urllib.request.Request(
             f"http://127.0.0.1:{port}/history/promote",
@@ -207,12 +234,12 @@ class TestDashboardServer:
         assert Path(promote_resp["path"]).exists()
 
         history.finalize_current()
-        moment_req = urllib.request.Request(
-            f"http://127.0.0.1:{port}/history/moment",
+        snippet_req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/history/snippet",
             data=json.dumps({"session_id": "sess-test", "title": "snapshot", "event_time_s": 0.0}).encode(),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        moment_resp = json.loads(urllib.request.urlopen(moment_req).read())
-        assert moment_resp["ok"] is True
-        assert Path(moment_resp["path"]).exists()
+        snippet_resp = json.loads(urllib.request.urlopen(snippet_req).read())
+        assert snippet_resp["ok"] is True
+        assert Path(snippet_resp["path"]).exists()

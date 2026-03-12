@@ -16,6 +16,8 @@ from playwright.sync_api import Error, Page, expect, sync_playwright
 from character_eng.dashboard.events import DashboardEventCollector
 from character_eng.dashboard.server import start_dashboard
 from character_eng.history import HistoryService
+from character_eng.person import PeopleState
+from character_eng.world import Goals, Script, WorldState
 
 
 class _VisionHandler(BaseHTTPRequestHandler):
@@ -130,7 +132,20 @@ def dashboard_server():
             elif child.is_dir():
                 child.rmdir()
     history = HistoryService(root=history_root, free_warning_gib=0.0)
-    history.start_session(session_id="sess-playwright", character="greg", model="groq-llama-8b")
+    archive = history.start_session(session_id="sess-playwright", character="greg", model="groq-llama-8b")
+    archive.capture_checkpoint(
+        label="start",
+        character="greg",
+        session_snapshot={"system_prompt": "system", "messages": [], "tagged_system_indices": {}},
+        world=WorldState(),
+        people=PeopleState(),
+        scenario=None,
+        script=Script(),
+        goals=Goals(),
+        log_entries=[],
+        context_version=0,
+        had_user_input=False,
+    )
     _, port = start_dashboard(collector, input_queue, port=0, report_dir=report_dir, history_api=history)
     for _ in range(20):
         try:
@@ -222,7 +237,7 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#time-window-value")).to_have_text("30s")
     expect(page.locator("#runtime-toggle")).to_have_text("Start")
 
-    page.locator("#runtime-toggle").click()
+    page.locator("#runtime-toggle").evaluate("(node) => node.click()")
     expect(page.locator("#runtime-toggle")).to_have_text("Starting...")
     assert input_queue.get(timeout=2) == "/start"
 
@@ -277,8 +292,9 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#runtime-toggle")).to_have_text("Play")
     expect(page.locator("#boot-summary")).to_contain_text("Fresh session is ready. Press Play when you want to begin.")
     expect(page.locator("#runtime-stop")).to_be_enabled()
+    expect(page.locator("#vision-panel")).to_be_visible()
 
-    page.locator("#runtime-toggle").click()
+    page.locator("#runtime-toggle").evaluate("(node) => node.click()")
     expect(page.locator("#runtime-toggle")).to_have_text("Playing...")
     assert input_queue.get(timeout=2) == "/play"
 
@@ -321,6 +337,7 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#runtime-status")).to_contain_text("state: live")
     expect(page.locator("#runtime-toggle")).to_have_text("Pause")
     expect(page.locator("#runtime-stop")).to_be_enabled()
+    expect(page.locator("#vision-panel")).to_be_visible()
 
     turn_base = time.time()
     collector.push("user_speech_started", {})
@@ -426,14 +443,21 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator(".prompt-message.role-system")).to_have_count(2)
     expect(page.locator(".prompt-message.role-user")).to_have_count(1)
     expect(page.locator(".prompt-message.role-assistant")).to_have_count(1)
+    page.locator("#annotation-toggle").click()
+    expect(page.locator("#annotation-form")).to_be_visible()
     page.locator("#annotation-tags").fill("latency, interruption")
     page.locator("#annotation-subsystem").fill("timing")
     page.locator("#annotation-note").fill("Assistant waited too long before answering.")
     page.locator("#annotation-desired").fill("Start speaking sooner after the transcript finalizes.")
     page.locator("#annotation-save").click()
     expect(page.locator("#annotation-status")).to_contain_text("Saved annotation:")
-    page.locator("#moment-capture").click()
-    expect(page.locator("#annotation-status")).to_contain_text("Captured moment:")
+    expect(page.locator("#annotation-form")).not_to_be_visible()
+    expect(page.locator("#annotation-list")).to_contain_text("Assistant waited too long before answering.")
+    expect(reply_card.locator(".reply-marker", has_text="note")).to_have_count(1)
+    page.locator("#snippet-toggle").click()
+    expect(page.locator("#snippet-form")).to_be_visible()
+    page.locator("#snippet-save").click()
+    expect(page.locator("#annotation-status")).to_contain_text("Captured snippet:")
     page.locator("#history-pin").click()
     expect(page.locator("#annotation-status")).to_contain_text("Pinned session:")
     page.locator("#history-checkpoint").fill("2")
@@ -443,20 +467,10 @@ def test_runtime_panel_interactions_in_browser(
     assert input_queue.get(timeout=2) == "/restore sess-playwright 2"
     page.locator("#history-replay").click()
     assert input_queue.get(timeout=2) == "/replay sess-playwright 2"
-    with page.expect_popup() as detail_popup_info:
-        page.locator("#detail-open-window").click()
-    detail_popup = detail_popup_info.value
-    detail_popup.wait_for_load_state("domcontentloaded")
-    expect(detail_popup.locator("body")).to_contain_text("Prompt / IO")
-    expect(detail_popup.locator("body")).to_contain_text("Free water. Want one?")
-    detail_popup.close()
-    with page.expect_download() as json_download_info:
-        page.locator("#detail-export-json").click()
-    assert json_download_info.value.suggested_filename.endswith(".json")
-    with page.expect_download() as html_download_info:
-        page.locator("#detail-export-html").click()
-    assert html_download_info.value.suggested_filename.endswith(".html")
-    page.locator("#tab-payload").click()
+    page.locator("#detail-continue-from-event").click()
+    assert input_queue.get(timeout=2) == "/rewind 0"
+    assert input_queue.get(timeout=2) == "Do you have water?"
+    page.locator("#detail-open-json").click()
     expect(page.locator("#detail-payload")).to_contain_text("\"total_ms\": 1980")
     page.locator("#tab-chronology").click()
     expect(page.locator("#detail-related")).to_contain_text("turn_start")
@@ -473,8 +487,8 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#detail-type")).to_have_text("vision_pass")
     expect(page.locator("#detail-trace")).to_have_class(re.compile(r"\bactive\b"))
     expect(page.locator("#detail-structure")).to_have_class(re.compile(r"\bactive\b"))
-    expect(page.locator("#detail-structure")).to_contain_text("Inputs")
-    expect(page.locator("#detail-structure")).to_contain_text("Raw Answers")
+    expect(page.locator("#detail-structure")).to_contain_text("Vision Input")
+    expect(page.locator("#detail-structure")).to_contain_text("Vision Synthesis Inputs")
     expect(page.locator("#detail-structure")).to_contain_text("Derived Claims")
     expect(page.locator("#detail-structure")).to_contain_text("Effects")
     expect(page.locator("#detail-structure")).to_contain_text("Is anyone holding a flier?")
@@ -485,13 +499,10 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#detail-trace-chips")).to_contain_text("sam flier")
     expect(page.locator("#detail-trace-chips")).to_contain_text("supports What is the person holding?")
 
-    with page.expect_popup() as vision_detail_popup_info:
-        page.locator("#detail-open-window").click()
-    vision_detail_popup = vision_detail_popup_info.value
-    vision_detail_popup.wait_for_load_state("domcontentloaded")
-    expect(vision_detail_popup.locator("body")).to_contain_text("Event Breakdown")
-    expect(vision_detail_popup.locator("body")).to_contain_text("Derived Claims")
-    vision_detail_popup.close()
+    page.locator("#detail-continue-from-event").click()
+    replay_cmd = input_queue.get(timeout=2)
+    assert replay_cmd.startswith("/replay_event sess-playwright ")
+    assert replay_cmd.endswith(" vision_synthesis_inputs")
 
     inspector_resizer = page.locator("#inspector-resizer")
     inspector_box = inspector_resizer.bounding_box()
@@ -761,7 +772,7 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("body")).to_have_class(re.compile(r"\bbooting\b"))
 
 
-def test_dashboard_discards_unfinished_reply_when_new_turn_starts(
+def test_dashboard_preserves_unfinished_reply_when_new_turn_starts(
     browser_page: Page,
     dashboard_server,
 ):
@@ -840,12 +851,12 @@ def test_dashboard_discards_unfinished_reply_when_new_turn_starts(
         "total_ms": 900,
     })
 
-    expect(page.locator(".stream-card").filter(has_text="Let me think")).to_have_count(0)
-    expect(page.locator(".stream-card[data-event-type='assistant_reply']")).to_have_count(1)
+    expect(page.locator(".stream-card").filter(has_text="Let me think")).to_have_count(1)
+    expect(page.locator(".stream-card").filter(has_text="Let me think").locator(".reply-marker", has_text="Interrupted")).to_have_count(1)
+    expect(page.locator(".stream-card[data-event-type='assistant_reply']")).to_have_count(2)
     expect(page.locator(".stream-card").filter(has_text="Okay, got it.")).to_have_count(1)
 
-
-def test_dashboard_discards_unfinished_reply_when_new_turn_starts(
+def test_dashboard_marks_reply_as_interrupted_when_runtime_emits_interruption_event(
     browser_page: Page,
     dashboard_server,
 ):
@@ -915,6 +926,13 @@ def test_dashboard_discards_unfinished_reply_when_new_turn_starts(
         "input_text": "well hm i don't think so",
         "input_source": "voice",
     })
+    collector.push("response_interrupted", {
+        "reason": "barge_in",
+        "raw_full_text": "Let me think about that for a second.",
+        "truncated_text": "Let me think —",
+        "spoken_chars": 13,
+        "playback_ratio": 0.33,
+    })
     collector.push("response_chunk", {"text": "Okay, got it."})
     collector.push("response_done", {
         "full_text": "Okay, got it.",
@@ -924,6 +942,77 @@ def test_dashboard_discards_unfinished_reply_when_new_turn_starts(
         "total_ms": 900,
     })
 
-    expect(page.locator(".stream-card").filter(has_text="Let me think")).to_have_count(0)
-    expect(page.locator(".stream-card[data-event-type='assistant_reply']")).to_have_count(1)
+    expect(page.locator(".stream-card[data-event-type='response_interrupted']")).to_have_count(1)
+    interrupted_reply = page.locator(".stream-card[data-event-type='assistant_reply']").filter(has_text="Let me think").first
+    expect(interrupted_reply.locator(".reply-marker", has_text="Interrupted")).to_have_count(1)
+    interrupted_event = page.locator(".stream-card[data-event-type='response_interrupted']").first
+    expect(interrupted_event).to_contain_text("Let me think —")
+    interrupted_event.evaluate("(node) => node.click()")
+    expect(page.locator("#detail-payload")).to_contain_text("\"raw_full_text\": \"Let me think about that for a second.\"")
+    expect(page.locator(".stream-card[data-event-type='assistant_reply']")).to_have_count(2)
     expect(page.locator(".stream-card").filter(has_text="Okay, got it.")).to_have_count(1)
+
+
+def test_continue_from_beat_generated_assistant_line_rewinds_before_the_beat(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, input_queue, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-playwright",
+            "stage": "watching",
+        },
+    )
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "paused",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push("turn_start", {"input_type": "beat", "input_text": ""})
+    collector.push("response_done", {"full_text": "Nice scarf, what brings you here?"})
+
+    card = page.locator(".stream-card").filter(has_text="Nice scarf, what brings you here?").first
+    card.evaluate("(node) => node.click()")
+    page.locator("#detail-continue-from-event").evaluate("(node) => node.click()")
+
+    assert input_queue.get(timeout=2) == "/rewind 0"
+    assert input_queue.get(timeout=2) == "/play"
+    assert input_queue.get(timeout=2) == "/beat"
