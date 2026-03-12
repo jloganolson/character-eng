@@ -1,0 +1,1257 @@
+from __future__ import annotations
+
+import argparse
+import gzip
+import io
+import json
+import os
+import re
+import shutil
+import threading
+import time
+import wave
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable
+
+from character_eng.person import PeopleState, Person
+from character_eng.scenario import (
+    ScenarioGuardrails,
+    ScenarioScript,
+    Stage,
+    StageExit,
+    VisualRequirements,
+)
+from character_eng.vision.client import VisionClient
+from character_eng.world import Goals, Script, Beat, WorldState
+
+HISTORY_ROOT = Path(__file__).resolve().parent.parent / "history"
+SESSIONS_DIR = HISTORY_ROOT / "sessions"
+MOMENTS_DIR = HISTORY_ROOT / "moments"
+PINNED_DIR = HISTORY_ROOT / "pinned"
+CATALOG_DIR = HISTORY_ROOT / "catalog"
+DEFAULT_FREE_WARNING_GIB = 50.0
+DEFAULT_VISION_CAPTURE_FPS = 2.0
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _now_ts() -> float:
+    return time.time()
+
+
+def _iso(ts: float | None = None) -> str:
+    return datetime.fromtimestamp(ts or _now_ts(), tz=timezone.utc).isoformat()
+
+
+def _slug(text: str, fallback: str = "item") -> str:
+    cleaned = _SLUG_RE.sub("-", (text or "").strip().lower()).strip("-")
+    return cleaned or fallback
+
+
+def _json_dump(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _json_load(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _append_jsonl(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def _dir_size_bytes(path: Path) -> int:
+    if not path.exists():
+        return 0
+    total = 0
+    for child in path.rglob("*"):
+        if child.is_file():
+            try:
+                total += child.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def _disk_free_gib(path: Path) -> float:
+    usage = shutil.disk_usage(path)
+    return usage.free / (1024 ** 3)
+
+
+def _ensure_roots(root: Path) -> None:
+    for directory in (
+        root,
+        root / "sessions",
+        root / "moments",
+        root / "pinned",
+        root / "catalog",
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+
+
+def serialize_world(world: WorldState | None) -> dict:
+    if world is None:
+        return {}
+    return {
+        "static": list(world.static),
+        "dynamic": dict(world.dynamic),
+        "events": list(world.events),
+        "pending": list(world.pending),
+        "next_id": int(getattr(world, "_next_id", 1)),
+    }
+
+
+def deserialize_world(payload: dict | None) -> WorldState | None:
+    if not payload:
+        return None
+    world = WorldState(
+        static=list(payload.get("static", [])),
+        dynamic=dict(payload.get("dynamic", {})),
+        events=list(payload.get("events", [])),
+        pending=list(payload.get("pending", [])),
+    )
+    world._next_id = int(payload.get("next_id", len(world.dynamic) + 1))
+    return world
+
+
+def serialize_people(people: PeopleState | None) -> dict:
+    if people is None:
+        return {}
+    return {
+        "next_id": int(getattr(people, "_next_id", 1)),
+        "people": [
+            {
+                "person_id": person.person_id,
+                "name": person.name,
+                "presence": person.presence,
+                "facts": dict(person.facts),
+                "history": list(person.history),
+                "next_fact_id": int(getattr(person, "_next_fact_id", 1)),
+            }
+            for person in people.people.values()
+        ],
+    }
+
+
+def deserialize_people(payload: dict | None) -> PeopleState | None:
+    if not payload:
+        return None
+    people = PeopleState()
+    people._next_id = int(payload.get("next_id", 1))
+    for entry in payload.get("people", []):
+        person = Person(
+            person_id=str(entry.get("person_id", "")),
+            name=entry.get("name"),
+            presence=str(entry.get("presence", "approaching")),
+            facts=dict(entry.get("facts", {})),
+            history=list(entry.get("history", [])),
+        )
+        person._next_fact_id = int(entry.get("next_fact_id", len(person.facts) + 1))
+        people.people[person.person_id] = person
+    return people
+
+
+def serialize_scenario(scenario: ScenarioScript | None) -> dict:
+    if scenario is None:
+        return {}
+    return {
+        "name": scenario.name,
+        "start": scenario.start,
+        "current_stage": scenario.current_stage,
+        "gaze_targets": list(scenario.gaze_targets),
+        "guardrails": asdict(scenario.guardrails),
+        "visual_requirements": asdict(scenario.visual_requirements),
+        "stages": {
+            name: {
+                "name": stage.name,
+                "goal": stage.goal,
+                "exits": [asdict(exit_obj) for exit_obj in stage.exits],
+                "visual_requirements": asdict(stage.visual_requirements),
+            }
+            for name, stage in scenario.stages.items()
+        },
+    }
+
+
+def deserialize_scenario(payload: dict | None) -> ScenarioScript | None:
+    if not payload:
+        return None
+    stages: dict[str, Stage] = {}
+    for name, stage_payload in payload.get("stages", {}).items():
+        stages[name] = Stage(
+            name=str(stage_payload.get("name", name)),
+            goal=str(stage_payload.get("goal", "")),
+            exits=[
+                StageExit(
+                    condition=str(exit_payload.get("condition", "")),
+                    goto=str(exit_payload.get("goto", "")),
+                    label=str(exit_payload.get("label", "")),
+                    visual_signals=list(exit_payload.get("visual_signals", [])),
+                )
+                for exit_payload in stage_payload.get("exits", [])
+            ],
+            visual_requirements=VisualRequirements(
+                constant_questions=list(stage_payload.get("visual_requirements", {}).get("constant_questions", [])),
+                constant_sam_targets=list(stage_payload.get("visual_requirements", {}).get("constant_sam_targets", [])),
+            ),
+        )
+    return ScenarioScript(
+        name=str(payload.get("name", "")),
+        stages=stages,
+        start=str(payload.get("start", "")),
+        current_stage=str(payload.get("current_stage", payload.get("start", ""))),
+        gaze_targets=list(payload.get("gaze_targets", [])),
+        guardrails=ScenarioGuardrails(
+            always=list(payload.get("guardrails", {}).get("always", [])),
+            on_first_visible_person=list(payload.get("guardrails", {}).get("on_first_visible_person", [])),
+            on_user_leaving=list(payload.get("guardrails", {}).get("on_user_leaving", [])),
+        ),
+        visual_requirements=VisualRequirements(
+            constant_questions=list(payload.get("visual_requirements", {}).get("constant_questions", [])),
+            constant_sam_targets=list(payload.get("visual_requirements", {}).get("constant_sam_targets", [])),
+        ),
+    )
+
+
+def serialize_script(script: Script | None) -> dict:
+    if script is None:
+        return {}
+    return {
+        "beats": [
+            {
+                "line": beat.line,
+                "intent": beat.intent,
+                "condition": beat.condition,
+            }
+            for beat in script.beats
+        ],
+        "index": int(getattr(script, "_index", 0)),
+    }
+
+
+def deserialize_script(payload: dict | None) -> Script | None:
+    if not payload:
+        return None
+    script = Script(
+        beats=[
+            Beat(
+                line=str(beat.get("line", "")),
+                intent=str(beat.get("intent", "")),
+                condition=str(beat.get("condition", "")),
+            )
+            for beat in payload.get("beats", [])
+        ]
+    )
+    script._index = int(payload.get("index", 0))
+    return script
+
+
+def _write_pcm_wav(path: Path, pcm: bytes, *, sample_rate: int, channels: int = 1) -> None:
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(channels)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(pcm)
+
+
+def _read_wav_bytes(path: Path) -> tuple[dict, bytes]:
+    if path.suffix == ".gz":
+        raw = gzip.open(path, "rb").read()
+        handle: io.BytesIO | Path = io.BytesIO(raw)
+    else:
+        handle = path
+    with wave.open(handle, "rb") as wav:
+        params = {
+            "channels": wav.getnchannels(),
+            "sample_width": wav.getsampwidth(),
+            "sample_rate": wav.getframerate(),
+        }
+        frames = wav.readframes(wav.getnframes())
+    return params, frames
+
+
+def clip_audio_track(source: Path, target: Path, *, start_s: float, end_s: float) -> bool:
+    if not source.exists() or end_s <= start_s:
+        return False
+    params, frames = _read_wav_bytes(source)
+    bytes_per_frame = params["channels"] * params["sample_width"]
+    sample_rate = params["sample_rate"]
+    start_index = max(0, int(start_s * sample_rate)) * bytes_per_frame
+    end_index = max(start_index, int(end_s * sample_rate)) * bytes_per_frame
+    clipped = frames[start_index:end_index]
+    if not clipped:
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _write_pcm_wav(target, clipped, sample_rate=sample_rate, channels=params["channels"])
+    return True
+
+
+def resolve_session_path(root: Path, ref: str) -> Path | None:
+    candidate = Path(ref)
+    if candidate.exists():
+        if candidate.is_dir():
+            return candidate
+        if candidate.name == "manifest.json":
+            return candidate.parent
+    for base in (root / "sessions", root / "pinned", root / "moments"):
+        possible = base / ref
+        if possible.exists():
+            return possible
+        if not base.exists():
+            continue
+        for child in base.iterdir():
+            manifest_path = child / "manifest.json"
+            if not manifest_path.exists():
+                continue
+            try:
+                manifest = _json_load(manifest_path)
+            except json.JSONDecodeError:
+                continue
+            if manifest.get("session_id") == ref or child.name == ref:
+                return child
+    return None
+
+
+def list_checkpoints(session_path: Path) -> list[Path]:
+    checkpoints_dir = session_path / "checkpoints"
+    if not checkpoints_dir.exists():
+        return []
+    return sorted(checkpoints_dir.glob("*.json"))
+
+
+def load_checkpoint(session_path: Path, index: int | None = None) -> dict:
+    direct_checkpoint = session_path / "checkpoint.json"
+    if direct_checkpoint.exists():
+        return _json_load(direct_checkpoint)
+    checkpoints = list_checkpoints(session_path)
+    if not checkpoints:
+        raise FileNotFoundError(f"no checkpoints in {session_path}")
+    selected = checkpoints[-1] if index is None else checkpoints[index]
+    return _json_load(selected)
+
+
+def _parse_frames_jsonl(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    entries: list[dict] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if isinstance(payload, dict) and isinstance(payload.get("frames"), list):
+            entries.extend(dict(entry) for entry in payload["frames"])
+        elif isinstance(payload, dict):
+            entries.append(payload)
+    return entries
+
+
+@dataclass
+class PlaybackPlan:
+    source_path: Path
+    source_kind: str
+    session_id: str
+    checkpoint_payload: dict
+    checkpoint_index: int
+    checkpoint_label: str
+    audio_path: Path | None
+    audio_start_s: float
+    video_frames: list[dict]
+
+    def summary(self) -> dict:
+        return {
+            "source_path": str(self.source_path),
+            "source_kind": self.source_kind,
+            "session_id": self.session_id,
+            "checkpoint_index": self.checkpoint_index,
+            "checkpoint_label": self.checkpoint_label,
+            "audio_path": str(self.audio_path) if self.audio_path is not None else "",
+            "audio_start_s": self.audio_start_s,
+            "video_frame_count": len(self.video_frames),
+        }
+
+
+class PlaybackRunner:
+    def __init__(
+        self,
+        plan: PlaybackPlan,
+        *,
+        audio_callback: Callable[[bytes], None] | None = None,
+        video_callback: Callable[[bytes, dict], None] | None = None,
+        speed: float = 1.0,
+        audio_chunk_ms: int = 100,
+    ):
+        self.plan = plan
+        self.audio_callback = audio_callback
+        self.video_callback = video_callback
+        self.speed = max(float(speed), 0.1)
+        self.audio_chunk_ms = max(int(audio_chunk_ms), 10)
+        self._threads: list[threading.Thread] = []
+        self._stop = threading.Event()
+        self._started_at = 0.0
+
+    def start(self) -> None:
+        if self._threads:
+            return
+        self._stop.clear()
+        self._started_at = time.monotonic()
+        if self.audio_callback is not None and self.plan.audio_path is not None:
+            self._threads.append(threading.Thread(target=self._run_audio, daemon=True))
+        if self.video_callback is not None and self.plan.video_frames:
+            self._threads.append(threading.Thread(target=self._run_video, daemon=True))
+        for thread in self._threads:
+            thread.start()
+
+    def join(self, timeout: float | None = None) -> None:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        for thread in list(self._threads):
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            thread.join(timeout=remaining)
+
+    def stop(self) -> None:
+        self._stop.set()
+        self.join(timeout=2.0)
+        self._threads.clear()
+
+    @property
+    def is_alive(self) -> bool:
+        return any(thread.is_alive() for thread in self._threads)
+
+    def _sleep_until(self, relative_s: float) -> bool:
+        target = self._started_at + (max(relative_s, 0.0) / self.speed)
+        while not self._stop.is_set():
+            remaining = target - time.monotonic()
+            if remaining <= 0:
+                return True
+            time.sleep(min(remaining, 0.02))
+        return False
+
+    def _run_audio(self) -> None:
+        assert self.plan.audio_path is not None
+        params, frames = _read_wav_bytes(self.plan.audio_path)
+        sample_rate = int(params["sample_rate"])
+        bytes_per_frame = int(params["channels"]) * int(params["sample_width"])
+        start_frame = max(0, int(self.plan.audio_start_s * sample_rate))
+        chunk_frames = max(1, int(sample_rate * (self.audio_chunk_ms / 1000.0)))
+        offset = start_frame * bytes_per_frame
+        while offset < len(frames) and not self._stop.is_set():
+            frame_index = offset // bytes_per_frame
+            relative_s = max(0.0, (frame_index - start_frame) / sample_rate)
+            if not self._sleep_until(relative_s):
+                break
+            end_offset = min(len(frames), offset + chunk_frames * bytes_per_frame)
+            chunk = frames[offset:end_offset]
+            if chunk:
+                self.audio_callback(chunk)
+            offset = end_offset
+
+    def _run_video(self) -> None:
+        for entry in self.plan.video_frames:
+            if self._stop.is_set():
+                break
+            relative_s = float(entry.get("relative_s", 0.0) or 0.0)
+            if not self._sleep_until(relative_s):
+                break
+            frame_path = Path(entry["abs_path"])
+            if not frame_path.exists():
+                continue
+            self.video_callback(
+                frame_path.read_bytes(),
+                {
+                    "relative_s": relative_s,
+                    "timestamp": float(entry.get("timestamp", 0.0) or 0.0),
+                    "path": str(frame_path),
+                    "source": str(entry.get("source", "history_playback")),
+                },
+            )
+
+
+@dataclass
+class AudioTrackWriter:
+    path: Path
+    sample_rate: int
+    channels: int = 1
+    _wav: wave.Wave_write | None = field(default=None, init=False, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    bytes_written: int = 0
+
+    def append(self, pcm: bytes) -> None:
+        if not pcm:
+            return
+        with self._lock:
+            if self._wav is None:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                self._wav = wave.open(str(self.path), "wb")
+                self._wav.setnchannels(self.channels)
+                self._wav.setsampwidth(2)
+                self._wav.setframerate(self.sample_rate)
+            self._wav.writeframes(pcm)
+            self.bytes_written += len(pcm)
+
+    def close(self) -> None:
+        with self._lock:
+            if self._wav is not None:
+                self._wav.close()
+                self._wav = None
+
+    def compress(self) -> Path | None:
+        self.close()
+        if not self.path.exists():
+            return None
+        gz_path = self.path.with_suffix(self.path.suffix + ".gz")
+        with self.path.open("rb") as src, gzip.open(gz_path, "wb", compresslevel=9) as dst:
+            shutil.copyfileobj(src, dst)
+        self.path.unlink()
+        self.path = gz_path
+        return gz_path
+
+
+class VisionFramePoller:
+    def __init__(self, service_url: str, fps: float, callback):
+        self._service_url = service_url
+        self._fps = max(fps, 0.1)
+        self._callback = callback
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        client = VisionClient(self._service_url)
+        interval = 1.0 / self._fps
+        while not self._stop.wait(0.0):
+            started = _now_ts()
+            try:
+                jpeg = client.capture_frame_jpeg(annotated=False, max_width=1280)
+            except Exception:
+                jpeg = b""
+            if jpeg:
+                self._callback(jpeg, timestamp=started, source="vision_poll")
+            elapsed = _now_ts() - started
+            remaining = max(0.0, interval - elapsed)
+            if self._stop.wait(remaining):
+                break
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+            self._thread = None
+
+
+class SessionArchive:
+    def __init__(
+        self,
+        *,
+        root: Path,
+        session_id: str,
+        character: str,
+        model: str,
+        model_name: str = "",
+        free_warning_gib: float = DEFAULT_FREE_WARNING_GIB,
+    ):
+        self.root = root
+        self.session_id = session_id
+        self.character = character
+        self.model = model
+        self.model_name = model_name
+        self.free_warning_gib = free_warning_gib
+        self.path = root / "sessions" / session_id
+        self.checkpoints_dir = self.path / "checkpoints"
+        self.media_dir = self.path / "media"
+        self.video_dir = self.media_dir / "video"
+        self.annotations_path = self.path / "annotations.jsonl"
+        self.events_path = self.path / "events.jsonl"
+        self.manifest_path = self.path / "manifest.json"
+        self._event_lock = threading.Lock()
+        self._checkpoint_count = 0
+        self._event_count = 0
+        self._video_index = 0
+        self._started_at = _now_ts()
+        self._vision_poller: VisionFramePoller | None = None
+        self._user_audio = AudioTrackWriter(self.media_dir / "audio" / "user_input.wav", sample_rate=16000)
+        self._assistant_audio = AudioTrackWriter(self.media_dir / "audio" / "assistant_output.wav", sample_rate=24000)
+        self.path.mkdir(parents=True, exist_ok=True)
+        self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
+        self.video_dir.mkdir(parents=True, exist_ok=True)
+        self._write_manifest(
+            {
+                "version": 1,
+                "session_id": session_id,
+                "character": character,
+                "model": model,
+                "model_name": model_name,
+                "started_at": self._started_at,
+                "started_at_iso": _iso(self._started_at),
+                "ended_at": None,
+                "ended_at_iso": "",
+                "event_count": 0,
+                "checkpoint_count": 0,
+                "annotation_count": 0,
+                "moment_count": 0,
+                "promoted": False,
+                "pinned_path": "",
+                "disk_warning": self.disk_warning(),
+                "free_gib": round(_disk_free_gib(self.root), 2),
+                "media": {
+                    "user_audio_path": "",
+                    "assistant_audio_path": "",
+                    "video_frames_path": str(self.video_dir / "frames.jsonl"),
+                    "video_frame_count": 0,
+                },
+            }
+        )
+
+    def disk_warning(self) -> str:
+        free_gib = _disk_free_gib(self.root)
+        if free_gib < self.free_warning_gib:
+            return (
+                f"Low disk space: {free_gib:.1f} GiB free "
+                f"(warning threshold {self.free_warning_gib:.1f} GiB)"
+            )
+        return ""
+
+    def _manifest(self) -> dict:
+        return _json_load(self.manifest_path)
+
+    def _write_manifest(self, payload: dict) -> None:
+        _json_dump(self.manifest_path, payload)
+
+    def update_manifest(self, **updates: Any) -> dict:
+        manifest = self._manifest()
+        manifest.update(updates)
+        manifest["free_gib"] = round(_disk_free_gib(self.root), 2)
+        manifest["disk_warning"] = self.disk_warning()
+        self._write_manifest(manifest)
+        return manifest
+
+    def status(self) -> dict:
+        manifest = self._manifest()
+        return {
+            "root": str(self.root),
+            "session_id": self.session_id,
+            "session_path": str(self.path),
+            "free_gib": manifest.get("free_gib", round(_disk_free_gib(self.root), 2)),
+            "warning": manifest.get("disk_warning", ""),
+            "event_count": manifest.get("event_count", 0),
+            "checkpoint_count": manifest.get("checkpoint_count", 0),
+            "annotation_count": manifest.get("annotation_count", 0),
+            "moment_count": manifest.get("moment_count", 0),
+            "promoted": bool(manifest.get("promoted", False)),
+            "media": manifest.get("media", {}),
+        }
+
+    def record_event(self, event_type: str, data: dict, *, timestamp: float | None = None) -> None:
+        payload = {
+            "timestamp": float(timestamp or _now_ts()),
+            "timestamp_iso": _iso(timestamp),
+            "type": event_type,
+            "data": data,
+        }
+        with self._event_lock:
+            _append_jsonl(self.events_path, payload)
+            self._event_count += 1
+        self.update_manifest(event_count=self._event_count)
+
+    def capture_checkpoint(
+        self,
+        *,
+        label: str,
+        character: str,
+        session_snapshot: dict,
+        world: WorldState | None,
+        people: PeopleState | None,
+        scenario: ScenarioScript | None,
+        script: Script | None,
+        goals: Goals | None,
+        log_entries: list[dict],
+        context_version: int,
+        had_user_input: bool,
+    ) -> Path:
+        path = self.checkpoints_dir / f"{self._checkpoint_count:04d}_{_slug(label, 'checkpoint')}.json"
+        payload = {
+            "version": 1,
+            "session_id": self.session_id,
+            "character": character,
+            "label": label,
+            "checkpoint_index": self._checkpoint_count,
+            "timestamp": _now_ts(),
+            "timestamp_iso": _iso(),
+            "context_version": context_version,
+            "had_user_input": had_user_input,
+            "session": session_snapshot,
+            "world": serialize_world(world),
+            "people": serialize_people(people),
+            "scenario": serialize_scenario(scenario),
+            "script": serialize_script(script),
+            "goals": {"long_term": goals.long_term if goals is not None else ""},
+            "log_entries": log_entries,
+        }
+        _json_dump(path, payload)
+        self._checkpoint_count += 1
+        self.update_manifest(checkpoint_count=self._checkpoint_count)
+        return path
+
+    def record_user_audio(self, pcm: bytes) -> None:
+        self._user_audio.append(pcm)
+
+    def record_assistant_audio(self, pcm: bytes) -> None:
+        self._assistant_audio.append(pcm)
+
+    def record_video_frame(self, jpeg_bytes: bytes, *, timestamp: float | None = None, source: str = "vision") -> Path | None:
+        if not jpeg_bytes:
+            return None
+        frame_name = f"frame_{self._video_index:06d}.jpg"
+        frame_path = self.video_dir / frame_name
+        frame_path.write_bytes(jpeg_bytes)
+        _append_jsonl(
+            self.video_dir / "frames.jsonl",
+            {
+                "frame_index": self._video_index,
+                "timestamp": float(timestamp or _now_ts()),
+                "timestamp_iso": _iso(timestamp),
+                "source": source,
+                "path": frame_name,
+            },
+        )
+        self._video_index += 1
+        manifest = self._manifest()
+        media = dict(manifest.get("media", {}))
+        media["video_frame_count"] = self._video_index
+        media["video_frames_path"] = str(self.video_dir / "frames.jsonl")
+        self.update_manifest(media=media)
+        return frame_path
+
+    def start_vision_capture(self, service_url: str, *, fps: float = DEFAULT_VISION_CAPTURE_FPS) -> None:
+        if self._vision_poller is not None:
+            return
+        self._vision_poller = VisionFramePoller(service_url, fps, self.record_video_frame)
+        self._vision_poller.start()
+
+    def stop_vision_capture(self) -> None:
+        if self._vision_poller is not None:
+            self._vision_poller.stop()
+            self._vision_poller = None
+
+    def promote(self, kind: str = "pinned") -> Path:
+        destination_root = self.root / ("pinned" if kind == "pinned" else "moments")
+        destination_root.mkdir(parents=True, exist_ok=True)
+        destination = destination_root / self.path.name
+        if destination.exists():
+            shutil.rmtree(destination)
+        shutil.copytree(self.path, destination)
+        self.update_manifest(promoted=True, pinned_path=str(destination))
+        return destination
+
+    def save_annotation(self, payload: dict, *, catalog_path: Path, auto_promote: bool = True) -> Path:
+        entry = {
+            "saved_at": _iso(),
+            "session_id": self.session_id,
+            "character": self.character,
+            **payload,
+        }
+        _append_jsonl(self.annotations_path, entry)
+        _append_jsonl(catalog_path, entry)
+        manifest = self._manifest()
+        annotation_count = int(manifest.get("annotation_count", 0)) + 1
+        self.update_manifest(annotation_count=annotation_count)
+        if auto_promote:
+            self.promote("pinned")
+        return self.annotations_path
+
+    def capture_moment(
+        self,
+        *,
+        title: str,
+        event_time_s: float | None,
+        bundle: dict | None,
+        moments_root: Path,
+        window_before_s: float = 10.0,
+        window_after_s: float = 10.0,
+    ) -> Path:
+        started_at = float(self._manifest().get("started_at", self._started_at))
+        anchor = started_at + float(event_time_s or 0.0)
+        moment_dir = moments_root / f"{self.session_id}_{_slug(title, 'moment')}_{int(_now_ts())}"
+        moment_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint = None
+        checkpoints = list_checkpoints(self.path)
+        if checkpoints:
+            checkpoint = checkpoints[-1]
+            for candidate in checkpoints:
+                candidate_payload = _json_load(candidate)
+                if float(candidate_payload.get("timestamp", 0.0)) <= anchor:
+                    checkpoint = candidate
+        if checkpoint is not None:
+            shutil.copy2(checkpoint, moment_dir / "checkpoint.json")
+        if self.annotations_path.exists():
+            shutil.copy2(self.annotations_path, moment_dir / "annotations.jsonl")
+
+        for source_name, target_name in (
+            ("user_input.wav.gz", "user_input_clip.wav"),
+            ("user_input.wav", "user_input_clip.wav"),
+            ("assistant_output.wav.gz", "assistant_output_clip.wav"),
+            ("assistant_output.wav", "assistant_output_clip.wav"),
+        ):
+            source = self.media_dir / "audio" / source_name
+            if source.exists():
+                clip_audio_track(
+                    source,
+                    moment_dir / "media" / "audio" / target_name,
+                    start_s=max(0.0, anchor - started_at - window_before_s),
+                    end_s=max(0.0, anchor - started_at + window_after_s),
+                )
+
+        frame_entries: list[dict] = []
+        frames_jsonl = self.video_dir / "frames.jsonl"
+        if frames_jsonl.exists():
+            entries = [
+                json.loads(line)
+                for line in frames_jsonl.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            selected = [
+                entry
+                for entry in entries
+                if anchor - window_before_s <= float(entry.get("timestamp", 0.0)) <= anchor + window_after_s
+            ]
+            for entry in selected:
+                src = self.video_dir / str(entry.get("path", ""))
+                if not src.exists():
+                    continue
+                dst = moment_dir / "media" / "video" / src.name
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                copied = dict(entry)
+                copied["path"] = str(Path("media") / "video" / src.name)
+                frame_entries.append(copied)
+        if frame_entries:
+            _append_jsonl(moment_dir / "media" / "video" / "frames.jsonl", {"frames": frame_entries})
+
+        metadata = {
+            "version": 1,
+            "type": "moment",
+            "title": title,
+            "session_id": self.session_id,
+            "source_session_path": str(self.path),
+            "captured_at": _iso(),
+            "event_time_s": event_time_s,
+            "window_before_s": window_before_s,
+            "window_after_s": window_after_s,
+            "bundle": bundle or {},
+        }
+        _json_dump(moment_dir / "manifest.json", metadata)
+        manifest = self._manifest()
+        self.update_manifest(moment_count=int(manifest.get("moment_count", 0)) + 1)
+        return moment_dir
+
+    def finalize(self) -> dict:
+        self.stop_vision_capture()
+        user_audio_path = self._user_audio.compress()
+        assistant_audio_path = self._assistant_audio.compress()
+        manifest = self._manifest()
+        media = dict(manifest.get("media", {}))
+        media["user_audio_path"] = str(user_audio_path) if user_audio_path else ""
+        media["assistant_audio_path"] = str(assistant_audio_path) if assistant_audio_path else ""
+        media["video_frames_path"] = str(self.video_dir / "frames.jsonl")
+        media["video_frame_count"] = self._video_index
+        return self.update_manifest(
+            ended_at=_now_ts(),
+            ended_at_iso=_iso(),
+            media=media,
+        )
+
+
+class HistoryService:
+    def __init__(self, *, root: Path = HISTORY_ROOT, free_warning_gib: float = DEFAULT_FREE_WARNING_GIB):
+        self.root = root
+        self.free_warning_gib = free_warning_gib
+        self._lock = threading.Lock()
+        self.current: SessionArchive | None = None
+        _ensure_roots(root)
+
+    def status(self) -> dict:
+        _ensure_roots(self.root)
+        free_gib = round(_disk_free_gib(self.root), 2)
+        sessions_dir = self.root / "sessions"
+        pinned_dir = self.root / "pinned"
+        moments_dir = self.root / "moments"
+        session = self.current.status() if self.current is not None else {}
+        return {
+            "root": str(self.root),
+            "free_gib": free_gib,
+            "warning_threshold_gib": self.free_warning_gib,
+            "warning": (
+                f"Low disk space: {free_gib:.1f} GiB free "
+                f"(warning threshold {self.free_warning_gib:.1f} GiB)"
+                if free_gib < self.free_warning_gib
+                else ""
+            ),
+            "sessions_count": len(list(sessions_dir.iterdir())) if sessions_dir.exists() else 0,
+            "pinned_count": len(list(pinned_dir.iterdir())) if pinned_dir.exists() else 0,
+            "moments_count": len(list(moments_dir.iterdir())) if moments_dir.exists() else 0,
+            "sessions_bytes": _dir_size_bytes(sessions_dir),
+            "pinned_bytes": _dir_size_bytes(pinned_dir),
+            "moments_bytes": _dir_size_bytes(moments_dir),
+            "current_session": session,
+        }
+
+    def list_archives(self, limit: int = 50) -> list[dict]:
+        items: list[dict] = []
+        for bucket in ("sessions", "pinned", "moments"):
+            base = self.root / bucket
+            if not base.exists():
+                continue
+            for child in base.iterdir():
+                manifest_path = child / "manifest.json"
+                if not manifest_path.exists():
+                    continue
+                try:
+                    manifest = _json_load(manifest_path)
+                except json.JSONDecodeError:
+                    continue
+                items.append(
+                    {
+                        "bucket": bucket,
+                        "path": str(child),
+                        "name": child.name,
+                        "session_id": manifest.get("session_id", ""),
+                        "character": manifest.get("character", ""),
+                        "label": manifest.get("title") or manifest.get("character") or child.name,
+                        "started_at": manifest.get("started_at", 0.0),
+                        "started_at_iso": manifest.get("started_at_iso") or manifest.get("captured_at", ""),
+                        "checkpoint_count": manifest.get("checkpoint_count", 0),
+                        "annotation_count": manifest.get("annotation_count", 0),
+                        "moment_count": manifest.get("moment_count", 0),
+                    }
+                )
+        items.sort(key=lambda item: str(item.get("started_at_iso") or item.get("started_at") or ""), reverse=True)
+        return items[:limit]
+
+    def start_session(self, *, session_id: str, character: str, model: str, model_name: str = "") -> SessionArchive:
+        with self._lock:
+            self.current = SessionArchive(
+                root=self.root,
+                session_id=session_id,
+                character=character,
+                model=model,
+                model_name=model_name,
+                free_warning_gib=self.free_warning_gib,
+            )
+            return self.current
+
+    def finalize_current(self) -> dict | None:
+        with self._lock:
+            if self.current is None:
+                return None
+            return self.current.finalize()
+
+    def record_event(self, event_type: str, data: dict, *, timestamp: float | None = None) -> None:
+        with self._lock:
+            if self.current is None:
+                return
+            self.current.record_event(event_type, data, timestamp=timestamp)
+
+    def capture_checkpoint(self, **kwargs: Any) -> Path | None:
+        with self._lock:
+            if self.current is None:
+                return None
+            return self.current.capture_checkpoint(**kwargs)
+
+    def record_user_audio(self, pcm: bytes) -> None:
+        with self._lock:
+            if self.current is not None:
+                self.current.record_user_audio(pcm)
+
+    def record_assistant_audio(self, pcm: bytes) -> None:
+        with self._lock:
+            if self.current is not None:
+                self.current.record_assistant_audio(pcm)
+
+    def record_video_frame(self, jpeg_bytes: bytes, *, timestamp: float | None = None, source: str = "vision") -> Path | None:
+        with self._lock:
+            if self.current is None:
+                return None
+            return self.current.record_video_frame(jpeg_bytes, timestamp=timestamp, source=source)
+
+    def start_vision_capture(self, service_url: str, *, fps: float = DEFAULT_VISION_CAPTURE_FPS) -> None:
+        with self._lock:
+            if self.current is not None:
+                self.current.start_vision_capture(service_url, fps=fps)
+
+    def stop_vision_capture(self) -> None:
+        with self._lock:
+            if self.current is not None:
+                self.current.stop_vision_capture()
+
+    def save_annotation(self, payload: dict, *, session_id: str | None = None, auto_promote: bool = True) -> Path:
+        session = self._resolve_active_or_ref(session_id)
+        return session.save_annotation(
+            payload,
+            catalog_path=self.root / "catalog" / "annotations.jsonl",
+            auto_promote=auto_promote,
+        )
+
+    def capture_moment(self, payload: dict) -> Path:
+        session = self._resolve_active_or_ref(payload.get("session_id"))
+        return session.capture_moment(
+            title=str(payload.get("title") or payload.get("label") or "moment"),
+            event_time_s=payload.get("event_time_s"),
+            bundle=payload.get("bundle"),
+            moments_root=self.root / "moments",
+            window_before_s=float(payload.get("window_before_s", 10.0)),
+            window_after_s=float(payload.get("window_after_s", 10.0)),
+        )
+
+    def promote(self, *, session_id: str | None = None, kind: str = "pinned") -> Path:
+        session = self._resolve_active_or_ref(session_id)
+        return session.promote(kind)
+
+    def load_checkpoint_payload(self, session_ref: str, checkpoint_index: int | None = None) -> dict:
+        session_path = resolve_session_path(self.root, session_ref)
+        if session_path is None:
+            raise FileNotFoundError(f"unknown session: {session_ref}")
+        return load_checkpoint(session_path, checkpoint_index)
+
+    def prepare_playback(self, session_ref: str, checkpoint_index: int | None = None) -> PlaybackPlan:
+        session_path = resolve_session_path(self.root, session_ref)
+        if session_path is None:
+            raise FileNotFoundError(f"unknown session: {session_ref}")
+
+        manifest = _json_load(session_path / "manifest.json")
+        checkpoint_payload = load_checkpoint(session_path, checkpoint_index)
+        source_kind = str(manifest.get("type") or session_path.parent.name.rstrip("s") or "session")
+        session_id = str(manifest.get("session_id") or session_path.name)
+        checkpoint_idx = int(checkpoint_payload.get("checkpoint_index", 0))
+        checkpoint_label = str(checkpoint_payload.get("label", "checkpoint"))
+        media_dir = session_path / "media"
+
+        audio_path = None
+        audio_start_s = 0.0
+        video_frames: list[dict] = []
+
+        if source_kind == "moment":
+            candidate_audio_paths = (
+                media_dir / "audio" / "user_input_clip.wav",
+                media_dir / "audio" / "user_input_clip.wav.gz",
+            )
+            audio_path = next((path for path in candidate_audio_paths if path.exists()), None)
+            source_session_path = Path(str(manifest.get("source_session_path", ""))) if manifest.get("source_session_path") else None
+            media_start_ts = None
+            if source_session_path is not None and (source_session_path / "manifest.json").exists():
+                source_manifest = _json_load(source_session_path / "manifest.json")
+                media_start_ts = (
+                    float(source_manifest.get("started_at", 0.0))
+                    + float(manifest.get("event_time_s", 0.0) or 0.0)
+                    - float(manifest.get("window_before_s", 0.0) or 0.0)
+                )
+            frame_entries = _parse_frames_jsonl(media_dir / "video" / "frames.jsonl")
+            for index, entry in enumerate(frame_entries):
+                frame_path = session_path / str(entry.get("path", ""))
+                if not frame_path.exists():
+                    continue
+                if media_start_ts is not None:
+                    relative_s = max(0.0, float(entry.get("timestamp", media_start_ts)) - media_start_ts)
+                else:
+                    relative_s = float(index) * 0.1
+                video_frames.append({
+                    **entry,
+                    "relative_s": relative_s,
+                    "abs_path": str(frame_path),
+                })
+        else:
+            media = manifest.get("media", {}) or {}
+            candidate_audio_paths = []
+            stored_audio = str(media.get("user_audio_path", "")).strip()
+            if stored_audio:
+                candidate_audio_paths.append(Path(stored_audio))
+            candidate_audio_paths.extend([
+                media_dir / "audio" / "user_input.wav.gz",
+                media_dir / "audio" / "user_input.wav",
+            ])
+            audio_path = next((path for path in candidate_audio_paths if path.exists()), None)
+
+            started_at = float(manifest.get("started_at", 0.0) or 0.0)
+            checkpoint_ts = float(checkpoint_payload.get("timestamp", started_at) or started_at)
+            audio_start_s = max(0.0, checkpoint_ts - started_at)
+
+            frame_entries = _parse_frames_jsonl(media_dir / "video" / "frames.jsonl")
+            for entry in frame_entries:
+                frame_ts = float(entry.get("timestamp", 0.0) or 0.0)
+                if frame_ts < checkpoint_ts:
+                    continue
+                frame_path = media_dir / "video" / str(entry.get("path", ""))
+                if not frame_path.exists():
+                    continue
+                video_frames.append({
+                    **entry,
+                    "relative_s": max(0.0, frame_ts - checkpoint_ts),
+                    "abs_path": str(frame_path),
+                })
+
+        return PlaybackPlan(
+            source_path=session_path,
+            source_kind=source_kind,
+            session_id=session_id,
+            checkpoint_payload=checkpoint_payload,
+            checkpoint_index=checkpoint_idx,
+            checkpoint_label=checkpoint_label,
+            audio_path=audio_path,
+            audio_start_s=audio_start_s,
+            video_frames=video_frames,
+        )
+
+    def prune_unpromoted(
+        self,
+        *,
+        older_than_days: float | None = None,
+        until_free_gib: float | None = None,
+    ) -> dict:
+        removed: list[str] = []
+        sessions_dir = self.root / "sessions"
+        candidates: list[tuple[float, Path, dict]] = []
+        active_session_id = None
+        if self.current is not None:
+            manifest = self.current._manifest()
+            if not manifest.get("ended_at"):
+                active_session_id = self.current.session_id
+        for session_dir in sessions_dir.iterdir():
+            manifest_path = session_dir / "manifest.json"
+            if not manifest_path.exists():
+                continue
+            manifest = _json_load(manifest_path)
+            if active_session_id and manifest.get("session_id") == active_session_id:
+                continue
+            if manifest.get("promoted"):
+                continue
+            if int(manifest.get("annotation_count", 0)) > 0:
+                continue
+            candidates.append((float(manifest.get("started_at", 0.0)), session_dir, manifest))
+        candidates.sort(key=lambda item: item[0])
+        cutoff = None if older_than_days is None else (_now_ts() - older_than_days * 86400)
+        for started_at, session_dir, manifest in candidates:
+            if cutoff is not None and started_at > cutoff:
+                continue
+            if until_free_gib is not None and _disk_free_gib(self.root) >= until_free_gib:
+                break
+            shutil.rmtree(session_dir, ignore_errors=True)
+            removed.append(str(session_dir))
+        return {
+            "removed": removed,
+            "free_gib": round(_disk_free_gib(self.root), 2),
+            "remaining_sessions": len(list((self.root / "sessions").iterdir())),
+        }
+
+    def _resolve_active_or_ref(self, session_id: str | None) -> SessionArchive:
+        with self._lock:
+            if session_id and self.current is not None and self.current.session_id == session_id:
+                return self.current
+            if session_id is None and self.current is not None:
+                return self.current
+        if not session_id:
+            raise FileNotFoundError("no active session")
+        session_path = resolve_session_path(self.root, session_id)
+        if session_path is None:
+            raise FileNotFoundError(f"unknown session: {session_id}")
+        return self._archive_from_path(session_path)
+
+    def _archive_from_path(self, session_path: Path) -> SessionArchive:
+        manifest = _json_load(session_path / "manifest.json")
+        archive = object.__new__(SessionArchive)
+        archive.root = self.root
+        archive.session_id = str(manifest.get("session_id"))
+        archive.character = str(manifest.get("character", ""))
+        archive.model = str(manifest.get("model", ""))
+        archive.model_name = str(manifest.get("model_name", ""))
+        archive.free_warning_gib = self.free_warning_gib
+        archive.path = session_path
+        archive.checkpoints_dir = session_path / "checkpoints"
+        archive.media_dir = session_path / "media"
+        archive.video_dir = archive.media_dir / "video"
+        archive.annotations_path = session_path / "annotations.jsonl"
+        archive.events_path = session_path / "events.jsonl"
+        archive.manifest_path = session_path / "manifest.json"
+        archive._event_lock = threading.Lock()
+        archive._checkpoint_count = int(manifest.get("checkpoint_count", 0))
+        archive._event_count = int(manifest.get("event_count", 0))
+        archive._video_index = int(manifest.get("media", {}).get("video_frame_count", 0))
+        archive._started_at = float(manifest.get("started_at", _now_ts()))
+        archive._vision_poller = None
+        archive._user_audio = AudioTrackWriter(archive.media_dir / "audio" / "user_input.wav", sample_rate=16000)
+        archive._assistant_audio = AudioTrackWriter(archive.media_dir / "audio" / "assistant_output.wav", sample_rate=24000)
+        return archive
+
+
+def restore_runtime_state(payload: dict) -> dict:
+    return {
+        "session_snapshot": payload.get("session", {}),
+        "world": deserialize_world(payload.get("world")),
+        "people": deserialize_people(payload.get("people")),
+        "scenario": deserialize_scenario(payload.get("scenario")),
+        "script": deserialize_script(payload.get("script")),
+        "goals": Goals(long_term=str(payload.get("goals", {}).get("long_term", ""))),
+        "log_entries": list(payload.get("log_entries", [])),
+        "had_user_input": bool(payload.get("had_user_input", False)),
+        "checkpoint_index": int(payload.get("checkpoint_index", 0)),
+        "label": str(payload.get("label", "")),
+    }
+
+
+def catalog_report_annotation(payload: dict, *, root: Path = HISTORY_ROOT) -> Path:
+    _ensure_roots(root)
+    path = root / "catalog" / "report_annotations.jsonl"
+    _append_jsonl(
+        path,
+        {
+            "saved_at": _iso(),
+            "type": "report_annotation",
+            **payload,
+        },
+    )
+    return path
+
+
+def _main_usage(root: Path) -> int:
+    service = HistoryService(root=root)
+    print(json.dumps(service.status(), indent=2, sort_keys=True))
+    return 0
+
+
+def _main_prune(root: Path, older_than_days: float | None, until_free_gib: float | None) -> int:
+    service = HistoryService(root=root)
+    print(json.dumps(
+        service.prune_unpromoted(older_than_days=older_than_days, until_free_gib=until_free_gib),
+        indent=2,
+        sort_keys=True,
+    ))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="History/session archive helpers.")
+    parser.add_argument("--root", default=str(HISTORY_ROOT))
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("usage")
+
+    prune = sub.add_parser("prune")
+    prune.add_argument("--older-than-days", type=float, default=None)
+    prune.add_argument("--until-free-gib", type=float, default=None)
+
+    args = parser.parse_args(argv)
+    root = Path(args.root)
+    if args.command == "usage":
+        return _main_usage(root)
+    if args.command == "prune":
+        return _main_prune(root, args.older_than_days, args.until_free_gib)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

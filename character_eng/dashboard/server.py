@@ -23,6 +23,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     collector: DashboardEventCollector
     input_queue: queue.Queue
     report_dir: Path
+    history_api = None
 
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
@@ -35,6 +36,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_sse()
         elif self.path == "/state":
             self._serve_state()
+        elif self.path == "/history/state":
+            self._serve_history_state()
+        elif self.path == "/history/list":
+            self._serve_history_list()
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -86,6 +91,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(resp)))
                 self.end_headers()
                 self.wfile.write(resp)
+        elif self.path == "/history/annotation":
+            self._handle_history_annotation()
+        elif self.path == "/history/moment":
+            self._handle_history_moment()
+        elif self.path == "/history/promote":
+            self._handle_history_promote()
+        elif self.path == "/history/prune":
+            self._handle_history_prune()
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -164,6 +177,96 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_history_state(self):
+        history_api = getattr(self, "history_api", None)
+        payload = history_api.status() if history_api is not None else {
+            "enabled": False,
+            "warning": "",
+            "free_gib": 0.0,
+        }
+        body = json.dumps(payload).encode()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_history_list(self):
+        history_api = getattr(self, "history_api", None)
+        payload = history_api.list_archives() if history_api is not None else []
+        body = json.dumps(payload).encode()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json_body(self) -> dict:
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length)
+        return json.loads(body or b"{}")
+
+    def _respond_json(self, status: HTTPStatus, payload: dict) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_history_annotation(self):
+        history_api = getattr(self, "history_api", None)
+        if history_api is None:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "history disabled"})
+            return
+        try:
+            data = self._read_json_body()
+            path = history_api.save_annotation(data, session_id=data.get("session_id"))
+            self._respond_json(HTTPStatus.OK, {"ok": True, "path": str(path), "status": history_api.status()})
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
+
+    def _handle_history_moment(self):
+        history_api = getattr(self, "history_api", None)
+        if history_api is None:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "history disabled"})
+            return
+        try:
+            data = self._read_json_body()
+            path = history_api.capture_moment(data)
+            self._respond_json(HTTPStatus.OK, {"ok": True, "path": str(path), "status": history_api.status()})
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
+
+    def _handle_history_promote(self):
+        history_api = getattr(self, "history_api", None)
+        if history_api is None:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "history disabled"})
+            return
+        try:
+            data = self._read_json_body()
+            path = history_api.promote(session_id=data.get("session_id"), kind=data.get("kind", "pinned"))
+            self._respond_json(HTTPStatus.OK, {"ok": True, "path": str(path), "status": history_api.status()})
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
+
+    def _handle_history_prune(self):
+        history_api = getattr(self, "history_api", None)
+        if history_api is None:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "history disabled"})
+            return
+        try:
+            data = self._read_json_body()
+            result = history_api.prune_unpromoted(
+                older_than_days=data.get("older_than_days"),
+                until_free_gib=data.get("until_free_gib"),
+            )
+            self._respond_json(HTTPStatus.OK, {"ok": True, **result, "status": history_api.status()})
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
+
     def log_message(self, format, *args):
         pass
 
@@ -184,7 +287,7 @@ def _port_available(port: int) -> bool:
 
 
 def start_dashboard(collector: DashboardEventCollector, input_queue: queue.Queue,
-                    port: int = 7862, report_dir: Path | None = None) -> tuple[threading.Thread, int]:
+                    port: int = 7862, report_dir: Path | None = None, history_api=None) -> tuple[threading.Thread, int]:
     """Start the dashboard HTTP server as a daemon thread. Returns (thread, actual_port)."""
     if port <= 0 or not _port_available(port):
         port = _find_free_port()
@@ -192,6 +295,7 @@ def start_dashboard(collector: DashboardEventCollector, input_queue: queue.Queue
     DashboardHandler.collector = collector
     DashboardHandler.input_queue = input_queue
     DashboardHandler.report_dir = report_dir or REPORTS_DIR
+    DashboardHandler.history_api = history_api
 
     server = ThreadingHTTPServer(("0.0.0.0", port), DashboardHandler)
     server.daemon_threads = True

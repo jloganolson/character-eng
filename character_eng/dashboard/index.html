@@ -1212,6 +1212,19 @@
             <div id="detail-related"><div style="color:var(--text-dim);">No event selected.</div></div>
           </div>
 
+          <div class="detail-section" style="position:relative;z-index:2;">
+            <label>Annotation</label>
+            <input id="annotation-tags" type="text" placeholder="tags: interruption, latency, vision" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
+            <input id="annotation-subsystem" type="text" placeholder="subsystem: prompt, vision, timing, tts" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
+            <textarea id="annotation-note" rows="4" placeholder="What went wrong?" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;"></textarea>
+            <textarea id="annotation-desired" rows="3" placeholder="Desired behavior / fix direction" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;"></textarea>
+            <div class="detail-actions">
+              <button class="detail-action" id="annotation-save" type="button">Save Annotation</button>
+              <button class="detail-action" id="moment-capture" type="button">Capture Moment</button>
+            </div>
+            <div id="annotation-status" style="margin-top:0.45em;color:var(--text-dim);">Annotations save to the active session history.</div>
+          </div>
+
           <div class="detail-section fill">
             <label>Inspector Pane</label>
             <div class="detail-tabs">
@@ -1270,6 +1283,28 @@
       </div>
     </div>
 
+    <div class="sidebar-panel" id="history-panel">
+      <h3>History</h3>
+      <div class="content">
+        <div id="history-status"><span style="color:var(--text-dim)">History loading...</span></div>
+        <div style="display:grid;gap:0.45em;margin-top:0.55em;">
+          <select id="history-select" style="width:100%;box-sizing:border-box;"></select>
+          <input id="history-checkpoint" type="number" min="0" placeholder="checkpoint index (optional)" style="width:100%;box-sizing:border-box;">
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
+          <button id="history-load" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--cyan);color:var(--bg);cursor:pointer;">Load Archive</button>
+          <button id="history-rewind" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--narrator);color:var(--bg);cursor:pointer;">Rewind Current</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.45em;margin-top:0.45em;">
+          <button id="history-replay" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--ok);color:var(--bg);cursor:pointer;">Replay Archive</button>
+          <button id="history-pin" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--accent);color:var(--bg);cursor:pointer;">Pin Session</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:0.45em;margin-top:0.45em;">
+          <button id="history-prune" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--warn);color:var(--bg);cursor:pointer;">Prune Unsaved</button>
+        </div>
+      </div>
+    </div>
+
     <div class="sidebar-panel" id="world-panel">
       <h3>World State</h3>
       <div class="content" id="world-content"><span class="fact" style="color:var(--text-dim)">No world state yet</span></div>
@@ -1302,6 +1337,10 @@
       pause: "session",
       resume: "session",
       runtime_controls: "session",
+      history_status: "session",
+      history_restore: "session",
+      history_promoted: "session",
+      history_playback: "session",
       vision_snapshot: "vision",
       vision_pass: "vision",
       world_update: "world",
@@ -1401,11 +1440,28 @@
   const detailExportHtmlButton = document.getElementById("detail-export-html");
   const reportRefButton = document.getElementById("report-ref-button");
   const reportRefStatus = document.getElementById("report-ref-status");
+  const annotationSaveButton = document.getElementById("annotation-save");
+  const momentCaptureButton = document.getElementById("moment-capture");
+  const annotationTagsInput = document.getElementById("annotation-tags");
+  const annotationSubsystemInput = document.getElementById("annotation-subsystem");
+  const annotationNoteInput = document.getElementById("annotation-note");
+  const annotationDesiredInput = document.getElementById("annotation-desired");
+  const annotationStatus = document.getElementById("annotation-status");
+  const historyStatusEl = document.getElementById("history-status");
+  const historySelect = document.getElementById("history-select");
+  const historyCheckpointInput = document.getElementById("history-checkpoint");
+  const historyLoadButton = document.getElementById("history-load");
+  const historyRewindButton = document.getElementById("history-rewind");
+  const historyReplayButton = document.getElementById("history-replay");
+  const historyPinButton = document.getElementById("history-pin");
+  const historyPruneButton = document.getElementById("history-prune");
   const INSPECTOR_WIDTH_STORAGE_KEY = "dashboard.inspector_width";
   const SIDEBAR_WIDTH_STORAGE_KEY = "dashboard.sidebar_width";
   let pendingPauseState = null;
   let lastStoppedReportRefText = "";
   let lastStoppedReportRefPath = "";
+  let historyState = {enabled: false, current_session: {}};
+  let historyArchives = [];
 
   async function loadStreamSchema() {
     try {
@@ -1451,6 +1507,86 @@
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({text: text.trim()})
     });
+  }
+
+  async function postJson(url, payload) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload || {}),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || `request failed (${response.status})`);
+    return data;
+  }
+
+  function renderHistoryState(state) {
+    historyState = state || {enabled: false, current_session: {}};
+    if (!historyState.enabled) {
+      historyStatusEl.innerHTML = '<span style="color:var(--text-dim)">History disabled.</span>';
+      historySelect.innerHTML = '<option value="">No archives</option>';
+      historyLoadButton.disabled = true;
+      historyRewindButton.disabled = true;
+      historyReplayButton.disabled = true;
+      historyPinButton.disabled = true;
+      historyPruneButton.disabled = true;
+      return;
+    }
+    const current = historyState.current_session || {};
+    const lines = [
+      `free: <b>${Number(historyState.free_gib || 0).toFixed(1)} GiB</b>`,
+      `sessions: <b>${historyState.sessions_count || 0}</b> · pinned: <b>${historyState.pinned_count || 0}</b> · moments: <b>${historyState.moments_count || 0}</b>`,
+      `current: <b>${current.session_id || "--"}</b>`,
+      current.session_path ? `path: <span style="color:var(--text-dim)">${esc(current.session_path)}</span>` : "",
+      historyState.playback?.active
+        ? `playback: <b>${esc(historyState.playback.source_kind || "archive")}</b> @ <b>${esc(String(historyState.playback.checkpoint_index ?? "--"))}</b>`
+        : "",
+      historyState.playback?.warning ? `<span style="color:var(--warn)">${esc(historyState.playback.warning)}</span>` : "",
+      historyState.warning ? `<span style="color:var(--warn)">${esc(historyState.warning)}</span>` : "",
+    ].filter(Boolean);
+    historyStatusEl.innerHTML = lines.join("<br>");
+    historyRewindButton.disabled = !current.session_id;
+    historyPinButton.disabled = !current.session_id;
+    historyReplayButton.disabled = !historyArchives.length;
+    historyPruneButton.disabled = false;
+  }
+
+  async function refreshHistoryState() {
+    try {
+      const response = await fetch("/history/state");
+      if (!response.ok) throw new Error(`history ${response.status}`);
+      const data = await response.json();
+      renderHistoryState({...data, enabled: data.enabled !== false});
+    } catch (err) {
+      renderHistoryState({enabled: false, current_session: {}});
+    }
+  }
+
+  function renderHistoryArchives(items) {
+    historyArchives = Array.isArray(items) ? items : [];
+    if (!historyArchives.length) {
+      historySelect.innerHTML = '<option value="">No archives</option>';
+      historyLoadButton.disabled = true;
+      historyReplayButton.disabled = true;
+      return;
+    }
+    historySelect.innerHTML = historyArchives.map((item, index) => {
+      const checkpointCount = Number(item.checkpoint_count || 0);
+      const label = `${item.bucket}: ${item.label || item.session_id || item.name} (${checkpointCount} ckpt)`;
+      return `<option value="${esc(String(index))}">${esc(label)}</option>`;
+    }).join("");
+    historyLoadButton.disabled = false;
+    historyReplayButton.disabled = false;
+  }
+
+  async function refreshHistoryArchives() {
+    try {
+      const response = await fetch("/history/list");
+      if (!response.ok) throw new Error(`list ${response.status}`);
+      renderHistoryArchives(await response.json());
+    } catch (err) {
+      renderHistoryArchives([]);
+    }
   }
 
   async function copyText(text) {
@@ -2604,6 +2740,12 @@
         return `faces ${data.faces || 0} · people ${data.persons || 0}`;
       case "runtime_controls":
         return `state ${data.conversation_paused ? "paused" : "live"} · stt ${data.voice_status?.stt?.state || "off"} · tts ${data.voice_status?.tts?.state || "off"}`;
+      case "history_status":
+        return data.warning ? data.warning : `history ${Number(data.free_gib || 0).toFixed(1)} GiB free`;
+      case "history_restore":
+        return `${data.mode || "restore"} · checkpoint ${data.checkpoint_index ?? "latest"}`;
+      case "history_promoted":
+        return `saved to ${data.kind || "pinned"}`;
       default:
         return JSON.stringify(data);
     }
@@ -2667,6 +2809,18 @@
           `vision manager ${data.vision_active ? "on" : "off"}`,
           `reconcile ${data.reconcile_thread_alive ? "running" : "idle"}`
         ].join(" · ");
+      case "history_status":
+        return [
+          data.current_session?.session_id ? `session ${data.current_session.session_id}` : "",
+          data.warning || "",
+        ].filter(Boolean).join(" · ");
+      case "history_restore":
+        return [
+          data.source_session_id || "",
+          data.label || "",
+        ].filter(Boolean).join(" · ");
+      case "history_promoted":
+        return data.path || "";
       default:
         return "";
     }
@@ -2734,6 +2888,65 @@
       stream_events: streamEvents,
       prompt_trace_events: promptTraceEvents,
     };
+  }
+
+  async function saveSelectedAnnotation() {
+    const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
+    const note = annotationNoteInput.value.trim();
+    const desired = annotationDesiredInput.value.trim();
+    if (!note && !desired) {
+      annotationStatus.textContent = "Add a note or desired behavior first.";
+      return;
+    }
+    annotationSaveButton.disabled = true;
+    annotationStatus.textContent = "Saving annotation...";
+    try {
+      const result = await postJson("/history/annotation", {
+        session_id: currentSessionId || historyState.current_session?.session_id || "",
+        event_key: event?.key || "",
+        event_type: event?.type || "",
+        event_time_s: event ? Number(relativeTime(event.timestamp).toFixed(3)) : null,
+        tags: annotationTagsInput.value.split(",").map((item) => item.trim()).filter(Boolean),
+        subsystem: annotationSubsystemInput.value.trim(),
+        note,
+        desired_behavior: desired,
+        bundle: event ? selectedEventBundle(event) : null,
+      });
+      renderHistoryState({...result.status, enabled: true});
+      refreshHistoryArchives();
+      annotationStatus.textContent = `Saved annotation: ${result.path}`;
+    } catch (error) {
+      annotationStatus.textContent = `Annotation save failed: ${error.message || error}`;
+    } finally {
+      annotationSaveButton.disabled = false;
+    }
+  }
+
+  async function captureSelectedMoment() {
+    const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
+    if (!event) {
+      annotationStatus.textContent = "Select an event before capturing a moment.";
+      return;
+    }
+    momentCaptureButton.disabled = true;
+    annotationStatus.textContent = "Capturing moment...";
+    try {
+      const result = await postJson("/history/moment", {
+        session_id: currentSessionId || historyState.current_session?.session_id || "",
+        title: event.label || event.type || "moment",
+        event_time_s: Number(relativeTime(event.timestamp).toFixed(3)),
+        bundle: selectedEventBundle(event),
+        window_before_s: 10,
+        window_after_s: 10,
+      });
+      renderHistoryState({...result.status, enabled: true});
+      refreshHistoryArchives();
+      annotationStatus.textContent = `Captured moment: ${result.path}`;
+    } catch (error) {
+      annotationStatus.textContent = `Moment capture failed: ${error.message || error}`;
+    } finally {
+      momentCaptureButton.disabled = false;
+    }
   }
 
   async function postReportSnapshot(payload) {
@@ -3939,6 +4152,28 @@
       pollVisionModelStatus();
       recordEvent("runtime_controls", data, rawEvent);
       renderBootStatus();
+    },
+
+    history_status(data, rawEvent) {
+      renderHistoryState({...data, enabled: true});
+      recordEvent("history_status", data, rawEvent);
+    },
+
+    history_restore(data, rawEvent) {
+      recordEvent("history_restore", data, rawEvent);
+      annotationStatus.textContent = `Restored ${data.label || "checkpoint"} from ${data.source_session_id || "history"}`;
+    },
+
+    history_promoted(data, rawEvent) {
+      recordEvent("history_promoted", data, rawEvent);
+      annotationStatus.textContent = `Pinned session: ${data.path || ""}`;
+      refreshHistoryState();
+    },
+
+    history_playback(data, rawEvent) {
+      recordEvent("history_playback", data, rawEvent);
+      annotationStatus.textContent = `Playback started from ${data.session_id || "history"} @ ${data.checkpoint_index ?? "--"}`;
+      refreshHistoryState();
     }
   };
 
@@ -4065,6 +4300,60 @@
   runtimeRestartButton.addEventListener("click", requestRestart);
   bootRestartButton.addEventListener("click", requestRestart);
   reportRefButton.addEventListener("click", saveReportReference);
+  annotationSaveButton.addEventListener("click", saveSelectedAnnotation);
+  momentCaptureButton.addEventListener("click", captureSelectedMoment);
+  historyPinButton.addEventListener("click", async () => {
+    try {
+      const result = await postJson("/history/promote", {
+        session_id: currentSessionId || historyState.current_session?.session_id || "",
+        kind: "pinned",
+      });
+      renderHistoryState({...result.status, enabled: true});
+      refreshHistoryArchives();
+      annotationStatus.textContent = `Pinned session: ${result.path}`;
+    } catch (error) {
+      annotationStatus.textContent = `Pin failed: ${error.message || error}`;
+    }
+  });
+  historyLoadButton.addEventListener("click", () => {
+    const selected = historyArchives[Number(historySelect.value || 0)];
+    if (!selected) {
+      annotationStatus.textContent = "Select an archive to load.";
+      return;
+    }
+    const checkpoint = historyCheckpointInput.value.trim();
+    const target = selected.session_id || selected.path;
+    sendInput(checkpoint ? `/restore ${target} ${checkpoint}` : `/restore ${target}`);
+    annotationStatus.textContent = `Requested restore: ${target}${checkpoint ? ` @ ${checkpoint}` : ""}`;
+  });
+  historyRewindButton.addEventListener("click", () => {
+    const checkpoint = historyCheckpointInput.value.trim();
+    sendInput(checkpoint ? `/rewind ${checkpoint}` : "/rewind");
+    annotationStatus.textContent = `Requested rewind${checkpoint ? ` @ ${checkpoint}` : ""}`;
+  });
+  historyReplayButton.addEventListener("click", () => {
+    const selected = historyArchives[Number(historySelect.value || 0)];
+    if (!selected) {
+      annotationStatus.textContent = "Select an archive to replay.";
+      return;
+    }
+    const checkpoint = historyCheckpointInput.value.trim();
+    const target = selected.session_id || selected.path;
+    sendInput(checkpoint ? `/replay ${target} ${checkpoint}` : `/replay ${target}`);
+    annotationStatus.textContent = `Requested replay: ${target}${checkpoint ? ` @ ${checkpoint}` : ""}`;
+  });
+  historyPruneButton.addEventListener("click", async () => {
+    try {
+      const result = await postJson("/history/prune", {
+        older_than_days: 0,
+      });
+      renderHistoryState({...result.status, enabled: true});
+      refreshHistoryArchives();
+      annotationStatus.textContent = `Pruned ${result.removed?.length || 0} unsaved session(s).`;
+    } catch (error) {
+      annotationStatus.textContent = `Prune failed: ${error.message || error}`;
+    }
+  });
   runtimeControlGrid.addEventListener("click", (event) => {
     const button = event.target.closest("[data-runtime-control]");
     if (!button) return;
@@ -4119,8 +4408,11 @@
   updateRuntimeButtons();
   renderBootStatus();
   refreshState();
+  refreshHistoryState();
+  refreshHistoryArchives();
   renderRuntimeControlButtons();
   setInterval(refreshState, 1000);
+  setInterval(refreshHistoryArchives, 4000);
   setInterval(pollVisionModelStatus, 4000);
   setInterval(renderBootStatus, 1000);
 

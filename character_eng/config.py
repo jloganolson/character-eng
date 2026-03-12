@@ -46,11 +46,19 @@ class BridgeConfig:
 
 
 @dataclass
+class HistoryConfig:
+    enabled: bool = True
+    free_warning_gib: float = 50.0
+    vision_capture_fps: float = 2.0
+
+
+@dataclass
 class AppConfig:
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     bridge: BridgeConfig = field(default_factory=BridgeConfig)
+    history: HistoryConfig = field(default_factory=HistoryConfig)
 
 
 def _toml_string(value: str) -> str:
@@ -88,6 +96,11 @@ def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
         "[bridge]",
         f"enabled = {'true' if config.bridge.enabled else 'false'}",
         f"port = {int(config.bridge.port)}",
+        "",
+        "[history]",
+        f"enabled = {'true' if config.history.enabled else 'false'}",
+        f"free_warning_gib = {config.history.free_warning_gib}",
+        f"vision_capture_fps = {config.history.vision_capture_fps}",
         "",
     ]
 
@@ -148,4 +161,11 @@ def load_config() -> AppConfig:
         port=bridge_data.get("port", 7862),
     )
 
-    return AppConfig(voice=voice, vision=vision, dashboard=dashboard, bridge=bridge)
+    history_data = data.get("history", {})
+    history = HistoryConfig(
+        enabled=history_data.get("enabled", True),
+        free_warning_gib=history_data.get("free_warning_gib", 50.0),
+        vision_capture_fps=history_data.get("vision_capture_fps", 2.0),
+    )
+
+    return AppConfig(voice=voice, vision=vision, dashboard=dashboard, bridge=bridge, history=history)

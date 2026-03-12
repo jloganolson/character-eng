@@ -824,6 +824,8 @@ class VoiceIO:
         filler_lead_ms: int = 180,
         output_only: bool = False,
         trace_hook: Callable[[str, dict], None] | None = None,
+        input_audio_hook: Callable[[bytes], None] | None = None,
+        output_audio_hook: Callable[[bytes], None] | None = None,
     ):
         self._event_queue: queue.Queue[str] = queue.Queue()
         self._cancelled = threading.Event()
@@ -860,6 +862,8 @@ class VoiceIO:
         self._started = False
         self._output_only = output_only
         self._trace_hook = trace_hook
+        self._input_audio_hook = input_audio_hook
+        self._output_audio_hook = output_audio_hook
         self._last_speech_started_at: float | None = None
         self._last_transcript_final_at: float | None = None
         self._last_transcript_text: str = ""
@@ -985,8 +989,12 @@ class VoiceIO:
                 if self._aec is not None:
                     pcm_16k = resample_to_16k(played_bytes, self._speaker._actual_rate)
                     self._aec.feed_playback(pcm_16k)
+                if self._output_audio_hook is not None:
+                    self._output_audio_hook(played_bytes)
 
             on_output = _feed_aec
+        elif self._output_audio_hook is not None:
+            on_output = self._output_audio_hook
 
         self._speaker = SpeakerStream(device=self._output_device, on_output=on_output)
         self._speaker.start()
@@ -1268,6 +1276,12 @@ class VoiceIO:
                 if not self._started:
                     return EXIT
 
+    def inject_input_audio(self, pcm: bytes) -> None:
+        """Feed prerecorded mono PCM16 audio through the live mic/STT path."""
+        if not pcm:
+            return
+        self._on_mic_audio(pcm)
+
     @property
     def speaker_playback_ratio(self) -> float:
         """Fraction of last utterance's audio that was actually played (0.0-1.0)."""
@@ -1403,6 +1417,8 @@ class VoiceIO:
         With AEC on: mic stays live always, audio cleaned via AEC before STT.
         With AEC off: mic muted during playback (legacy echo suppression).
         """
+        if self._input_audio_hook is not None:
+            self._input_audio_hook(data)
         if self._aec is not None:
             cleaned = self._aec.process_capture(data)
             if self._stt is not None and len(cleaned) > 0:

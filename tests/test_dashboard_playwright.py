@@ -15,6 +15,7 @@ from playwright.sync_api import Error, Page, expect, sync_playwright
 
 from character_eng.dashboard.events import DashboardEventCollector
 from character_eng.dashboard.server import start_dashboard
+from character_eng.history import HistoryService
 
 
 class _VisionHandler(BaseHTTPRequestHandler):
@@ -121,7 +122,16 @@ def dashboard_server():
     report_dir.mkdir(parents=True, exist_ok=True)
     for child in report_dir.iterdir():
         child.unlink()
-    _, port = start_dashboard(collector, input_queue, port=0, report_dir=report_dir)
+    history_root = Path("/tmp/character-eng-dashboard-playwright-history")
+    if history_root.exists():
+        for child in sorted(history_root.rglob("*"), reverse=True):
+            if child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+    history = HistoryService(root=history_root, free_warning_gib=0.0)
+    history.start_session(session_id="sess-playwright", character="greg", model="groq-llama-8b")
+    _, port = start_dashboard(collector, input_queue, port=0, report_dir=report_dir, history_api=history)
     for _ in range(20):
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{port}/state")
@@ -192,6 +202,8 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#runtime-status")).to_contain_text("state: ready")
     expect(page.locator("#boot-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
     expect(page.locator("#boot-overlay-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
+    expect(page.locator("#history-status")).to_contain_text("current:")
+    expect(page.locator("#history-select option")).to_have_count(1)
     expect(page.locator("#boot-grid")).to_contain_text("voice")
     expect(page.locator("#boot-grid")).to_contain_text("models")
     expect(page.locator("#runtime-status")).to_contain_text("auto-beat: off")
@@ -414,6 +426,23 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator(".prompt-message.role-system")).to_have_count(2)
     expect(page.locator(".prompt-message.role-user")).to_have_count(1)
     expect(page.locator(".prompt-message.role-assistant")).to_have_count(1)
+    page.locator("#annotation-tags").fill("latency, interruption")
+    page.locator("#annotation-subsystem").fill("timing")
+    page.locator("#annotation-note").fill("Assistant waited too long before answering.")
+    page.locator("#annotation-desired").fill("Start speaking sooner after the transcript finalizes.")
+    page.locator("#annotation-save").click()
+    expect(page.locator("#annotation-status")).to_contain_text("Saved annotation:")
+    page.locator("#moment-capture").click()
+    expect(page.locator("#annotation-status")).to_contain_text("Captured moment:")
+    page.locator("#history-pin").click()
+    expect(page.locator("#annotation-status")).to_contain_text("Pinned session:")
+    page.locator("#history-checkpoint").fill("2")
+    page.locator("#history-rewind").click()
+    assert input_queue.get(timeout=2) == "/rewind 2"
+    page.locator("#history-load").click()
+    assert input_queue.get(timeout=2) == "/restore sess-playwright 2"
+    page.locator("#history-replay").click()
+    assert input_queue.get(timeout=2) == "/replay sess-playwright 2"
     with page.expect_popup() as detail_popup_info:
         page.locator("#detail-open-window").click()
     detail_popup = detail_popup_info.value

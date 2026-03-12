@@ -15,6 +15,14 @@ from rich.text import Text
 
 from character_eng.chat import ChatSession, set_chat_trace_hook
 from character_eng.config import load_config, save_config
+from character_eng.history import (
+    DEFAULT_VISION_CAPTURE_FPS,
+    HISTORY_ROOT,
+    HistoryService,
+    PlaybackRunner,
+    catalog_report_annotation,
+    restore_runtime_state,
+)
 from character_eng.models import BIG_MODEL, CHAT_MODEL, MODELS
 from character_eng.utils import start_prefixed_output_thread, ts as _ts
 from character_eng.perception import PerceptionEvent, load_sim_script, process_perception
@@ -55,6 +63,18 @@ LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 _collector = None  # set in chat_loop / main when dashboard is active
 _dashboard_input_queue = None
 _app_config = None
+_history_service = None
+_history_playback_runner = None
+_history_playback_state = {
+    "active": False,
+    "source": "",
+    "source_kind": "",
+    "checkpoint_index": None,
+    "checkpoint_label": "",
+    "audio": False,
+    "video": False,
+    "warning": "",
+}
 _vision_runtime = {
     "cfg": None,
     "proc": None,
@@ -65,12 +85,16 @@ _vision_runtime = {
 
 def _push(event_type: str, data: dict) -> None:
     """Push an event to the dashboard collector (no-op if dashboard is off)."""
+    if _history_service is not None:
+        _history_service.record_event(event_type, data)
     if _collector is not None:
         _collector.push(event_type, data)
 
 
 def _record_prompt_trace(payload: dict) -> None:
     """Forward captured prompt traces to the dashboard as hidden runtime events."""
+    if _history_service is not None:
+        _history_service.record_event("prompt_trace", payload)
     if _collector is None:
         return
     trace = dict(payload)
@@ -379,6 +403,97 @@ def _push_runtime_controls(voice_io=None, vision_mgr=None, vision_cfg=None) -> N
     ))
 
 
+def _history_status_payload() -> dict:
+    if _history_service is None:
+        return {
+            "enabled": False,
+            "root": str(HISTORY_ROOT),
+            "free_gib": 0.0,
+            "warning_threshold_gib": 0.0,
+            "warning": "",
+            "sessions_count": 0,
+            "pinned_count": 0,
+            "moments_count": 0,
+            "sessions_bytes": 0,
+            "pinned_bytes": 0,
+            "moments_bytes": 0,
+            "current_session": {},
+            "playback": dict(_history_playback_state),
+        }
+    payload = dict(_history_service.status())
+    payload["enabled"] = True
+    payload["playback"] = dict(_history_playback_state)
+    return payload
+
+
+def _push_history_status() -> None:
+    if _history_service is None:
+        return
+    _push("history_status", _history_status_payload())
+
+
+def _set_history_playback_state(**updates) -> None:
+    _history_playback_state.update(updates)
+    _push_history_status()
+
+
+def _stop_history_playback() -> None:
+    global _history_playback_runner
+    if _history_playback_runner is not None:
+        _history_playback_runner.stop()
+        _history_playback_runner = None
+    _set_history_playback_state(
+        active=False,
+        source="",
+        source_kind="",
+        checkpoint_index=None,
+        checkpoint_label="",
+        audio=False,
+        video=False,
+        warning="",
+    )
+
+
+def _history_had_user_input(log: list[dict]) -> bool:
+    return any(entry.get("type") == "send" for entry in log)
+
+
+def _capture_history_checkpoint(
+    label: str,
+    *,
+    character: str,
+    session,
+    world,
+    people,
+    scenario,
+    script,
+    goals,
+    log,
+) -> None:
+    if _history_service is None:
+        return
+    _history_service.capture_checkpoint(
+        label=label,
+        character=character,
+        session_snapshot=session.snapshot_state(),
+        world=world,
+        people=people,
+        scenario=scenario,
+        script=script,
+        goals=goals,
+        log_entries=list(log),
+        context_version=_context_version,
+        had_user_input=_history_had_user_input(log),
+    )
+    _push_history_status()
+
+
+def _restore_runtime_checkpoint(session, payload: dict):
+    restored = restore_runtime_state(payload)
+    session.restore_state(restored["session_snapshot"])
+    return restored
+
+
 def _render_runtime_controls(voice_io=None, vision_mgr=None, vision_cfg=None) -> str:
     state = _runtime_controls_snapshot(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
     lines = []
@@ -504,7 +619,7 @@ def _check_reconcile(world, log, people=None):
         _reconcile_result = None
 
     if result is None:
-        return
+        return False
 
     _reconcile_thread = None
 
@@ -550,6 +665,7 @@ def _check_reconcile(world, log, people=None):
         "events": result.events,
     })
     _push_world_people_state(world, people)
+    return True
 
 
 def _push_world_people_state(world, people=None):
@@ -699,13 +815,24 @@ def _poll_live_input(session_id: str, voice_io):
         return None
 
 
-def _wait_for_active_turn_input(session_id, voice_io, session, world, people, vision_mgr, scenario, script, goals, model_config, log):
+def _wait_for_active_turn_input(session_id, voice_io, session, world, people, vision_mgr, scenario, script, goals, model_config, log, character):
     if voice_io is None and _dashboard_input_queue is None:
         return _get_input(session_id)
 
     while True:
         if world is not None:
-            _check_reconcile(world, log, people=people)
+            if _check_reconcile(world, log, people=people):
+                _capture_history_checkpoint(
+                    "reconcile",
+                    character=character,
+                    session=session,
+                    world=world,
+                    people=people,
+                    scenario=scenario,
+                    script=script,
+                    goals=goals,
+                    log=log,
+                )
         user_input = _poll_live_input(session_id, voice_io)
         if user_input:
             return user_input
@@ -1202,7 +1329,19 @@ def _create_voice_io(voice_cfg, VoiceIO_cls):
             return
         _push(event_type, data)
 
+    def _input_audio_hook(pcm: bytes):
+        if _session_stopped or _conversation_paused or _history_service is None:
+            return
+        _history_service.record_user_audio(pcm)
+
+    def _output_audio_hook(pcm: bytes):
+        if _session_stopped or _conversation_paused or _history_service is None:
+            return
+        _history_service.record_assistant_audio(pcm)
+
     kw["trace_hook"] = _voice_trace
+    kw["input_audio_hook"] = _input_audio_hook
+    kw["output_audio_hook"] = _output_audio_hook
     return VoiceIO_cls(**kw)
 
 
@@ -1409,6 +1548,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             from character_eng.vision.client import VisionClient
             _vision_client = VisionClient(vision_cfg.service_url)
             def on_video_frame(jpeg_bytes: bytes):
+                if _history_service is not None and not _session_stopped and not _conversation_paused:
+                    _history_service.record_video_frame(jpeg_bytes, source="browser_bridge")
                 try:
                     _vision_client.inject_frame(jpeg_bytes)
                 except Exception:
@@ -1461,6 +1602,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             console.print("[dim]Falling back to text mode[/dim]")
 
     next_session_mode = "ready" if start_paused else "live"
+    pending_history_action = None
 
     # Outer loop: handles /reload by restarting with fresh session
     while True:
@@ -1474,6 +1616,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             if vision_mgr is not None:
                 vision_mgr.set_paused(False)
             _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
+            _push_history_status()
             console.print("[yellow]Session ready[/yellow] — use /start or the dashboard Start button to create a fresh session")
             while True:
                 try:
@@ -1495,6 +1638,59 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     break
                 if ready_cmd == "/restart":
                     next_session_mode = "paused"
+                    break
+                if ready_cmd == "/history":
+                    status = _history_status_payload()
+                    console.print(Panel(
+                        "\n".join([
+                            f"root        : {status.get('root', '')}",
+                            f"free        : {status.get('free_gib', 0.0):.1f} GiB",
+                            f"threshold   : {status.get('warning_threshold_gib', 0.0):.1f} GiB",
+                            f"sessions    : {status.get('sessions_count', 0)}",
+                            f"pinned      : {status.get('pinned_count', 0)}",
+                            f"moments     : {status.get('moments_count', 0)}",
+                        ]),
+                        title="History",
+                        border_style="dim",
+                    ))
+                    continue
+                if ready_cmd.startswith("/restore "):
+                    parts = ready_input.split()
+                    if len(parts) < 2:
+                        console.print("[red]Usage: /restore <session_id|path> [checkpoint_index][/red]")
+                        continue
+                    checkpoint_index = None
+                    if len(parts) > 2:
+                        try:
+                            checkpoint_index = int(parts[2])
+                        except ValueError:
+                            console.print("[red]checkpoint_index must be an integer[/red]")
+                            continue
+                    pending_history_action = {
+                        "type": "restore",
+                        "ref": parts[1],
+                        "checkpoint": checkpoint_index,
+                    }
+                    next_session_mode = "paused"
+                    break
+                if ready_cmd.startswith("/replay "):
+                    parts = ready_input.split()
+                    if len(parts) < 2:
+                        console.print("[red]Usage: /replay <session_id|path> [checkpoint_index][/red]")
+                        continue
+                    checkpoint_index = None
+                    if len(parts) > 2:
+                        try:
+                            checkpoint_index = int(parts[2])
+                        except ValueError:
+                            console.print("[red]checkpoint_index must be an integer[/red]")
+                            continue
+                    pending_history_action = {
+                        "type": "replay",
+                        "ref": parts[1],
+                        "checkpoint": checkpoint_index,
+                    }
+                    next_session_mode = "live"
                     break
                 if ready_cmd == "/quit":
                     if voice_io is not None:
@@ -1543,6 +1739,16 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
         session = ChatSession(system_prompt, model_config)
         _inject_runtime_turn_guardrails(session, scenario=scenario)
         script = Script()
+        model_key = next((k for k, v in MODELS.items() if v is model_config), "unknown")
+
+        if _history_service is not None:
+            _history_service.start_session(
+                session_id=session_id,
+                character=character,
+                model=model_key,
+                model_name=model_config["name"],
+            )
+        _stop_history_playback()
 
         if scenario:
             console.print(f"[dim]Scenario: {scenario.name} (stage: {scenario.current_stage})[/dim]")
@@ -1562,6 +1768,11 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             )
         if vision_mgr is not None:
             console.print("[green]Vision active[/green]")
+            if _history_service is not None and vision_cfg is not None:
+                _history_service.start_vision_capture(
+                    vision_cfg.service_url,
+                    fps=float(getattr(_app_config.history, "vision_capture_fps", DEFAULT_VISION_CAPTURE_FPS)) if _app_config else DEFAULT_VISION_CAPTURE_FPS,
+                )
         _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
 
         # Generate initial script at boot (synchronous, 8B single-beat)
@@ -1579,7 +1790,6 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
         mode_tag = " [green]voice[/green]" if voice_io is not None else ""
         console.print(f"\n[bold green]Chatting with {label} ({model_config['name']})[/bold green]{mode_tag}  [dim]{session_id}[/dim]  (type /help for commands)\n")
 
-        model_key = next((k for k, v in MODELS.items() if v is model_config), "unknown")
         if _collector is not None:
             _collector.reset()
         if vision_mgr is not None:
@@ -1605,6 +1815,163 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 "old_stage": "", "new_stage": scenario.active_stage.name,
                 "new_goal": scenario.active_stage.goal,
             })
+        _capture_history_checkpoint(
+            "session_start",
+            character=character,
+            session=session,
+            world=world,
+            people=people,
+            scenario=scenario,
+            script=script,
+            goals=goals,
+            log=log,
+        )
+
+        def _apply_history_payload(payload: dict, *, source_session_id: str, mode: str) -> None:
+            nonlocal world, people, scenario, script, goals, log, had_user_input, _arm_auto_beat
+            restored = _restore_runtime_checkpoint(session, payload)
+            world = restored["world"]
+            people = restored["people"] or PeopleState()
+            scenario = restored["scenario"]
+            script = restored["script"] or Script()
+            goals = restored["goals"]
+            log = restored["log_entries"]
+            had_user_input = restored["had_user_input"]
+            _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
+            _push("history_restore", {
+                "source_session_id": source_session_id,
+                "checkpoint_index": restored["checkpoint_index"],
+                "label": restored["label"],
+                "mode": mode,
+            })
+            _push_world_people_state(world, people)
+            if scenario and scenario.active_stage:
+                _push("stage_change", {
+                    "old_stage": "",
+                    "new_stage": scenario.active_stage.name,
+                    "new_goal": scenario.active_stage.goal,
+                })
+            _capture_history_checkpoint(
+                f"{mode}_{restored['checkpoint_index']}",
+                character=character,
+                session=session,
+                world=world,
+                people=people,
+                scenario=scenario,
+                script=script,
+                goals=goals,
+                log=log,
+            )
+            _arm_auto_beat = False
+
+        def _start_history_playback(session_ref: str, checkpoint_index: int | None = None) -> bool:
+            nonlocal _arm_auto_beat
+            global _conversation_paused, _session_stopped, _startup_pause_pending, _history_playback_runner
+            if _history_service is None:
+                console.print("[red]History recording is disabled.[/red]")
+                return False
+            plan = _history_service.prepare_playback(session_ref, checkpoint_index)
+            _apply_history_payload(plan.checkpoint_payload, source_session_id=plan.session_id, mode="historical_replay")
+
+            audio_enabled = False
+            video_enabled = False
+            warning_parts: list[str] = []
+
+            audio_callback = None
+            if plan.audio_path is not None:
+                if voice_io is not None and hasattr(voice_io, "inject_input_audio"):
+                    audio_callback = voice_io.inject_input_audio
+                    audio_enabled = True
+                else:
+                    warning_parts.append("voice input inactive; audio replay skipped")
+
+            video_callback = None
+            if plan.video_frames:
+                if vision_cfg is not None:
+                    from character_eng.vision.client import VisionClient
+                    vision_client = VisionClient(vision_cfg.service_url)
+
+                    def _video_callback(jpeg_bytes: bytes, meta: dict) -> None:
+                        try:
+                            vision_client.inject_frame(jpeg_bytes)
+                            _push("history_playback_frame", {
+                                "source_session_id": plan.session_id,
+                                "checkpoint_index": plan.checkpoint_index,
+                                "relative_s": meta.get("relative_s", 0.0),
+                                "path": meta.get("path", ""),
+                            })
+                        except Exception:
+                            pass
+
+                    video_callback = _video_callback
+                    video_enabled = True
+                else:
+                    warning_parts.append("vision service inactive; video replay skipped")
+
+            if audio_callback is None and video_callback is None:
+                warning = "; ".join(warning_parts) or "no replayable media found"
+                _set_history_playback_state(
+                    active=False,
+                    source=session_ref,
+                    source_kind=plan.source_kind,
+                    checkpoint_index=plan.checkpoint_index,
+                    checkpoint_label=plan.checkpoint_label,
+                    audio=False,
+                    video=False,
+                    warning=warning,
+                )
+                console.print(f"[yellow]Playback unavailable[/yellow] — {warning}")
+                return False
+
+            _stop_history_playback()
+            _history_playback_runner = PlaybackRunner(
+                plan,
+                audio_callback=audio_callback,
+                video_callback=video_callback,
+            )
+            _history_playback_runner.start()
+
+            _conversation_paused = False
+            _session_stopped = False
+            _startup_pause_pending = False
+            if vision_mgr is not None:
+                vision_mgr.set_paused(False)
+            _arm_auto_beat = False
+
+            warning = "; ".join(warning_parts)
+            _set_history_playback_state(
+                active=True,
+                source=str(plan.source_path),
+                source_kind=plan.source_kind,
+                checkpoint_index=plan.checkpoint_index,
+                checkpoint_label=plan.checkpoint_label,
+                audio=audio_enabled,
+                video=video_enabled,
+                warning=warning,
+            )
+            _push("history_playback", {
+                **plan.summary(),
+                "audio": audio_enabled,
+                "video": video_enabled,
+                "warning": warning,
+                "mode": "started",
+            })
+            console.print(
+                f"[green]Playback started[/green] from {plan.session_id} @ checkpoint {plan.checkpoint_index}"
+            )
+            if warning:
+                console.print(f"[yellow]{warning}[/yellow]")
+            return True
+
+        if pending_history_action is not None:
+            action = dict(pending_history_action)
+            pending_history_action = None
+            if action["type"] == "restore":
+                payload = _history_service.load_checkpoint_payload(action["ref"], action.get("checkpoint")) if _history_service is not None else None
+                if payload is not None:
+                    _apply_history_payload(payload, source_session_id=str(action["ref"]), mode="historical_restore")
+            elif action["type"] == "replay":
+                _start_history_playback(str(action["ref"]), action.get("checkpoint"))
 
         # Auto-sim: run sim script then exit
         if auto_sim:
@@ -1617,10 +1984,21 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
         # Inner loop: conversation turns
         def _finish_session() -> None:
+            _stop_history_playback()
             total_turns = len([e for e in log if e.get("type") in ("send", "beat", "world", "see")])
-            _push("session_end", {"total_turns": total_turns})
+            history_meta = _history_service.finalize_current() if _history_service is not None else None
+            history_status = _history_status_payload()
+            current_history = history_status.get("current_session", {}) or {}
+            _push("session_end", {
+                "total_turns": total_turns,
+                "session_id": session_id,
+                "history_path": current_history.get("session_path", ""),
+                "pinned_path": history_meta.get("pinned_path", "") if history_meta else "",
+                "disk_warning": history_meta.get("disk_warning", "") if history_meta else "",
+            })
             save_chat_log(character, model_config, log, session_id)
             save_chat_html(character, model_config, log, session_id)
+            _push_history_status()
 
         session_action = None
         while True:
@@ -1654,6 +2032,85 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     _push("resume", {"from_start": bool(is_fresh_session)})
                     _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
                     _arm_auto_beat = True
+                    continue
+                if cmd == "/history":
+                    status = _history_status_payload()
+                    current = status.get("current_session", {}) or {}
+                    lines = [
+                        f"root        : {status.get('root', '')}",
+                        f"free        : {status.get('free_gib', 0.0):.1f} GiB",
+                        f"threshold   : {status.get('warning_threshold_gib', 0.0):.1f} GiB",
+                        f"sessions    : {status.get('sessions_count', 0)}",
+                        f"pinned      : {status.get('pinned_count', 0)}",
+                        f"moments     : {status.get('moments_count', 0)}",
+                        f"path        : {current.get('session_path', '') or 'n/a'}",
+                    ]
+                    playback = status.get("playback", {}) or {}
+                    if playback.get("active"):
+                        lines.append(
+                            f"playback    : active ({playback.get('source_kind', 'archive')} @ {playback.get('checkpoint_index')})"
+                        )
+                    if status.get("warning"):
+                        lines.append(f"warning     : {status['warning']}")
+                    console.print(Panel("\n".join(lines), title="History", border_style="dim"))
+                    continue
+                if cmd == "/pin":
+                    if _history_service is None:
+                        console.print("[red]History recording is disabled.[/red]")
+                        continue
+                    pinned = _history_service.promote(kind="pinned")
+                    _push("history_promoted", {"kind": "pinned", "path": str(pinned)})
+                    _push_history_status()
+                    console.print(f"[green]Pinned session[/green] → {pinned}")
+                    continue
+                if cmd.startswith("/rewind"):
+                    parts = user_input.split()
+                    checkpoint_index = None
+                    if len(parts) > 1:
+                        try:
+                            checkpoint_index = int(parts[1])
+                        except ValueError:
+                            console.print("[red]Usage: /rewind [checkpoint_index][/red]")
+                            continue
+                    if _history_service is None:
+                        console.print("[red]History recording is disabled.[/red]")
+                        continue
+                    payload = _history_service.load_checkpoint_payload(session_id, checkpoint_index)
+                    _apply_history_payload(payload, source_session_id=session_id, mode="rewind")
+                    console.print("[green]Rewound[/green] current session")
+                    continue
+                if cmd.startswith("/restore "):
+                    parts = user_input.split()
+                    if len(parts) < 2:
+                        console.print("[red]Usage: /restore <session_id|path> [checkpoint_index][/red]")
+                        continue
+                    checkpoint_index = None
+                    if len(parts) > 2:
+                        try:
+                            checkpoint_index = int(parts[2])
+                        except ValueError:
+                            console.print("[red]checkpoint_index must be an integer[/red]")
+                            continue
+                    if _history_service is None:
+                        console.print("[red]History recording is disabled.[/red]")
+                        continue
+                    payload = _history_service.load_checkpoint_payload(parts[1], checkpoint_index)
+                    _apply_history_payload(payload, source_session_id=parts[1], mode="historical_restore")
+                    console.print(f"[green]Restored[/green] checkpoint from {parts[1]}")
+                    continue
+                if cmd.startswith("/replay "):
+                    parts = user_input.split()
+                    if len(parts) < 2:
+                        console.print("[red]Usage: /replay <session_id|path> [checkpoint_index][/red]")
+                        continue
+                    checkpoint_index = None
+                    if len(parts) > 2:
+                        try:
+                            checkpoint_index = int(parts[2])
+                        except ValueError:
+                            console.print("[red]checkpoint_index must be an integer[/red]")
+                            continue
+                    _start_history_playback(parts[1], checkpoint_index)
                     continue
                 if cmd == "/stop":
                     console.print("[yellow]Stopping session...[/yellow]")
@@ -1696,7 +2153,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 try:
                     user_input = _wait_for_active_turn_input(
                         session_id, voice_io, session, world, people, vision_mgr,
-                        scenario, script, goals, model_config, log,
+                        scenario, script, goals, model_config, log, character,
                     )
                 except (EOFError, KeyboardInterrupt):
                     console.print()
@@ -1744,7 +2201,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     if voice_io is not None or _dashboard_input_queue is not None:
                         user_input = _wait_for_active_turn_input(
                             session_id, voice_io, session, world, people, vision_mgr,
-                            scenario, script, goals, model_config, log,
+                            scenario, script, goals, model_config, log, character,
                         )
                     else:
                         user_input = _get_input(session_id)
@@ -1872,6 +2329,85 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             elif cmd == "/trace":
                 show_trace(session)
                 continue
+            elif cmd == "/history":
+                status = _history_status_payload()
+                current = status.get("current_session", {}) or {}
+                lines = [
+                    f"root        : {status.get('root', '')}",
+                    f"free        : {status.get('free_gib', 0.0):.1f} GiB",
+                    f"threshold   : {status.get('warning_threshold_gib', 0.0):.1f} GiB",
+                    f"sessions    : {status.get('sessions_count', 0)}",
+                    f"pinned      : {status.get('pinned_count', 0)}",
+                    f"moments     : {status.get('moments_count', 0)}",
+                    f"path        : {current.get('session_path', '') or 'n/a'}",
+                ]
+                playback = status.get("playback", {}) or {}
+                if playback.get("active"):
+                    lines.append(
+                        f"playback    : active ({playback.get('source_kind', 'archive')} @ {playback.get('checkpoint_index')})"
+                    )
+                if status.get("warning"):
+                    lines.append(f"warning     : {status['warning']}")
+                console.print(Panel("\n".join(lines), title="History", border_style="dim"))
+                continue
+            elif cmd == "/pin":
+                if _history_service is None:
+                    console.print("[red]History recording is disabled.[/red]")
+                    continue
+                pinned = _history_service.promote(kind="pinned")
+                _push("history_promoted", {"kind": "pinned", "path": str(pinned)})
+                _push_history_status()
+                console.print(f"[green]Pinned session[/green] → {pinned}")
+                continue
+            elif cmd.startswith("/rewind"):
+                parts = user_input.split()
+                checkpoint_index = None
+                if len(parts) > 1:
+                    try:
+                        checkpoint_index = int(parts[1])
+                    except ValueError:
+                        console.print("[red]Usage: /rewind [checkpoint_index][/red]")
+                        continue
+                if _history_service is None:
+                    console.print("[red]History recording is disabled.[/red]")
+                    continue
+                payload = _history_service.load_checkpoint_payload(session_id, checkpoint_index)
+                _apply_history_payload(payload, source_session_id=session_id, mode="rewind")
+                console.print("[green]Rewound[/green] current session")
+                continue
+            elif cmd.startswith("/restore "):
+                parts = user_input.split()
+                if len(parts) < 2:
+                    console.print("[red]Usage: /restore <session_id|path> [checkpoint_index][/red]")
+                    continue
+                checkpoint_index = None
+                if len(parts) > 2:
+                    try:
+                        checkpoint_index = int(parts[2])
+                    except ValueError:
+                        console.print("[red]checkpoint_index must be an integer[/red]")
+                        continue
+                if _history_service is None:
+                    console.print("[red]History recording is disabled.[/red]")
+                    continue
+                payload = _history_service.load_checkpoint_payload(parts[1], checkpoint_index)
+                _apply_history_payload(payload, source_session_id=parts[1], mode="historical_restore")
+                console.print(f"[green]Restored[/green] checkpoint from {parts[1]}")
+                continue
+            elif cmd.startswith("/replay "):
+                parts = user_input.split()
+                if len(parts) < 2:
+                    console.print("[red]Usage: /replay <session_id|path> [checkpoint_index][/red]")
+                    continue
+                checkpoint_index = None
+                if len(parts) > 2:
+                    try:
+                        checkpoint_index = int(parts[2])
+                    except ValueError:
+                        console.print("[red]checkpoint_index must be an integer[/red]")
+                        continue
+                _start_history_playback(parts[1], checkpoint_index)
+                continue
             elif handle_runtime_control_command(
                 user_input,
                 voice_io=voice_io,
@@ -1957,6 +2493,17 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 continue
             elif cmd == "/beat":
                 handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario, vision_mgr=vision_mgr)
+                _capture_history_checkpoint(
+                    "beat",
+                    character=character,
+                    session=session,
+                    world=world,
+                    people=people,
+                    scenario=scenario,
+                    script=script,
+                    goals=goals,
+                    log=log,
+                )
                 _arm_auto_beat = False
                 continue
             elif cmd == "/info":
@@ -1968,6 +2515,17 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     continue
                 change_text = user_input[7:]  # preserve original case
                 handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario, vision_mgr=vision_mgr)
+                _capture_history_checkpoint(
+                    "world",
+                    character=character,
+                    session=session,
+                    world=world,
+                    people=people,
+                    scenario=scenario,
+                    script=script,
+                    goals=goals,
+                    log=log,
+                )
                 _arm_auto_beat = True
                 continue
             elif cmd.startswith("/see "):
@@ -1976,6 +2534,17 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     continue
                 see_text = user_input[5:]  # preserve original case
                 handle_perception(session, world, goals, script, people, scenario, see_text, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, vision_mgr=vision_mgr)
+                _capture_history_checkpoint(
+                    "perception",
+                    character=character,
+                    session=session,
+                    world=world,
+                    people=people,
+                    scenario=scenario,
+                    script=script,
+                    goals=goals,
+                    log=log,
+                )
                 _arm_auto_beat = True
                 continue
             elif cmd.startswith("/sim "):
@@ -1984,10 +2553,32 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print("[red]Usage: /sim <name>[/red]")
                     continue
                 run_sim(sim_name, character, session, world, goals, script, people, scenario, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, vision_mgr=vision_mgr)
+                _capture_history_checkpoint(
+                    "sim",
+                    character=character,
+                    session=session,
+                    world=world,
+                    people=people,
+                    scenario=scenario,
+                    script=script,
+                    goals=goals,
+                    log=log,
+                )
                 _arm_auto_beat = True
                 continue
             elif cmd in ("1", "2", "3", "4"):
                 handle_trigger(int(cmd), scenario, session, world, goals, script, people, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, vision_mgr=vision_mgr)
+                _capture_history_checkpoint(
+                    "trigger",
+                    character=character,
+                    session=session,
+                    world=world,
+                    people=people,
+                    scenario=scenario,
+                    script=script,
+                    goals=goals,
+                    log=log,
+                )
                 _arm_auto_beat = True
                 continue
             elif user_input.startswith("/"):
@@ -2039,6 +2630,17 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 )
                 if result.beats:
                     apply_plan(script, result)
+                _capture_history_checkpoint(
+                    "send_first_turn",
+                    character=character,
+                    session=session,
+                    world=world,
+                    people=people,
+                    scenario=scenario,
+                    script=script,
+                    goals=goals,
+                    log=log,
+                )
                 _arm_auto_beat = True
                 continue
 
@@ -2096,6 +2698,17 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 )
                 if result.beats:
                     apply_plan(script, result)
+            _capture_history_checkpoint(
+                "send_turn",
+                character=character,
+                session=session,
+                world=world,
+                people=people,
+                scenario=scenario,
+                script=script,
+                goals=goals,
+                log=log,
+            )
             _arm_auto_beat = True
 
         if session_action == "ready":
@@ -2927,6 +3540,11 @@ def show_help(voice_active: bool = False):
         "/stop           - Stop this session, save its log, and return to ready\n"
         "/pause          - Pause the conversation loop\n"
         "/resume         - Alias for /play\n"
+        "/history        - Show history storage + disk status\n"
+        "/pin            - Pin the current session so cleanup will keep it\n"
+        "/rewind [n]     - Restore checkpoint n from the current session (latest if omitted)\n"
+        "/restore <id> [n] - Restore checkpoint n from an archived session or moment\n"
+        "/replay <id> [n] - Restore checkpoint n and replay archived audio/video from there\n"
         "/restart        - Restart this character session\n"
         "/reload         - Reload prompt files, restart conversation\n"
         "/trace          - Show system prompt, model, token usage\n"
@@ -3310,9 +3928,13 @@ def main():
     if args.smoke:
         sys.exit(run_smoke())
 
-    global _app_config
+    global _app_config, _history_service
     cfg = load_config()
     _app_config = cfg
+    _history_service = HistoryService(
+        root=HISTORY_ROOT,
+        free_warning_gib=float(getattr(cfg.history, "free_warning_gib", 50.0)),
+    ) if getattr(cfg.history, "enabled", True) else None
     browser_mode = args.browser or cfg.bridge.enabled
 
     # --voice flag overrides config; config.voice.enabled is the default
@@ -3345,7 +3967,12 @@ def main():
         else:
             from character_eng.dashboard.server import start_dashboard
             from character_eng.open_report import open_in_browser
-            _, dash_port = start_dashboard(_collector, _dashboard_input_queue, port=cfg.dashboard.port)
+            _, dash_port = start_dashboard(
+                _collector,
+                _dashboard_input_queue,
+                port=cfg.dashboard.port,
+                history_api=_history_service,
+            )
             dash_url = f"http://127.0.0.1:{dash_port}/"
             console.print(f"[bold green]Dashboard:[/bold green] {dash_url}")
             open_in_browser(dash_url)
@@ -3379,6 +4006,8 @@ def main():
         if not VisionClient(cfg.vision.service_url).health():
             console.print(f"[yellow]Vision unavailable at {cfg.vision.service_url} — continuing without vision[/yellow]")
             vision_mode = False
+
+    _push_history_status()
 
     try:
         while True:
