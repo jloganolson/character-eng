@@ -1381,8 +1381,10 @@
             </div>
             <div id="snippet-form" style="display:none;margin-top:0.55em;">
               <input id="snippet-title" type="text" placeholder="snippet title" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
+              <input id="snippet-tags" type="text" placeholder="tags: false-barge-in, stt, echo" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
               <select id="snippet-mode" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
                 <option value="turn_context">Turn Context</option>
+                <option value="barge_in_turn">Barge-In Turn</option>
                 <option value="vision_full_stack">Vision Full Stack</option>
                 <option value="vision_synthesis_inputs">Vision Synthesis Inputs</option>
               </select>
@@ -1636,6 +1638,7 @@
   const snippetCancelButton = document.getElementById("snippet-cancel");
   const snippetForm = document.getElementById("snippet-form");
   const snippetTitleInput = document.getElementById("snippet-title");
+  const snippetTagsInput = document.getElementById("snippet-tags");
   const snippetModeSelect = document.getElementById("snippet-mode");
   const annotationForm = document.getElementById("annotation-form");
   const annotationTagsInput = document.getElementById("annotation-tags");
@@ -1900,6 +1903,7 @@
       item?.session_id || "",
       item?.started_at_iso || "",
       archiveBucketLabel(item),
+      ...(Array.isArray(item?.tags) ? item.tags : []),
     ].join(" ").toLowerCase();
     return haystack.includes(query.toLowerCase());
   }
@@ -3362,9 +3366,51 @@
 
   function defaultSnippetModeForEvent(event) {
     if (!event) return "turn_context";
+    if (event.type === "response_interrupted" || (event.type === "assistant_reply" && event.data?.interrupted)) return "barge_in_turn";
     if (event.type === "vision_pass" || event.type === "perception") return "vision_synthesis_inputs";
     if (event.type === "vision_snapshot" || event.type === "vision_focus") return "vision_full_stack";
     return "turn_context";
+  }
+
+  function bargeInInputsForEvent(event, bundle) {
+    if (!event) return {};
+    const upstream = Array.isArray(bundle?.upstream_events) ? bundle.upstream_events : [];
+    const downstream = Array.isArray(bundle?.downstream_events) ? bundle.downstream_events : [];
+    const current = bundle?.event || {};
+    const all = [...upstream, current, ...downstream];
+    const assistantReply = event.type === "assistant_reply"
+      ? current
+      : [...upstream].reverse().find((item) => item.type === "assistant_reply") || null;
+    const interruption = event.type === "response_interrupted"
+      ? current
+      : downstream.find((item) => item.type === "response_interrupted") || null;
+    const speechStarted = upstream.find((item) => item.type === "user_speech_started")
+      || downstream.find((item) => item.type === "user_speech_started")
+      || null;
+    const transcriptFinal = upstream.find((item) => item.type === "user_transcript_final")
+      || downstream.find((item) => item.type === "user_transcript_final")
+      || null;
+    const turnStart = upstream.find((item) => item.type === "turn_start")
+      || downstream.find((item) => item.type === "turn_start")
+      || null;
+    const firstAudioS = assistantReply?.data?.first_audio_ms != null
+      ? Number((Number(assistantReply.data.first_audio_ms) / 1000).toFixed(3))
+      : null;
+    const speechStartedS = speechStarted?.time_s ?? null;
+    return {
+      reason: interruption?.data?.reason || assistantReply?.data?.interrupted_reason || "",
+      transcript_text: transcriptFinal?.data?.text || turnStart?.data?.stt_text || "",
+      speech_started_s: speechStartedS,
+      transcript_final_s: transcriptFinal?.time_s ?? null,
+      turn_start_s: turnStart?.time_s ?? null,
+      assistant_first_audio_s: firstAudioS,
+      audio_started_before_speech: firstAudioS != null && speechStartedS != null ? firstAudioS <= speechStartedS : null,
+      assistant_text: assistantReply?.data?.full_text || assistantReply?.label || "",
+      interrupted_text: interruption?.data?.truncated_text || assistantReply?.data?.truncated_text || "",
+      interruption_event_time_s: interruption?.time_s ?? null,
+      source_event_type: event.type,
+      source_event_key: event.key,
+    };
   }
 
   function setSnippetFormOpen(open) {
@@ -3373,6 +3419,7 @@
     snippetToggleButton.textContent = snippetFormOpen ? "Close Snippet Form" : "Capture As Snippet";
     if (!snippetFormOpen) {
       snippetTitleInput.value = "";
+      snippetTagsInput.value = "";
       snippetModeSelect.value = "turn_context";
     }
   }
@@ -3437,6 +3484,7 @@
     annotationNoteInput.value = "";
     annotationDesiredInput.value = "";
     snippetTitleInput.value = "";
+    snippetTagsInput.value = "";
     snippetModeSelect.value = "turn_context";
     annotationList.innerHTML = '<div style="color:var(--text-dim);">Select a debug timeline event to inspect or annotate it.</div>';
   }
@@ -3686,9 +3734,17 @@
       const bundle = selectedEventBundle(event) || {};
       bundle.vision_inputs = await visionInputsForEvent(event);
       bundle.capture_mode = snippetModeSelect.value || defaultSnippetModeForEvent(event);
+      if (bundle.capture_mode === "barge_in_turn") {
+        bundle.barge_in = bargeInInputsForEvent(event, bundle);
+      }
+      const snippetTags = snippetTagsInput.value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
       const result = await postJson("/history/snippet", {
         session_id: activeArchiveSessionId(),
         title: snippetTitleInput.value.trim() || event.label || event.type || "snippet",
+        tags: snippetTags,
         capture_mode: bundle.capture_mode,
         event_time_s: Number(relativeTime(event.timestamp).toFixed(3)),
         bundle,
@@ -5203,6 +5259,7 @@
     }
     snippetModeSelect.value = defaultSnippetModeForEvent(event);
     snippetTitleInput.value = event.label || event.type || "snippet";
+    snippetTagsInput.value = snippetModeSelect.value === "barge_in_turn" ? "barge-in" : "";
     setSnippetFormOpen(!snippetFormOpen);
   });
   snippetSaveButton.addEventListener("click", captureSelectedMoment);

@@ -114,6 +114,7 @@ def test_capture_moment_writes_audio_and_video_context(tmp_path):
         {
             "session_id": "sess3",
             "title": "phone moment",
+            "tags": ["barge-in", "false-barge-in"],
             "event_time_s": 0.5,
             "bundle": {"event": {"type": "vision_pass"}},
             "window_before_s": 0.25,
@@ -127,6 +128,7 @@ def test_capture_moment_writes_audio_and_video_context(tmp_path):
     assert (moment_dir / "media" / "video" / "frame_000000.jpg").exists()
     manifest = json.loads((moment_dir / "manifest.json").read_text())
     assert manifest["type"] == "snippet"
+    assert manifest["tags"] == ["barge-in", "false-barge-in"]
 
 
 def test_prune_unpromoted_sessions_leaves_pinned(tmp_path):
