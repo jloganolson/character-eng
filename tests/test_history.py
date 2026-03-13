@@ -1,10 +1,14 @@
 import json
+import subprocess
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from character_eng.history import (
     HistoryService,
     PlaybackRunner,
+    VisionVideoRecorder,
     load_checkpoint,
     resolve_checkpoint_for_event_time,
     resolve_session_path,
@@ -20,6 +24,80 @@ def _session_snapshot():
         "messages": [{"role": "system", "content": "system"}],
         "tagged_system_indices": {},
     }
+
+
+def _write_test_video(path):
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=320x240:d=1:r=30",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(path),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _write_test_jpeg(path):
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=320x240:d=0.04:r=30",
+            "-frames:v",
+            "1",
+            str(path),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+class _MjpegHandler(BaseHTTPRequestHandler):
+    frame_bytes = b""
+
+    def do_GET(self):
+        if self.path != "/video_feed":
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        self.end_headers()
+        try:
+            deadline = time.time() + 1.0
+            while time.time() < deadline:
+                payload = (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    + f"Content-Length: {len(self.frame_bytes)}\r\n\r\n".encode()
+                    + self.frame_bytes
+                    + b"\r\n"
+                )
+                self.wfile.write(payload)
+                self.wfile.flush()
+                time.sleep(1.0 / 30.0)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    def log_message(self, format, *args):
+        pass
 
 
 def test_history_service_records_session_checkpoint_and_restore(tmp_path):
@@ -129,6 +207,127 @@ def test_capture_moment_writes_audio_and_video_context(tmp_path):
     manifest = json.loads((moment_dir / "manifest.json").read_text())
     assert manifest["type"] == "snippet"
     assert manifest["tags"] == ["barge-in", "false-barge-in"]
+
+
+def test_finalize_creates_playback_media_and_mixed_audio(tmp_path):
+    service = HistoryService(root=tmp_path, free_warning_gib=0.0)
+    archive = service.start_session(session_id="sess-media", character="greg", model="test")
+    archive.record_user_audio(b"\x00\x00" * 16000)
+    archive.record_assistant_audio(b"\x00\x00" * 24000)
+    _write_test_video(archive.media_dir / "video" / "session_capture.mp4")
+
+    manifest = service.finalize_current()
+    media = manifest["media"]
+    assert Path(media["conversation_audio_path"]).exists()
+    assert Path(media["playback_path"]).exists()
+    assert service.playback_media_path_for_session("sess-media") == Path(media["playback_path"])
+
+
+def test_vision_video_recorder_writes_valid_video_from_mjpeg_stream(tmp_path):
+    jpeg_path = tmp_path / "recorder.jpg"
+    _write_test_jpeg(jpeg_path)
+    _MjpegHandler.frame_bytes = jpeg_path.read_bytes()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _MjpegHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    output_path = tmp_path / "vision_capture.mp4"
+    try:
+        recorder = VisionVideoRecorder(
+            f"http://127.0.0.1:{server.server_address[1]}",
+            output_path,
+            fps=30,
+        )
+        recorder.start()
+        time.sleep(0.75)
+        result = recorder.stop()
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+    assert result == output_path
+    assert output_path.exists()
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_name,avg_frame_rate,duration",
+            "-of",
+            "json",
+            str(output_path),
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    payload = json.loads(probe.stdout)
+    stream = payload["streams"][0]
+    assert stream["codec_name"] == "h264"
+    assert stream["avg_frame_rate"] == "30/1"
+    assert float(stream["duration"]) > 0.0
+
+
+def test_finalize_rebuilds_playback_from_frames_when_raw_video_invalid(tmp_path):
+    service = HistoryService(root=tmp_path, free_warning_gib=0.0)
+    archive = service.start_session(session_id="sess-fallback", character="greg", model="test")
+    archive.record_user_audio(b"\x00\x00" * 16000)
+    archive.record_assistant_audio(b"\x00\x00" * 16000)
+
+    jpg_a = tmp_path / "frame_a.jpg"
+    jpg_b = tmp_path / "frame_b.jpg"
+    _write_test_jpeg(jpg_a)
+    _write_test_jpeg(jpg_b)
+    archive.record_video_frame(jpg_a.read_bytes(), timestamp=archive._started_at + 0.0, source="vision")
+    archive.record_video_frame(jpg_b.read_bytes(), timestamp=archive._started_at + 0.5, source="vision")
+    (archive.media_dir / "video" / "session_capture.mp4").write_bytes(b"broken")
+
+    manifest = service.finalize_current()
+    media = manifest["media"]
+    assert Path(media["video_path"]).exists()
+    assert Path(media["playback_path"]).exists()
+    probe = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=avg_frame_rate",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            media["playback_path"],
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    assert "30/1" in probe.stdout
+
+
+def test_playback_media_path_repairs_archive_when_playback_missing(tmp_path):
+    service = HistoryService(root=tmp_path, free_warning_gib=0.0)
+    archive = service.start_session(session_id="sess-repair", character="greg", model="test")
+    archive.record_user_audio(b"\x00\x00" * 16000)
+    archive.record_assistant_audio(b"\x00\x00" * 16000)
+    jpg = tmp_path / "repair.jpg"
+    _write_test_jpeg(jpg)
+    archive.record_video_frame(jpg.read_bytes(), timestamp=archive._started_at + 0.0, source="vision")
+    (archive.media_dir / "video" / "session_capture.mp4").write_bytes(b"broken")
+
+    manifest = service.finalize_current()
+    playback_path = Path(manifest["media"]["playback_path"])
+    assert playback_path.exists()
+    playback_path.unlink()
+    manifest_path = resolve_session_path(tmp_path, "sess-repair") / "manifest.json"
+    payload = json.loads(manifest_path.read_text())
+    payload["media"]["playback_path"] = ""
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    repaired = service.playback_media_path_for_session("sess-repair")
+    assert repaired is not None
+    assert repaired.exists()
 
 
 def test_prune_unpromoted_sessions_leaves_pinned(tmp_path):

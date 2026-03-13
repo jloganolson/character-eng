@@ -52,6 +52,7 @@ class HistoryConfig:
     enabled: bool = True
     free_warning_gib: float = 50.0
     vision_capture_fps: float = 2.0
+    playback_video_fps: float = 30.0
 
 
 @dataclass
@@ -105,6 +106,7 @@ def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
         f"enabled = {'true' if config.history.enabled else 'false'}",
         f"free_warning_gib = {config.history.free_warning_gib}",
         f"vision_capture_fps = {config.history.vision_capture_fps}",
+        f"playback_video_fps = {config.history.playback_video_fps}",
         "",
     ]
 
@@ -172,6 +174,7 @@ def load_config() -> AppConfig:
         enabled=history_data.get("enabled", True),
         free_warning_gib=history_data.get("free_warning_gib", 50.0),
         vision_capture_fps=history_data.get("vision_capture_fps", 2.0),
+        playback_video_fps=history_data.get("playback_video_fps", 30.0),
     )
 
     return AppConfig(voice=voice, vision=vision, dashboard=dashboard, bridge=bridge, history=history)

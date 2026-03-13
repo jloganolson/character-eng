@@ -65,6 +65,7 @@ _dashboard_input_queue = None
 _app_config = None
 _history_service = None
 _history_playback_runner = None
+_history_playback_cleanup = None
 _history_playback_state = {
     "active": False,
     "source": "",
@@ -438,10 +439,16 @@ def _set_history_playback_state(**updates) -> None:
 
 
 def _stop_history_playback() -> None:
-    global _history_playback_runner
+    global _history_playback_runner, _history_playback_cleanup
     if _history_playback_runner is not None:
         _history_playback_runner.stop()
         _history_playback_runner = None
+    if _history_playback_cleanup is not None:
+        try:
+            _history_playback_cleanup()
+        except Exception:
+            pass
+        _history_playback_cleanup = None
     _set_history_playback_state(
         active=False,
         source="",
@@ -1795,6 +1802,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 _history_service.start_vision_capture(
                     vision_cfg.service_url,
                     fps=float(getattr(_app_config.history, "vision_capture_fps", DEFAULT_VISION_CAPTURE_FPS)) if _app_config else DEFAULT_VISION_CAPTURE_FPS,
+                    playback_video_fps=float(getattr(_app_config.history, "playback_video_fps", 30.0)) if _app_config else 30.0,
                 )
         _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
 
@@ -1938,7 +1946,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
         def _start_history_playback(session_ref: str, checkpoint_index: int | None = None) -> bool:
             nonlocal _arm_auto_beat
-            global _conversation_paused, _session_stopped, _startup_pause_pending, _history_playback_runner
+            global _conversation_paused, _session_stopped, _startup_pause_pending, _history_playback_runner, _history_playback_cleanup
             if _history_service is None:
                 console.print("[red]History recording is disabled.[/red]")
                 return False
@@ -1963,10 +1971,15 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     warning_parts.append("voice input inactive; audio replay skipped")
 
             video_callback = None
+            vision_client = None
             if plan.video_frames:
                 if vision_cfg is not None:
                     from character_eng.vision.client import VisionClient
                     vision_client = VisionClient(vision_cfg.service_url)
+                    try:
+                        vision_client.set_input_mode("external")
+                    except Exception:
+                        warning_parts.append("vision input mode unchanged; live camera may override replay frames")
 
                     def _video_callback(jpeg_bytes: bytes, meta: dict) -> None:
                         try:
@@ -1975,6 +1988,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                                 "source_session_id": plan.session_id,
                                 "checkpoint_index": plan.checkpoint_index,
                                 "relative_s": meta.get("relative_s", 0.0),
+                                "frame_timestamp": meta.get("timestamp", 0.0),
                                 "path": meta.get("path", ""),
                             })
                         except Exception:
@@ -2007,6 +2021,33 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 video_callback=video_callback,
             )
             _history_playback_runner.start()
+            if vision_client is not None:
+                def _restore_vision_input_mode() -> None:
+                    try:
+                        vision_client.set_input_mode("camera")
+                    except Exception:
+                        pass
+                _history_playback_cleanup = _restore_vision_input_mode
+
+                def _reset_input_mode_when_done(runner: PlaybackRunner) -> None:
+                    global _history_playback_runner, _history_playback_cleanup
+                    runner.join()
+                    if _history_playback_runner is runner:
+                        _restore_vision_input_mode()
+                        _history_playback_runner = None
+                        _history_playback_cleanup = None
+                        _set_history_playback_state(
+                            active=False,
+                            source="",
+                            source_kind="",
+                            checkpoint_index=None,
+                            checkpoint_label="",
+                            audio=False,
+                            video=False,
+                            warning="",
+                        )
+
+                threading.Thread(target=_reset_input_mode_when_done, args=(_history_playback_runner,), daemon=True).start()
 
             _conversation_paused = False
             _session_stopped = False
@@ -2047,7 +2088,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             replay_mode: str = "vision_full_stack",
         ) -> bool:
             nonlocal _arm_auto_beat
-            global _conversation_paused, _session_stopped, _startup_pause_pending, _history_playback_runner
+            global _conversation_paused, _session_stopped, _startup_pause_pending, _history_playback_runner, _history_playback_cleanup
             if _history_service is None:
                 console.print("[red]History recording is disabled.[/red]")
                 return False
@@ -2081,6 +2122,10 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
             from character_eng.vision.client import VisionClient
             vision_client = VisionClient(vision_cfg.service_url)
+            try:
+                vision_client.set_input_mode("external")
+            except Exception:
+                pass
 
             def _video_callback(jpeg_bytes: bytes, meta: dict) -> None:
                 try:
@@ -2089,6 +2134,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                         "source_session_id": plan.session_id,
                         "checkpoint_index": plan.checkpoint_index,
                         "relative_s": meta.get("relative_s", 0.0),
+                        "frame_timestamp": meta.get("timestamp", 0.0),
                         "path": meta.get("path", ""),
                         "replay_mode": replay_mode,
                     })
@@ -2102,6 +2148,32 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 video_callback=_video_callback,
             )
             _history_playback_runner.start()
+            def _restore_vision_input_mode() -> None:
+                try:
+                    vision_client.set_input_mode("camera")
+                except Exception:
+                    pass
+            _history_playback_cleanup = _restore_vision_input_mode
+
+            def _reset_input_mode_when_done(runner: PlaybackRunner) -> None:
+                global _history_playback_runner, _history_playback_cleanup
+                runner.join()
+                if _history_playback_runner is runner:
+                    _restore_vision_input_mode()
+                    _history_playback_runner = None
+                    _history_playback_cleanup = None
+                    _set_history_playback_state(
+                        active=False,
+                        source="",
+                        source_kind="",
+                        checkpoint_index=None,
+                        checkpoint_label="",
+                        audio=False,
+                        video=False,
+                        warning="",
+                    )
+
+            threading.Thread(target=_reset_input_mode_when_done, args=(_history_playback_runner,), daemon=True).start()
             _conversation_paused = False
             _session_stopped = False
             _startup_pause_pending = False
@@ -2161,6 +2233,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             _push("session_end", {
                 "total_turns": total_turns,
                 "session_id": session_id,
+                "title": current_history.get("title", ""),
                 "history_path": current_history.get("session_path", ""),
                 "pinned_path": history_meta.get("pinned_path", "") if history_meta else "",
                 "disk_warning": history_meta.get("disk_warning", "") if history_meta else "",
@@ -4239,6 +4312,7 @@ def main():
                 _dashboard_input_queue,
                 port=cfg.dashboard.port,
                 history_api=_history_service,
+                history_status_provider=_history_status_payload,
                 default_character=dashboard_default_character,
                 prompt_asset_open_target=cfg.dashboard.prompt_asset_open_target,
                 prompt_asset_vscode_cmd=cfg.dashboard.prompt_asset_vscode_cmd,

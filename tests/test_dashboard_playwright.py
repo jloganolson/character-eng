@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import queue
 import re
+import subprocess
 import threading
 import time
 import urllib.request
@@ -18,6 +19,29 @@ from character_eng.dashboard.server import start_dashboard
 from character_eng.history import HistoryService
 from character_eng.person import PeopleState
 from character_eng.world import Goals, Script, WorldState
+
+
+def _write_test_video(path: Path):
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=320x240:d=2:r=30",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(path),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 class _VisionHandler(BaseHTTPRequestHandler):
@@ -132,7 +156,44 @@ def dashboard_server():
             elif child.is_dir():
                 child.rmdir()
     history = HistoryService(root=history_root, free_warning_gib=0.0)
+    archived = history.start_session(session_id="sess-archive-playback", character="greg", model="groq-llama-8b")
+    archived_start = archived._started_at
+    archived.record_event("session_start", {
+        "character": "greg",
+        "model": "groq-llama-8b",
+        "session_id": "sess-archive-playback",
+        "stage": "engaged",
+    }, timestamp=archived_start + 0.0)
+    archived.record_event("user_transcript_final", {"text": "oh hey man"}, timestamp=archived_start + 0.4)
+    archived.record_event("turn_start", {"input_text": "oh hey man", "input_type": "send"}, timestamp=archived_start + 0.45)
+    archived.record_event("response_done", {"full_text": "Hey, what time is it to you?"}, timestamp=archived_start + 1.1)
+    archived.capture_checkpoint(
+        label="start",
+        character="greg",
+        session_snapshot={"system_prompt": "system", "messages": [], "tagged_system_indices": {}},
+        world=WorldState(),
+        people=PeopleState(),
+        scenario=None,
+        script=Script(),
+        goals=Goals(),
+        log_entries=[],
+        context_version=0,
+        had_user_input=False,
+    )
+    history.finalize_current()
+    _write_test_video(archived.media_dir / "playback.mp4")
+    archived_manifest = json.loads(archived.manifest_path.read_text())
+    archived_media = dict(archived_manifest.get("media", {}))
+    archived_media["playback_path"] = str(archived.media_dir / "playback.mp4")
+    archived_media["video_path"] = str(archived.media_dir / "playback.mp4")
+    archived.update_manifest(media=archived_media)
     archive = history.start_session(session_id="sess-playwright", character="greg", model="groq-llama-8b")
+    archive.record_event("session_start", {
+        "character": "greg",
+        "model": "groq-llama-8b",
+        "session_id": "sess-playwright",
+        "stage": "greeting",
+    })
     archive.capture_checkpoint(
         label="start",
         character="greg",
@@ -441,8 +502,8 @@ def test_runtime_panel_interactions_in_browser(
     reply_card = page.locator(".stream-card").filter(has_text="Free water. Want one?").first
     reply_card.click()
     page.locator("#report-ref-button").click()
-    expect(page.locator("#report-ref-status")).to_contain_text("intermediate session log:")
-    assert list(report_dir.iterdir())
+    expect(page.locator("#report-ref-status")).to_contain_text("Copied archive ref:")
+    expect(page.locator("#report-ref-status")).to_contain_text("sess-playwright")
     expect(page.locator("#detail-type")).to_have_text("assistant_reply")
     expect(page.locator("#detail-label")).to_contain_text("Free water. Want one?")
     expect(page.locator("#detail-detail")).to_contain_text("STT 420ms")
@@ -480,18 +541,24 @@ def test_runtime_panel_interactions_in_browser(
     page.locator("#archive-load-button").click()
     expect(page.locator("#archive-picker")).to_have_class(re.compile(r"\bopen\b"))
     page.locator(".archive-row").filter(has=page.locator(".archive-kind", has_text="session")).locator(".archive-load-action").first.click()
-    assert input_queue.get(timeout=2) == "/restore sess-playwright"
+    expect(page.locator("#archive-load-button")).to_have_text("Return To Live")
+    expect(page.locator("#archive-load-status")).to_contain_text("Browsing archive:")
+    expect(page.locator("#runtime-toggle")).to_have_text("Replay")
+    expect(page.locator("#runtime-stop")).to_be_disabled()
+    expect(page.locator(".stream-card[data-event-type='session_start']")).to_have_count(1)
+    page.locator("#runtime-toggle").click()
+    assert input_queue.get(timeout=2) == "/replay sess-playwright"
+    expect(page.locator("#archive-load-button")).to_have_text("Return To Live")
+    expect(page.locator("#archive-load-status")).to_contain_text("sess-playwright")
+    page.locator("#archive-load-button").click()
+    expect(page.locator("#archive-load-button")).to_have_text("Load Archive...")
     page.locator("#archive-load-button").click()
     page.locator(".archive-row").filter(has=page.locator(".archive-kind", has_text="session")).locator(".archive-replay-action").first.click()
     assert input_queue.get(timeout=2) == "/replay sess-playwright"
-    page.locator("#detail-continue-from-event").click()
-    assert input_queue.get(timeout=2) == "/rewind 0"
-    assert input_queue.get(timeout=2) == "Do you have water?"
     page.locator("#detail-open-json").click()
-    expect(page.locator("#detail-payload")).to_contain_text("\"total_ms\": 1980")
+    expect(page.locator("#detail-payload")).to_contain_text("\"session_id\": \"sess-playwright\"")
     page.locator("#tab-chronology").click()
-    expect(page.locator("#detail-related")).to_contain_text("turn_start")
-    expect(page.locator("#detail-related")).to_contain_text("user_transcript_final")
+    expect(page.locator("#detail-related")).to_contain_text("No linked turn context")
     expect(page.locator("#detail-related")).not_to_contain_text("post_response")
     expect(page.locator(".chronology-row.selected")).to_have_count(1)
 
@@ -569,7 +636,7 @@ def test_runtime_panel_interactions_in_browser(
     vision_popup.close()
 
     page.locator("#runtime-stop").click()
-    expect(page.locator("#runtime-stop")).to_have_text("Stopping...")
+    expect(page.locator("#runtime-stop")).to_have_text("Saving...")
     assert input_queue.get(timeout=2) == "/stop"
 
     collector.push("session_end", {"total_turns": 2})
@@ -617,7 +684,8 @@ def test_runtime_panel_interactions_in_browser(
     assert list(report_dir.iterdir())
 
     page.locator("#report-ref-button").click()
-    expect(page.locator("#report-ref-status")).to_contain_text("Last stopped session: intermediate session log:")
+    expect(page.locator("#report-ref-status")).to_contain_text("Copied archive ref:")
+    expect(page.locator("#report-ref-status")).to_contain_text("sess-playwright")
 
     page.locator("#runtime-toggle").click()
     expect(page.locator("#runtime-toggle")).to_have_text("Starting...")
@@ -1036,6 +1104,76 @@ def test_continue_from_beat_generated_assistant_line_rewinds_before_the_beat(
     assert input_queue.get(timeout=2) == "/rewind 0"
     assert input_queue.get(timeout=2) == "/play"
     assert input_queue.get(timeout=2) == "/beat"
+
+
+def test_archive_load_shows_timeline_and_scrubbable_media_player(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+
+    page.locator("#archive-load-button").evaluate("(node) => node.click()")
+    page.locator(".archive-row").filter(has_text="sess-archive-playback").locator(".archive-load-action").click()
+
+    expect(page.locator("#archive-load-status")).to_contain_text("Browsing archive:")
+    expect(page.locator("#runtime-toggle")).to_have_text("Play Archive")
+    expect(page.locator("#archive-media-player")).to_have_class(re.compile(r"\bvisible\b"))
+    expect(page.locator(".stream-card[data-event-type='session_start']")).to_have_count(1)
+    expect(page.locator(".stream-card[data-event-type='user_transcript_final']")).to_have_count(1)
+    expect(page.locator(".stream-card").filter(has_text="Hey, what time is it to you?")).to_have_count(1)
+
+    page.locator("#runtime-toggle").evaluate("(node) => node.click()")
+    page.wait_for_timeout(800)
+    player_time = page.locator("#archive-media-player").evaluate("(node) => node.currentTime")
+    assert player_time > 0.1
+    expect(page.locator("#stream-playhead")).to_have_class(re.compile(r"\bvisible\b"))
+
+    page.locator("#archive-media-player").evaluate("(node) => { node.pause(); node.currentTime = 0; }")
+    page.wait_for_timeout(100)
+    reply_card = page.locator(".stream-card").filter(has_text="Hey, what time is it to you?").first
+    reply_card.evaluate("(node) => node.click()")
+    page.wait_for_timeout(200)
+    selected_time = page.locator("#archive-media-player").evaluate("(node) => node.currentTime")
+    assert selected_time >= 0.9
 
 
 def test_rewind_keeps_new_active_path_visible_and_greys_out_superseded_events(

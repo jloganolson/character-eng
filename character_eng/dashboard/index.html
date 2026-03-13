@@ -400,9 +400,24 @@
     background: linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--narrator) 70%, transparent) 20%, color-mix(in srgb, var(--narrator) 90%, transparent) 50%, color-mix(in srgb, var(--narrator) 70%, transparent) 80%, transparent 100%);
   }
   #stream-viewport {
+    position: relative;
     overflow: auto;
     min-height: 0;
     padding-right: 0.2em;
+  }
+  #stream-playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: color-mix(in srgb, var(--accent) 80%, white 20%);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+    pointer-events: none;
+    z-index: 6;
+    display: none;
+  }
+  #stream-playhead.visible {
+    display: block;
   }
   #stream-viewport::-webkit-scrollbar,
   #sidebar::-webkit-scrollbar,
@@ -428,6 +443,21 @@
     position: relative;
     height: 34px;
     min-width: 100%;
+  }
+  #archive-media-player {
+    width: 100%;
+    display: none;
+    border-radius: 8px;
+    background: #000;
+  }
+  #archive-media-player.visible {
+    display: block;
+  }
+  #archive-media-status {
+    margin-top: 0.45em;
+    color: var(--text-dim);
+    font-size: 0.78em;
+    line-height: 1.45;
   }
   .ruler-tick {
     position: absolute;
@@ -1276,7 +1306,8 @@
   <span class="character" id="h-character">--</span>
   <span><span class="label">model:</span> <span class="value" id="h-model">--</span></span>
   <span><span class="label">session:</span> <span class="value" id="h-session">--</span></span>
-  <button id="report-ref-button" type="button">Copy Replay Ref</button>
+  <button id="report-ref-button" type="button">Copy Archive Ref</button>
+  <button id="archive-rename-button" type="button">Rename</button>
   <button id="archive-load-button" type="button">Load Archive...</button>
   <span id="report-ref-status"></span>
   <span id="archive-load-status"></span>
@@ -1319,6 +1350,7 @@
       <div id="stream-main">
         <div id="stream-viewport">
           <div id="stream-ruler"><div id="stream-ruler-inner"></div></div>
+          <div id="stream-playhead" aria-hidden="true"></div>
           <div id="stream-empty" class="stream-empty">Waiting for debug timeline events. The dashboard will populate as the session starts.</div>
           <div id="stream-lanes"></div>
         </div>
@@ -1453,6 +1485,9 @@
       <h3>Vision</h3>
       <div class="content">
         <img id="vision-feed" alt="Vision feed">
+        <video id="archive-media-player" preload="metadata" controls playsinline></video>
+        <audio id="archive-audio-playback" preload="auto" style="width:100%;margin-top:0.45em;display:none;" controls></audio>
+        <div id="archive-media-status"></div>
         <div id="vision-meta"></div>
       </div>
     </div>
@@ -1605,6 +1640,7 @@
 
   const timeline = document.getElementById("timeline");
   const streamViewport = document.getElementById("stream-viewport");
+  const streamRuler = document.getElementById("stream-ruler");
   const streamRulerInner = document.getElementById("stream-ruler-inner");
   const streamLanes = document.getElementById("stream-lanes");
   const streamEmpty = document.getElementById("stream-empty");
@@ -1622,6 +1658,7 @@
   const detailOpenJsonButton = document.getElementById("detail-open-json");
   const detailWarning = document.getElementById("detail-warning");
   const reportRefButton = document.getElementById("report-ref-button");
+  const archiveRenameButton = document.getElementById("archive-rename-button");
   const reportRefStatus = document.getElementById("report-ref-status");
   const archiveLoadButton = document.getElementById("archive-load-button");
   const archiveLoadStatus = document.getElementById("archive-load-status");
@@ -1655,14 +1692,28 @@
   const historyRewindButton = document.getElementById("history-rewind");
   const historyPinButton = document.getElementById("history-pin");
   const historyPruneButton = document.getElementById("history-prune");
+  const archiveAudioPlayback = document.getElementById("archive-audio-playback");
+  const archiveMediaPlayer = document.getElementById("archive-media-player");
+  const archiveMediaStatusEl = document.getElementById("archive-media-status");
+  const streamPlayheadEl = document.getElementById("stream-playhead");
   const INSPECTOR_WIDTH_STORAGE_KEY = "dashboard.inspector_width";
   const SIDEBAR_WIDTH_STORAGE_KEY = "dashboard.sidebar_width";
   let pendingPauseState = null;
   let lastStoppedReportRefText = "";
   let lastStoppedReportRefPath = "";
+  let lastStoppedArchiveRef = "";
+  let lastStoppedArchiveTitle = "";
   let historyState = {enabled: false, current_session: {}};
   let historyArchives = [];
   let archivePickerOpen = false;
+  let archiveBrowseRef = "";
+  let archiveBrowseMeta = null;
+  let archiveBrowseSeqFloor = 0;
+  let playbackVisionFrame = null;
+  let archiveHydrating = false;
+  let pendingReplayArchiveRef = "";
+  let pendingReplayEventTime = null;
+  let liveTimelineSnapshot = null;
   let annotationFormOpen = false;
   let snippetFormOpen = false;
   let loadedAnnotationSessionId = "";
@@ -1672,6 +1723,20 @@
   let pendingPauseSince = 0;
   const pendingPauseTimeoutMs = 6000;
   let promptAssets = [];
+  let archiveMediaSeekLock = false;
+  let archiveMediaScrubbing = false;
+  let archiveMediaDuration = 0;
+  let timelineRenderScale = 1;
+  let timelineRenderBaseWidth = 720;
+  const ARCHIVE_BROWSE_LIVE_EVENT_ALLOWLIST = new Set([
+    "history_playback",
+    "history_playback_frame",
+    "history_status",
+    "runtime_controls",
+    "pause",
+    "resume",
+    "session_end",
+  ]);
 
   async function loadStreamSchema() {
     try {
@@ -1775,6 +1840,13 @@
 
   function renderHistoryState(state) {
     historyState = state || {enabled: false, current_session: {}};
+    const playbackKnown = Object.prototype.hasOwnProperty.call(historyState, "playback");
+    if (playbackKnown && !historyState.playback?.active && !(pendingPauseState === "playing" && pendingReplayArchiveRef)) {
+      playbackVisionFrame = null;
+      pendingReplayArchiveRef = "";
+      pendingReplayEventTime = null;
+      stopArchiveAudioPlayback();
+    }
     if (!historyState.enabled) {
       historyStatusEl.innerHTML = '<span style="color:var(--text-dim)">Replay capture disabled.</span>';
       historyRecordingModeEl.textContent = "";
@@ -1918,6 +1990,144 @@
     }
   }
 
+  function cloneSnapshotPayload(value) {
+    if (typeof structuredClone === "function") return structuredClone(value);
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function captureLiveTimelineSnapshot() {
+    liveTimelineSnapshot = {
+      streamEvents: cloneSnapshotPayload(streamEvents),
+      promptTraceEvents: cloneSnapshotPayload(promptTraceEvents),
+      annotations: cloneSnapshotPayload(Array.from(annotationsByEventKey.entries())),
+      hiddenLanes: Array.from(hiddenLanes),
+      sessionStart,
+      currentSessionId,
+      turnCount,
+      currentTurnId,
+      pendingInputTurnId,
+      activeReplyKey,
+      activePostResponseKey,
+      activeWorldUpdateKey,
+      visionPassKey,
+      selectedStreamKey,
+      streamKey,
+      lastSeq,
+      debugOnlyBoundaryTimestamp,
+      historyRecordMode,
+      sessionSeen,
+      detailTab: activeDetailTab,
+      loadedAnnotationSessionId,
+      worldHtml: document.getElementById("world-content").innerHTML,
+      peopleHtml: document.getElementById("people-content").innerHTML,
+      stageText: document.getElementById("stage-content").textContent,
+      headerSession: document.getElementById("h-session").textContent,
+      headerStage: document.getElementById("h-stage").textContent,
+      headerUptime: document.getElementById("h-uptime").textContent,
+    };
+  }
+
+  function restoreLiveTimelineSnapshot() {
+    if (!liveTimelineSnapshot) return false;
+    streamEvents.length = 0;
+    streamEventByKey.clear();
+    promptTraceEvents.length = 0;
+    annotationsByEventKey.clear();
+    hiddenLanes.clear();
+    cloneSnapshotPayload(liveTimelineSnapshot.streamEvents || []).forEach((event) => {
+      streamEvents.push(event);
+      if (event?.key) streamEventByKey.set(event.key, event);
+    });
+    cloneSnapshotPayload(liveTimelineSnapshot.promptTraceEvents || []).forEach((event) => promptTraceEvents.push(event));
+    (liveTimelineSnapshot.annotations || []).forEach(([eventKey, entries]) => {
+      annotationsByEventKey.set(eventKey, entries);
+    });
+    (liveTimelineSnapshot.hiddenLanes || []).forEach((lane) => hiddenLanes.add(lane));
+    sessionStart = liveTimelineSnapshot.sessionStart ?? null;
+    currentSessionId = liveTimelineSnapshot.currentSessionId || "";
+    turnCount = liveTimelineSnapshot.turnCount || 0;
+    currentTurnId = liveTimelineSnapshot.currentTurnId || 0;
+    pendingInputTurnId = liveTimelineSnapshot.pendingInputTurnId ?? null;
+    activeReplyKey = liveTimelineSnapshot.activeReplyKey || null;
+    activePostResponseKey = liveTimelineSnapshot.activePostResponseKey || null;
+    activeWorldUpdateKey = liveTimelineSnapshot.activeWorldUpdateKey || null;
+    visionPassKey = liveTimelineSnapshot.visionPassKey || null;
+    selectedStreamKey = liveTimelineSnapshot.selectedStreamKey || null;
+    streamKey = liveTimelineSnapshot.streamKey || 0;
+    lastSeq = liveTimelineSnapshot.lastSeq || 0;
+    debugOnlyBoundaryTimestamp = liveTimelineSnapshot.debugOnlyBoundaryTimestamp ?? null;
+    historyRecordMode = liveTimelineSnapshot.historyRecordMode || "full";
+    sessionSeen = !!liveTimelineSnapshot.sessionSeen;
+    loadedAnnotationSessionId = liveTimelineSnapshot.loadedAnnotationSessionId || "";
+    document.getElementById("world-content").innerHTML = liveTimelineSnapshot.worldHtml || '<span class="fact" style="color:var(--text-dim)">No world state yet</span>';
+    document.getElementById("people-content").innerHTML = liveTimelineSnapshot.peopleHtml || '<span style="color:var(--text-dim)">No people tracked</span>';
+    document.getElementById("stage-content").textContent = liveTimelineSnapshot.stageText || "--";
+    document.getElementById("h-session").textContent = liveTimelineSnapshot.headerSession || "--";
+    document.getElementById("h-stage").textContent = liveTimelineSnapshot.headerStage || "--";
+    document.getElementById("h-uptime").textContent = liveTimelineSnapshot.headerUptime || "--";
+    renderStream();
+    setDetailTab(liveTimelineSnapshot.detailTab || activeDetailTab);
+    if (selectedStreamKey && streamEventByKey.has(selectedStreamKey)) selectEvent(selectedStreamKey);
+    renderSelectedEventAnnotations();
+    liveTimelineSnapshot = null;
+    return true;
+  }
+
+  function renderArchiveBrowseState() {
+    if (archiveBrowseRef) {
+      archiveLoadButton.textContent = "Return To Live";
+      const title = archiveBrowseMeta?.title || archiveBrowseRef;
+      archiveLoadStatus.textContent = `Browsing archive: ${title}`;
+    } else {
+      archiveLoadButton.textContent = "Load Archive...";
+      archiveLoadStatus.textContent = "";
+    }
+    syncArchiveMediaPlayer();
+    updateTimelinePlayhead();
+  }
+
+  async function loadArchiveTimeline(sessionRef) {
+    const response = await fetch(`/history/events?session_id=${encodeURIComponent(sessionRef)}`);
+    const payload = await response.json();
+    if (!response.ok || payload.ok === false) throw new Error(payload.error || `history events ${response.status}`);
+    if (!archiveBrowseRef) captureLiveTimelineSnapshot();
+    archiveBrowseSeqFloor = lastSeq;
+    archiveBrowseRef = sessionRef;
+    archiveBrowseMeta = payload;
+    clearConversationState(`Browsing archive: ${payload.title || sessionRef}`);
+    lastSeq = archiveBrowseSeqFloor;
+    archiveHydrating = true;
+    try {
+      (payload.events || []).forEach((event) => handleEvent(event, {archive: true}));
+    } finally {
+      archiveHydrating = false;
+    }
+    await refreshAnnotations(sessionRef);
+    renderArchiveBrowseState();
+    updateVisionFeedUrl();
+  }
+
+  function exitArchiveBrowseMode() {
+    if (!archiveBrowseRef) return;
+    archiveBrowseRef = "";
+    archiveBrowseMeta = null;
+    archiveBrowseSeqFloor = 0;
+    archiveMediaSeekLock = false;
+    archiveMediaScrubbing = false;
+    renderArchiveBrowseState();
+    if (restoreLiveTimelineSnapshot()) {
+      refreshAnnotations(activeArchiveSessionId());
+      renderBootStatus();
+      refreshHistoryState();
+      updateVisionFeedUrl();
+      return;
+    }
+    resetDashboardState("Connecting to the local runtime...");
+    refreshState();
+    refreshHistoryState();
+    updateVisionFeedUrl();
+  }
+
   function renderArchivePicker() {
     if (!historyArchives.length) {
       archivePickerStatus.textContent = "No saved sessions or snippets yet.";
@@ -1945,6 +2155,7 @@
               <div class="archive-row-meta">${esc(archiveDisplayTime(item))} · ${esc(item.character || "unknown")} · ${esc(item.session_id || item.ref || "")} · ${checkpointCount} ckpt · ${notes} note${notes === 1 ? "" : "s"}</div>
             </div>
             <div class="archive-row-actions">
+              <button type="button" class="ghost archive-copy-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}" data-title="${esc(archiveDisplayTitle(item))}">Copy Ref</button>
               <button type="button" class="ghost archive-rename-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}" data-title="${esc(archiveDisplayTitle(item))}">Rename</button>
               <button type="button" class="secondary archive-replay-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}">Replay</button>
               <button type="button" class="primary archive-load-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}">Load</button>
@@ -1997,6 +2208,143 @@
     reportRefStatus.title = title || "";
   }
 
+  function activeArchiveRef() {
+    if (archiveBrowseRef) return archiveBrowseRef;
+    if (currentSessionId) return currentSessionId;
+    if (historyState.current_session?.session_id) return historyState.current_session.session_id;
+    return lastStoppedArchiveRef || "";
+  }
+
+  function activeArchiveTitle() {
+    if (archiveBrowseRef) return archiveBrowseMeta?.title || archiveBrowseRef;
+    if (historyState.current_session?.title) return historyState.current_session.title;
+    return lastStoppedArchiveTitle || activeArchiveRef();
+  }
+
+  function stopButtonLabel() {
+    return "Save + Stop";
+  }
+
+  function stopArchiveAudioPlayback() {
+    archiveAudioPlayback.pause();
+    archiveAudioPlayback.removeAttribute("src");
+    archiveAudioPlayback.load();
+    archiveAudioPlayback.style.display = "none";
+  }
+
+  function playArchiveAudio(sessionId, startSeconds = 0) {
+    if (!sessionId) return;
+    archiveAudioPlayback.src = `/history/audio?session_id=${encodeURIComponent(sessionId)}&_=${Date.now()}`;
+    archiveAudioPlayback.style.display = "";
+    const startAt = Math.max(0, Number(startSeconds || 0));
+    const applyOffset = () => {
+      try {
+        archiveAudioPlayback.currentTime = startAt;
+      } catch (_) {}
+      archiveAudioPlayback.play().catch(() => {});
+    };
+    if (archiveAudioPlayback.readyState >= 1) {
+      applyOffset();
+    } else {
+      archiveAudioPlayback.onloadedmetadata = () => {
+        archiveAudioPlayback.onloadedmetadata = null;
+        applyOffset();
+      };
+    }
+  }
+
+  function archivePlaybackMediaAvailable() {
+    return !!(archiveBrowseMeta?.media?.playback_available);
+  }
+
+  function archivePlaybackMediaUrl(sessionId) {
+    if (!sessionId) return "";
+    return `/history/media?session_id=${encodeURIComponent(sessionId)}`;
+  }
+
+  function setArchiveMediaStatus(text = "") {
+    archiveMediaStatusEl.textContent = text;
+  }
+
+  function syncArchiveMediaPlayer() {
+    const active = !!(archiveBrowseRef && archivePlaybackMediaAvailable());
+    if (!active) {
+      archiveMediaPlayer.pause();
+      archiveMediaPlayer.classList.remove("visible");
+      archiveMediaPlayer.removeAttribute("src");
+      archiveMediaPlayer.load();
+      archiveMediaDuration = 0;
+      setArchiveMediaStatus("");
+      return;
+    }
+    const nextSrc = archivePlaybackMediaUrl(archiveBrowseRef);
+    if (archiveMediaPlayer.getAttribute("src") !== nextSrc) {
+      archiveMediaPlayer.src = nextSrc;
+      archiveMediaPlayer.load();
+    }
+    archiveMediaPlayer.classList.add("visible");
+    const title = archiveBrowseMeta?.title || archiveBrowseRef;
+    setArchiveMediaStatus(`Loaded archive media: ${title}`);
+  }
+
+  function archiveMediaCurrentTime() {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return null;
+    if (!Number.isFinite(archiveMediaPlayer.currentTime)) return null;
+    return Math.max(0, Number(archiveMediaPlayer.currentTime || 0));
+  }
+
+  function updateTimelinePlayhead() {
+    const playerTime = archiveMediaCurrentTime();
+    if (playerTime == null || !streamEvents.length) {
+      streamPlayheadEl.classList.remove("visible");
+      return;
+    }
+    const contentLeft = 20 + playerTime * timelineRenderScale;
+    if (archiveBrowseRef && archivePlaybackMediaAvailable() && !archiveMediaPlayer.paused && followLive) {
+      const maxScroll = Math.max(0, streamViewport.scrollWidth - streamViewport.clientWidth);
+      const desired = Math.max(0, Math.min(maxScroll, contentLeft - streamViewport.clientWidth * 0.55));
+      if (Math.abs(streamViewport.scrollLeft - desired) > 4) {
+        streamViewport.scrollLeft = desired;
+      }
+    }
+    const left = contentLeft - streamViewport.scrollLeft;
+    streamPlayheadEl.style.left = `${left}px`;
+    streamPlayheadEl.classList.add("visible");
+  }
+
+  function nearestEventKeyForTime(timeS) {
+    if (!streamEvents.length) return "";
+    const target = Math.max(0, Number(timeS || 0));
+    let best = streamEvents[0];
+    let bestDelta = Math.abs(relativeTime(best.timestamp) - target);
+    for (const event of streamEvents) {
+      const delta = Math.abs(relativeTime(event.timestamp) - target);
+      if (delta < bestDelta) {
+        best = event;
+        bestDelta = delta;
+      }
+    }
+    return best?.key || "";
+  }
+
+  function seekArchiveMedia(timeS, {syncSelection = true, autoPlay = false} = {}) {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    const target = Math.max(0, Number(timeS || 0));
+    archiveMediaSeekLock = true;
+    try {
+      archiveMediaPlayer.currentTime = target;
+    } catch (_) {}
+    window.setTimeout(() => { archiveMediaSeekLock = false; }, 80);
+    if (autoPlay) {
+      archiveMediaPlayer.play().catch(() => {});
+    }
+    if (syncSelection) {
+      const key = nearestEventKeyForTime(target);
+      if (key) selectEvent(key, {seekMedia: false});
+    }
+    updateTimelinePlayhead();
+  }
+
   function clearStickyStoppedReportRef() {
     lastStoppedReportRefText = "";
     lastStoppedReportRefPath = "";
@@ -2011,6 +2359,11 @@
       return;
     }
     setReportRefStatus(`Last stopped session: ${lastStoppedReportRefText}`, lastStoppedReportRefPath || "");
+  }
+
+  function setLastStoppedArchive(ref = "", title = "") {
+    lastStoppedArchiveRef = ref || "";
+    lastStoppedArchiveTitle = title || ref || "";
   }
 
   document.addEventListener("keydown", (e) => {
@@ -2640,6 +2993,7 @@
   }
 
   function bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState) {
+    if (archiveBrowseRef) return "archive loaded";
     if (statePollingSuspended) return "dashboard disconnected";
     if (!runtimeStateSeen) return "attaching app runtime";
     if (sessionStopped) return "ready to start";
@@ -2663,14 +3017,18 @@
     const overlaySubEl = document.getElementById("boot-overlay-sub");
     const overlayGridEl = document.getElementById("boot-overlay-grid");
     const now = Date.now();
-    const runtimeState = runtimeStateSeen ? (sessionStopped ? "ready" : (conversationPaused ? "ready" : "active")) : "waiting";
-    const runtimeDetail = runtimeStateSeen
+    const runtimeState = archiveBrowseRef
+      ? "ready"
+      : (runtimeStateSeen ? (sessionStopped ? "ready" : (conversationPaused ? "ready" : "active")) : "waiting");
+    const runtimeDetail = archiveBrowseRef
+      ? `Loaded archive ${archiveBrowseMeta?.title || archiveBrowseRef}. Hit Play Archive to review the recording, scrub directly in the threads, or Return To Live to go back.`
+      : (runtimeStateSeen
       ? (sessionStopped
         ? "Fresh session is prepared. Hit Start when you want to begin."
         : (conversationPaused
           ? (startupPausePending ? "Fresh session is loaded. Hit Play when you want to begin." : "Conversation is paused. Hit Play when you want to continue.")
           : "Runtime is live and accepting turns."))
-      : "Waiting for the app to publish runtime controls.";
+      : "Waiting for the app to publish runtime controls.");
 
     const voiceState = runtimeStateSeen
       ? (
@@ -2722,12 +3080,14 @@
       modelState = allReady ? "ready" : (anyLoading ? "active" : "waiting");
     }
 
-    const sessionState = sessionStopped ? "ready" : (sessionSeen ? "ready" : (restartPending ? "active" : "waiting"));
-    const sessionDetail = sessionSeen
+    const sessionState = archiveBrowseRef ? "ready" : (sessionStopped ? "ready" : (sessionSeen ? "ready" : (restartPending ? "active" : "waiting")));
+    const sessionDetail = archiveBrowseRef
+      ? `Browsing archive ${archiveBrowseMeta?.title || archiveBrowseRef}`
+      : (sessionSeen
       ? `Session ${document.getElementById("h-session").textContent || "--"} for ${document.getElementById("h-character").textContent || "character"}`
       : (sessionStopped
         ? "No active session. Hit Start to create a fresh one."
-        : (restartPending ? "Waiting for the fresh session to attach." : "Waiting for session start."));
+        : (restartPending ? "Waiting for the fresh session to attach." : "Waiting for session start.")));
 
     const phase = bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState);
     const lastEventText = lastEventAt ? `last event ${formatAge(now - lastEventAt)} ago` : "waiting for first event";
@@ -2771,7 +3131,12 @@
   }
 
   function updateRuntimeButtons() {
-    if (pendingPauseState === "pausing") {
+    if (archiveBrowseRef && pendingPauseState === "playing") {
+      runtimeToggleButton.textContent = "Replaying...";
+      runtimeToggleButton.style.background = "var(--hold)";
+      runtimeToggleButton.disabled = true;
+      runtimeToggleButton.style.opacity = "0.75";
+    } else if (pendingPauseState === "pausing") {
       runtimeToggleButton.textContent = "Pausing...";
       runtimeToggleButton.style.background = "var(--hold)";
       runtimeToggleButton.disabled = true;
@@ -2791,6 +3156,14 @@
       runtimeToggleButton.style.background = "var(--hold)";
       runtimeToggleButton.disabled = true;
       runtimeToggleButton.style.opacity = "0.75";
+    } else if (archiveBrowseRef) {
+      const mediaActive = archivePlaybackMediaAvailable();
+      runtimeToggleButton.textContent = mediaActive
+        ? (archiveMediaPlayer.paused ? "Play Archive" : "Pause Archive")
+        : "Replay";
+      runtimeToggleButton.style.background = "var(--advance)";
+      runtimeToggleButton.disabled = false;
+      runtimeToggleButton.style.opacity = "1";
     } else {
       runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Play" : "Pause");
       runtimeToggleButton.style.background = sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)");
@@ -2798,15 +3171,16 @@
       runtimeToggleButton.style.opacity = "1";
     }
     runtimeToggleButton.style.color = "var(--bg)";
-    runtimeStopButton.textContent = pendingPauseState === "stopping" ? "Stopping..." : "Stop Session";
-    runtimeStopButton.disabled = pendingPauseState === "stopping" || restartPending || sessionStopped;
+    runtimeStopButton.textContent = pendingPauseState === "stopping" ? "Saving..." : stopButtonLabel();
+    runtimeStopButton.disabled = !!archiveBrowseRef || pendingPauseState === "stopping" || restartPending || sessionStopped;
     runtimeStopButton.style.opacity = runtimeStopButton.disabled ? "0.6" : "1";
+    runtimeStopButton.title = activeArchiveTitle() ? `Finalize archive: ${activeArchiveTitle()}` : "Finalize the current session archive and stop.";
     runtimeRestartButton.textContent = "Restart Session";
-    runtimeRestartButton.disabled = false;
-    runtimeRestartButton.style.opacity = "1";
+    runtimeRestartButton.disabled = !!archiveBrowseRef;
+    runtimeRestartButton.style.opacity = runtimeRestartButton.disabled ? "0.6" : "1";
     bootRestartButton.textContent = "Restart Session";
-    bootRestartButton.disabled = false;
-    bootRestartButton.style.opacity = "1";
+    bootRestartButton.disabled = !!archiveBrowseRef;
+    bootRestartButton.style.opacity = bootRestartButton.disabled ? "0.6" : "1";
   }
 
   async function requestRestart() {
@@ -2854,8 +3228,19 @@
     visionPassKey = null;
     selectedStreamKey = null;
     streamKey = 0;
+    lastSeq = 0;
     debugOnlyBoundaryTimestamp = null;
     historyRecordMode = "full";
+    pendingReplayArchiveRef = "";
+    pendingReplayEventTime = null;
+    playbackVisionFrame = null;
+    stopArchiveAudioPlayback();
+    archiveMediaPlayer.pause();
+    archiveMediaPlayer.classList.remove("visible");
+    archiveMediaPlayer.removeAttribute("src");
+    archiveMediaPlayer.load();
+    archiveMediaDuration = 0;
+    setArchiveMediaStatus("");
     clearAnnotationState();
     document.getElementById("h-session").textContent = "--";
     document.getElementById("h-stage").textContent = "--";
@@ -2913,8 +3298,19 @@
     visionPassKey = null;
     selectedStreamKey = null;
     streamKey = 0;
+    lastSeq = 0;
     debugOnlyBoundaryTimestamp = null;
     historyRecordMode = "full";
+    pendingReplayArchiveRef = "";
+    pendingReplayEventTime = null;
+    playbackVisionFrame = null;
+    stopArchiveAudioPlayback();
+    archiveMediaPlayer.pause();
+    archiveMediaPlayer.classList.remove("visible");
+    archiveMediaPlayer.removeAttribute("src");
+    archiveMediaPlayer.load();
+    archiveMediaDuration = 0;
+    setArchiveMediaStatus("");
     clearAnnotationState();
     conversationPaused = true;
     voiceActive = false;
@@ -2989,8 +3385,44 @@
 
   function updateVisionFeedUrl() {
     const visionFeed = document.getElementById("vision-feed");
-    if (!visionService.url) return;
-    const nextSrc = `${visionService.url.replace(/\/$/, "")}/video_feed`;
+    if (archiveBrowseRef && archivePlaybackMediaAvailable()) {
+      visionFeed.style.display = "none";
+      visionFeed.removeAttribute("src");
+      visionFeedSrc = "";
+      archiveAudioPlayback.style.display = "none";
+      syncArchiveMediaPlayer();
+      updateTimelinePlayhead();
+      return;
+    }
+    let nextSrc = "";
+    const browsingArchivePlayback = !!(
+      archiveBrowseRef &&
+      historyState.playback?.active &&
+      playbackVisionFrame?.sessionId &&
+      playbackVisionFrame?.frameTimestamp != null &&
+      String(playbackVisionFrame.sessionId) === String(archiveBrowseRef)
+    );
+    if (browsingArchivePlayback) {
+      nextSrc = `/history/frame?session_id=${encodeURIComponent(playbackVisionFrame.sessionId)}&frame_timestamp=${encodeURIComponent(String(playbackVisionFrame.frameTimestamp))}&raw=1&_=${encodeURIComponent(String(playbackVisionFrame.token || playbackVisionFrame.frameTimestamp))}`;
+    } else if (archiveBrowseRef) {
+      const targetEvent = selectedEvent() || streamEvents[streamEvents.length - 1] || null;
+      if (targetEvent) {
+        const eventTimeS = Number(relativeTime(targetEvent.timestamp).toFixed(3));
+        nextSrc = `/history/frame?session_id=${encodeURIComponent(archiveBrowseRef)}&event_time_s=${encodeURIComponent(String(eventTimeS))}&raw=1&_=${encodeURIComponent(selectedStreamKey || String(eventTimeS))}`;
+      }
+    } else if (pendingReplayArchiveRef && pendingReplayEventTime != null) {
+      nextSrc = `/history/frame?session_id=${encodeURIComponent(pendingReplayArchiveRef)}&event_time_s=${encodeURIComponent(String(Number(pendingReplayEventTime)))}&raw=1&_=${Date.now()}`;
+    } else if (historyState.playback?.active && playbackVisionFrame?.sessionId && playbackVisionFrame?.frameTimestamp != null) {
+      nextSrc = `/history/frame?session_id=${encodeURIComponent(playbackVisionFrame.sessionId)}&frame_timestamp=${encodeURIComponent(String(playbackVisionFrame.frameTimestamp))}&raw=1&_=${encodeURIComponent(String(playbackVisionFrame.token || playbackVisionFrame.frameTimestamp))}`;
+    } else if (visionService.url) {
+      nextSrc = `${visionService.url.replace(/\/$/, "")}/video_feed`;
+    }
+    if (!nextSrc) {
+      visionFeed.style.display = "none";
+      visionFeed.removeAttribute("src");
+      visionFeedSrc = "";
+      return;
+    }
     if (nextSrc === visionFeedSrc) return;
     visionFeedSrc = nextSrc;
     visionFeed.style.display = "";
@@ -3003,22 +3435,32 @@
     const panel = document.getElementById("vision-panel");
     const health = modelPollError ? "unreachable" : (visionService.health ? "ok" : "unknown");
     const effectiveState = modelPollError ? "error" : (visionService.state || "stopped");
-    const source = visionService.managed ? "managed by app"
+    const source = (archiveBrowseRef && archivePlaybackMediaAvailable()) ? "archive media"
+      : (historyState.playback?.active && playbackVisionFrame?.sessionId) ? "archive playback"
+      : archiveBrowseRef ? "archive frame"
+      : visionService.managed ? "managed by app"
       : visionService.external ? "external service"
       : "not running";
     statusEl.innerHTML = [
       `service: <b style="color:${statusColor(effectiveState)}">${esc(effectiveState)}</b>`,
       `health: <b style="color:${statusColor(modelPollError ? "error" : (visionService.health ? "ready" : "waiting"))}">${esc(health)}</b>`,
       `source: <b>${esc(source)}</b>`,
-      visionService.url ? `url: <b>${esc(visionService.url)}</b>` : "",
+      archiveBrowseRef ? `archive: <b>${esc(archiveBrowseMeta?.title || archiveBrowseRef)}</b>` : "",
+      visionService.url && !archiveBrowseRef ? `url: <b>${esc(visionService.url)}</b>` : "",
       visionService.mockReplay ? `mock: <b>${esc(visionService.mockReplay)}</b>` : "",
       modelPollError ? `error: <b style="color:var(--error)">${esc(modelPollError)}</b>` : "",
     ].filter(Boolean).join("<br>");
-    if (visionService.url) {
+    if (visionService.url || archiveBrowseRef || (historyState.playback?.active && playbackVisionFrame?.sessionId)) {
       panel.style.display = "";
-      linkEl.href = visionService.url;
-      linkEl.style.pointerEvents = "auto";
-      linkEl.style.opacity = "1";
+      if (visionService.url && !archiveBrowseRef) {
+        linkEl.href = visionService.url;
+        linkEl.style.pointerEvents = "auto";
+        linkEl.style.opacity = "1";
+      } else {
+        linkEl.href = "#";
+        linkEl.style.pointerEvents = "none";
+        linkEl.style.opacity = "0.55";
+      }
       updateVisionFeedUrl();
     } else {
       panel.style.display = "none";
@@ -3105,7 +3547,14 @@
   }
 
   function activeArchiveSessionId() {
-    return historyState.current_session?.session_id || currentSessionId || "";
+    return archiveBrowseRef || historyState.current_session?.session_id || currentSessionId || "";
+  }
+
+  function selectedArchiveVisionEventTime() {
+    if (!streamEvents.length) return null;
+    const target = selectedEvent() || streamEvents[streamEvents.length - 1];
+    if (!target) return null;
+    return Number(relativeTime(target.timestamp).toFixed(3));
   }
 
   function previewText(type, data) {
@@ -3774,33 +4223,46 @@
   }
 
   async function saveReportReference() {
-    if (!currentSessionId && lastStoppedReportRefText) {
-      reportRefButton.disabled = true;
-      setReportRefStatus("Copying last stopped session ref...", lastStoppedReportRefPath || "");
-      try {
-        await copyText(lastStoppedReportRefText);
-        setStickyStoppedReportRef(lastStoppedReportRefText, lastStoppedReportRefPath);
-      } catch (error) {
-        setReportRefStatus(`Report ref failed: ${error.message || error}`, lastStoppedReportRefPath || "");
-      } finally {
-        reportRefButton.disabled = false;
-      }
+    const ref = activeArchiveRef();
+    if (!ref) {
+      setReportRefStatus("No archive or session ref is available yet.");
       return;
     }
-
-    const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
-    const payload = buildReportSnapshotPayload(event);
+    const title = activeArchiveTitle();
+    const text = title && title !== ref ? `archive: ${title} (${ref})` : ref;
     reportRefButton.disabled = true;
-    setReportRefStatus("Saving report ref...");
+    setReportRefStatus("Copying archive ref...");
     try {
-      const data = await postReportSnapshot(payload);
-      const pasteText = data.paste_text || `intermediate session log: ${data.path}`;
-      await copyText(pasteText);
-      setReportRefStatus(pasteText, data.path || "");
+      await copyText(text);
+      setReportRefStatus(`Copied archive ref: ${text}`, ref);
     } catch (error) {
-      setReportRefStatus(`Report ref failed: ${error.message || error}`);
+      setReportRefStatus(`Archive ref copy failed: ${error.message || error}`, ref);
     } finally {
       reportRefButton.disabled = false;
+    }
+  }
+
+  async function renameActiveArchive() {
+    const ref = activeArchiveRef();
+    if (!ref) {
+      archiveLoadStatus.textContent = "No archive or session is available to rename.";
+      return;
+    }
+    const currentTitle = activeArchiveTitle() || ref;
+    const title = window.prompt("Archive title", currentTitle);
+    if (title == null) return;
+    try {
+      await postJson("/history/rename", {session_id: ref, title});
+      if (archiveBrowseRef === ref && archiveBrowseMeta) archiveBrowseMeta.title = title.trim() || currentTitle;
+      if (historyState.current_session?.session_id === ref) historyState.current_session.title = title.trim() || currentTitle;
+      if (lastStoppedArchiveRef === ref) lastStoppedArchiveTitle = title.trim() || currentTitle;
+      archiveLoadStatus.textContent = `Renamed archive: ${(title || currentTitle).trim()}`;
+      refreshHistoryArchives();
+      refreshHistoryState();
+      renderArchiveBrowseState();
+      setReportRefStatus("", "");
+    } catch (error) {
+      archiveLoadStatus.textContent = `Rename failed: ${error.message || error}`;
     }
   }
 
@@ -4179,7 +4641,7 @@
     visionPassKey = null;
   }
 
-  function selectEvent(key) {
+  function selectEvent(key, options = {}) {
     const event = streamEventByKey.get(key);
     if (!event) return;
     selectedStreamKey = key;
@@ -4238,6 +4700,10 @@
       row.classList.toggle("selected", active);
       if (active) row.scrollIntoView({block: "nearest"});
     });
+    if (archiveBrowseRef && archivePlaybackMediaAvailable() && options.seekMedia !== false) {
+      seekArchiveMedia(relativeTime(event.timestamp), {syncSelection: false});
+    }
+    updateVisionFeedUrl();
   }
 
   function renderChronology() {
@@ -4436,6 +4902,8 @@
     const usableWidth = Math.max(720, streamViewport.clientWidth - 48);
     const scale = usableWidth / Math.max(timelineWindowSeconds, 1);
     const baseWidth = Math.max(usableWidth + 40, 40 + (maxRelative + 1.5) * scale);
+    timelineRenderScale = scale;
+    timelineRenderBaseWidth = baseWidth;
     streamRulerInner.style.width = `${baseWidth}px`;
     const roughTickTarget = timelineWindowSeconds / 6;
     const step = roughTickTarget <= 2 ? 0.5
@@ -4463,6 +4931,7 @@
       streamEmpty.style.display = "";
       streamLanes.innerHTML = "";
       streamRulerInner.innerHTML = "";
+      updateTimelinePlayhead();
       return;
     }
 
@@ -4525,11 +4994,15 @@
       card.addEventListener("click", () => selectEvent(card.dataset.eventKey));
     });
     if (selectedStreamKey && streamEventByKey.has(selectedStreamKey)) {
-      selectEvent(selectedStreamKey);
+      selectEvent(selectedStreamKey, {seekMedia: false});
     } else {
-      selectEvent(streamEvents[streamEvents.length - 1].key);
+      selectEvent(streamEvents[streamEvents.length - 1].key, {seekMedia: false});
     }
-    if (followLive) scrollTimelineToEnd();
+    updateTimelinePlayhead();
+    if (followLive) {
+      scrollTimelineToEnd();
+      updateTimelinePlayhead();
+    }
   }
 
   function recordEvent(type, data, rawEvent) {
@@ -4540,7 +5013,7 @@
 
   const handlers = {
     session_start(data, rawEvent) {
-      if (data.session_id && data.session_id !== currentSessionId) {
+      if (!archiveHydrating && data.session_id && data.session_id !== currentSessionId) {
         clearConversationState("Starting a fresh session...");
       }
       restartPending = false;
@@ -4959,8 +5432,14 @@
 
     async session_end(data, rawEvent) {
       recordEvent("session_end", data, rawEvent);
+      if (archiveHydrating) {
+        setLastStoppedArchive(data.session_id || currentSessionId || "", data.title || activeArchiveTitle());
+        return;
+      }
       const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
       const finishedSessionId = data.session_id || currentSessionId || "";
+      setLastStoppedArchive(finishedSessionId, data.title || historyState.current_session?.title || finishedSessionId);
+      playbackVisionFrame = null;
       const payload = buildReportSnapshotPayload(event, finishedSessionId);
       sessionSeen = false;
       currentSessionId = "";
@@ -5091,9 +5570,36 @@
     history_playback(data, rawEvent) {
       recordEvent("history_playback", data, rawEvent);
       currentSessionId = data.session_id || currentSessionId;
+      playbackVisionFrame = {
+        sessionId: data.session_id || currentSessionId,
+        frameTimestamp: null,
+        token: Date.now(),
+      };
+      if (!data.video) {
+        pendingReplayArchiveRef = "";
+        pendingReplayEventTime = null;
+      }
+      if (data.audio) {
+        playArchiveAudio(data.session_id || currentSessionId, Number(data.audio_start_s || 0));
+      } else {
+        stopArchiveAudioPlayback();
+      }
       refreshAnnotations(currentSessionId);
+      archiveLoadStatus.textContent = "";
       annotationStatus.textContent = `Playback started from ${data.session_id || "history"} @ ${data.checkpoint_index ?? "--"}`;
       refreshHistoryState();
+      renderVisionServiceStatus();
+    },
+
+    history_playback_frame(data) {
+      playbackVisionFrame = {
+        sessionId: data.source_session_id || currentSessionId || activeArchiveRef(),
+        frameTimestamp: Number(data.frame_timestamp || 0) || null,
+        token: Date.now(),
+      };
+      pendingReplayArchiveRef = "";
+      pendingReplayEventTime = null;
+      updateVisionFeedUrl();
     },
 
     prompt_reload(data, rawEvent) {
@@ -5107,9 +5613,10 @@
     }
   };
 
-  function handleEvent(event) {
+  function handleEvent(event, options = {}) {
+    if (archiveBrowseRef && !options.archive && !ARCHIVE_BROWSE_LIVE_EVENT_ALLOWLIST.has(event.type)) return;
     lastEventAt = Date.now();
-    if (typeof event.seq === "number") {
+    if (!options.archive && typeof event.seq === "number") {
       if (event.seq <= lastSeq) return;
       lastSeq = event.seq;
     }
@@ -5221,10 +5728,88 @@
       followLive = false;
       document.getElementById("follow-live").checked = false;
     }
+    updateTimelinePlayhead();
+  });
+
+  function seekArchiveMediaFromPointer(clientX) {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    const bounds = streamViewport.getBoundingClientRect();
+    const contentX = streamViewport.scrollLeft + (clientX - bounds.left);
+    const timeS = Math.max(0, (contentX - 20) / Math.max(timelineRenderScale, 0.001));
+    seekArchiveMedia(timeS, {syncSelection: true});
+  }
+
+  archiveMediaPlayer.addEventListener("loadedmetadata", () => {
+    archiveMediaDuration = Number.isFinite(archiveMediaPlayer.duration) ? Number(archiveMediaPlayer.duration) : 0;
+    setArchiveMediaStatus(
+      archiveMediaDuration > 0
+        ? `Loaded archive media · ${formatWindow(archiveMediaDuration)}`
+        : "Loaded archive media"
+    );
+    updateRuntimeButtons();
+    updateTimelinePlayhead();
+  });
+  archiveMediaPlayer.addEventListener("play", () => {
+    updateRuntimeButtons();
+  });
+  archiveMediaPlayer.addEventListener("pause", () => {
+    updateRuntimeButtons();
+  });
+  archiveMediaPlayer.addEventListener("timeupdate", () => {
+    updateTimelinePlayhead();
+    if (archiveMediaSeekLock || archiveMediaScrubbing) return;
+    const key = nearestEventKeyForTime(archiveMediaPlayer.currentTime || 0);
+    if (key && key !== selectedStreamKey) selectEvent(key, {seekMedia: false});
+  });
+  streamRuler.addEventListener("pointerdown", (event) => {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    archiveMediaScrubbing = true;
+    seekArchiveMediaFromPointer(event.clientX);
+    event.preventDefault();
+  });
+  streamViewport.addEventListener("pointerdown", (event) => {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    if (event.target.closest(".stream-card")) return;
+    archiveMediaScrubbing = true;
+    seekArchiveMediaFromPointer(event.clientX);
+    event.preventDefault();
+  });
+  window.addEventListener("pointermove", (event) => {
+    if (!archiveMediaScrubbing) return;
+    seekArchiveMediaFromPointer(event.clientX);
+  });
+  window.addEventListener("pointerup", () => {
+    archiveMediaScrubbing = false;
   });
 
   runtimeToggleButton.addEventListener("click", async () => {
     if (pendingPauseState) return;
+    if (archiveBrowseRef) {
+      if (archivePlaybackMediaAvailable()) {
+        if (archiveMediaPlayer.paused) {
+          archiveMediaPlayer.play().catch(() => {});
+        } else {
+          archiveMediaPlayer.pause();
+        }
+        updateRuntimeButtons();
+        return;
+      }
+      const target = archiveBrowseRef;
+      pendingReplayArchiveRef = target;
+      pendingReplayEventTime = 0;
+      notePendingRuntimeAction("playing");
+      try {
+        updateVisionFeedUrl();
+        await sendInput(`/replay ${target}`);
+        archiveLoadStatus.textContent = `Replaying archive: ${target}`;
+        annotationStatus.textContent = `Requested replay: ${target}`;
+      } catch (error) {
+        pendingReplayArchiveRef = "";
+        pendingReplayEventTime = null;
+        clearPendingRuntimeAction(`Replay failed: ${error.message || error}`);
+      }
+      return;
+    }
     const nextState = sessionStopped ? "starting" : (conversationPaused ? "playing" : "pausing");
     const command = sessionStopped ? "/start" : (conversationPaused ? "/play" : "/pause");
     notePendingRuntimeAction(nextState);
@@ -5238,6 +5823,7 @@
   runtimeRestartButton.addEventListener("click", requestRestart);
   bootRestartButton.addEventListener("click", requestRestart);
   reportRefButton.addEventListener("click", saveReportReference);
+  archiveRenameButton.addEventListener("click", renameActiveArchive);
   annotationToggleButton.addEventListener("click", () => {
     if (!selectedEvent()) {
       annotationStatus.textContent = "Select a debug timeline event before annotating it.";
@@ -5265,6 +5851,10 @@
   snippetSaveButton.addEventListener("click", captureSelectedMoment);
   snippetCancelButton.addEventListener("click", () => setSnippetFormOpen(false));
   archiveLoadButton.addEventListener("click", async () => {
+    if (archiveBrowseRef) {
+      exitArchiveBrowseMode();
+      return;
+    }
     await refreshHistoryArchives();
     setArchivePickerOpen(true);
   });
@@ -5277,18 +5867,34 @@
     const loadButton = event.target.closest(".archive-load-action");
     const replayButton = event.target.closest(".archive-replay-action");
     const renameButton = event.target.closest(".archive-rename-action");
+    const copyButton = event.target.closest(".archive-copy-action");
+    if (copyButton) {
+      const target = copyButton.dataset.sessionRef || "";
+      if (!target) return;
+      const title = (copyButton.dataset.title || "").trim();
+      const text = title ? `archive: ${title} (${target})` : target;
+      const ok = await copyText(text);
+      archiveLoadStatus.textContent = ok ? `Copied archive ref: ${target}` : `Copy failed for archive ref: ${target}`;
+      return;
+    }
     if (loadButton) {
       const target = loadButton.dataset.sessionRef || "";
       if (!target) return;
-      sendInput(`/restore ${target}`);
-      archiveLoadStatus.textContent = `Loaded archive: ${target}`;
-      annotationStatus.textContent = `Requested restore: ${target}`;
-      setArchivePickerOpen(false);
+      try {
+        await loadArchiveTimeline(target);
+        annotationStatus.textContent = `Loaded archive timeline: ${target}`;
+        setArchivePickerOpen(false);
+      } catch (error) {
+        archiveLoadStatus.textContent = `Load failed: ${error.message || error}`;
+      }
       return;
     }
     if (replayButton) {
       const target = replayButton.dataset.sessionRef || "";
       if (!target) return;
+      pendingReplayArchiveRef = target;
+      pendingReplayEventTime = 0;
+      updateVisionFeedUrl();
       sendInput(`/replay ${target}`);
       archiveLoadStatus.textContent = `Replaying archive: ${target}`;
       annotationStatus.textContent = `Requested replay: ${target}`;
@@ -5394,6 +6000,7 @@
   setDetailTab("chronology");
   updateRuntimeButtons();
   renderBootStatus();
+  renderArchiveBrowseState();
   refreshState();
   refreshHistoryState();
   refreshHistoryArchives();

@@ -53,6 +53,7 @@ class WebcamCapture:
         self._thread: threading.Thread | None = None
         self._device = device
         self._resolution: tuple[int, int] | None = None
+        self._external_only = False
 
     def start(self) -> None:
         if self._running:
@@ -95,6 +96,14 @@ class WebcamCapture:
         with self._lock:
             self._frame = frame
 
+    def set_input_mode(self, mode: str) -> None:
+        with self._lock:
+            self._external_only = str(mode or "camera").lower() == "external"
+
+    def input_mode(self) -> str:
+        with self._lock:
+            return "external" if self._external_only else "camera"
+
     def release(self) -> None:
         self._running = False
         if self._thread is not None:
@@ -106,6 +115,9 @@ class WebcamCapture:
 
     def _loop(self) -> None:
         while self._running and self._cap is not None:
+            if self._external_only:
+                time.sleep(0.01)
+                continue
             ok, frame = self._cap.read()
             if ok:
                 with self._lock:
@@ -972,6 +984,21 @@ def inject_frame():
     if frame is not None:
         cam.inject(frame)
     return json.dumps({"ok": True})
+
+
+@app.route("/set_input_mode", methods=["POST"])
+def set_input_mode():
+    payload = request.get_json(silent=True) or {}
+    mode = str(payload.get("mode") or "camera").strip().lower()
+    if mode not in {"camera", "external"}:
+        return Response(json.dumps({"ok": False, "error": f"unsupported mode: {mode}"}), status=400, mimetype="application/json")
+    cam.set_input_mode(mode)
+    return json.dumps({"ok": True, "mode": cam.input_mode()})
+
+
+@app.route("/input_mode")
+def input_mode():
+    return json.dumps({"mode": cam.input_mode()})
 
 
 @app.route("/frame.jpg")

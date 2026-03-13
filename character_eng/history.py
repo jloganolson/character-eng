@@ -6,9 +6,13 @@ import io
 import json
 import os
 import re
+import signal
 import shutil
+import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 import wave
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -33,6 +37,7 @@ PINNED_DIR = HISTORY_ROOT / "pinned"
 CATALOG_DIR = HISTORY_ROOT / "catalog"
 DEFAULT_FREE_WARNING_GIB = 50.0
 DEFAULT_VISION_CAPTURE_FPS = 2.0
+DEFAULT_PLAYBACK_VIDEO_FPS = 30.0
 DEFAULT_EVENT_PLAYBACK_WINDOW_S = 0.85
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
@@ -74,6 +79,76 @@ def _append_jsonl(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(payload, sort_keys=True) + "\n")
+
+
+def _ffmpeg_available() -> bool:
+    try:
+        subprocess.run(
+            ["ffmpeg", "-version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=2,
+        )
+        return True
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        return False
+
+
+def _run_ffmpeg(args: list[str]) -> bool:
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", *args],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+            timeout=60,
+        )
+        return True
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        return False
+
+
+def _ffprobe_json(args: list[str]) -> dict:
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", *args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=True,
+            timeout=20,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        return {}
+    try:
+        return json.loads(proc.stdout.decode("utf-8", errors="ignore") or "{}")
+    except json.JSONDecodeError:
+        return {}
+
+
+def _video_is_valid(path: Path | None) -> bool:
+    if path is None or not path.exists():
+        return False
+    payload = _ffprobe_json([
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=codec_name,avg_frame_rate,duration",
+        "-of",
+        "json",
+        str(path),
+    ])
+    streams = payload.get("streams") or []
+    if not streams:
+        return False
+    stream = streams[0] or {}
+    codec_name = str(stream.get("codec_name") or "").strip()
+    avg_rate = str(stream.get("avg_frame_rate") or "").strip()
+    try:
+        duration = float(stream.get("duration") or 0.0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    return bool(codec_name and avg_rate and avg_rate != "0/0" and duration > 0.0)
 
 
 def _dir_size_bytes(path: Path) -> int:
@@ -286,6 +361,13 @@ def _read_wav_bytes(path: Path) -> tuple[dict, bytes]:
     return params, frames
 
 
+def _read_audio_file_bytes(path: Path) -> bytes:
+    if path.suffix == ".gz":
+        with gzip.open(path, "rb") as fh:
+            return fh.read()
+    return path.read_bytes()
+
+
 def clip_audio_track(source: Path, target: Path, *, start_s: float, end_s: float) -> bool:
     if not source.exists() or end_s <= start_s:
         return False
@@ -383,6 +465,21 @@ def _parse_frames_jsonl(path: Path) -> list[dict]:
     return entries
 
 
+def _parse_events_jsonl(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    events: list[dict] = []
+    for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if not isinstance(payload, dict):
+            continue
+        payload.setdefault("seq", index)
+        events.append(payload)
+    return events
+
+
 @dataclass
 class PlaybackPlan:
     source_path: Path
@@ -429,6 +526,26 @@ def _nearest_frame_entry(session_path: Path, *, event_time_s: float) -> dict | N
                 **entry,
                 "abs_path": str(frame_path),
                 "relative_to_event_s": round(frame_ts - anchor, 3),
+            }
+            best_delta = delta
+    return best_entry
+
+
+def _nearest_frame_entry_by_timestamp(session_path: Path, *, frame_timestamp: float) -> dict | None:
+    media_dir = session_path / "media"
+    best_entry = None
+    best_delta = None
+    for entry in _parse_frames_jsonl(media_dir / "video" / "frames.jsonl"):
+        frame_ts = float(entry.get("timestamp", 0.0) or 0.0)
+        delta = abs(frame_ts - float(frame_timestamp))
+        if best_delta is None or delta < best_delta:
+            frame_path = media_dir / "video" / str(entry.get("path", ""))
+            if not frame_path.exists():
+                continue
+            best_entry = {
+                **entry,
+                "abs_path": str(frame_path),
+                "relative_to_target_s": round(frame_ts - float(frame_timestamp), 3),
             }
             best_delta = delta
     return best_entry
@@ -606,6 +723,301 @@ class VisionFramePoller:
             self._thread = None
 
 
+class VisionVideoRecorder:
+    def __init__(self, service_url: str, output_path: Path, *, fps: float = DEFAULT_PLAYBACK_VIDEO_FPS):
+        self._service_url = service_url.rstrip("/")
+        self._output_path = output_path
+        self._fps = max(float(fps or DEFAULT_PLAYBACK_VIDEO_FPS), 1.0)
+        self._proc: subprocess.Popen[bytes] | None = None
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._response = None
+        self._response_lock = threading.Lock()
+
+    @property
+    def output_path(self) -> Path:
+        return self._output_path
+
+    def start(self) -> None:
+        if self._proc is not None or self._thread is not None or not _ffmpeg_available():
+            return
+        self._stop.clear()
+        self._output_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._output_path.unlink()
+        except OSError:
+            pass
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-fflags",
+            "+genpts",
+            "-f",
+            "mjpeg",
+            "-r",
+            f"{self._fps:.2f}",
+            "-i",
+            "pipe:0",
+            "-an",
+            "-vf",
+            f"fps={self._fps:.2f}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(self._output_path),
+        ]
+        try:
+            self._proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (FileNotFoundError, OSError):
+            self._proc = None
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True, name="vision-video-recorder")
+        self._thread.start()
+
+    def _run(self) -> None:
+        proc = self._proc
+        if proc is None or proc.stdin is None:
+            return
+        request = urllib.request.Request(f"{self._service_url}/video_feed")
+        response = None
+        try:
+            response = urllib.request.urlopen(request, timeout=10)
+            with self._response_lock:
+                self._response = response
+            buffer = bytearray()
+            while not self._stop.is_set():
+                try:
+                    chunk = response.read(65536)
+                except (OSError, urllib.error.URLError):
+                    break
+                if not chunk:
+                    break
+                buffer.extend(chunk)
+                while True:
+                    start = buffer.find(b"\xff\xd8")
+                    if start < 0:
+                        if len(buffer) > 1_000_000:
+                            del buffer[:-4]
+                        break
+                    end = buffer.find(b"\xff\xd9", start + 2)
+                    if end < 0:
+                        if start > 0:
+                            del buffer[:start]
+                        break
+                    jpeg = bytes(buffer[start:end + 2])
+                    del buffer[:end + 2]
+                    if not jpeg:
+                        continue
+                    try:
+                        proc.stdin.write(jpeg)
+                        proc.stdin.flush()
+                    except OSError:
+                        self._stop.set()
+                        break
+        except (OSError, urllib.error.URLError, ValueError):
+            pass
+        finally:
+            with self._response_lock:
+                self._response = None
+            if response is not None:
+                try:
+                    response.close()
+                except OSError:
+                    pass
+            if proc.stdin is not None:
+                try:
+                    proc.stdin.close()
+                except OSError:
+                    pass
+
+    def stop(self) -> Path | None:
+        if self._proc is None:
+            return self._output_path if self._output_path.exists() else None
+        self._stop.set()
+        with self._response_lock:
+            response = self._response
+            self._response = None
+        if response is not None:
+            try:
+                response.close()
+            except OSError:
+                pass
+        if self._thread is not None:
+            self._thread.join(timeout=6)
+            self._thread = None
+        proc = self._proc
+        self._proc = None
+        try:
+            proc.wait(timeout=12)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try:
+                proc.wait(timeout=6)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=2)
+        return self._output_path if _video_is_valid(self._output_path) else None
+
+
+def _mix_conversation_audio(
+    *,
+    user_audio_path: Path | None,
+    assistant_audio_path: Path | None,
+    output_path: Path,
+) -> Path | None:
+    if not _ffmpeg_available():
+        return None
+    inputs = [path for path in (user_audio_path, assistant_audio_path) if path is not None and path.exists()]
+    if not inputs:
+        return None
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if len(inputs) == 1:
+        if _run_ffmpeg(["-i", str(inputs[0]), "-c:a", "pcm_s16le", str(output_path)]):
+            return output_path if output_path.exists() else None
+        return None
+    filter_complex = (
+        "[0:a]aresample=48000,volume=1.0[a0];"
+        "[1:a]aresample=48000,volume=1.0[a1];"
+        "[a0][a1]amix=inputs=2:duration=longest:normalize=0[aout]"
+    )
+    ok = _run_ffmpeg([
+        "-i", str(inputs[0]),
+        "-i", str(inputs[1]),
+        "-filter_complex", filter_complex,
+        "-map", "[aout]",
+        "-c:a", "pcm_s16le",
+        str(output_path),
+    ])
+    return output_path if ok and output_path.exists() else None
+
+
+def _materialize_wav_for_ffmpeg(source: Path | None, *, temp_path: Path) -> Path | None:
+    if source is None or not source.exists():
+        return None
+    if source.suffix != ".gz":
+        return source
+    try:
+        raw = _read_audio_file_bytes(source)
+    except OSError:
+        return None
+    temp_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path.write_bytes(raw)
+    return temp_path
+
+
+def _mux_playback_media(
+    *,
+    video_path: Path | None,
+    audio_path: Path | None,
+    output_path: Path,
+) -> Path | None:
+    if video_path is None or not video_path.exists():
+        return None
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if audio_path is None or not audio_path.exists():
+        shutil.copy2(video_path, output_path)
+        return output_path
+    ok = _run_ffmpeg([
+        "-i", str(video_path),
+        "-i", str(audio_path),
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-shortest",
+        "-movflags", "+faststart",
+        str(output_path),
+    ])
+    return output_path if ok and output_path.exists() else None
+
+
+def _build_video_from_frames(
+    *,
+    frames_jsonl: Path | None,
+    output_path: Path,
+    fps: float = DEFAULT_PLAYBACK_VIDEO_FPS,
+) -> Path | None:
+    if frames_jsonl is None or not frames_jsonl.exists() or not _ffmpeg_available():
+        return None
+    entries: list[dict] = []
+    for line in frames_jsonl.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and "frames" in payload:
+            nested = payload.get("frames") or []
+            if isinstance(nested, list):
+                entries.extend(item for item in nested if isinstance(item, dict))
+            continue
+        if isinstance(payload, dict):
+            entries.append(payload)
+    entries = [entry for entry in entries if entry.get("path")]
+    if not entries:
+        return None
+    ordered = sorted(entries, key=lambda item: float(item.get("timestamp", 0.0) or 0.0))
+    concat_path = output_path.with_suffix(".frames.txt")
+    concat_path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    for index, entry in enumerate(ordered):
+        frame_path = (frames_jsonl.parent / str(entry.get("path"))).resolve()
+        if not frame_path.exists():
+            continue
+        escaped_frame = str(frame_path).replace("'", "'\\''")
+        lines.append(f"file '{escaped_frame}'")
+        if index + 1 < len(ordered):
+            current_ts = float(entry.get("timestamp", 0.0) or 0.0)
+            next_ts = float(ordered[index + 1].get("timestamp", current_ts) or current_ts)
+            duration = max(1.0 / max(fps, 1.0), next_ts - current_ts)
+            lines.append(f"duration {duration:.6f}")
+    last_entry = next((entry for entry in reversed(ordered) if (frames_jsonl.parent / str(entry.get('path'))).exists()), None)
+    if last_entry is None:
+        return None
+    last_path = (frames_jsonl.parent / str(last_entry.get("path"))).resolve()
+    escaped_last = str(last_path).replace("'", "'\\''")
+    lines.append(f"file '{escaped_last}'")
+    concat_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        ok = _run_ffmpeg([
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_path),
+            "-vf",
+            f"fps={max(float(fps or DEFAULT_PLAYBACK_VIDEO_FPS), 1.0):.2f}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ])
+    finally:
+        try:
+            concat_path.unlink()
+        except OSError:
+            pass
+    return output_path if ok and _video_is_valid(output_path) else None
+
+
 class SessionArchive:
     def __init__(
         self,
@@ -637,6 +1049,7 @@ class SessionArchive:
         self._video_index = 0
         self._started_at = _now_ts()
         self._vision_poller: VisionFramePoller | None = None
+        self._video_recorder: VisionVideoRecorder | None = None
         self._user_audio = AudioTrackWriter(self.media_dir / "audio" / "user_input.wav", sample_rate=16000)
         self._assistant_audio = AudioTrackWriter(self.media_dir / "audio" / "assistant_output.wav", sample_rate=24000)
         self.path.mkdir(parents=True, exist_ok=True)
@@ -670,6 +1083,9 @@ class SessionArchive:
                 "media": {
                     "user_audio_path": "",
                     "assistant_audio_path": "",
+                    "conversation_audio_path": "",
+                    "video_path": "",
+                    "playback_path": "",
                     "video_frames_path": str(self.video_dir / "frames.jsonl"),
                     "video_frame_count": 0,
                 },
@@ -856,16 +1272,34 @@ class SessionArchive:
         self.update_manifest(media=media)
         return frame_path
 
-    def start_vision_capture(self, service_url: str, *, fps: float = DEFAULT_VISION_CAPTURE_FPS) -> None:
+    def start_vision_capture(
+        self,
+        service_url: str,
+        *,
+        fps: float = DEFAULT_VISION_CAPTURE_FPS,
+        playback_video_fps: float = DEFAULT_PLAYBACK_VIDEO_FPS,
+    ) -> None:
         if self._vision_poller is not None:
-            return
-        self._vision_poller = VisionFramePoller(service_url, fps, self.record_video_frame)
-        self._vision_poller.start()
+            if self._video_recorder is not None:
+                return
+        if self._vision_poller is None:
+            self._vision_poller = VisionFramePoller(service_url, fps, self.record_video_frame)
+            self._vision_poller.start()
+        if self._video_recorder is None:
+            self._video_recorder = VisionVideoRecorder(
+                service_url,
+                self.media_dir / "video" / "session_capture.mp4",
+                fps=playback_video_fps,
+            )
+            self._video_recorder.start()
 
     def stop_vision_capture(self) -> None:
         if self._vision_poller is not None:
             self._vision_poller.stop()
             self._vision_poller = None
+        if self._video_recorder is not None:
+            self._video_recorder.stop()
+            self._video_recorder = None
 
     def promote(self, kind: str = "pinned") -> Path:
         destination_root = self.root / ("pinned" if kind == "pinned" else "moments")
@@ -997,12 +1431,42 @@ class SessionArchive:
 
     def finalize(self) -> dict:
         self.stop_vision_capture()
+        raw_user_audio_path = self._user_audio.path if self._user_audio.path.exists() else None
+        raw_assistant_audio_path = self._assistant_audio.path if self._assistant_audio.path.exists() else None
+        raw_video_path = self.media_dir / "video" / "session_capture.mp4"
+        frames_jsonl = self.video_dir / "frames.jsonl"
+        mixed_audio_path = _mix_conversation_audio(
+            user_audio_path=raw_user_audio_path,
+            assistant_audio_path=raw_assistant_audio_path,
+            output_path=self.media_dir / "audio" / "conversation_mix.wav",
+        )
+        video_for_mux = raw_video_path if _video_is_valid(raw_video_path) else None
+        if video_for_mux is None:
+            video_for_mux = _build_video_from_frames(
+                frames_jsonl=frames_jsonl if frames_jsonl.exists() else None,
+                output_path=self.media_dir / "video" / "session_capture_fallback.mp4",
+                fps=DEFAULT_PLAYBACK_VIDEO_FPS,
+            )
+        playback_path = _mux_playback_media(
+            video_path=video_for_mux,
+            audio_path=mixed_audio_path,
+            output_path=self.media_dir / "playback.mp4",
+        )
         user_audio_path = self._user_audio.compress()
         assistant_audio_path = self._assistant_audio.compress()
+        mixed_audio_gz_path = None
+        if mixed_audio_path is not None and mixed_audio_path.exists():
+            mixed_audio_gz_path = mixed_audio_path.with_suffix(mixed_audio_path.suffix + ".gz")
+            with mixed_audio_path.open("rb") as src, gzip.open(mixed_audio_gz_path, "wb", compresslevel=9) as dst:
+                shutil.copyfileobj(src, dst)
+            mixed_audio_path.unlink()
         manifest = self._manifest()
         media = dict(manifest.get("media", {}))
         media["user_audio_path"] = str(user_audio_path) if user_audio_path else ""
         media["assistant_audio_path"] = str(assistant_audio_path) if assistant_audio_path else ""
+        media["conversation_audio_path"] = str(mixed_audio_gz_path) if mixed_audio_gz_path else ""
+        media["video_path"] = str(video_for_mux) if video_for_mux and video_for_mux.exists() else ""
+        media["playback_path"] = str(playback_path) if playback_path else ""
         media["video_frames_path"] = str(self.video_dir / "frames.jsonl")
         media["video_frame_count"] = self._video_index
         return self.update_manifest(
@@ -1131,10 +1595,20 @@ class HistoryService:
                 return None
             return self.current.record_video_frame(jpeg_bytes, timestamp=timestamp, source=source)
 
-    def start_vision_capture(self, service_url: str, *, fps: float = DEFAULT_VISION_CAPTURE_FPS) -> None:
+    def start_vision_capture(
+        self,
+        service_url: str,
+        *,
+        fps: float = DEFAULT_VISION_CAPTURE_FPS,
+        playback_video_fps: float = DEFAULT_PLAYBACK_VIDEO_FPS,
+    ) -> None:
         with self._lock:
             if self.current is not None:
-                self.current.start_vision_capture(service_url, fps=fps)
+                self.current.start_vision_capture(
+                    service_url,
+                    fps=fps,
+                    playback_video_fps=playback_video_fps,
+                )
 
     def stop_vision_capture(self) -> None:
         with self._lock:
@@ -1194,6 +1668,138 @@ class HistoryService:
         if event_time_s is None:
             return {}
         return _nearest_frame_entry(session_path, event_time_s=float(event_time_s)) or {}
+
+    def nearest_frame_for_timestamp(self, session_ref: str, frame_timestamp: float | None = None) -> dict:
+        session_path = resolve_session_path(self.root, session_ref)
+        if session_path is None:
+            raise FileNotFoundError(f"unknown session: {session_ref}")
+        if frame_timestamp is None:
+            return {}
+        return _nearest_frame_entry_by_timestamp(session_path, frame_timestamp=float(frame_timestamp)) or {}
+
+    def audio_path_for_session(self, session_ref: str) -> Path | None:
+        session_path = resolve_session_path(self.root, session_ref)
+        if session_path is None:
+            raise FileNotFoundError(f"unknown session: {session_ref}")
+        manifest = _json_load(session_path / "manifest.json")
+        media = manifest.get("media", {}) or {}
+        candidates = []
+        mixed = str(media.get("conversation_audio_path", "")).strip()
+        if mixed:
+            candidates.append(Path(mixed))
+        stored = str(media.get("user_audio_path", "")).strip()
+        if stored:
+            candidates.append(Path(stored))
+        candidates.extend([
+            session_path / "media" / "audio" / "conversation_mix.wav.gz",
+            session_path / "media" / "audio" / "conversation_mix.wav",
+            session_path / "media" / "audio" / "user_input.wav.gz",
+            session_path / "media" / "audio" / "user_input.wav",
+            session_path / "media" / "audio" / "user_input_clip.wav.gz",
+            session_path / "media" / "audio" / "user_input_clip.wav",
+        ])
+        return next((path for path in candidates if path.exists()), None)
+
+    def audio_bytes_for_session(self, session_ref: str) -> bytes:
+        path = self.audio_path_for_session(session_ref)
+        if path is None:
+            raise FileNotFoundError(f"no user audio for session: {session_ref}")
+        return _read_audio_file_bytes(path)
+
+    def playback_media_path_for_session(self, session_ref: str) -> Path | None:
+        session_path = resolve_session_path(self.root, session_ref)
+        if session_path is None:
+            raise FileNotFoundError(f"unknown session: {session_ref}")
+        manifest = _json_load(session_path / "manifest.json")
+        media = manifest.get("media", {}) or {}
+        candidates = []
+        stored = str(media.get("playback_path", "")).strip()
+        if stored:
+            candidates.append(Path(stored))
+        candidates.append(session_path / "media" / "playback.mp4")
+        existing = next((path for path in candidates if _video_is_valid(path)), None)
+        if existing is not None:
+            return existing
+        repaired = self._ensure_playback_media(session_path)
+        return repaired if repaired and _video_is_valid(repaired) else None
+
+    def list_events(self, session_ref: str) -> dict:
+        session_path = resolve_session_path(self.root, session_ref)
+        if session_path is None:
+            raise FileNotFoundError(f"unknown session: {session_ref}")
+        manifest = _json_load(session_path / "manifest.json")
+        media = dict(manifest.get("media", {}) or {})
+        playback_path = self.playback_media_path_for_session(session_ref)
+        return {
+            "session_id": str(manifest.get("session_id") or session_path.name),
+            "title": str(manifest.get("title") or session_path.name),
+            "character": str(manifest.get("character") or ""),
+            "source_kind": str(manifest.get("type") or session_path.parent.name.rstrip("s") or "session"),
+            "media": {
+                **media,
+                "playback_available": bool(playback_path is not None),
+                "playback_path": str(playback_path) if playback_path is not None else str(media.get("playback_path") or ""),
+            },
+            "events": _parse_events_jsonl(session_path / "events.jsonl"),
+        }
+
+    def _ensure_playback_media(self, session_path: Path) -> Path | None:
+        session_path = session_path.resolve()
+        manifest_path = session_path / "manifest.json"
+        if not manifest_path.exists():
+            return None
+        manifest = _json_load(manifest_path)
+        media = dict(manifest.get("media", {}) or {})
+        output_path = session_path / "media" / "playback.mp4"
+        if _video_is_valid(output_path):
+            return output_path
+
+        mixed_audio_candidates = []
+        mixed = str(media.get("conversation_audio_path", "")).strip()
+        if mixed:
+            mixed_audio_candidates.append(Path(mixed))
+        mixed_audio_candidates.extend([
+            session_path / "media" / "audio" / "conversation_mix.wav.gz",
+            session_path / "media" / "audio" / "conversation_mix.wav",
+        ])
+        audio_source = next((path for path in mixed_audio_candidates if path.exists()), None)
+        temp_audio_path = session_path / "media" / "audio" / ".conversation_mix_for_mux.wav"
+        audio_path = _materialize_wav_for_ffmpeg(audio_source, temp_path=temp_audio_path)
+
+        raw_video_candidates = []
+        stored_video = str(media.get("video_path", "")).strip()
+        if stored_video:
+            raw_video_candidates.append(Path(stored_video))
+        raw_video_candidates.extend([
+            session_path / "media" / "video" / "session_capture.mp4",
+            session_path / "media" / "video" / "session_capture_fallback.mp4",
+        ])
+        raw_video = next((path for path in raw_video_candidates if _video_is_valid(path)), None)
+        if raw_video is None:
+            raw_video = _build_video_from_frames(
+                frames_jsonl=session_path / "media" / "video" / "frames.jsonl",
+                output_path=session_path / "media" / "video" / "session_capture_fallback.mp4",
+                fps=DEFAULT_PLAYBACK_VIDEO_FPS,
+            )
+        try:
+            playback = _mux_playback_media(
+                video_path=raw_video,
+                audio_path=audio_path,
+                output_path=output_path,
+            )
+        finally:
+            if temp_audio_path.exists():
+                try:
+                    temp_audio_path.unlink()
+                except OSError:
+                    pass
+        if playback is None or not _video_is_valid(playback):
+            return None
+        media["playback_path"] = str(playback)
+        if raw_video is not None and raw_video.exists():
+            media["video_path"] = str(raw_video)
+        _json_dump(manifest_path, {**manifest, "media": media})
+        return playback
 
     def prepare_playback(self, session_ref: str, checkpoint_index: int | None = None) -> PlaybackPlan:
         session_path = resolve_session_path(self.root, session_ref)

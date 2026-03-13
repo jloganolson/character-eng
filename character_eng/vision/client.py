@@ -88,6 +88,17 @@ class VisionClient:
         with urllib.request.urlopen(req, timeout=5):
             pass
 
+    def set_input_mode(self, mode: str) -> None:
+        body = json.dumps({"mode": str(mode or "camera")}).encode()
+        req = urllib.request.Request(
+            f"{self.base_url}/set_input_mode",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5):
+            pass
+
     def _get_json(self, path: str, timeout: float = 5) -> dict:
         req = urllib.request.Request(f"{self.base_url}{path}")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
