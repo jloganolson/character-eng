@@ -28,6 +28,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     input_queue: queue.Queue
     report_dir: Path
     history_api = None
+    history_status_provider = None
     default_character: str = ""
     prompt_asset_open_target: str = "vscode"
     prompt_asset_vscode_cmd: str = "code"
@@ -49,8 +50,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_history_list()
         elif self.path.startswith("/history/checkpoint"):
             self._serve_history_checkpoint()
+        elif self.path.startswith("/history/events"):
+            self._serve_history_events()
         elif self.path.startswith("/history/frame"):
             self._serve_history_frame()
+        elif self.path.startswith("/history/audio"):
+            self._serve_history_audio()
+        elif self.path.startswith("/history/media"):
+            self._serve_history_media()
         elif self.path.startswith("/history/annotations"):
             self._serve_history_annotations()
         elif self.path.startswith("/prompt-assets"):
@@ -197,12 +204,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_history_state(self):
+        provider = getattr(type(self), "history_status_provider", None)
         history_api = getattr(self, "history_api", None)
-        payload = history_api.status() if history_api is not None else {
-            "enabled": False,
-            "warning": "",
-            "free_gib": 0.0,
-        }
+        if callable(provider):
+            payload = provider()
+        elif history_api is not None:
+            payload = history_api.status()
+        else:
+            payload = {
+                "enabled": False,
+                "warning": "",
+                "free_gib": 0.0,
+            }
         body = json.dumps(payload).encode()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json")
@@ -275,6 +288,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
 
+    def _serve_history_events(self):
+        history_api = getattr(self, "history_api", None)
+        if history_api is None:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "history disabled"})
+            return
+        query = parse_qs(urlparse(self.path).query)
+        session_id = (query.get("session_id") or [None])[0]
+        try:
+            payload = history_api.list_events(session_id)
+            self._respond_json(HTTPStatus.OK, {"ok": True, **payload})
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
+
     def _serve_history_frame(self):
         history_api = getattr(self, "history_api", None)
         if history_api is None:
@@ -283,10 +309,96 @@ class DashboardHandler(BaseHTTPRequestHandler):
         query = parse_qs(urlparse(self.path).query)
         session_id = (query.get("session_id") or [None])[0]
         event_time_raw = (query.get("event_time_s") or [None])[0]
+        frame_timestamp_raw = (query.get("frame_timestamp") or [None])[0]
+        raw = (query.get("raw") or ["0"])[0] == "1"
         try:
             event_time_s = None if event_time_raw in (None, "") else float(event_time_raw)
-            payload = history_api.nearest_frame_for_event(session_id, event_time_s=event_time_s)
+            frame_timestamp = None if frame_timestamp_raw in (None, "") else float(frame_timestamp_raw)
+            if frame_timestamp is not None:
+                payload = history_api.nearest_frame_for_timestamp(session_id, frame_timestamp=frame_timestamp)
+            else:
+                payload = history_api.nearest_frame_for_event(session_id, event_time_s=event_time_s)
+            if raw:
+                frame_path = Path(str(payload.get("abs_path", "")))
+                if not frame_path.exists():
+                    self.send_error(HTTPStatus.NOT_FOUND, "history frame not found")
+                    return
+                content = frame_path.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(content)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(content)
+                return
             self._respond_json(HTTPStatus.OK, {"ok": True, "frame": payload})
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
+
+    def _serve_history_audio(self):
+        history_api = getattr(self, "history_api", None)
+        if history_api is None:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "history disabled"})
+            return
+        query = parse_qs(urlparse(self.path).query)
+        session_id = (query.get("session_id") or [None])[0]
+        try:
+            content = history_api.audio_bytes_for_session(session_id)
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(content)
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
+
+    def _serve_history_media(self):
+        history_api = getattr(self, "history_api", None)
+        if history_api is None:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "history disabled"})
+            return
+        query = parse_qs(urlparse(self.path).query)
+        session_id = (query.get("session_id") or [None])[0]
+        try:
+            media_path = history_api.playback_media_path_for_session(session_id)
+            if media_path is None or not media_path.exists():
+                self.send_error(HTTPStatus.NOT_FOUND, "history media not found")
+                return
+            size = media_path.stat().st_size
+            range_header = self.headers.get("Range", "").strip()
+            start = 0
+            end = size - 1
+            status = HTTPStatus.OK
+            if range_header.startswith("bytes="):
+                spec = range_header.split("=", 1)[1]
+                start_text, _, end_text = spec.partition("-")
+                if start_text:
+                    start = max(0, int(start_text))
+                if end_text:
+                    end = min(size - 1, int(end_text))
+                if start > end or start >= size:
+                    self.send_error(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                    return
+                status = HTTPStatus.PARTIAL_CONTENT
+            length = end - start + 1
+            self.send_response(status)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(length))
+            self.send_header("Cache-Control", "no-store")
+            if status == HTTPStatus.PARTIAL_CONTENT:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.end_headers()
+            with media_path.open("rb") as fh:
+                fh.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = fh.read(min(64 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
         except Exception as e:
             self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
 
@@ -420,6 +532,7 @@ def _port_available(port: int) -> bool:
 
 def start_dashboard(collector: DashboardEventCollector, input_queue: queue.Queue,
                     port: int = 7862, report_dir: Path | None = None, history_api=None,
+                    history_status_provider=None,
                     default_character: str = "",
                     prompt_asset_open_target: str = "vscode",
                     prompt_asset_vscode_cmd: str = "code") -> tuple[threading.Thread, int]:
@@ -431,6 +544,7 @@ def start_dashboard(collector: DashboardEventCollector, input_queue: queue.Queue
     DashboardHandler.input_queue = input_queue
     DashboardHandler.report_dir = report_dir or REPORTS_DIR
     DashboardHandler.history_api = history_api
+    DashboardHandler.history_status_provider = history_status_provider
     DashboardHandler.default_character = default_character
     DashboardHandler.prompt_asset_open_target = prompt_asset_open_target
     DashboardHandler.prompt_asset_vscode_cmd = prompt_asset_vscode_cmd

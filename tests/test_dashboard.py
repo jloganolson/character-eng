@@ -2,6 +2,7 @@
 
 import json
 import queue
+import subprocess
 import threading
 import time
 import urllib.request
@@ -14,6 +15,29 @@ from character_eng.dashboard.server import DashboardHandler, start_dashboard
 from character_eng.history import HistoryService
 from character_eng.person import PeopleState
 from character_eng.world import Goals, Script, WorldState
+
+
+def _write_test_video(path: Path) -> None:
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=320x240:d=1:r=30",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(path),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 class TestEventCollector:
@@ -214,6 +238,30 @@ class TestDashboardServer:
         )
         assert checkpoint["ok"] is True
         assert checkpoint["session_id"] == "sess-test"
+        events = json.loads(
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/history/events?session_id=sess-test").read()
+        )
+        assert events["ok"] is True
+
+    def test_history_media_endpoint_supports_range(self, server):
+        _, _, port, _, history = server
+        archive = history.current
+        assert archive is not None
+        video_path = archive.media_dir / "playback.mp4"
+        _write_test_video(video_path)
+        manifest = json.loads(archive.manifest_path.read_text())
+        media = dict(manifest.get("media", {}))
+        media["playback_path"] = str(video_path)
+        archive.update_manifest(media=media)
+
+        request = urllib.request.Request(f"http://127.0.0.1:{port}/history/media?session_id=sess-test")
+        request.add_header("Range", "bytes=0-127")
+        response = urllib.request.urlopen(request)
+        body = response.read()
+        assert response.status == 206
+        assert response.headers["Content-Type"] == "video/mp4"
+        assert response.headers["Accept-Ranges"] == "bytes"
+        assert len(body) == 128
 
         prompt_assets = json.loads(
             urllib.request.urlopen(f"http://127.0.0.1:{port}/prompt-assets").read()
