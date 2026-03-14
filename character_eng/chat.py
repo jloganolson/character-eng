@@ -97,11 +97,6 @@ class ChatSession:
             configs.append((fb, _make_chat_client(fb)))
 
         for i, (cfg, client) in enumerate(configs):
-            if i == 0:
-                _console.print(f"[dim]  {_ts()} → {cfg['name']} (chat)[/dim]")
-            else:
-                _console.print(f"[yellow]  {_ts()} → fallback: {cfg['name']} (chat)[/yellow]")
-
             stream = self._create_stream(cfg, client)
             if stream is None:
                 continue

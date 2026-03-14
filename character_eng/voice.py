@@ -500,8 +500,6 @@ class DeepgramSTT:
             msg_type = getattr(message, "type", "")
 
         if msg_type == "SpeechStarted":
-            sys.stdout.write(f"  \033[2m[{_ts()} dg: speech-started{' (already)' if self._is_speaking else ''}]\033[0m\n")
-            sys.stdout.flush()
             if not self._is_speaking:
                 self._is_speaking = True
                 self._on_turn_start()
@@ -513,17 +511,10 @@ class DeepgramSTT:
                 self._pending_transcript = ""
                 self._is_speaking = False
                 if text:
-                    sys.stdout.write(f"  \033[2m[{_ts()} dg: utterance-end \"{text[:40]}\"]\033[0m\n")
-                    sys.stdout.flush()
                     self._on_transcript(text)
-                else:
-                    sys.stdout.write(f"  \033[2m[{_ts()} dg: utterance-end (empty)]\033[0m\n")
-                    sys.stdout.flush()
             else:
                 if self._is_speaking:
                     self._is_speaking = False
-                    sys.stdout.write(f"  \033[2m[{_ts()} dg: utterance-end (no transcript)]\033[0m\n")
-                    sys.stdout.flush()
             return
 
         if msg_type != "Results":
@@ -552,17 +543,12 @@ class DeepgramSTT:
 
         if transcript and is_final:
             self._pending_transcript = transcript
-            if not speech_final:
-                sys.stdout.write(f"  \033[2m[{_ts()} dg: is-final \"{transcript[:40]}\"]\033[0m\n")
-                sys.stdout.flush()
 
         if speech_final and self._pending_transcript:
             text = self._pending_transcript.strip()
             self._pending_transcript = ""
             self._is_speaking = False
             if text:
-                sys.stdout.write(f"  \033[2m[{_ts()} dg: speech-final \"{text[:40]}\"]\033[0m\n")
-                sys.stdout.flush()
                 self._on_transcript(text)
 
     def _on_error(self, error):
@@ -1452,15 +1438,9 @@ class VoiceIO:
         self._trace("user_transcript_final", {"text": text})
         if self._is_speaking and not self.audio_started:
             self._cancel_auto_beat()
-            if self._started:
-                sys.stdout.write(f"\n  [{_ts()} keep-listening: transcript before first audio]\n")
-                sys.stdout.flush()
             self.cancel_speech()
         if self._aec is not None and self._is_speaking:
             self._cancel_auto_beat()
-            if self._started:
-                sys.stdout.write(f"\n  [{_ts()} barge-in: transcript while speaking]\n")
-                sys.stdout.flush()
             self.cancel_speech()
         self._event_queue.put(text)
 
@@ -1476,9 +1456,6 @@ class VoiceIO:
         if self._is_speaking:
             if not self.audio_started:
                 self._cancel_auto_beat()
-                if self._started:
-                    sys.stdout.write(f"  \033[2m[{_ts()} keep-listening: speech-started before first audio]\033[0m\n")
-                    sys.stdout.flush()
                 self.cancel_speech()
                 return
             if self._aec is not None:
@@ -1486,23 +1463,13 @@ class VoiceIO:
                 # only triggers on real transcript in _on_transcript()
                 # But still cancel auto-beat — speech was genuinely detected
                 self._cancel_auto_beat()
-                if self._started:
-                    sys.stdout.write(f"  \033[2m[{_ts()} aec: ignoring speech-started during playback]\033[0m\n")
-                    sys.stdout.flush()
                 return
             # Legacy: barge-in on SpeechStarted
             self._cancel_auto_beat()
-            if self._started:
-                sys.stdout.write(f"\n  [{_ts()} barge-in: speech-started while speaking]\n")
-                sys.stdout.flush()
             self.cancel_speech()
         else:
             # Real speech — cancel auto-beat
-            had_auto_beat = self._auto_beat_timer is not None
             self._cancel_auto_beat()
-            if had_auto_beat and self._started:
-                sys.stdout.write(f"  \033[2m[{_ts()} auto-beat: cancelled by speech]\033[0m\n")
-                sys.stdout.flush()
 
     def consume_input_timing(self, expected_text: str = "") -> dict:
         """Return and clear cached speech/transcript timing for the latest utterance."""
@@ -1536,10 +1503,6 @@ class VoiceIO:
         """Start auto-beat timer — fires /beat after AUTO_BEAT_DELAY seconds."""
         self._cancel_auto_beat()
         self._auto_beat_countdown_active = True
-        if self._started:
-            sys.stdout.write(f"  \033[2m[{_ts()} auto-beat: armed {AUTO_BEAT_DELAY:.0f}s]\033[0m\n")
-            sys.stdout.flush()
-            threading.Thread(target=self._countdown_loop, daemon=True).start()
         self._auto_beat_timer = threading.Timer(
             AUTO_BEAT_DELAY,
             self._fire_auto_beat,
@@ -1576,9 +1539,6 @@ class VoiceIO:
         # Put back non-beat items
         for item in items:
             self._event_queue.put(item)
-        if drained and self._started:
-            sys.stdout.write(f"  \033[2m[{_ts()} auto-beat: drained {drained} stale]\033[0m\n")
-            sys.stdout.flush()
 
     def _fire_auto_beat(self):
         """Auto-beat timer callback — puts /beat on the event queue."""
@@ -1587,32 +1547,5 @@ class VoiceIO:
         if self._stt is not None and (
             self._stt._is_speaking or self._stt._pending_transcript
         ):
-            if self._started:
-                sys.stdout.write(
-                    f"  \033[2m[{_ts()} auto-beat: suppressed, user speaking]\033[0m\n"
-                )
-                sys.stdout.flush()
             return
-        if self._started:
-            sys.stdout.write(f"  \033[2m[{_ts()} auto-beat: fired]\033[0m\n")
-            sys.stdout.flush()
         self._event_queue.put("/beat")
-
-    def _countdown_loop(self):
-        """Print auto-beat countdown dots to stdout."""
-        sys.stdout.write("  auto-beat ")
-        sys.stdout.flush()
-        for _ in range(int(AUTO_BEAT_DELAY)):
-            if not self._auto_beat_countdown_active:
-                sys.stdout.write("\n")
-                sys.stdout.flush()
-                return
-            time.sleep(1.0)
-            if not self._auto_beat_countdown_active:
-                sys.stdout.write("\n")
-                sys.stdout.flush()
-                return
-            sys.stdout.write(".")
-            sys.stdout.flush()
-        sys.stdout.write("\n")
-        sys.stdout.flush()
