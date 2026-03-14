@@ -636,10 +636,20 @@ def test_runtime_panel_interactions_in_browser(
     vision_popup.close()
 
     page.locator("#runtime-stop").click()
+    expect(page.locator("#save-complete-modal")).to_have_class(re.compile(r"\bopen\b"))
+    expect(page.locator("#save-complete-heading")).to_contain_text("Save Session")
+    expect(page.locator("#save-complete-title")).not_to_have_value("")
+    expect(page.locator("#runtime-stop")).to_have_text("Save + Stop")
+    assert input_queue.empty()
+    page.locator("#save-complete-title").fill("Greg stop flow")
+    page.locator("#save-complete-save").click()
     expect(page.locator("#runtime-stop")).to_have_text("Saving...")
     assert input_queue.get(timeout=2) == "/stop"
 
     collector.push("session_end", {"total_turns": 2})
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
+    expect(page.locator("#save-complete-modal")).to_have_class(re.compile(r"\bopen\b"))
+    expect(page.locator("#timeline")).to_contain_text("Free water. Want one?")
     collector.push(
         "runtime_controls",
         {
@@ -682,6 +692,20 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#boot-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
     expect(page.locator("#report-ref-status")).to_contain_text("Last stopped session: intermediate session log:")
     assert list(report_dir.iterdir())
+    expect(page.locator("#save-complete-session-id")).to_contain_text("sess-playwright")
+    expect(page.locator("#save-complete-session-path")).to_contain_text("sess-playwright")
+    expect(page.locator("#save-complete-report-path")).to_contain_text("sess-playwright")
+    expect(page.locator("#save-complete-heading")).to_contain_text("Session Saved")
+    expect(page.locator("#save-complete-status")).to_contain_text("Hiding in")
+    page.locator("#save-complete-copy-ref").click()
+    expect(page.locator("#save-complete-status")).to_contain_text("Copied archive ref:")
+    page.locator("#save-complete-load").click()
+    expect(page.locator("#save-complete-modal")).not_to_have_class(re.compile(r"\bopen\b"))
+    expect(page.locator("#archive-load-button")).to_have_text("Return To Live")
+    expect(page.locator("#archive-load-status")).to_contain_text("Greg stop flow")
+    expect(page.locator("#runtime-toggle")).to_have_text("Replay")
+    page.locator("#archive-load-button").click()
+    expect(page.locator("#archive-load-button")).to_have_text("Load Archive...")
 
     page.locator("#report-ref-button").click()
     expect(page.locator("#report-ref-status")).to_contain_text("Copied archive ref:")
@@ -1155,16 +1179,19 @@ def test_archive_load_shows_timeline_and_scrubbable_media_player(
     page.locator(".archive-row").filter(has_text="sess-archive-playback").locator(".archive-load-action").click()
 
     expect(page.locator("#archive-load-status")).to_contain_text("Browsing archive:")
-    expect(page.locator("#runtime-toggle")).to_have_text("Play Archive")
+    expect(page.locator("#runtime-toggle")).to_have_text("Archive Loaded")
+    expect(page.locator("#archive-transport")).to_have_class(re.compile(r"\bvisible\b"))
+    expect(page.locator("#archive-transport-toggle")).to_have_text("Play")
     expect(page.locator("#archive-media-player")).to_have_class(re.compile(r"\bvisible\b"))
     expect(page.locator(".stream-card[data-event-type='session_start']")).to_have_count(1)
     expect(page.locator(".stream-card[data-event-type='user_transcript_final']")).to_have_count(1)
     expect(page.locator(".stream-card").filter(has_text="Hey, what time is it to you?")).to_have_count(1)
 
-    page.locator("#runtime-toggle").evaluate("(node) => node.click()")
+    page.locator("#archive-transport-toggle").evaluate("(node) => node.click()")
     page.wait_for_timeout(800)
     player_time = page.locator("#archive-media-player").evaluate("(node) => node.currentTime")
     assert player_time > 0.1
+    expect(page.locator("#archive-transport-toggle")).to_have_text("Pause")
     expect(page.locator("#stream-playhead")).to_have_class(re.compile(r"\bvisible\b"))
 
     page.locator("#archive-media-player").evaluate("(node) => { node.pause(); node.currentTime = 0; }")
@@ -1274,3 +1301,286 @@ def test_rewind_keeps_new_active_path_visible_and_greys_out_superseded_events(
     expect(
         page.locator(".stream-card").filter(has_text="Nice scarf, what brings you here? (rerun)").locator(".reply-marker", has_text="Debug Only")
     ).to_have_count(0)
+
+
+def test_save_stop_fallback_opens_modal_without_session_end(
+    browser_page: Page,
+    dashboard_server,
+    vision_service: VisionServiceController,
+):
+    collector, input_queue, dashboard_url, _report_dir = dashboard_server
+    vision_service_url = vision_service.url
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-playwright",
+            "stage": "greeting",
+        },
+    )
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": vision_service_url,
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": vision_service_url,
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push("turn_start", {"input_type": "beat", "input_text": ""})
+    collector.push("response_done", {"full_text": "Finished session content"})
+
+    page.locator("#runtime-stop").click()
+    expect(page.locator("#save-complete-modal")).to_have_class(re.compile(r"\bopen\b"))
+    page.locator("#save-complete-title").fill("Fallback save flow")
+    page.locator("#save-complete-save").click()
+    expect(page.locator("#runtime-stop")).to_have_text("Saving...")
+    assert input_queue.get(timeout=2) == "/stop"
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": True,
+            "session_state": "ready",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": vision_service_url,
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push(
+        "history_status",
+        {
+            "enabled": True,
+            "free_gib": 100.0,
+            "sessions_count": 1,
+            "pinned_count": 0,
+            "moments_count": 0,
+            "current_session": {
+                "session_id": "sess-playwright",
+                "title": "Fallback save flow",
+                "session_path": "/tmp/character-eng-dashboard-playwright-history/sessions/sess-playwright",
+                "record_mode": "full",
+                "replay_capture_enabled": True,
+            },
+            "playback": {"active": False},
+        },
+    )
+
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
+    expect(page.locator("#timeline")).to_contain_text("Finished session content")
+    expect(page.locator("#save-complete-modal")).to_have_class(re.compile(r"\bopen\b"))
+    expect(page.locator("#save-complete-session-id")).to_contain_text("sess-playwright")
+    expect(page.locator("#save-complete-heading")).to_contain_text("Session Saved")
+    expect(page.locator("#save-complete-title")).not_to_have_value("")
+
+
+def test_discard_session_stays_in_discard_flow(
+    browser_page: Page,
+    dashboard_server,
+    vision_service: VisionServiceController,
+):
+    collector, input_queue, dashboard_url, _report_dir = dashboard_server
+    vision_service_url = vision_service.url
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-playwright",
+            "stage": "greeting",
+        },
+    )
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": vision_service_url,
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push("turn_start", {"input_type": "beat", "input_text": ""})
+    collector.push("response_done", {"full_text": "Discard me"})
+
+    page.locator("#runtime-stop").click()
+    expect(page.locator("#save-complete-heading")).to_contain_text("Save Session")
+    page.locator("#save-complete-discard").click()
+    expect(page.locator("#runtime-stop")).to_have_text("Discarding...")
+    assert input_queue.get(timeout=2) == "/discard"
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": True,
+            "session_state": "ready",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": vision_service_url,
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push(
+        "history_status",
+        {
+            "enabled": True,
+            "free_gib": 100.0,
+            "sessions_count": 1,
+            "pinned_count": 0,
+            "moments_count": 0,
+            "current_session": {},
+            "playback": {"active": False},
+        },
+    )
+    collector.push("session_end", {"session_id": "sess-playwright", "discarded": True})
+
+    expect(page.locator("#save-complete-heading")).to_contain_text("Session Discarded")
+    expect(page.locator("#save-complete-heading")).not_to_contain_text("Session Saved")
+    expect(page.locator("#save-complete-heading")).not_to_contain_text("Save Session")

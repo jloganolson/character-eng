@@ -261,6 +261,41 @@
   #header .value { font-weight: 600; }
   #header .character { color: var(--npc); font-size: 1.1em; }
   #header .stage { color: var(--narrator); }
+  .archive-transport {
+    display: none;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: min(42vw, 540px);
+    padding: 0.25rem 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--panel-hover) 76%, transparent);
+  }
+  .archive-transport.visible {
+    display: inline-flex;
+  }
+  .archive-transport button {
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--advance);
+    color: var(--bg);
+    cursor: pointer;
+  }
+  .archive-transport button:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .archive-transport input[type="range"] {
+    flex: 1 1 auto;
+    min-width: 180px;
+  }
+  .archive-transport-time {
+    min-width: 7.5em;
+    text-align: right;
+    color: var(--text-dim);
+    font-size: 0.82rem;
+  }
   #report-ref-button,
   #archive-load-button {
     background: var(--bg-alt);
@@ -1302,6 +1337,49 @@
   </div>
 </div>
 
+<div id="save-complete-modal" class="app-modal" aria-hidden="true">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div>
+        <div id="save-complete-heading" class="app-modal-title">Save Session</div>
+        <div id="save-complete-subtitle" class="app-modal-sub">Review the session name, then save it or discard it.</div>
+      </div>
+      <button id="save-complete-close" class="app-modal-close" type="button">Close</button>
+    </div>
+    <div style="display:grid;gap:0.75em;">
+      <label style="display:grid;gap:0.25em;">
+        <span style="color:var(--text-dim);font-size:0.8em;">Title</span>
+        <input id="save-complete-title" type="text" style="width:100%;box-sizing:border-box;">
+      </label>
+      <div style="display:grid;gap:0.45em;">
+        <div style="color:var(--text-dim);font-size:0.8em;">Session ID</div>
+        <div id="save-complete-session-id" style="padding:0.45em 0.55em;border-radius:8px;border:1px solid var(--border);background:var(--panel-hover);word-break:break-all;">--</div>
+      </div>
+      <div style="display:grid;gap:0.45em;">
+        <div style="color:var(--text-dim);font-size:0.8em;">Archive Path</div>
+        <div id="save-complete-session-path" style="padding:0.45em 0.55em;border-radius:8px;border:1px solid var(--border);background:var(--panel-hover);word-break:break-all;">--</div>
+      </div>
+      <div style="display:grid;gap:0.45em;">
+        <div style="color:var(--text-dim);font-size:0.8em;">Intermediate Report</div>
+        <div id="save-complete-report-path" style="padding:0.45em 0.55em;border-radius:8px;border:1px solid var(--border);background:var(--panel-hover);word-break:break-all;">--</div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.45em;">
+        <button id="save-complete-copy-ref" type="button">Copy Ref</button>
+        <button id="save-complete-copy-path" type="button">Copy Archive Path</button>
+        <button id="save-complete-copy-report" type="button">Copy Report Path</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.45em;justify-content:flex-end;">
+        <button id="save-complete-cancel" type="button">Cancel</button>
+        <button id="save-complete-discard" type="button" style="background:var(--error);color:var(--bg);">Discard</button>
+        <button id="save-complete-save" type="button" style="background:var(--advance);color:var(--bg);">Save</button>
+        <button id="save-complete-load" type="button">Load Now</button>
+        <button id="save-complete-okay" type="button">OK</button>
+      </div>
+      <div id="save-complete-status" class="app-modal-sub"></div>
+    </div>
+  </div>
+</div>
+
 <div id="header">
   <span class="character" id="h-character">--</span>
   <span><span class="label">model:</span> <span class="value" id="h-model">--</span></span>
@@ -1309,6 +1387,11 @@
   <button id="report-ref-button" type="button">Copy Archive Ref</button>
   <button id="archive-rename-button" type="button">Rename</button>
   <button id="archive-load-button" type="button">Load Archive...</button>
+  <div id="archive-transport" class="archive-transport" aria-label="Archive playback transport">
+    <button id="archive-transport-toggle" type="button">Play</button>
+    <input id="archive-transport-scrubber" type="range" min="0" max="0" step="0.01" value="0">
+    <span id="archive-transport-time" class="archive-transport-time">0:00 / 0:00</span>
+  </div>
   <span id="report-ref-status"></span>
   <span id="archive-load-status"></span>
   <span><span class="label">stage:</span> <span class="value stage" id="h-stage">--</span></span>
@@ -1485,7 +1568,7 @@
       <h3>Vision</h3>
       <div class="content">
         <img id="vision-feed" alt="Vision feed">
-        <video id="archive-media-player" preload="metadata" controls playsinline></video>
+        <video id="archive-media-player" preload="metadata" playsinline></video>
         <audio id="archive-audio-playback" preload="auto" style="width:100%;margin-top:0.45em;display:none;" controls></audio>
         <div id="archive-media-status"></div>
         <div id="vision-meta"></div>
@@ -1661,12 +1744,33 @@
   const archiveRenameButton = document.getElementById("archive-rename-button");
   const reportRefStatus = document.getElementById("report-ref-status");
   const archiveLoadButton = document.getElementById("archive-load-button");
+  const archiveTransportEl = document.getElementById("archive-transport");
+  const archiveTransportToggleButton = document.getElementById("archive-transport-toggle");
+  const archiveTransportScrubber = document.getElementById("archive-transport-scrubber");
+  const archiveTransportTime = document.getElementById("archive-transport-time");
   const archiveLoadStatus = document.getElementById("archive-load-status");
   const archivePicker = document.getElementById("archive-picker");
   const archivePickerCloseButton = document.getElementById("archive-picker-close");
   const archivePickerSearchInput = document.getElementById("archive-picker-search");
   const archivePickerStatus = document.getElementById("archive-picker-status");
   const archivePickerList = document.getElementById("archive-picker-list");
+  const saveCompleteModal = document.getElementById("save-complete-modal");
+  const saveCompleteHeadingEl = document.getElementById("save-complete-heading");
+  const saveCompleteSubtitleEl = document.getElementById("save-complete-subtitle");
+  const saveCompleteCloseButton = document.getElementById("save-complete-close");
+  const saveCompleteTitleInput = document.getElementById("save-complete-title");
+  const saveCompleteSessionIdEl = document.getElementById("save-complete-session-id");
+  const saveCompleteSessionPathEl = document.getElementById("save-complete-session-path");
+  const saveCompleteReportPathEl = document.getElementById("save-complete-report-path");
+  const saveCompleteCopyRefButton = document.getElementById("save-complete-copy-ref");
+  const saveCompleteCopyPathButton = document.getElementById("save-complete-copy-path");
+  const saveCompleteCopyReportButton = document.getElementById("save-complete-copy-report");
+  const saveCompleteCancelButton = document.getElementById("save-complete-cancel");
+  const saveCompleteDiscardButton = document.getElementById("save-complete-discard");
+  const saveCompleteSaveButton = document.getElementById("save-complete-save");
+  const saveCompleteLoadButton = document.getElementById("save-complete-load");
+  const saveCompleteOkayButton = document.getElementById("save-complete-okay");
+  const saveCompleteStatusEl = document.getElementById("save-complete-status");
   const annotationToggleButton = document.getElementById("annotation-toggle");
   const annotationSaveButton = document.getElementById("annotation-save");
   const annotationCancelButton = document.getElementById("annotation-cancel");
@@ -1706,6 +1810,13 @@
   let historyState = {enabled: false, current_session: {}};
   let historyArchives = [];
   let archivePickerOpen = false;
+  let saveCompleteModalOpen = false;
+  let saveCompleteMeta = null;
+  let saveCompleteMode = "closed";
+  let sessionSavePending = false;
+  let saveCompletionResolving = false;
+  let saveCompleteAutoHideTimer = 0;
+  let saveCompleteAutoHideDeadline = 0;
   let archiveBrowseRef = "";
   let archiveBrowseMeta = null;
   let archiveBrowseSeqFloor = 0;
@@ -1879,6 +1990,7 @@
     historyPruneButton.disabled = false;
     renderSelectedEventAnnotations();
     if (selectedStreamKey) selectEvent(selectedStreamKey);
+    maybeResolveSaveCompleteFromState().catch(() => {});
   }
 
   function promptApplyModeLabel(mode) {
@@ -2168,6 +2280,7 @@
 
   function renderHistoryArchives(items) {
     historyArchives = Array.isArray(items) ? items : [];
+    if (saveCompleteModalOpen) renderSaveCompleteModal();
     renderArchivePicker();
   }
 
@@ -2179,6 +2292,11 @@
     } catch (err) {
       renderHistoryArchives([]);
     }
+  }
+
+  function archiveItemByRef(ref) {
+    if (!ref) return null;
+    return historyArchives.find((item) => String(item.ref || item.session_id || item.path || "") === String(ref)) || null;
   }
 
   async function copyText(text) {
@@ -2266,6 +2384,35 @@
     archiveMediaStatusEl.textContent = text;
   }
 
+  function formatMediaClock(value) {
+    const total = Math.max(0, Number(value || 0));
+    const minutes = Math.floor(total / 60);
+    const seconds = Math.floor(total % 60);
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  function renderArchiveTransport() {
+    const active = !!(archiveBrowseRef && archivePlaybackMediaAvailable());
+    archiveTransportEl.classList.toggle("visible", active);
+    if (!active) {
+      archiveTransportToggleButton.textContent = "Play";
+      archiveTransportToggleButton.disabled = true;
+      archiveTransportScrubber.max = "0";
+      archiveTransportScrubber.value = "0";
+      archiveTransportScrubber.disabled = true;
+      archiveTransportTime.textContent = "0:00 / 0:00";
+      return;
+    }
+    const current = Math.max(0, Number(archiveMediaPlayer.currentTime || 0));
+    const duration = Math.max(0, Number(archiveMediaDuration || archiveMediaPlayer.duration || 0));
+    archiveTransportToggleButton.textContent = archiveMediaPlayer.paused ? "Play" : "Pause";
+    archiveTransportToggleButton.disabled = duration <= 0 && archiveMediaPlayer.readyState < 1;
+    archiveTransportScrubber.max = String(duration > 0 ? duration : 0);
+    archiveTransportScrubber.value = String(Math.min(current, duration || current));
+    archiveTransportScrubber.disabled = duration <= 0;
+    archiveTransportTime.textContent = `${formatMediaClock(current)} / ${formatMediaClock(duration)}`;
+  }
+
   function syncArchiveMediaPlayer() {
     const active = !!(archiveBrowseRef && archivePlaybackMediaAvailable());
     if (!active) {
@@ -2275,6 +2422,7 @@
       archiveMediaPlayer.load();
       archiveMediaDuration = 0;
       setArchiveMediaStatus("");
+      renderArchiveTransport();
       return;
     }
     const nextSrc = archivePlaybackMediaUrl(archiveBrowseRef);
@@ -2285,6 +2433,7 @@
     archiveMediaPlayer.classList.add("visible");
     const title = archiveBrowseMeta?.title || archiveBrowseRef;
     setArchiveMediaStatus(`Loaded archive media: ${title}`);
+    renderArchiveTransport();
   }
 
   function archiveMediaCurrentTime() {
@@ -2297,6 +2446,7 @@
     const playerTime = archiveMediaCurrentTime();
     if (playerTime == null || !streamEvents.length) {
       streamPlayheadEl.classList.remove("visible");
+      renderArchiveTransport();
       return;
     }
     const contentLeft = 20 + playerTime * timelineRenderScale;
@@ -2310,6 +2460,7 @@
     const left = contentLeft - streamViewport.scrollLeft;
     streamPlayheadEl.style.left = `${left}px`;
     streamPlayheadEl.classList.add("visible");
+    renderArchiveTransport();
   }
 
   function nearestEventKeyForTime(timeS) {
@@ -2343,6 +2494,7 @@
       if (key) selectEvent(key, {seekMedia: false});
     }
     updateTimelinePlayhead();
+    renderArchiveTransport();
   }
 
   function clearStickyStoppedReportRef() {
@@ -2364,6 +2516,153 @@
   function setLastStoppedArchive(ref = "", title = "") {
     lastStoppedArchiveRef = ref || "";
     lastStoppedArchiveTitle = title || ref || "";
+  }
+
+  function cancelSaveCompleteAutoHide() {
+    if (saveCompleteAutoHideTimer) {
+      window.clearInterval(saveCompleteAutoHideTimer);
+      saveCompleteAutoHideTimer = 0;
+    }
+    saveCompleteAutoHideDeadline = 0;
+  }
+
+  function setSaveCompleteMode(mode) {
+    saveCompleteMode = mode || "closed";
+    renderSaveCompleteModal();
+  }
+
+  function scheduleSaveCompleteAutoHide(ms = 3000) {
+    cancelSaveCompleteAutoHide();
+    saveCompleteAutoHideDeadline = Date.now() + ms;
+    renderSaveCompleteModal();
+    saveCompleteAutoHideTimer = window.setInterval(() => {
+      if (!saveCompleteModalOpen) {
+        cancelSaveCompleteAutoHide();
+        return;
+      }
+      if (Date.now() >= saveCompleteAutoHideDeadline) {
+        cancelSaveCompleteAutoHide();
+        closeSaveCompleteModal();
+        return;
+      }
+      renderSaveCompleteModal();
+    }, 200);
+  }
+
+  function closeSaveCompleteModal() {
+    cancelSaveCompleteAutoHide();
+    saveCompleteModalOpen = false;
+    saveCompleteMeta = null;
+    saveCompleteMode = "closed";
+    saveCompleteModal.classList.remove("open");
+    saveCompleteModal.setAttribute("aria-hidden", "true");
+    saveCompleteStatusEl.textContent = "";
+    renderBootStatus();
+  }
+
+  function renderSaveCompleteModal() {
+    const meta = saveCompleteMeta || {};
+    const item = archiveItemByRef(meta.sessionId || "");
+    const title = saveCompleteTitleInput === document.activeElement
+      ? saveCompleteTitleInput.value
+      : (item?.title || meta.title || meta.sessionId || "--");
+    const sessionPath = item?.path || meta.sessionPath || "--";
+    const reportPath = meta.reportPath || "--";
+    const countdownSeconds = saveCompleteAutoHideDeadline
+      ? Math.max(1, Math.ceil((saveCompleteAutoHideDeadline - Date.now()) / 1000))
+      : 0;
+    const mode = saveCompleteMode;
+    saveCompleteTitleInput.value = title;
+    saveCompleteSessionIdEl.textContent = meta.sessionId || "--";
+    saveCompleteSessionPathEl.textContent = sessionPath;
+    saveCompleteReportPathEl.textContent = reportPath;
+    const reviewMode = mode === "review";
+    const savingMode = mode === "saving" || mode === "discarding";
+    const savedMode = mode === "saved" || mode === "discarded";
+    saveCompleteHeadingEl.textContent =
+      mode === "saving" ? "Saving Session" :
+      mode === "saved" ? "Session Saved" :
+      mode === "discarding" ? "Discarding Session" :
+      mode === "discarded" ? "Session Discarded" :
+      "Save Session";
+    saveCompleteSubtitleEl.textContent =
+      mode === "saving" ? "Saving the session now. This dialog will update when the archive is ready." :
+      mode === "saved" ? "The session is saved. You can load it now or let this dialog hide automatically." :
+      mode === "discarding" ? "Discarding this session now." :
+      mode === "discarded" ? "The session was discarded. This dialog will hide automatically." :
+      "Review the session name, then save it or discard it.";
+    saveCompleteTitleInput.disabled = !reviewMode;
+    saveCompleteCopyRefButton.hidden = !savedMode || mode === "discarded";
+    saveCompleteCopyPathButton.hidden = !savedMode || mode === "discarded";
+    saveCompleteCopyReportButton.hidden = !savedMode || mode === "discarded";
+    saveCompleteCopyReportButton.disabled = !meta.reportPath;
+    saveCompleteLoadButton.hidden = !savedMode || mode === "discarded";
+    saveCompleteLoadButton.disabled = !meta.sessionId;
+    saveCompleteCancelButton.hidden = !reviewMode;
+    saveCompleteDiscardButton.hidden = !reviewMode;
+    saveCompleteSaveButton.hidden = !reviewMode;
+    saveCompleteOkayButton.hidden = !savedMode;
+    saveCompleteCloseButton.textContent = reviewMode ? "Cancel" : "Close";
+    if (savedMode && countdownSeconds) {
+      const base = mode === "discarded" ? "Discarded successfully." : "Saved successfully.";
+      saveCompleteStatusEl.textContent = `${base} Hiding in ${countdownSeconds}s.`;
+    }
+    if (savingMode) {
+      saveCompleteStatusEl.textContent = mode === "discarding" ? "Discarding..." : "Saving...";
+    }
+  }
+
+  async function openSaveCompleteModal({sessionId = "", title = "", reportPath = "", sessionPath = "", mode = "saved"} = {}) {
+    if (mode === "saved") await refreshHistoryArchives();
+    saveCompleteMeta = {
+      sessionId: sessionId || "",
+      title: title || "",
+      reportPath: reportPath || "",
+      sessionPath: sessionPath || "",
+    };
+    saveCompleteMode = mode;
+    renderSaveCompleteModal();
+    saveCompleteModalOpen = true;
+    saveCompleteModal.classList.add("open");
+    saveCompleteModal.setAttribute("aria-hidden", "false");
+  }
+
+  async function maybeResolveSaveCompleteFromState() {
+    if (!sessionSavePending || saveCompletionResolving || archiveBrowseRef) return;
+    if (saveCompleteMode === "discarding") return;
+    if (saveCompleteModalOpen && saveCompleteMode !== "saving" && saveCompleteMode !== "discarding") return;
+    if (!sessionStopped) return;
+    const current = historyState.current_session || {};
+    const sessionId = String(lastStoppedArchiveRef || current.session_id || "").trim();
+    if (!sessionId) return;
+    let archiveItem = archiveItemByRef(sessionId);
+    if (!archiveItem) {
+      saveCompletionResolving = true;
+      try {
+        await refreshHistoryArchives();
+      } finally {
+        saveCompletionResolving = false;
+      }
+      archiveItem = archiveItemByRef(sessionId);
+    }
+    const resolvedTitle = archiveItem?.title || current.title || lastStoppedArchiveTitle || sessionId;
+    const resolvedPath = archiveItem?.path || current.session_path || "";
+    if (!archiveItem && !resolvedPath) return;
+    sessionSavePending = false;
+    updateRuntimeButtons();
+    renderBootStatus();
+    saveCompleteMeta = {
+      sessionId,
+      title: resolvedTitle,
+      reportPath: lastStoppedReportRefPath || "",
+      sessionPath: resolvedPath,
+    };
+    saveCompleteMode = "saved";
+    renderSaveCompleteModal();
+    saveCompleteModalOpen = true;
+    saveCompleteModal.classList.add("open");
+    saveCompleteModal.setAttribute("aria-hidden", "false");
+    scheduleSaveCompleteAutoHide(3000);
   }
 
   document.addEventListener("keydown", (e) => {
@@ -2995,6 +3294,7 @@
   function bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState) {
     if (archiveBrowseRef) return "archive loaded";
     if (statePollingSuspended) return "dashboard disconnected";
+    if (sessionSavePending) return "saving session";
     if (!runtimeStateSeen) return "attaching app runtime";
     if (sessionStopped) return "ready to start";
     if (!(sessionSeen || restartPending)) return restartPending ? "waiting for fresh session" : "waiting for session init";
@@ -3019,16 +3319,18 @@
     const now = Date.now();
     const runtimeState = archiveBrowseRef
       ? "ready"
-      : (runtimeStateSeen ? (sessionStopped ? "ready" : (conversationPaused ? "ready" : "active")) : "waiting");
+      : (sessionSavePending ? "active" : (runtimeStateSeen ? (sessionStopped ? "ready" : (conversationPaused ? "ready" : "active")) : "waiting"));
     const runtimeDetail = archiveBrowseRef
-      ? `Loaded archive ${archiveBrowseMeta?.title || archiveBrowseRef}. Hit Play Archive to review the recording, scrub directly in the threads, or Return To Live to go back.`
+      ? `Loaded archive ${archiveBrowseMeta?.title || archiveBrowseRef}. Use the header transport to play or scrub the recording, or Return To Live to go back.`
+      : (sessionSavePending
+      ? "The current session is being finalized and archived."
       : (runtimeStateSeen
       ? (sessionStopped
         ? "Fresh session is prepared. Hit Start when you want to begin."
         : (conversationPaused
           ? (startupPausePending ? "Fresh session is loaded. Hit Play when you want to begin." : "Conversation is paused. Hit Play when you want to continue.")
           : "Runtime is live and accepting turns."))
-      : "Waiting for the app to publish runtime controls.");
+      : "Waiting for the app to publish runtime controls."));
 
     const voiceState = runtimeStateSeen
       ? (
@@ -3080,14 +3382,16 @@
       modelState = allReady ? "ready" : (anyLoading ? "active" : "waiting");
     }
 
-    const sessionState = archiveBrowseRef ? "ready" : (sessionStopped ? "ready" : (sessionSeen ? "ready" : (restartPending ? "active" : "waiting")));
+    const sessionState = archiveBrowseRef ? "ready" : (sessionSavePending ? "active" : (sessionStopped ? "ready" : (sessionSeen ? "ready" : (restartPending ? "active" : "waiting"))));
     const sessionDetail = archiveBrowseRef
       ? `Browsing archive ${archiveBrowseMeta?.title || archiveBrowseRef}`
+      : (sessionSavePending
+      ? `Saving ${lastStoppedArchiveTitle || document.getElementById("h-session").textContent || "current session"}`
       : (sessionSeen
       ? `Session ${document.getElementById("h-session").textContent || "--"} for ${document.getElementById("h-character").textContent || "character"}`
       : (sessionStopped
         ? "No active session. Hit Start to create a fresh one."
-        : (restartPending ? "Waiting for the fresh session to attach." : "Waiting for session start.")));
+        : (restartPending ? "Waiting for the fresh session to attach." : "Waiting for session start."))));
 
     const phase = bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState);
     const lastEventText = lastEventAt ? `last event ${formatAge(now - lastEventAt)} ago` : "waiting for first event";
@@ -3101,6 +3405,7 @@
       statePollingSuspended ? "Dashboard disconnected. Refresh after the local runtime comes back." :
       modelPollError ? "Vision models need attention before the runtime is ready." :
       voiceState === "error" ? "Voice needs attention before the runtime is ready." :
+      sessionSavePending ? "Saving the finished session. A completion modal will appear when the archive is ready." :
       sessionStopped ? "Everything is warm. Start when you want to begin a fresh session." :
       conversationPaused ? (startupPausePending ? "Fresh session is ready. Press Play when you want to begin." : "Conversation is paused. Press Play when you want to continue.") :
       "Runtime is live. You can speak or type now.";
@@ -3108,7 +3413,7 @@
     const modelReady = modelState === "ready" || modelState === "off";
     const voiceReady = voiceState === "ready" || voiceState === "off";
     const visionReady = !visionService.url || visionServiceState === "ready" || visionServiceState === "off";
-    const bootReady = runtimeStateSeen && (sessionStopped || sessionSeen || restartPending) && visionReady && voiceReady && modelReady && !modelPollError;
+    const bootReady = runtimeStateSeen && (sessionSavePending || sessionStopped || sessionSeen || restartPending) && visionReady && voiceReady && modelReady && !modelPollError;
     document.body.classList.toggle("booting", !bootReady);
 
     summaryEl.textContent = summary;
@@ -3131,7 +3436,12 @@
   }
 
   function updateRuntimeButtons() {
-    if (archiveBrowseRef && pendingPauseState === "playing") {
+    if (sessionSavePending) {
+      runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Play" : "Pause");
+      runtimeToggleButton.disabled = true;
+      runtimeToggleButton.style.opacity = "0.75";
+      runtimeToggleButton.style.background = sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)");
+    } else if (archiveBrowseRef && pendingPauseState === "playing") {
       runtimeToggleButton.textContent = "Replaying...";
       runtimeToggleButton.style.background = "var(--hold)";
       runtimeToggleButton.disabled = true;
@@ -3158,12 +3468,10 @@
       runtimeToggleButton.style.opacity = "0.75";
     } else if (archiveBrowseRef) {
       const mediaActive = archivePlaybackMediaAvailable();
-      runtimeToggleButton.textContent = mediaActive
-        ? (archiveMediaPlayer.paused ? "Play Archive" : "Pause Archive")
-        : "Replay";
+      runtimeToggleButton.textContent = mediaActive ? "Archive Loaded" : "Replay";
       runtimeToggleButton.style.background = "var(--advance)";
-      runtimeToggleButton.disabled = false;
-      runtimeToggleButton.style.opacity = "1";
+      runtimeToggleButton.disabled = mediaActive;
+      runtimeToggleButton.style.opacity = mediaActive ? "0.6" : "1";
     } else {
       runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Play" : "Pause");
       runtimeToggleButton.style.background = sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)");
@@ -3171,8 +3479,10 @@
       runtimeToggleButton.style.opacity = "1";
     }
     runtimeToggleButton.style.color = "var(--bg)";
-    runtimeStopButton.textContent = pendingPauseState === "stopping" ? "Saving..." : stopButtonLabel();
-    runtimeStopButton.disabled = !!archiveBrowseRef || pendingPauseState === "stopping" || restartPending || sessionStopped;
+    runtimeStopButton.textContent = sessionSavePending
+      ? (saveCompleteMode === "discarding" ? "Discarding..." : "Saving...")
+      : (pendingPauseState === "stopping" ? "Saving..." : stopButtonLabel());
+    runtimeStopButton.disabled = !!archiveBrowseRef || sessionSavePending || pendingPauseState === "stopping" || restartPending || sessionStopped;
     runtimeStopButton.style.opacity = runtimeStopButton.disabled ? "0.6" : "1";
     runtimeStopButton.title = activeArchiveTitle() ? `Finalize archive: ${activeArchiveTitle()}` : "Finalize the current session archive and stop.";
     runtimeRestartButton.textContent = "Restart Session";
@@ -3203,13 +3513,7 @@
   }
 
   async function requestStop() {
-    notePendingRuntimeAction("stopping");
-    clearConversationState("Stopping session and preparing a fresh one...");
-    try {
-      await sendInput("/stop");
-    } catch (error) {
-      clearPendingRuntimeAction(`Stop failed: ${error.message || error}`);
-    }
+    await prepareStopReviewModal();
   }
 
   function clearConversationState(message = "Waiting for conversation...") {
@@ -4263,6 +4567,78 @@
       setReportRefStatus("", "");
     } catch (error) {
       archiveLoadStatus.textContent = `Rename failed: ${error.message || error}`;
+    }
+  }
+
+  async function prepareStopReviewModal() {
+    const current = historyState.current_session || {};
+    const sessionId = currentSessionId || current.session_id || document.getElementById("h-session").textContent || "";
+    const title = current.title || activeArchiveTitle() || sessionId || "session";
+    await openSaveCompleteModal({
+      sessionId,
+      title,
+      reportPath: "",
+      sessionPath: current.session_path || "",
+      mode: "review",
+    });
+  }
+
+  async function confirmSaveAndStop() {
+    const ref = saveCompleteMeta?.sessionId || currentSessionId || "";
+    const fallbackTitle = archiveItemByRef(ref)?.title || saveCompleteMeta?.title || ref;
+    const title = saveCompleteTitleInput.value.trim() || fallbackTitle;
+    if (!ref) {
+      saveCompleteStatusEl.textContent = "No active session is available to save.";
+      return;
+    }
+    try {
+      if (title && title !== fallbackTitle) {
+        await postJson("/history/rename", {session_id: ref, title});
+        if (lastStoppedArchiveRef === ref) lastStoppedArchiveTitle = title;
+        if (historyState.current_session?.session_id === ref) historyState.current_session.title = title;
+      }
+      saveCompleteMeta = {
+        ...(saveCompleteMeta || {}),
+        sessionId: ref,
+        title,
+      };
+      cancelSaveCompleteAutoHide();
+      saveCompleteMode = "saving";
+      saveCompleteStatusEl.textContent = "Saving...";
+      sessionSavePending = true;
+      notePendingRuntimeAction("stopping");
+      updateRuntimeButtons();
+      renderBootStatus();
+      renderSaveCompleteModal();
+      await sendInput("/stop");
+    } catch (error) {
+      sessionSavePending = false;
+      clearPendingRuntimeAction(`Stop failed: ${error.message || error}`);
+      saveCompleteMode = "review";
+      renderSaveCompleteModal();
+      saveCompleteStatusEl.textContent = `Save failed: ${error.message || error}`;
+    }
+  }
+
+  async function confirmDiscardSession() {
+    const ref = saveCompleteMeta?.sessionId || currentSessionId || "";
+    cancelSaveCompleteAutoHide();
+    saveCompleteMode = "discarding";
+    saveCompleteStatusEl.textContent = "Discarding...";
+    sessionSavePending = true;
+    notePendingRuntimeAction("stopping");
+    updateRuntimeButtons();
+    renderBootStatus();
+    renderSaveCompleteModal();
+    try {
+      await sendInput("/discard");
+      if (ref) setLastStoppedArchive(ref, "");
+    } catch (error) {
+      sessionSavePending = false;
+      clearPendingRuntimeAction(`Discard failed: ${error.message || error}`);
+      saveCompleteMode = "review";
+      renderSaveCompleteModal();
+      saveCompleteStatusEl.textContent = `Discard failed: ${error.message || error}`;
     }
   }
 
@@ -5436,21 +5812,49 @@
         setLastStoppedArchive(data.session_id || currentSessionId || "", data.title || activeArchiveTitle());
         return;
       }
+      if (data.discarded) {
+        sessionSavePending = false;
+        sessionStopped = true;
+        conversationPaused = true;
+        startupPausePending = false;
+        pendingPauseState = null;
+        pendingPauseSince = 0;
+        updateRuntimeButtons();
+        renderBootStatus();
+        saveCompleteMeta = {
+          sessionId: data.session_id || saveCompleteMeta?.sessionId || "",
+          title: "",
+          reportPath: "",
+          sessionPath: "",
+        };
+        saveCompleteMode = "discarded";
+        saveCompleteModalOpen = true;
+        renderSaveCompleteModal();
+        saveCompleteModal.classList.add("open");
+        saveCompleteModal.setAttribute("aria-hidden", "false");
+        scheduleSaveCompleteAutoHide(3000);
+        return;
+      }
       const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
       const finishedSessionId = data.session_id || currentSessionId || "";
       setLastStoppedArchive(finishedSessionId, data.title || historyState.current_session?.title || finishedSessionId);
       playbackVisionFrame = null;
       const payload = buildReportSnapshotPayload(event, finishedSessionId);
-      sessionSeen = false;
-      currentSessionId = "";
-      clearConversationState("Session ended.");
+      sessionSavePending = false;
+      sessionStopped = true;
+      conversationPaused = true;
+      startupPausePending = false;
+      pendingPauseState = null;
+      pendingPauseSince = 0;
       updateRuntimeButtons();
       renderBootStatus();
       reportRefButton.disabled = true;
       setReportRefStatus("Saving last stopped session ref...");
+      let reportPath = "";
       try {
         const result = await postReportSnapshot(payload);
         const pasteText = result.paste_text || `intermediate session log: ${result.path}`;
+        reportPath = result.path || "";
         await copyText(pasteText);
         setStickyStoppedReportRef(pasteText, result.path || "");
       } catch (error) {
@@ -5458,6 +5862,15 @@
       } finally {
         reportRefButton.disabled = false;
       }
+      cancelSaveCompleteAutoHide();
+      await openSaveCompleteModal({
+        sessionId: finishedSessionId,
+        title: data.title || historyState.current_session?.title || finishedSessionId,
+        reportPath,
+        sessionPath: data.history_path || historyState.current_session?.session_path || "",
+        mode: "saved",
+      });
+      scheduleSaveCompleteAutoHide(3000);
     },
 
     pause(data, rawEvent) {
@@ -5533,6 +5946,7 @@
       pollVisionModelStatus();
       recordEvent("runtime_controls", data, rawEvent);
       renderBootStatus();
+      maybeResolveSaveCompleteFromState().catch(() => {});
     },
 
     history_status(data, rawEvent) {
@@ -5748,12 +6162,15 @@
     );
     updateRuntimeButtons();
     updateTimelinePlayhead();
+    renderArchiveTransport();
   });
   archiveMediaPlayer.addEventListener("play", () => {
     updateRuntimeButtons();
+    renderArchiveTransport();
   });
   archiveMediaPlayer.addEventListener("pause", () => {
     updateRuntimeButtons();
+    renderArchiveTransport();
   });
   archiveMediaPlayer.addEventListener("timeupdate", () => {
     updateTimelinePlayhead();
@@ -5780,18 +6197,33 @@
   });
   window.addEventListener("pointerup", () => {
     archiveMediaScrubbing = false;
+    renderArchiveTransport();
+  });
+
+  archiveTransportToggleButton.addEventListener("click", () => {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    if (archiveMediaPlayer.paused) {
+      archiveMediaPlayer.play().catch(() => {});
+    } else {
+      archiveMediaPlayer.pause();
+    }
+    renderArchiveTransport();
+  });
+  archiveTransportScrubber.addEventListener("input", (event) => {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    archiveMediaScrubbing = true;
+    seekArchiveMedia(Number(event.target.value || 0), {syncSelection: true});
+  });
+  archiveTransportScrubber.addEventListener("change", (event) => {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    archiveMediaScrubbing = false;
+    seekArchiveMedia(Number(event.target.value || 0), {syncSelection: true});
   });
 
   runtimeToggleButton.addEventListener("click", async () => {
     if (pendingPauseState) return;
     if (archiveBrowseRef) {
       if (archivePlaybackMediaAvailable()) {
-        if (archiveMediaPlayer.paused) {
-          archiveMediaPlayer.play().catch(() => {});
-        } else {
-          archiveMediaPlayer.pause();
-        }
-        updateRuntimeButtons();
         return;
       }
       const target = archiveBrowseRef;
@@ -5859,9 +6291,52 @@
     setArchivePickerOpen(true);
   });
   archivePickerCloseButton.addEventListener("click", () => setArchivePickerOpen(false));
+  saveCompleteCloseButton.addEventListener("click", () => {
+    if (saveCompleteMode === "saving" || saveCompleteMode === "discarding") return;
+    closeSaveCompleteModal();
+  });
   archivePicker.addEventListener("click", (event) => {
     if (event.target === archivePicker) setArchivePickerOpen(false);
   });
+  saveCompleteModal.addEventListener("click", (event) => {
+    if (event.target === saveCompleteModal && saveCompleteMode !== "saving" && saveCompleteMode !== "discarding") closeSaveCompleteModal();
+  });
+  saveCompleteCopyRefButton.addEventListener("click", async () => {
+    const ref = saveCompleteMeta?.sessionId || "";
+    if (!ref) return;
+    const title = archiveItemByRef(ref)?.title || saveCompleteTitleInput.value.trim() || ref;
+    const text = title && title !== ref ? `archive: ${title} (${ref})` : ref;
+    const ok = await copyText(text);
+    saveCompleteStatusEl.textContent = ok ? `Copied archive ref: ${text}` : "Copy ref failed.";
+  });
+  saveCompleteCopyPathButton.addEventListener("click", async () => {
+    const path = archiveItemByRef(saveCompleteMeta?.sessionId || "")?.path || saveCompleteSessionPathEl.textContent || "";
+    if (!path || path === "--") return;
+    const ok = await copyText(path);
+    saveCompleteStatusEl.textContent = ok ? `Copied archive path: ${path}` : "Copy archive path failed.";
+  });
+  saveCompleteCopyReportButton.addEventListener("click", async () => {
+    const path = saveCompleteMeta?.reportPath || "";
+    if (!path) return;
+    const ok = await copyText(path);
+    saveCompleteStatusEl.textContent = ok ? `Copied report path: ${path}` : "Copy report path failed.";
+  });
+  saveCompleteCancelButton.addEventListener("click", closeSaveCompleteModal);
+  saveCompleteDiscardButton.addEventListener("click", confirmDiscardSession);
+  saveCompleteSaveButton.addEventListener("click", confirmSaveAndStop);
+  saveCompleteLoadButton.addEventListener("click", async () => {
+    const ref = saveCompleteMeta?.sessionId || "";
+    if (!ref) return;
+    cancelSaveCompleteAutoHide();
+    try {
+      await loadArchiveTimeline(ref);
+      closeSaveCompleteModal();
+      annotationStatus.textContent = `Loaded archive timeline: ${ref}`;
+    } catch (error) {
+      saveCompleteStatusEl.textContent = `Load failed: ${error.message || error}`;
+    }
+  });
+  saveCompleteOkayButton.addEventListener("click", closeSaveCompleteModal);
   archivePickerSearchInput.addEventListener("input", renderArchivePicker);
   archivePickerList.addEventListener("click", async (event) => {
     const loadButton = event.target.closest(".archive-load-action");

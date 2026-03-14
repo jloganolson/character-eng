@@ -6,7 +6,6 @@ import io
 import json
 import os
 import re
-import signal
 import shutil
 import subprocess
 import threading
@@ -651,13 +650,37 @@ class AudioTrackWriter:
     path: Path
     sample_rate: int
     channels: int = 1
+    origin_ts: float = 0.0
     _wav: wave.Wave_write | None = field(default=None, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     bytes_written: int = 0
+    first_chunk_start_ts: float | None = None
+    last_chunk_end_ts: float | None = None
 
-    def append(self, pcm: bytes) -> None:
+    @property
+    def bytes_per_frame(self) -> int:
+        return self.channels * 2
+
+    @property
+    def total_frames(self) -> int:
+        return self.bytes_written // self.bytes_per_frame
+
+    def _write_silence_frames(self, frame_count: int) -> None:
+        if frame_count <= 0:
+            return
+        silence = b"\x00" * (frame_count * self.bytes_per_frame)
+        self._wav.writeframes(silence)
+        self.bytes_written += len(silence)
+
+    def append(self, pcm: bytes, *, timestamp: float | None = None) -> None:
         if not pcm:
             return
+        chunk_ts = float(timestamp or _now_ts())
+        chunk_frames = len(pcm) // self.bytes_per_frame
+        if chunk_frames <= 0:
+            return
+        chunk_duration_s = chunk_frames / float(self.sample_rate)
+        chunk_start_ts = max(self.origin_ts, chunk_ts - chunk_duration_s)
         with self._lock:
             if self._wav is None:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -665,8 +688,14 @@ class AudioTrackWriter:
                 self._wav.setnchannels(self.channels)
                 self._wav.setsampwidth(2)
                 self._wav.setframerate(self.sample_rate)
+            expected_start_frame = max(0, int(round((chunk_start_ts - self.origin_ts) * self.sample_rate)))
+            gap_frames = expected_start_frame - self.total_frames
+            self._write_silence_frames(gap_frames)
             self._wav.writeframes(pcm)
             self.bytes_written += len(pcm)
+            if self.first_chunk_start_ts is None:
+                self.first_chunk_start_ts = chunk_start_ts
+            self.last_chunk_end_ts = chunk_start_ts + chunk_duration_s
 
     def close(self) -> None:
         with self._lock:
@@ -684,6 +713,11 @@ class AudioTrackWriter:
         self.path.unlink()
         self.path = gz_path
         return gz_path
+
+    def start_offset_s(self) -> float | None:
+        if self.first_chunk_start_ts is None:
+            return None
+        return max(0.0, self.first_chunk_start_ts - self.origin_ts)
 
 
 class VisionFramePoller:
@@ -800,7 +834,7 @@ class VisionVideoRecorder:
             while not self._stop.is_set():
                 try:
                     chunk = response.read(65536)
-                except (OSError, urllib.error.URLError):
+                except (AttributeError, OSError, urllib.error.URLError):
                     break
                 if not chunk:
                     break
@@ -870,6 +904,35 @@ class VisionVideoRecorder:
                 proc.wait(timeout=2)
         return self._output_path if _video_is_valid(self._output_path) else None
 
+    def abort(self) -> None:
+        if self._proc is None and self._thread is None:
+            return
+        self._stop.set()
+        with self._response_lock:
+            response = self._response
+            self._response = None
+        if response is not None:
+            try:
+                response.close()
+            except OSError:
+                pass
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+            self._thread = None
+        proc = self._proc
+        self._proc = None
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+
 
 def _mix_conversation_audio(
     *,
@@ -922,6 +985,7 @@ def _mux_playback_media(
     video_path: Path | None,
     audio_path: Path | None,
     output_path: Path,
+    video_offset_s: float = 0.0,
 ) -> Path | None:
     if video_path is None or not video_path.exists():
         return None
@@ -929,7 +993,10 @@ def _mux_playback_media(
     if audio_path is None or not audio_path.exists():
         shutil.copy2(video_path, output_path)
         return output_path
-    ok = _run_ffmpeg([
+    args = []
+    if video_offset_s > 0.001:
+        args.extend(["-itsoffset", f"{video_offset_s:.3f}"])
+    args.extend([
         "-i", str(video_path),
         "-i", str(audio_path),
         "-c:v", "copy",
@@ -939,6 +1006,7 @@ def _mux_playback_media(
         "-movflags", "+faststart",
         str(output_path),
     ])
+    ok = _run_ffmpeg(args)
     return output_path if ok and output_path.exists() else None
 
 
@@ -1050,8 +1118,9 @@ class SessionArchive:
         self._started_at = _now_ts()
         self._vision_poller: VisionFramePoller | None = None
         self._video_recorder: VisionVideoRecorder | None = None
-        self._user_audio = AudioTrackWriter(self.media_dir / "audio" / "user_input.wav", sample_rate=16000)
-        self._assistant_audio = AudioTrackWriter(self.media_dir / "audio" / "assistant_output.wav", sample_rate=24000)
+        self._user_audio = AudioTrackWriter(self.media_dir / "audio" / "user_input.wav", sample_rate=16000, origin_ts=self._started_at)
+        self._assistant_audio = AudioTrackWriter(self.media_dir / "audio" / "assistant_output.wav", sample_rate=24000, origin_ts=self._started_at)
+        self._video_started_at: float | None = None
         self.path.mkdir(parents=True, exist_ok=True)
         self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
         self.video_dir.mkdir(parents=True, exist_ok=True)
@@ -1237,12 +1306,12 @@ class SessionArchive:
     def record_user_audio(self, pcm: bytes) -> None:
         if not self.replay_capture_enabled():
             return
-        self._user_audio.append(pcm)
+        self._user_audio.append(pcm, timestamp=_now_ts())
 
     def record_assistant_audio(self, pcm: bytes) -> None:
         if not self.replay_capture_enabled():
             return
-        self._assistant_audio.append(pcm)
+        self._assistant_audio.append(pcm, timestamp=_now_ts())
 
     def record_video_frame(self, jpeg_bytes: bytes, *, timestamp: float | None = None, source: str = "vision") -> Path | None:
         if not self.replay_capture_enabled():
@@ -1286,6 +1355,7 @@ class SessionArchive:
             self._vision_poller = VisionFramePoller(service_url, fps, self.record_video_frame)
             self._vision_poller.start()
         if self._video_recorder is None:
+            self._video_started_at = _now_ts()
             self._video_recorder = VisionVideoRecorder(
                 service_url,
                 self.media_dir / "video" / "session_capture.mp4",
@@ -1293,12 +1363,15 @@ class SessionArchive:
             )
             self._video_recorder.start()
 
-    def stop_vision_capture(self) -> None:
+    def stop_vision_capture(self, *, force: bool = False) -> None:
         if self._vision_poller is not None:
             self._vision_poller.stop()
             self._vision_poller = None
         if self._video_recorder is not None:
-            self._video_recorder.stop()
+            if force:
+                self._video_recorder.abort()
+            else:
+                self._video_recorder.stop()
             self._video_recorder = None
 
     def promote(self, kind: str = "pinned") -> Path:
@@ -1435,6 +1508,11 @@ class SessionArchive:
         raw_assistant_audio_path = self._assistant_audio.path if self._assistant_audio.path.exists() else None
         raw_video_path = self.media_dir / "video" / "session_capture.mp4"
         frames_jsonl = self.video_dir / "frames.jsonl"
+        user_audio_start_s = self._user_audio.start_offset_s()
+        assistant_audio_start_s = self._assistant_audio.start_offset_s()
+        video_start_s = max(0.0, (self._video_started_at or self._started_at) - self._started_at) if (
+            self._video_started_at is not None or raw_video_path.exists()
+        ) else None
         mixed_audio_path = _mix_conversation_audio(
             user_audio_path=raw_user_audio_path,
             assistant_audio_path=raw_assistant_audio_path,
@@ -1451,6 +1529,7 @@ class SessionArchive:
             video_path=video_for_mux,
             audio_path=mixed_audio_path,
             output_path=self.media_dir / "playback.mp4",
+            video_offset_s=float(video_start_s or 0.0),
         )
         user_audio_path = self._user_audio.compress()
         assistant_audio_path = self._assistant_audio.compress()
@@ -1467,6 +1546,10 @@ class SessionArchive:
         media["conversation_audio_path"] = str(mixed_audio_gz_path) if mixed_audio_gz_path else ""
         media["video_path"] = str(video_for_mux) if video_for_mux and video_for_mux.exists() else ""
         media["playback_path"] = str(playback_path) if playback_path else ""
+        media["user_audio_start_s"] = float(user_audio_start_s) if user_audio_start_s is not None else None
+        media["assistant_audio_start_s"] = float(assistant_audio_start_s) if assistant_audio_start_s is not None else None
+        media["video_start_s"] = float(video_start_s) if video_start_s is not None else None
+        media["playback_origin_s"] = 0.0
         media["video_frames_path"] = str(self.video_dir / "frames.jsonl")
         media["video_frame_count"] = self._video_index
         return self.update_manifest(
@@ -1566,6 +1649,23 @@ class HistoryService:
             if self.current is None:
                 return None
             return self.current.finalize()
+
+    def discard_current(self) -> dict | None:
+        with self._lock:
+            if self.current is None:
+                return None
+            archive = self.current
+            archive.stop_vision_capture(force=True)
+            archive._user_audio.close()
+            archive._assistant_audio.close()
+            path = archive.path
+            session_id = archive.session_id
+            self.current = None
+            shutil.rmtree(path, ignore_errors=True)
+            return {
+                "session_id": session_id,
+                "path": str(path),
+            }
 
     def record_event(self, event_type: str, data: dict, *, timestamp: float | None = None) -> None:
         with self._lock:
@@ -1786,6 +1886,7 @@ class HistoryService:
                 video_path=raw_video,
                 audio_path=audio_path,
                 output_path=output_path,
+                video_offset_s=float(media.get("video_start_s") or 0.0),
             )
         finally:
             if temp_audio_path.exists():
@@ -2021,8 +2122,8 @@ class HistoryService:
         archive._video_index = int(manifest.get("media", {}).get("video_frame_count", 0))
         archive._started_at = float(manifest.get("started_at", _now_ts()))
         archive._vision_poller = None
-        archive._user_audio = AudioTrackWriter(archive.media_dir / "audio" / "user_input.wav", sample_rate=16000)
-        archive._assistant_audio = AudioTrackWriter(archive.media_dir / "audio" / "assistant_output.wav", sample_rate=24000)
+        archive._user_audio = AudioTrackWriter(archive.media_dir / "audio" / "user_input.wav", sample_rate=16000, origin_ts=archive._started_at)
+        archive._assistant_audio = AudioTrackWriter(archive.media_dir / "audio" / "assistant_output.wav", sample_rate=24000, origin_ts=archive._started_at)
         return archive
 
 

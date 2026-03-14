@@ -2242,6 +2242,19 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             save_chat_html(character, model_config, log, session_id)
             _push_history_status()
 
+        def _discard_session() -> None:
+            _stop_history_playback()
+            discarded_meta = _history_service.discard_current() if _history_service is not None else None
+            _push("session_end", {
+                "total_turns": 0,
+                "session_id": session_id,
+                "title": "",
+                "history_path": "",
+                "discarded": True,
+                "discarded_path": discarded_meta.get("path", "") if discarded_meta else "",
+            })
+            _push_history_status()
+
         session_action = None
         while True:
             # --- Get input (voice or text) ---
@@ -2373,6 +2386,16 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                         voice_io.cancel_speech()
                         voice_io.cancel_and_drain_auto_beat()
                     _finish_session()
+                    next_session_mode = "ready"
+                    session_action = "ready"
+                    break
+                if cmd == "/discard":
+                    console.print("[yellow]Discarding session...[/yellow]")
+                    if voice_io is not None:
+                        voice_io._cancel_auto_beat()
+                        voice_io.cancel_speech()
+                        voice_io.cancel_and_drain_auto_beat()
+                    _discard_session()
                     next_session_mode = "ready"
                     session_action = "ready"
                     break
@@ -2549,6 +2572,21 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 next_session_mode = "ready"
                 session_action = "ready"
                 break
+            elif cmd == "/discard":
+                console.print("[yellow]Discarding session...[/yellow]")
+                _conversation_paused = True
+                _session_stopped = True
+                _startup_pause_pending = True
+                if vision_mgr is not None:
+                    vision_mgr.set_paused(True)
+                if voice_io is not None:
+                    voice_io._cancel_auto_beat()
+                    voice_io.cancel_speech()
+                    voice_io.cancel_and_drain_auto_beat()
+                _discard_session()
+                next_session_mode = "ready"
+                session_action = "ready"
+                break
             elif cmd == "/pause":
                 console.print("[yellow]Paused[/yellow] — send /play to continue")
                 _conversation_paused = True
@@ -2588,6 +2626,14 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                         _session_stopped = True
                         _startup_pause_pending = True
                         _finish_session()
+                        next_session_mode = "ready"
+                        session_action = "ready"
+                        break
+                    elif resume_input.lower() == "/discard":
+                        console.print("[yellow]Discarding session...[/yellow]")
+                        _session_stopped = True
+                        _startup_pause_pending = True
+                        _discard_session()
                         next_session_mode = "ready"
                         session_action = "ready"
                         break
@@ -3875,6 +3921,7 @@ def show_help(voice_active: bool = False):
         "/start          - Create a fresh paused session\n"
         "/play           - Begin or continue the current paused session\n"
         "/stop           - Stop this session, save its log, and return to ready\n"
+        "/discard        - Discard this session and return to ready\n"
         "/pause          - Pause the conversation loop\n"
         "/resume         - Alias for /play\n"
         "/history        - Show history storage + disk status\n"
