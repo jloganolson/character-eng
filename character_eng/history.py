@@ -175,8 +175,15 @@ def _ensure_roots(root: Path) -> None:
         root / "moments",
         root / "pinned",
         root / "catalog",
+        root / ".discarding",
     ):
         directory.mkdir(parents=True, exist_ok=True)
+
+
+def _remove_tree_async(path: Path) -> None:
+    def _worker() -> None:
+        shutil.rmtree(path, ignore_errors=True)
+    threading.Thread(target=_worker, daemon=True, name="history-discard-cleanup").start()
 
 
 def serialize_world(world: WorldState | None) -> dict:
@@ -880,6 +887,8 @@ class VisionVideoRecorder:
         if self._proc is None:
             return self._output_path if self._output_path.exists() else None
         self._stop.set()
+        proc = self._proc
+        self._proc = None
         with self._response_lock:
             response = self._response
             self._response = None
@@ -888,20 +897,26 @@ class VisionVideoRecorder:
                 response.close()
             except OSError:
                 pass
+        if proc.stdin is not None:
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
         if self._thread is not None:
-            self._thread.join(timeout=6)
+            self._thread.join(timeout=1.0)
             self._thread = None
-        proc = self._proc
-        self._proc = None
         try:
-            proc.wait(timeout=12)
+            proc.wait(timeout=1.5)
         except subprocess.TimeoutExpired:
             proc.terminate()
             try:
-                proc.wait(timeout=6)
+                proc.wait(timeout=1.0)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                proc.wait(timeout=2)
+                try:
+                    proc.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    pass
         return self._output_path if _video_is_valid(self._output_path) else None
 
     def abort(self) -> None:
@@ -1661,7 +1676,14 @@ class HistoryService:
             path = archive.path
             session_id = archive.session_id
             self.current = None
-            shutil.rmtree(path, ignore_errors=True)
+            cleanup_path = path
+            try:
+                cleanup_path = self.root / ".discarding" / f"{session_id}_{int(time.time() * 1000)}"
+                cleanup_path.parent.mkdir(parents=True, exist_ok=True)
+                path.rename(cleanup_path)
+            except OSError:
+                cleanup_path = path
+            _remove_tree_async(cleanup_path)
             return {
                 "session_id": session_id,
                 "path": str(path),
