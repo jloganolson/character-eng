@@ -1815,8 +1815,12 @@
   let saveCompleteMode = "closed";
   let sessionSavePending = false;
   let saveCompletionResolving = false;
+  let discardCompletionResolving = false;
+  let discardCompletionProbeTimer = 0;
   let saveCompleteAutoHideTimer = 0;
   let saveCompleteAutoHideDeadline = 0;
+  let pendingFinalizeAction = "";
+  let pendingStopReviewPause = false;
   let archiveBrowseRef = "";
   let archiveBrowseMeta = null;
   let archiveBrowseSeqFloor = 0;
@@ -1991,6 +1995,7 @@
     renderSelectedEventAnnotations();
     if (selectedStreamKey) selectEvent(selectedStreamKey);
     maybeResolveSaveCompleteFromState().catch(() => {});
+    maybeResolveDiscardCompleteFromState().catch(() => {});
   }
 
   function promptApplyModeLabel(mode) {
@@ -2551,6 +2556,10 @@
 
   function closeSaveCompleteModal() {
     cancelSaveCompleteAutoHide();
+    if (discardCompletionProbeTimer) {
+      window.clearTimeout(discardCompletionProbeTimer);
+      discardCompletionProbeTimer = 0;
+    }
     saveCompleteModalOpen = false;
     saveCompleteMeta = null;
     saveCompleteMode = "closed";
@@ -2577,15 +2586,22 @@
     saveCompleteSessionPathEl.textContent = sessionPath;
     saveCompleteReportPathEl.textContent = reportPath;
     const reviewMode = mode === "review";
-    const savingMode = mode === "saving" || mode === "discarding";
+    const preparingMode = mode === "preparing_review" || mode === "preparing_save" || mode === "preparing_discard";
+    const savingMode = mode === "saving" || mode === "discarding" || preparingMode;
     const savedMode = mode === "saved" || mode === "discarded";
     saveCompleteHeadingEl.textContent =
+      mode === "preparing_review" ? "Pausing Session" :
+      mode === "preparing_save" ? "Pausing Session" :
+      mode === "preparing_discard" ? "Pausing Session" :
       mode === "saving" ? "Saving Session" :
       mode === "saved" ? "Session Saved" :
       mode === "discarding" ? "Discarding Session" :
       mode === "discarded" ? "Session Discarded" :
       "Save Session";
     saveCompleteSubtitleEl.textContent =
+      mode === "preparing_review" ? "Pausing the live session before opening save/discard review." :
+      mode === "preparing_save" ? "Pausing the live session before saving so the archive is consistent." :
+      mode === "preparing_discard" ? "Pausing the live session before discarding it." :
       mode === "saving" ? "Saving the session now. This dialog will update when the archive is ready." :
       mode === "saved" ? "The session is saved. You can load it now or let this dialog hide automatically." :
       mode === "discarding" ? "Discarding this session now." :
@@ -2607,7 +2623,12 @@
       const base = mode === "discarded" ? "Discarded successfully." : "Saved successfully.";
       saveCompleteStatusEl.textContent = `${base} Hiding in ${countdownSeconds}s.`;
     }
-    if (savingMode) {
+    if (preparingMode) {
+      saveCompleteStatusEl.textContent =
+        mode === "preparing_review" ? "Pausing before review..." :
+        mode === "preparing_discard" ? "Pausing before discard..." :
+        "Pausing before save...";
+    } else if (savingMode) {
       saveCompleteStatusEl.textContent = mode === "discarding" ? "Discarding..." : "Saving...";
     }
   }
@@ -2663,6 +2684,76 @@
     saveCompleteModal.classList.add("open");
     saveCompleteModal.setAttribute("aria-hidden", "false");
     scheduleSaveCompleteAutoHide(3000);
+  }
+
+  async function maybeResolveDiscardCompleteFromState() {
+    if (!sessionSavePending || discardCompletionResolving) return;
+    if (saveCompleteMode !== "discarding") return;
+    if (!sessionStopped) return;
+    const expectedSessionId = String(saveCompleteMeta?.sessionId || currentSessionId || "").trim();
+    const current = historyState.current_session || {};
+    const currentSessionIdFromState = String(current.session_id || "").trim();
+    if (currentSessionIdFromState && (!expectedSessionId || currentSessionIdFromState === expectedSessionId)) return;
+    sessionSavePending = false;
+    pendingFinalizeAction = "";
+    if (discardCompletionProbeTimer) {
+      window.clearTimeout(discardCompletionProbeTimer);
+      discardCompletionProbeTimer = 0;
+    }
+    updateRuntimeButtons();
+    renderBootStatus();
+    saveCompleteMeta = {
+      sessionId: expectedSessionId,
+      title: "",
+      reportPath: "",
+      sessionPath: "",
+    };
+    saveCompleteMode = "discarded";
+    renderSaveCompleteModal();
+    saveCompleteModalOpen = true;
+    saveCompleteModal.classList.add("open");
+    saveCompleteModal.setAttribute("aria-hidden", "false");
+    scheduleSaveCompleteAutoHide(3000);
+  }
+
+  function scheduleDiscardCompletionProbe(delayMs = 250) {
+    if (discardCompletionProbeTimer) window.clearTimeout(discardCompletionProbeTimer);
+    discardCompletionProbeTimer = window.setTimeout(async () => {
+      discardCompletionProbeTimer = 0;
+      if (!sessionSavePending || saveCompleteMode !== "discarding") return;
+      discardCompletionResolving = true;
+      try {
+        await refreshHistoryState();
+      } finally {
+        discardCompletionResolving = false;
+      }
+      await maybeResolveDiscardCompleteFromState();
+      if (sessionSavePending && saveCompleteMode === "discarding") scheduleDiscardCompletionProbe(500);
+    }, delayMs);
+  }
+
+  async function flushPendingFinalizeAction() {
+    if (!pendingFinalizeAction || !sessionSavePending) return;
+    if (!conversationPaused || sessionStopped) return;
+    const command = pendingFinalizeAction;
+    pendingFinalizeAction = "";
+    saveCompleteMode = command === "/discard" ? "discarding" : "saving";
+    notePendingRuntimeAction("stopping");
+    renderSaveCompleteModal();
+    try {
+      await sendInput(command);
+      if (command === "/discard") scheduleDiscardCompletionProbe(250);
+    } catch (error) {
+      sessionSavePending = false;
+      if (discardCompletionProbeTimer) {
+        window.clearTimeout(discardCompletionProbeTimer);
+        discardCompletionProbeTimer = 0;
+      }
+      clearPendingRuntimeAction(`${command === "/discard" ? "Discard" : "Save"} failed: ${error.message || error}`);
+      saveCompleteMode = "review";
+      renderSaveCompleteModal();
+      saveCompleteStatusEl.textContent = `${command === "/discard" ? "Discard" : "Save"} failed: ${error.message || error}`;
+    }
   }
 
   document.addEventListener("keydown", (e) => {
@@ -4574,13 +4665,26 @@
     const current = historyState.current_session || {};
     const sessionId = currentSessionId || current.session_id || document.getElementById("h-session").textContent || "";
     const title = current.title || activeArchiveTitle() || sessionId || "session";
+    const needsPauseFirst = !conversationPaused && !sessionStopped;
     await openSaveCompleteModal({
       sessionId,
       title,
       reportPath: "",
       sessionPath: current.session_path || "",
-      mode: "review",
+      mode: needsPauseFirst ? "preparing_review" : "review",
     });
+    if (!needsPauseFirst) return;
+    pendingStopReviewPause = true;
+    notePendingRuntimeAction("pausing");
+    try {
+      await sendInput("/pause");
+    } catch (error) {
+      pendingStopReviewPause = false;
+      clearPendingRuntimeAction(`Pause before review failed: ${error.message || error}`);
+      saveCompleteMode = "review";
+      renderSaveCompleteModal();
+      saveCompleteStatusEl.textContent = `Pause before review failed: ${error.message || error}`;
+    }
   }
 
   async function confirmSaveAndStop() {
@@ -4606,12 +4710,22 @@
       saveCompleteMode = "saving";
       saveCompleteStatusEl.textContent = "Saving...";
       sessionSavePending = true;
-      notePendingRuntimeAction("stopping");
       updateRuntimeButtons();
       renderBootStatus();
       renderSaveCompleteModal();
-      await sendInput("/stop");
+      if (!conversationPaused && !sessionStopped) {
+        pendingFinalizeAction = "/stop";
+        notePendingRuntimeAction("pausing");
+        saveCompleteMode = "preparing_save";
+        renderSaveCompleteModal();
+        await sendInput("/pause");
+      } else {
+        pendingFinalizeAction = "";
+        notePendingRuntimeAction("stopping");
+        await sendInput("/stop");
+      }
     } catch (error) {
+      pendingFinalizeAction = "";
       sessionSavePending = false;
       clearPendingRuntimeAction(`Stop failed: ${error.message || error}`);
       saveCompleteMode = "review";
@@ -4626,14 +4740,24 @@
     saveCompleteMode = "discarding";
     saveCompleteStatusEl.textContent = "Discarding...";
     sessionSavePending = true;
-    notePendingRuntimeAction("stopping");
     updateRuntimeButtons();
     renderBootStatus();
     renderSaveCompleteModal();
     try {
-      await sendInput("/discard");
+      if (!conversationPaused && !sessionStopped) {
+        pendingFinalizeAction = "/discard";
+        notePendingRuntimeAction("pausing");
+        saveCompleteMode = "preparing_discard";
+        renderSaveCompleteModal();
+        await sendInput("/pause");
+      } else {
+        pendingFinalizeAction = "";
+        notePendingRuntimeAction("stopping");
+        await sendInput("/discard");
+      }
       if (ref) setLastStoppedArchive(ref, "");
     } catch (error) {
+      pendingFinalizeAction = "";
       sessionSavePending = false;
       clearPendingRuntimeAction(`Discard failed: ${error.message || error}`);
       saveCompleteMode = "review";
@@ -5817,8 +5941,13 @@
         sessionStopped = true;
         conversationPaused = true;
         startupPausePending = false;
+        pendingFinalizeAction = "";
         pendingPauseState = null;
         pendingPauseSince = 0;
+        if (discardCompletionProbeTimer) {
+          window.clearTimeout(discardCompletionProbeTimer);
+          discardCompletionProbeTimer = 0;
+        }
         updateRuntimeButtons();
         renderBootStatus();
         saveCompleteMeta = {
@@ -5879,9 +6008,18 @@
         pendingPauseState = null;
         pendingPauseSince = 0;
       }
+      if (pendingStopReviewPause) {
+        pendingStopReviewPause = false;
+        if (saveCompleteModalOpen && saveCompleteMode === "preparing_review") {
+          saveCompleteMode = "review";
+          renderSaveCompleteModal();
+          saveCompleteStatusEl.textContent = "Paused. Save or discard this session.";
+        }
+      }
       recordEvent("pause", data, rawEvent);
       updateRuntimeButtons();
       renderBootStatus();
+      flushPendingFinalizeAction().catch(() => {});
     },
 
     resume(data, rawEvent) {
@@ -5909,6 +6047,14 @@
       ) {
         pendingPauseState = null;
         pendingPauseSince = 0;
+      }
+      if (pendingStopReviewPause && conversationPaused && !sessionStopped) {
+        pendingStopReviewPause = false;
+        if (saveCompleteModalOpen && saveCompleteMode === "preparing_review") {
+          saveCompleteMode = "review";
+          renderSaveCompleteModal();
+          saveCompleteStatusEl.textContent = "Paused. Save or discard this session.";
+        }
       }
       voiceActive = !!data.voice_active;
       voiceStatus = data.voice_status || voiceStatus;
@@ -5946,12 +6092,15 @@
       pollVisionModelStatus();
       recordEvent("runtime_controls", data, rawEvent);
       renderBootStatus();
+      flushPendingFinalizeAction().catch(() => {});
       maybeResolveSaveCompleteFromState().catch(() => {});
+      maybeResolveDiscardCompleteFromState().catch(() => {});
     },
 
     history_status(data, rawEvent) {
       renderHistoryState({...data, enabled: true});
       recordEvent("history_status", data, rawEvent);
+      maybeResolveDiscardCompleteFromState().catch(() => {});
     },
 
     history_restore(data, rawEvent) {
@@ -6304,6 +6453,7 @@
   saveCompleteCopyRefButton.addEventListener("click", async () => {
     const ref = saveCompleteMeta?.sessionId || "";
     if (!ref) return;
+    cancelSaveCompleteAutoHide();
     const title = archiveItemByRef(ref)?.title || saveCompleteTitleInput.value.trim() || ref;
     const text = title && title !== ref ? `archive: ${title} (${ref})` : ref;
     const ok = await copyText(text);
@@ -6312,12 +6462,14 @@
   saveCompleteCopyPathButton.addEventListener("click", async () => {
     const path = archiveItemByRef(saveCompleteMeta?.sessionId || "")?.path || saveCompleteSessionPathEl.textContent || "";
     if (!path || path === "--") return;
+    cancelSaveCompleteAutoHide();
     const ok = await copyText(path);
     saveCompleteStatusEl.textContent = ok ? `Copied archive path: ${path}` : "Copy archive path failed.";
   });
   saveCompleteCopyReportButton.addEventListener("click", async () => {
     const path = saveCompleteMeta?.reportPath || "";
     if (!path) return;
+    cancelSaveCompleteAutoHide();
     const ok = await copyText(path);
     saveCompleteStatusEl.textContent = ok ? `Copied report path: ${path}` : "Copy report path failed.";
   });
