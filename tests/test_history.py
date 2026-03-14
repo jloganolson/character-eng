@@ -2,10 +2,12 @@ import json
 import subprocess
 import threading
 import time
+import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from character_eng.history import (
+    AudioTrackWriter,
     HistoryService,
     PlaybackRunner,
     VisionVideoRecorder,
@@ -144,6 +146,19 @@ def test_history_service_can_rename_archive(tmp_path):
     assert updated["title"] == "greg scarf retry"
 
 
+def test_history_service_can_discard_current_archive(tmp_path):
+    service = HistoryService(root=tmp_path, free_warning_gib=0.0)
+    archive = service.start_session(session_id="sess-discard", character="greg", model="test")
+    archive.record_event("session_start", {"session_id": "sess-discard"})
+
+    result = service.discard_current()
+
+    assert result is not None
+    assert result["session_id"] == "sess-discard"
+    assert not archive.path.exists()
+    assert service.status()["current_session"] == {}
+
+
 def test_annotations_auto_promote_and_catalog(tmp_path):
     service = HistoryService(root=tmp_path, free_warning_gib=0.0)
     service.start_session(session_id="sess2", character="greg", model="test")
@@ -267,6 +282,19 @@ def test_vision_video_recorder_writes_valid_video_from_mjpeg_stream(tmp_path):
     assert stream["codec_name"] == "h264"
     assert stream["avg_frame_rate"] == "30/1"
     assert float(stream["duration"]) > 0.0
+
+
+def test_audio_track_writer_preserves_leading_gap(tmp_path):
+    writer = AudioTrackWriter(tmp_path / "gap.wav", sample_rate=16000, origin_ts=100.0)
+    writer.append(b"\x01\x02" * 1600, timestamp=100.3)
+    writer.close()
+    with wave.open(str(writer.path), "rb") as wav:
+        assert wav.getframerate() == 16000
+        frames = wav.readframes(wav.getnframes())
+    # 0.2s of silence + 0.1s of audio
+    assert len(frames) == 9600
+    assert frames[:6400] == b"\x00" * 6400
+    assert frames[6400:] == (b"\x01\x02" * 1600)
 
 
 def test_finalize_rebuilds_playback_from_frames_when_raw_video_invalid(tmp_path):
