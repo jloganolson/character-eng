@@ -2419,7 +2419,6 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     save_chat_html(character, model_config, log, session_id)
                     console.print("Goodbye!")
                     sys.exit(0)
-                console.print("[yellow]Still paused[/yellow] — send /play or click Play in the dashboard when you're ready")
                 continue
             if voice_io is not None and _arm_auto_beat and _runtime_controls["auto_beat"]:
                 # Centralized auto-beat: start timer here so it fires after all
@@ -2468,13 +2467,6 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
                     continue
 
-                # Show what was transcribed or which hotkey was pressed
-                if user_input.startswith("/"):
-                    console.print(f"[dim]  {_ts()} → {user_input}[/dim]")
-                elif user_input in ("1", "2", "3", "4"):
-                    console.print(f"[dim]  {_ts()} → trigger {user_input}[/dim]")
-                else:
-                    console.print(f"[bold blue]You[/bold blue] [dim]{session_id} {_ts()}[/dim]: {user_input}")
             else:
                 try:
                     if voice_io is not None or _dashboard_input_queue is not None:

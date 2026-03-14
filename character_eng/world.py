@@ -466,10 +466,6 @@ def _llm_call(model_config: dict, label: str = "", **create_kwargs):
 
     last_err = None
     for i, cfg in enumerate(chain):
-        if i == 0:
-            _console.print(f"[dim]  {_ts()} → {cfg['name']}{tag}[/dim]")
-        else:
-            _console.print(f"[yellow]  {_ts()} → fallback: {cfg['name']}{tag}[/yellow]")
         started_at = time.time()
         try:
             client = _make_client(cfg)
