@@ -1155,8 +1155,7 @@
     font-size: 0.86em;
     line-height: 1.45;
   }
-  #detail-related button,
-  .chronology-row {
+  #detail-related button {
     width: 100%;
     text-align: left;
     border: 1px solid var(--border);
@@ -1171,18 +1170,6 @@
     display: grid;
     gap: 0.4em;
   }
-  .chronology-pane {
-    display: grid;
-    gap: 0.35em;
-    overflow: auto;
-    min-height: 0;
-    padding-right: 0.2em;
-  }
-  .chronology-row.selected {
-    border-color: var(--narrator);
-    box-shadow: 0 0 0 1px var(--narrator);
-  }
-  .chronology-row small,
   #detail-related small {
     display: block;
     margin-top: 0.22em;
@@ -1213,12 +1200,41 @@
   .sidebar-panel {
     padding: 0.55em 0.7em;
   }
+  .sidebar-group-label {
+    font-size: 0.7em;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    padding: 0 0.1em;
+    margin-top: 0.2em;
+  }
+  .sidebar-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.45em;
+    margin-bottom: 0.45em;
+  }
   .sidebar-panel h3 {
     font-size: 0.8em;
     color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 0.45em;
+    margin: 0;
+  }
+  .sidebar-panel-toggle {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-alt);
+    color: var(--text-dim);
+    padding: 0.16em 0.52em;
+    font-size: 0.68em;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .sidebar-panel.collapsed .content {
+    display: none;
   }
   .sidebar-panel .content {
     font-size: 0.82em;
@@ -1305,7 +1321,7 @@
   }
 </style>
 </head>
-<body>
+<body class="booting">
 
 <div id="boot-overlay">
   <div class="boot-overlay-card">
@@ -1416,10 +1432,6 @@
           <span id="time-window-value">30s</span>
         </div>
         <div class="toolbar-group">
-          <label for="show-chronology">Chronology</label>
-          <input id="show-chronology" type="checkbox" checked>
-        </div>
-        <div class="toolbar-group">
           <label for="follow-live">Follow</label>
           <input id="follow-live" type="checkbox" checked>
         </div>
@@ -1440,8 +1452,8 @@
         <div class="pane-resizer" id="inspector-resizer" role="separator" aria-label="Resize inspector"></div>
 
         <aside id="stream-inspector">
-          <div class="detail-section">
-            <div class="inspector-title">Debug Timeline Event</div>
+          <div class="detail-section" id="inspector-summary-panel" data-panel-region="inspector" data-panel-id="event_summary" data-panel-scope="event">
+            <div class="inspector-title" id="inspector-summary-title">Debug Timeline Event</div>
             <div id="detail-summary">
               <div id="detail-meta">
                 <span id="detail-time">+0.00s</span>
@@ -1473,13 +1485,13 @@
             </div>
           </div>
 
-          <div class="detail-section">
-            <label>Related In Turn</label>
+          <div class="detail-section" id="inspector-related-panel" data-panel-region="inspector" data-panel-id="related_in_turn" data-panel-scope="event">
+            <label id="inspector-related-label">Related In Turn</label>
             <div id="detail-related"><div style="color:var(--text-dim);">No event selected.</div></div>
           </div>
 
-          <div class="detail-section" style="position:relative;z-index:2;">
-            <label>Annotations</label>
+          <div class="detail-section" id="inspector-annotations-panel" data-panel-region="inspector" data-panel-id="annotations" data-panel-scope="event" style="position:relative;z-index:2;">
+            <label id="inspector-annotations-label">Annotations</label>
             <div class="detail-actions">
               <button class="detail-action" id="annotation-toggle" type="button" disabled>Annotate Event</button>
               <button class="detail-action" id="snippet-toggle" type="button" disabled>Capture As Snippet</button>
@@ -1514,20 +1526,16 @@
             <div id="annotation-status" style="margin-top:0.45em;color:var(--text-dim);">Annotations save to the archived replay record for this session.</div>
           </div>
 
-          <div class="detail-section fill">
-            <label>Inspector Pane</label>
-            <div class="detail-tabs">
-              <button class="detail-tab active" id="tab-chronology" type="button" data-detail-tab="chronology">Chronology</button>
-              <button class="detail-tab" id="tab-prompts" type="button" data-detail-tab="prompts">Conversation Memory / Prompt IO</button>
-              <button class="detail-tab" id="tab-payload" type="button" data-detail-tab="payload">Debug Event JSON</button>
+          <div class="detail-section fill" id="inspector-detail-tabs-panel" data-panel-region="inspector" data-panel-id="detail_tabs" data-panel-scope="event">
+            <label id="inspector-detail-tabs-label">Inspector Pane</label>
+            <div class="detail-tabs" id="inspector-detail-tabs">
+              <button class="detail-tab active" id="tab-prompts" type="button" data-detail-tab="prompts" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">Conversation Memory / Prompt IO</button>
+              <button class="detail-tab" id="tab-payload" type="button" data-detail-tab="payload" data-panel-region="inspector" data-panel-id="payload" data-panel-scope="event">Debug Event JSON</button>
             </div>
-            <div class="detail-pane active" id="detail-chronology-pane">
-              <div class="chronology-pane" id="detail-chronology"></div>
-            </div>
-            <div class="detail-pane" id="detail-prompts-pane">
+            <div class="detail-pane active" id="detail-prompts-pane" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">
               <div class="detail-prompts" id="detail-prompts"></div>
             </div>
-            <div class="detail-pane" id="detail-payload-pane">
+            <div class="detail-pane" id="detail-payload-pane" data-panel-region="inspector" data-panel-id="payload" data-panel-scope="event">
               <pre id="detail-payload">{}</pre>
             </div>
           </div>
@@ -1538,7 +1546,7 @@
   <div class="pane-resizer" id="sidebar-resizer" role="separator" aria-label="Resize right panel"></div>
 
   <div id="sidebar">
-    <div class="sidebar-panel" id="runtime-panel">
+    <div class="sidebar-panel" id="runtime-panel" data-panel-region="sidebar" data-panel-id="runtime" data-panel-scope="session">
       <h3>Runtime</h3>
       <div class="content">
         <div id="boot-panel" class="boot-panel">
@@ -1564,7 +1572,7 @@
       </div>
     </div>
 
-    <div class="sidebar-panel" id="vision-panel" style="display:none;">
+    <div class="sidebar-panel" id="vision-panel" data-panel-region="sidebar" data-panel-id="vision" data-panel-scope="session">
       <h3>Vision</h3>
       <div class="content">
         <img id="vision-feed" alt="Vision feed">
@@ -1575,7 +1583,7 @@
       </div>
     </div>
 
-    <div class="sidebar-panel" id="history-panel">
+    <div class="sidebar-panel" id="history-panel" data-panel-region="sidebar" data-panel-id="history" data-panel-scope="session">
       <h3>Replay Capture</h3>
       <div class="content">
         <div id="history-status"><span style="color:var(--text-dim)">Replay record loading...</span></div>
@@ -1596,7 +1604,7 @@
       </div>
     </div>
 
-    <div class="sidebar-panel" id="prompt-assets-panel">
+    <div class="sidebar-panel" id="prompt-assets-panel" data-panel-region="sidebar" data-panel-id="prompt_assets" data-panel-scope="session">
       <h3>Mutable Prompts</h3>
       <div class="content">
         <div id="prompt-assets-status" style="color:var(--text-dim);font-size:0.8em;">Scanning mutable prompt assets...</div>
@@ -1604,22 +1612,22 @@
       </div>
     </div>
 
-    <div class="sidebar-panel" id="world-panel">
+    <div class="sidebar-panel" id="world-panel" data-panel-region="sidebar" data-panel-id="world" data-panel-scope="session">
       <h3>World State</h3>
       <div class="content" id="world-content"><span class="fact" style="color:var(--text-dim)">No world state yet</span></div>
     </div>
 
-    <div class="sidebar-panel" id="stage-panel">
+    <div class="sidebar-panel" id="stage-panel" data-panel-region="sidebar" data-panel-id="stage" data-panel-scope="session">
       <h3>Stage</h3>
       <div class="content" id="stage-content">--</div>
     </div>
 
-    <div class="sidebar-panel" id="plan-panel" style="display:none;">
+    <div class="sidebar-panel" id="plan-panel" data-panel-region="sidebar" data-panel-id="plan" data-panel-scope="session">
       <h3>Script</h3>
       <div class="content" id="plan-content"></div>
     </div>
 
-    <div class="sidebar-panel" id="people-panel">
+    <div class="sidebar-panel" id="people-panel" data-panel-region="sidebar" data-panel-id="people" data-panel-scope="session">
       <h3>People</h3>
       <div class="content" id="people-content"><span style="color:var(--text-dim)">No people tracked</span></div>
     </div>
@@ -1671,7 +1679,7 @@
   let compactMode = false;
   let timelineWindowSeconds = 30;
   let followLive = true;
-  let activeDetailTab = "chronology";
+  let activeDetailTab = "prompts";
   let visionPassKey = null;
   const promptTraceEvents = [];
   let isTimelineDragging = false;
@@ -1716,6 +1724,71 @@
   let statePollFailures = 0;
   let statePollingSuspended = false;
   const pageLoadedAt = Date.now();
+  const INSPECTOR_PANELS = [
+    {
+      id: "event_summary",
+      sectionId: "inspector-summary-panel",
+      titleId: "inspector-summary-title",
+      title: "Debug Timeline Event",
+      scope: "event",
+    },
+    {
+      id: "related_in_turn",
+      sectionId: "inspector-related-panel",
+      labelId: "inspector-related-label",
+      title: "Related In Turn",
+      scope: "event",
+    },
+    {
+      id: "annotations",
+      sectionId: "inspector-annotations-panel",
+      labelId: "inspector-annotations-label",
+      title: "Annotations",
+      scope: "event",
+    },
+    {
+      id: "detail_tabs",
+      sectionId: "inspector-detail-tabs-panel",
+      labelId: "inspector-detail-tabs-label",
+      title: "Inspector Pane",
+      scope: "event",
+      tabs: [
+        {id: "prompts", tabId: "tab-prompts", paneId: "detail-prompts-pane", title: "Conversation Memory / Prompt IO", scope: "event"},
+        {id: "payload", tabId: "tab-payload", paneId: "detail-payload-pane", title: "Debug Event JSON", scope: "event"},
+      ],
+    },
+  ];
+  const DETAIL_TABS = (INSPECTOR_PANELS.find((panel) => panel.id === "detail_tabs")?.tabs || []).map((tab) => ({
+    key: tab.id,
+    paneId: tab.paneId,
+    tabId: tab.tabId,
+    title: tab.title,
+  }));
+  const SIDEBAR_GROUPS = [
+    {id: "session_control", label: "Session Control", order: 10},
+    {id: "live_state", label: "Live State", order: 20},
+  ];
+  const SIDEBAR_PANELS = [
+    {id: "runtime", panelId: "runtime-panel", title: "Runtime", scope: "session", group: "session_control", order: 10, defaultVisible: true, defaultCollapsed: false, required: true},
+    {id: "history", panelId: "history-panel", title: "Replay Capture", scope: "session", group: "session_control", order: 20, defaultVisible: true, defaultCollapsed: false},
+    {id: "prompt_assets", panelId: "prompt-assets-panel", title: "Mutable Prompts", scope: "session", group: "session_control", order: 30, defaultVisible: true, defaultCollapsed: false},
+    {id: "vision", panelId: "vision-panel", title: "Vision", scope: "session", group: "live_state", order: 10, defaultVisible: true, defaultCollapsed: false, required: true, contentId: "vision-meta"},
+    {id: "world", panelId: "world-panel", title: "World State", scope: "session", group: "live_state", order: 20, defaultVisible: true, defaultCollapsed: false, contentId: "world-content"},
+    {id: "stage", panelId: "stage-panel", title: "Stage", scope: "session", group: "live_state", order: 30, defaultVisible: true, defaultCollapsed: false, contentId: "stage-content"},
+    {id: "plan", panelId: "plan-panel", title: "Script", scope: "session", group: "live_state", order: 40, defaultVisible: true, defaultCollapsed: false, contentId: "plan-content"},
+    {id: "people", panelId: "people-panel", title: "People", scope: "session", group: "live_state", order: 50, defaultVisible: true, defaultCollapsed: false, contentId: "people-content"},
+  ];
+  const sidebarPanelConfigById = new Map(SIDEBAR_PANELS.map((panel) => [panel.id, panel]));
+  const sidebarPanelState = new Map(
+    SIDEBAR_PANELS.map((panel) => [
+      panel.id,
+      {
+        visible: panel.defaultVisible !== false,
+        status: panel.defaultVisible === false ? "hidden" : "idle",
+        collapsed: !!panel.defaultCollapsed,
+      },
+    ])
+  );
 
   const hiddenLanes = new Set();
   const streamEvents = [];
@@ -1802,6 +1875,7 @@
   const streamPlayheadEl = document.getElementById("stream-playhead");
   const INSPECTOR_WIDTH_STORAGE_KEY = "dashboard.inspector_width";
   const SIDEBAR_WIDTH_STORAGE_KEY = "dashboard.sidebar_width";
+  const SIDEBAR_COLLAPSE_STORAGE_KEY = "dashboard.sidebar_collapsed";
   let pendingPauseState = null;
   let lastStoppedReportRefText = "";
   let lastStoppedReportRefPath = "";
@@ -1852,6 +1926,227 @@
     "resume",
     "session_end",
   ]);
+
+  function syncSidebarPanel(id) {
+    const panel = sidebarPanelConfigById.get(id);
+    if (!panel) return;
+    const state = sidebarPanelState.get(id) || {visible: true, status: "idle", collapsed: false};
+    const root = document.getElementById(panel.panelId);
+    if (!root) return;
+    root.style.display = state.visible ? "" : "none";
+    root.dataset.panelVisible = state.visible ? "true" : "false";
+    root.dataset.panelStatus = state.status || "";
+    root.dataset.panelGroup = panel.group || "";
+    root.dataset.panelOrder = String(panel.order || 0);
+    root.classList.toggle("collapsed", !!state.collapsed);
+    root.dataset.panelCollapsed = state.collapsed ? "true" : "false";
+    const toggle = root.querySelector(".sidebar-panel-toggle");
+    if (toggle) {
+      toggle.textContent = state.collapsed ? "Expand" : "Collapse";
+      toggle.setAttribute("aria-expanded", state.collapsed ? "false" : "true");
+      toggle.setAttribute("aria-label", `${state.collapsed ? "Expand" : "Collapse"} ${panel.title}`);
+    }
+  }
+
+  function setSidebarPanelVisibility(id, visible, status = null) {
+    const state = sidebarPanelState.get(id);
+    if (!state) return;
+    state.visible = !!visible;
+    if (status != null) state.status = status;
+    syncSidebarPanel(id);
+  }
+
+  function setSidebarPanelStatus(id, status) {
+    const state = sidebarPanelState.get(id);
+    if (!state) return;
+    state.status = status || state.status;
+    syncSidebarPanel(id);
+  }
+
+  function persistSidebarPanelCollapseState() {
+    try {
+      const payload = Object.fromEntries(Array.from(sidebarPanelState.entries()).map(([id, state]) => [id, !!state.collapsed]));
+      localStorage.setItem(SIDEBAR_COLLAPSE_STORAGE_KEY, JSON.stringify(payload));
+    } catch (_) {}
+  }
+
+  function restoreSidebarPanelCollapseState() {
+    try {
+      const raw = localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return;
+      Object.entries(parsed).forEach(([id, collapsed]) => {
+        const state = sidebarPanelState.get(id);
+        if (!state) return;
+        state.collapsed = !!collapsed;
+      });
+    } catch (_) {}
+  }
+
+  function setSidebarPanelCollapsed(id, collapsed, {persist = true} = {}) {
+    const state = sidebarPanelState.get(id);
+    if (!state) return;
+    state.collapsed = !!collapsed;
+    syncSidebarPanel(id);
+    if (persist) persistSidebarPanelCollapseState();
+  }
+
+  function toggleSidebarPanelCollapsed(id) {
+    const state = sidebarPanelState.get(id);
+    if (!state) return;
+    setSidebarPanelCollapsed(id, !state.collapsed);
+  }
+
+  function resetSidebarPanels() {
+    SIDEBAR_PANELS.forEach((panel) => {
+      const state = sidebarPanelState.get(panel.id);
+      if (!state) return;
+      state.visible = panel.defaultVisible !== false;
+      state.status = panel.defaultVisible === false ? "hidden" : "idle";
+      syncSidebarPanel(panel.id);
+    });
+  }
+
+  function sidebarPanelContentEl(id) {
+    const panel = sidebarPanelConfigById.get(id);
+    if (!panel?.contentId) return null;
+    return document.getElementById(panel.contentId);
+  }
+
+  function renderSidebarPanelContent(id, html, {status = "ready", visible = true} = {}) {
+    const el = sidebarPanelContentEl(id);
+    if (el) el.innerHTML = html;
+    setSidebarPanelVisibility(id, visible, status);
+  }
+
+  function resetSidebarPanelContent(id) {
+    switch (id) {
+      case "vision":
+        renderSidebarPanelContent("vision", "", {status: "idle", visible: true});
+        document.getElementById("vision-model-status").innerHTML = "";
+        break;
+      case "history":
+        historyStatusEl.innerHTML = '<span style="color:var(--text-dim)">Replay record loading...</span>';
+        historyRecordingModeEl.textContent = "";
+        setSidebarPanelStatus("history", "idle");
+        break;
+      case "prompt_assets":
+        promptAssetsStatusEl.textContent = "Scanning mutable prompt assets...";
+        promptAssetsListEl.innerHTML = "";
+        setSidebarPanelStatus("prompt_assets", "idle");
+        break;
+      case "world":
+        renderSidebarPanelContent("world", '<span class="fact" style="color:var(--text-dim)">No world state yet</span>', {status: "empty", visible: true});
+        break;
+      case "stage":
+        renderSidebarPanelContent("stage", "--", {status: "empty", visible: true});
+        break;
+      case "plan":
+        renderSidebarPanelContent("plan", '<span style="color:var(--text-dim)">No active script plan yet</span>', {status: "empty", visible: true});
+        break;
+      case "people":
+        renderSidebarPanelContent("people", '<span style="color:var(--text-dim)">No people tracked</span>', {status: "empty", visible: true});
+        break;
+      default:
+        break;
+    }
+  }
+
+  function resetSidebarPanelContentAll() {
+    SIDEBAR_PANELS.forEach((panel) => resetSidebarPanelContent(panel.id));
+  }
+
+  function buildSidebarLayout() {
+    const sidebar = document.getElementById("sidebar");
+    if (!sidebar) return;
+    const sortedGroups = [...SIDEBAR_GROUPS].sort((a, b) => (a.order || 0) - (b.order || 0));
+    const panelsByGroup = new Map(sortedGroups.map((group) => [group.id, []]));
+    SIDEBAR_PANELS.forEach((panel) => {
+      const list = panelsByGroup.get(panel.group) || [];
+      list.push(panel);
+      panelsByGroup.set(panel.group, list);
+    });
+    const fragment = document.createDocumentFragment();
+    sortedGroups.forEach((group) => {
+      const groupPanels = (panelsByGroup.get(group.id) || []).sort((a, b) => (a.order || 0) - (b.order || 0));
+      if (!groupPanels.length) return;
+      const label = document.createElement("div");
+      label.className = "sidebar-group-label";
+      label.dataset.panelGroup = group.id;
+      label.textContent = group.label;
+      fragment.appendChild(label);
+      groupPanels.forEach((panel) => {
+        const root = document.getElementById(panel.panelId);
+        if (root) fragment.appendChild(root);
+      });
+    });
+    sidebar.replaceChildren(fragment);
+  }
+
+  function applyPanelRegistryMetadata() {
+    INSPECTOR_PANELS.forEach((panel) => {
+      const section = document.getElementById(panel.sectionId);
+      if (section) {
+        section.dataset.panelId = panel.id;
+        section.dataset.panelRegion = "inspector";
+        section.dataset.panelScope = panel.scope;
+      }
+      if (panel.titleId) {
+        const titleEl = document.getElementById(panel.titleId);
+        if (titleEl) titleEl.textContent = panel.title;
+      }
+      if (panel.labelId) {
+        const labelEl = document.getElementById(panel.labelId);
+        if (labelEl) labelEl.textContent = panel.title;
+      }
+      (panel.tabs || []).forEach((tab) => {
+        const button = document.getElementById(tab.tabId);
+        if (button) {
+          button.dataset.panelId = tab.id;
+          button.dataset.panelRegion = "inspector";
+          button.dataset.panelScope = tab.scope;
+          button.textContent = tab.title;
+        }
+        const pane = document.getElementById(tab.paneId);
+        if (pane) {
+          pane.dataset.panelId = tab.id;
+          pane.dataset.panelRegion = "inspector";
+          pane.dataset.panelScope = tab.scope;
+        }
+      });
+    });
+    SIDEBAR_PANELS.forEach((panel) => {
+      const root = document.getElementById(panel.panelId);
+      if (!root) return;
+      root.dataset.panelId = panel.id;
+      root.dataset.panelRegion = "sidebar";
+      root.dataset.panelScope = panel.scope;
+      root.dataset.panelGroup = panel.group || "";
+      root.dataset.panelOrder = String(panel.order || 0);
+      const heading = root.querySelector("h3");
+      if (heading) {
+        heading.textContent = panel.title;
+        let head = root.querySelector(".sidebar-panel-head");
+        if (!head) {
+          head = document.createElement("div");
+          head.className = "sidebar-panel-head";
+          root.insertBefore(head, heading);
+        }
+        if (heading.parentElement !== head) head.prepend(heading);
+        let toggle = head.querySelector(".sidebar-panel-toggle");
+        if (!toggle) {
+          toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.className = "sidebar-panel-toggle";
+          toggle.dataset.panelCollapse = panel.id;
+          head.appendChild(toggle);
+        }
+      }
+      syncSidebarPanel(panel.id);
+    });
+    buildSidebarLayout();
+  }
 
   async function loadStreamSchema() {
     try {
@@ -1968,6 +2263,7 @@
       historyRewindButton.disabled = true;
       historyPinButton.disabled = true;
       historyPruneButton.disabled = true;
+      setSidebarPanelStatus("history", "error");
       return;
     }
     const current = historyState.current_session || {};
@@ -1992,6 +2288,7 @@
     historyRewindButton.disabled = !current.session_id;
     historyPinButton.disabled = !current.session_id;
     historyPruneButton.disabled = false;
+    setSidebarPanelStatus("history", current.session_id ? "ready" : "empty");
     renderSelectedEventAnnotations();
     if (selectedStreamKey) selectEvent(selectedStreamKey);
     maybeResolveSaveCompleteFromState().catch(() => {});
@@ -2018,8 +2315,10 @@
     if (!promptAssets.length) {
       promptAssetsStatusEl.textContent = "No mutable prompt assets discovered yet.";
       promptAssetsListEl.innerHTML = "";
+      setSidebarPanelStatus("prompt_assets", "empty");
       return;
     }
+    setSidebarPanelStatus("prompt_assets", "ready");
     promptAssetsStatusEl.innerHTML = "Edit these files locally, then use <b>Apply</b> to push the relevant refresh action.";
     promptAssetsListEl.innerHTML = promptAssets.map((item) => `
       <div style="border:1px solid var(--border);border-radius:8px;padding:0.5em 0.6em;background:var(--panel-hover);">
@@ -2046,6 +2345,7 @@
     } catch (error) {
       promptAssetsStatusEl.textContent = `Prompt asset inventory unavailable: ${error.message || error}`;
       promptAssetsListEl.innerHTML = "";
+      setSidebarPanelStatus("prompt_assets", "error");
     }
   }
 
@@ -2137,7 +2437,9 @@
       loadedAnnotationSessionId,
       worldHtml: document.getElementById("world-content").innerHTML,
       peopleHtml: document.getElementById("people-content").innerHTML,
-      stageText: document.getElementById("stage-content").textContent,
+      stageHtml: document.getElementById("stage-content").innerHTML,
+      planHtml: document.getElementById("plan-content").innerHTML,
+      sidebarPanels: cloneSnapshotPayload(Array.from(sidebarPanelState.entries())),
       headerSession: document.getElementById("h-session").textContent,
       headerStage: document.getElementById("h-stage").textContent,
       headerUptime: document.getElementById("h-uptime").textContent,
@@ -2178,7 +2480,16 @@
     loadedAnnotationSessionId = liveTimelineSnapshot.loadedAnnotationSessionId || "";
     document.getElementById("world-content").innerHTML = liveTimelineSnapshot.worldHtml || '<span class="fact" style="color:var(--text-dim)">No world state yet</span>';
     document.getElementById("people-content").innerHTML = liveTimelineSnapshot.peopleHtml || '<span style="color:var(--text-dim)">No people tracked</span>';
-    document.getElementById("stage-content").textContent = liveTimelineSnapshot.stageText || "--";
+    document.getElementById("stage-content").innerHTML = liveTimelineSnapshot.stageHtml || "--";
+    document.getElementById("plan-content").innerHTML = liveTimelineSnapshot.planHtml || '<span style="color:var(--text-dim)">No active script plan yet</span>';
+    (liveTimelineSnapshot.sidebarPanels || []).forEach(([id, savedState]) => {
+      const state = sidebarPanelState.get(id);
+      if (!state || !savedState || typeof savedState !== "object") return;
+      state.visible = savedState.visible !== false;
+      state.status = savedState.status || state.status;
+      state.collapsed = !!savedState.collapsed;
+      syncSidebarPanel(id);
+    });
     document.getElementById("h-session").textContent = liveTimelineSnapshot.headerSession || "--";
     document.getElementById("h-stage").textContent = liveTimelineSnapshot.headerStage || "--";
     document.getElementById("h-uptime").textContent = liveTimelineSnapshot.headerUptime || "--";
@@ -2847,13 +3158,14 @@
   }
 
   function setDetailTab(tab) {
-    activeDetailTab = tab;
+    const resolvedTab = DETAIL_TABS.some((item) => item.key === tab) ? tab : DETAIL_TABS[0].key;
+    activeDetailTab = resolvedTab;
     document.querySelectorAll(".detail-tab").forEach((button) => {
-      button.classList.toggle("active", button.dataset.detailTab === tab);
+      button.classList.toggle("active", button.dataset.detailTab === resolvedTab);
     });
-    document.getElementById("detail-chronology-pane").classList.toggle("active", tab === "chronology");
-    document.getElementById("detail-prompts-pane").classList.toggle("active", tab === "prompts");
-    document.getElementById("detail-payload-pane").classList.toggle("active", tab === "payload");
+    DETAIL_TABS.forEach((item) => {
+      document.getElementById(item.paneId).classList.toggle("active", item.key === resolvedTab);
+    });
   }
 
   function scrollTimelineToStart() {
@@ -3441,15 +3753,25 @@
     let visionServiceState = "waiting";
     let visionServiceDetail = "Waiting for runtime vision service info.";
     if (runtimeStateSeen) {
-      if (visionService.state === "managed" || visionService.state === "external") {
+      const visionSource = currentVisionSourceKind();
+      if (!visionSource) {
+        visionServiceState = "error";
+        visionServiceDetail = "No live vision feed or archive source is available.";
+      } else if (archiveBrowseRef || (historyState.playback?.active && playbackVisionFrame?.sessionId)) {
+        visionServiceState = "ready";
+        visionServiceDetail = `Using ${visionSource}.`;
+      } else if (visionService.state === "managed" || visionService.state === "external") {
         visionServiceState = "ready";
         visionServiceDetail = `${visionService.state} at ${visionService.url || "local service"}${visionManagerActive ? " · manager attached" : ""}`;
       } else if (visionService.state === "starting") {
         visionServiceState = "active";
         visionServiceDetail = `Vision service is booting at ${visionService.url || "local service"}`;
+      } else if (visionService.health) {
+        visionServiceState = "ready";
+        visionServiceDetail = `${visionSource} is available.`;
       } else {
-        visionServiceState = "off";
-        visionServiceDetail = "Vision service has not started yet.";
+        visionServiceState = "waiting";
+        visionServiceDetail = `${visionSource} is available, waiting for runtime confirmation.`;
       }
     }
 
@@ -3494,6 +3816,7 @@
       !runtimeStateSeen ? "Connecting to the local runtime... waiting for app runtime controls." :
       restartPending ? "Restarting conversation..." :
       statePollingSuspended ? "Dashboard disconnected. Refresh after the local runtime comes back." :
+      visionServiceState === "error" ? "Vision needs attention before the runtime is ready." :
       modelPollError ? "Vision models need attention before the runtime is ready." :
       voiceState === "error" ? "Voice needs attention before the runtime is ready." :
       sessionSavePending ? "Saving the finished session. A completion modal will appear when the archive is ready." :
@@ -3503,7 +3826,7 @@
 
     const modelReady = modelState === "ready" || modelState === "off";
     const voiceReady = voiceState === "ready" || voiceState === "off";
-    const visionReady = !visionService.url || visionServiceState === "ready" || visionServiceState === "off";
+    const visionReady = visionServiceState === "ready";
     const bootReady = runtimeStateSeen && (sessionSavePending || sessionStopped || sessionSeen || restartPending) && visionReady && voiceReady && modelReady && !modelPollError;
     document.body.classList.toggle("booting", !bootReady);
 
@@ -3639,15 +3962,12 @@
     clearAnnotationState();
     document.getElementById("h-session").textContent = "--";
     document.getElementById("h-stage").textContent = "--";
-    document.getElementById("world-content").innerHTML = '<span class="fact" style="color:var(--text-dim)">No world state yet</span>';
-    document.getElementById("people-content").innerHTML = '<span style="color:var(--text-dim)">No people tracked</span>';
-    document.getElementById("stage-content").textContent = "--";
+    resetSidebarPanelContentAll();
     document.getElementById("detail-label").textContent = "Select a debug timeline event to inspect it.";
     document.getElementById("detail-detail").textContent = "The stream view groups interwoven activity by lane and highlights all events from the same turn when selected.";
     document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Raw event JSON appears here for the selected item.\"\n}";
     document.getElementById("detail-prompts").innerHTML = '<div style="color:var(--text-dim);">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-related").innerHTML = '<div style="color:var(--text-dim);">No event selected.</div>';
-    document.getElementById("detail-chronology").innerHTML = "";
     document.getElementById("detail-loop").classList.remove("active");
     document.getElementById("detail-loop-track").innerHTML = "";
     document.getElementById("detail-loop-chips").innerHTML = "";
@@ -3663,12 +3983,10 @@
     document.getElementById("boot-summary").textContent = message;
     document.getElementById("boot-overlay-summary").textContent = message;
     setDetailTab(activeDetailTab);
+    resetSidebarPanels();
+    renderVisionServiceStatus();
     renderStream();
     renderSelectedEventAnnotations();
-    if (visionService.url) {
-      document.getElementById("vision-panel").style.display = "";
-      renderVisionServiceStatus();
-    }
     renderBootStatus();
     updateRuntimeButtons();
   }
@@ -3734,18 +4052,14 @@
     visionMemory = null;
     modelPollError = "";
     visionFeedSrc = "";
-    document.getElementById("vision-panel").style.display = visionService.url ? "" : "none";
-    document.getElementById("vision-meta").innerHTML = "";
-    document.getElementById("world-content").innerHTML = '<span class="fact" style="color:var(--text-dim)">No world state yet</span>';
-    document.getElementById("people-content").innerHTML = '<span style="color:var(--text-dim)">No people tracked</span>';
-    document.getElementById("stage-content").textContent = "--";
+    resetSidebarPanels();
+    resetSidebarPanelContentAll();
     document.getElementById("runtime-status").innerHTML = "Waiting for runtime state...";
     document.getElementById("detail-label").textContent = "Select a debug timeline event to inspect it.";
     document.getElementById("detail-detail").textContent = "The stream view groups interwoven activity by lane and highlights all events from the same turn when selected.";
     document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Raw event JSON appears here for the selected item.\"\n}";
     document.getElementById("detail-prompts").innerHTML = '<div style="color:var(--text-dim);">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-related").innerHTML = '<div style="color:var(--text-dim);">No event selected.</div>';
-    document.getElementById("detail-chronology").innerHTML = "";
     document.getElementById("detail-loop").classList.remove("active");
     document.getElementById("detail-loop-track").innerHTML = "";
     document.getElementById("detail-loop-chips").innerHTML = "";
@@ -3759,6 +4073,7 @@
     detailWarning.style.display = "none";
     detailWarning.textContent = "";
     setDetailTab(activeDetailTab);
+    renderVisionServiceStatus();
     document.getElementById("boot-summary").textContent = message;
     document.getElementById("boot-overlay-summary").textContent = message;
     renderStream();
@@ -3776,6 +4091,16 @@
       </div>
       ${suffix}
     </div>`;
+  }
+
+  function currentVisionSourceKind() {
+    if (archiveBrowseRef && archivePlaybackMediaAvailable()) return "archive media";
+    if (historyState.playback?.active && playbackVisionFrame?.sessionId) return "archive playback";
+    if (archiveBrowseRef) return "archive frame";
+    if (visionService.url && visionService.managed) return "managed by app";
+    if (visionService.url && visionService.external) return "external service";
+    if (visionService.url) return "live service";
+    return "";
   }
 
   function updateVisionFeedUrl() {
@@ -3827,42 +4152,31 @@
   function renderVisionServiceStatus() {
     const statusEl = document.getElementById("vision-service-status");
     const linkEl = document.getElementById("vision-service-link");
-    const panel = document.getElementById("vision-panel");
-    const health = modelPollError ? "unreachable" : (visionService.health ? "ok" : "unknown");
-    const effectiveState = modelPollError ? "error" : (visionService.state || "stopped");
-    const source = (archiveBrowseRef && archivePlaybackMediaAvailable()) ? "archive media"
-      : (historyState.playback?.active && playbackVisionFrame?.sessionId) ? "archive playback"
-      : archiveBrowseRef ? "archive frame"
-      : visionService.managed ? "managed by app"
-      : visionService.external ? "external service"
-      : "not running";
+    const source = currentVisionSourceKind();
+    const missingVisionSource = !source;
+    const health = missingVisionSource ? "missing source" : (modelPollError ? "unreachable" : (visionService.health ? "ok" : "unknown"));
+    const effectiveState = missingVisionSource ? "error" : (modelPollError ? "error" : (visionService.state || "stopped"));
+    setSidebarPanelVisibility("vision", true, effectiveState);
     statusEl.innerHTML = [
       `service: <b style="color:${statusColor(effectiveState)}">${esc(effectiveState)}</b>`,
-      `health: <b style="color:${statusColor(modelPollError ? "error" : (visionService.health ? "ready" : "waiting"))}">${esc(health)}</b>`,
-      `source: <b>${esc(source)}</b>`,
+      `health: <b style="color:${statusColor(missingVisionSource || modelPollError ? "error" : (visionService.health ? "ready" : "waiting"))}">${esc(health)}</b>`,
+      `source: <b>${esc(source || "missing")}</b>`,
       archiveBrowseRef ? `archive: <b>${esc(archiveBrowseMeta?.title || archiveBrowseRef)}</b>` : "",
       visionService.url && !archiveBrowseRef ? `url: <b>${esc(visionService.url)}</b>` : "",
       visionService.mockReplay ? `mock: <b>${esc(visionService.mockReplay)}</b>` : "",
+      missingVisionSource ? `error: <b style="color:var(--error)">No live vision feed or archive source is available.</b>` : "",
       modelPollError ? `error: <b style="color:var(--error)">${esc(modelPollError)}</b>` : "",
     ].filter(Boolean).join("<br>");
-    if (visionService.url || archiveBrowseRef || (historyState.playback?.active && playbackVisionFrame?.sessionId)) {
-      panel.style.display = "";
-      if (visionService.url && !archiveBrowseRef) {
-        linkEl.href = visionService.url;
-        linkEl.style.pointerEvents = "auto";
-        linkEl.style.opacity = "1";
-      } else {
-        linkEl.href = "#";
-        linkEl.style.pointerEvents = "none";
-        linkEl.style.opacity = "0.55";
-      }
-      updateVisionFeedUrl();
+    if (visionService.url && !archiveBrowseRef) {
+      linkEl.href = visionService.url;
+      linkEl.style.pointerEvents = "auto";
+      linkEl.style.opacity = "1";
     } else {
-      panel.style.display = "none";
       linkEl.href = "#";
       linkEl.style.pointerEvents = "none";
       linkEl.style.opacity = "0.55";
     }
+    updateVisionFeedUrl();
     renderBootStatus();
   }
 
@@ -4437,7 +4751,6 @@
       loadedAnnotationSessionId = sessionId;
       mergeAnnotations(entries, {replace: true});
       renderStream();
-      renderChronology();
       renderSelectedEventAnnotations();
     } catch (_) {
       if (loadedAnnotationSessionId === sessionId) return;
@@ -5195,32 +5508,10 @@
       const card = document.querySelector(`.stream-card[data-event-key="${relatedKey}"]`);
       if (card) card.classList.add("context");
     });
-    document.querySelectorAll(".chronology-row").forEach((row) => {
-      const active = row.dataset.eventKey === key;
-      row.classList.toggle("selected", active);
-      if (active) row.scrollIntoView({block: "nearest"});
-    });
     if (archiveBrowseRef && archivePlaybackMediaAvailable() && options.seekMedia !== false) {
       seekArchiveMedia(relativeTime(event.timestamp), {syncSelection: false});
     }
     updateVisionFeedUrl();
-  }
-
-  function renderChronology() {
-    const root = document.getElementById("detail-chronology");
-    root.innerHTML = "";
-    streamEvents.forEach((event) => {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "chronology-row";
-      if (event.superseded) row.classList.add("context");
-      if (event.key === selectedStreamKey) row.classList.add("selected");
-      row.dataset.eventKey = event.key;
-      row.onclick = () => selectEvent(event.key);
-      const markers = `${renderStateBadges(event)}${renderAnnotationBadge(event)}`;
-      row.innerHTML = `<div><b>${esc(event.type)}</b> · ${esc(event.label)}</div><small>${esc(event.lane)} · +${relativeTime(event.timestamp).toFixed(2)}s</small>${markers ? `<div class="reply-markers" style="margin-top:0.35em;">${markers}</div>` : ""}`;
-      root.appendChild(row);
-    });
   }
 
   function cardWidth(event) {
@@ -5425,7 +5716,6 @@
 
   function renderStream() {
     renderLaneToggles();
-    renderChronology();
 
     if (!streamEvents.length) {
       streamEmpty.style.display = "";
@@ -5698,7 +5988,6 @@
     },
 
     world_state(data, rawEvent) {
-      const el = document.getElementById("world-content");
       let html = "";
       if (data.static_facts && data.static_facts.length) {
         html += data.static_facts.map((fact) => `<div class="fact"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}</div>`).join("");
@@ -5709,7 +5998,7 @@
       if (data.pending && data.pending.length) {
         html += data.pending.map((fact) => `<div class="fact fact-add">~ ${esc(fact)}</div>`).join("");
       }
-      el.innerHTML = html || '<span style="color:var(--text-dim)">Empty</span>';
+      renderSidebarPanelContent("world", html || '<span style="color:var(--text-dim)">Empty</span>', {status: html ? "ready" : "empty", visible: true});
       rawEvent.turnId = currentTurnId || null;
       const event = ensureCompoundEvent("world_update", rawEvent, {
         add_count: 0,
@@ -5731,14 +6020,13 @@
     },
 
     people_state(data, rawEvent) {
-      const el = document.getElementById("people-content");
       if (!data.people || !data.people.length) {
-        el.innerHTML = '<span style="color:var(--text-dim)">No people tracked</span>';
+        renderSidebarPanelContent("people", '<span style="color:var(--text-dim)">No people tracked</span>', {status: "empty", visible: true});
       } else {
-        el.innerHTML = data.people.map((person) => {
+        renderSidebarPanelContent("people", data.people.map((person) => {
           const facts = (person.facts || []).map((fact) => `<div class="fact" style="padding-left:1em"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}</div>`).join("");
           return `<div class="person-entry"><span class="person-name">${esc(person.name || person.id)}</span> <span style="color:var(--text-dim)">${esc(person.id)}</span>${facts}</div>`;
-        }).join("");
+        }).join(""), {status: "ready", visible: true});
       }
       rawEvent.turnId = currentTurnId || null;
       const event = ensureCompoundEvent("world_update", rawEvent, {
@@ -5758,10 +6046,9 @@
 
     stage_change(data, rawEvent) {
       document.getElementById("h-stage").textContent = data.new_stage || "--";
-      const el = document.getElementById("stage-content");
       let html = `<div><b>${esc(data.new_stage || "--")}</b></div>`;
       if (data.new_goal) html += `<div style="color:var(--text-dim)">${esc(data.new_goal)}</div>`;
-      el.innerHTML = html;
+      renderSidebarPanelContent("stage", html, {status: data.new_stage || data.new_goal ? "ready" : "empty", visible: true});
       rawEvent.turnId = currentTurnId || null;
       const event = ensureCompoundEvent("post_response", rawEvent, {
         script_status: "",
@@ -5781,16 +6068,13 @@
     },
 
     plan(data, rawEvent) {
-      const panel = document.getElementById("plan-panel");
-      const el = document.getElementById("plan-content");
       if (!data.beats || !data.beats.length) {
-        panel.style.display = "none";
+        renderSidebarPanelContent("plan", '<span style="color:var(--text-dim)">No active script plan yet</span>', {status: "empty", visible: true});
       } else {
-        panel.style.display = "";
-        el.innerHTML = '<div class="beat-list">' + data.beats.map((beat, index) => {
+        renderSidebarPanelContent("plan", '<div class="beat-list">' + data.beats.map((beat, index) => {
           const cls = index === 0 ? "beat-item current" : "beat-item";
           return `<div class="${cls}">${index}. [${esc(beat.intent)}]</div>`;
-        }).join("") + "</div>";
+        }).join("") + "</div>", {status: "ready", visible: true});
       }
       rawEvent.turnId = currentTurnId || null;
       const event = ensureCompoundEvent("post_response", rawEvent, {
@@ -5881,9 +6165,6 @@
 
     vision_snapshot(data, rawEvent) {
       if (conversationPaused) return;
-      const panel = document.getElementById("vision-panel");
-      panel.style.display = "";
-      const meta = document.getElementById("vision-meta");
       let html = "";
       if (data.faces !== undefined) html += `Faces: ${data.faces} `;
       if (data.persons !== undefined) html += `People: ${data.persons} `;
@@ -5894,7 +6175,7 @@
           return `<b>${esc(answer.question || "vision")}</b>: ${esc(answer.answer || "")}`;
         }).join("<br>");
       }
-      meta.innerHTML = html;
+      renderSidebarPanelContent("vision", html, {status: "ready", visible: true});
       rawEvent.turnId = currentTurnId || null;
       const event = ensureVisionPassEvent(rawEvent);
       event.data.object_labels = data.object_labels || event.data.object_labels || [];
@@ -6224,12 +6505,6 @@
     timelineWindowSeconds = sliderToWindow(e.target.value);
     timeWindowValue.textContent = formatWindow(timelineWindowSeconds);
     renderStream();
-  });
-  document.getElementById("show-chronology").addEventListener("change", (e) => {
-    const show = e.target.checked;
-    document.getElementById("tab-chronology").style.display = show ? "" : "none";
-    if (!show && activeDetailTab === "chronology") setDetailTab("payload");
-    if (show && activeDetailTab !== "chronology" && !selectedStreamKey) setDetailTab("chronology");
   });
   document.getElementById("follow-live").addEventListener("change", (e) => {
     followLive = !!e.target.checked;
@@ -6574,6 +6849,13 @@
       annotationStatus.textContent = `Prune failed: ${error.message || error}`;
     }
   });
+  document.getElementById("sidebar").addEventListener("click", (event) => {
+    const toggle = event.target.closest(".sidebar-panel-toggle");
+    if (!toggle) return;
+    const panelId = toggle.dataset.panelCollapse || "";
+    if (!panelId) return;
+    toggleSidebarPanelCollapsed(panelId);
+  });
   runtimeControlGrid.addEventListener("click", (event) => {
     const button = event.target.closest("[data-runtime-control]");
     if (!button) return;
@@ -6620,11 +6902,15 @@
     setSidebarWidth(width);
   });
 
+  restoreSidebarPanelCollapseState();
+  applyPanelRegistryMetadata();
+  resetSidebarPanels();
+  resetSidebarPanelContentAll();
   loadStreamSchema();
   timelineWindowSeconds = sliderToWindow(timeWindowSlider.value);
   timeWindowValue.textContent = formatWindow(timelineWindowSeconds);
   restoreLayoutWidths();
-  setDetailTab("chronology");
+  setDetailTab("prompts");
   updateRuntimeButtons();
   renderBootStatus();
   renderArchiveBrowseState();

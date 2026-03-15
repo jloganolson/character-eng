@@ -162,6 +162,16 @@ class TestDashboardServer:
         assert "Character Dashboard" in body
         assert resp.status == 200
 
+    def test_root_exposes_panel_registry_markup(self, server):
+        _, _, port, _, _ = server
+        body = urllib.request.urlopen(f"http://127.0.0.1:{port}/").read().decode()
+        assert 'data-panel-region="inspector"' in body
+        assert 'data-panel-id="event_summary"' in body
+        assert 'data-panel-id="prompts"' in body
+        assert 'data-panel-region="sidebar"' in body
+        assert 'data-panel-id="vision"' in body
+        assert 'data-panel-id="plan"' in body
+
     def test_state_returns_json(self, server):
         c, _, port, _, _ = server
         c.push("test_event", {"key": "value"})

@@ -14,6 +14,15 @@ Some are:
 - service wrappers
 - event transformers
 
+## Dashboard Panel Registry
+
+- The dashboard right rail is registry-driven in `character_eng/dashboard/index.html`.
+- Inspector panels are defined in `INSPECTOR_PANELS`.
+- Sidebar panels are defined in `SIDEBAR_PANELS`.
+- Sidebar grouping, ordering, collapse state, visibility, and empty/error states flow through the registry helpers near those definitions.
+- For UX work on the dashboard, edit the registry first, then the specific renderer/reset path if needed. Do not add one-off panel toggles or reorder panels directly in scattered DOM code.
+- `Vision` and `Plan` are permanent panels now. Missing data should usually render as explicit empty/error state, not by hiding the panel.
+
 ## Primary Runtime Agents
 
 ### Base Chat
