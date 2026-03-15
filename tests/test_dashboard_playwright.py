@@ -557,10 +557,10 @@ def test_runtime_panel_interactions_in_browser(
     assert input_queue.get(timeout=2) == "/replay sess-playwright"
     page.locator("#detail-open-json").click()
     expect(page.locator("#detail-payload")).to_contain_text("\"session_id\": \"sess-playwright\"")
-    page.locator("#tab-chronology").click()
     expect(page.locator("#detail-related")).to_contain_text("No linked turn context")
     expect(page.locator("#detail-related")).not_to_contain_text("post_response")
-    expect(page.locator(".chronology-row.selected")).to_have_count(1)
+    expect(page.locator("#tab-chronology")).to_have_count(0)
+    expect(page.locator("#show-chronology")).to_have_count(0)
 
     page.locator("#stream-density").select_option("compact")
     reply_card.click()
@@ -622,11 +622,6 @@ def test_runtime_panel_interactions_in_browser(
     page.mouse.move(viewport_box["x"] + 320, viewport_box["y"] + 40)
     page.mouse.up()
     expect(page.locator("#follow-live")).not_to_be_checked()
-
-    page.locator("#show-chronology").uncheck()
-    expect(page.locator("#tab-chronology")).to_be_hidden()
-    page.locator("#show-chronology").check()
-    expect(page.locator("#tab-chronology")).to_be_visible()
 
     with page.expect_popup() as vision_popup_info:
         page.locator("#vision-service-link").click()
@@ -923,6 +918,84 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#vision-service-status")).to_contain_text("health: unreachable")
     expect(page.locator("#vision-service-status")).to_contain_text("service: error")
     expect(page.locator("body")).to_have_class(re.compile(r"\bbooting\b"))
+
+
+def test_vision_panel_stays_visible_without_source(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+
+    expect(page.locator("#runtime-status")).to_contain_text("state: ready")
+    expect(page.locator("#vision-panel")).to_be_visible()
+    expect(page.locator("#vision-panel")).to_have_attribute("data-panel-id", "vision")
+    expect(page.locator("#vision-service-status")).to_contain_text("source: missing")
+    expect(page.locator("#vision-service-status")).to_contain_text("No live vision feed or archive source is available.")
+    expect(page.locator("#boot-summary")).to_contain_text("Vision needs attention before the runtime is ready.")
+
+
+def test_sidebar_registry_layout_and_panel_collapse(
+    browser_page: Page,
+    dashboard_server,
+):
+    _, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    expect(page.locator(".sidebar-group-label").nth(0)).to_have_text("Session Control")
+    expect(page.locator(".sidebar-group-label").nth(1)).to_have_text("Live State")
+    expect(page.locator("#plan-panel")).to_be_visible()
+    expect(page.locator("#plan-panel")).to_have_attribute("data-panel-group", "live_state")
+    expect(page.locator("#plan-content")).to_contain_text("No active script plan yet")
+    assert page.evaluate(
+        """() => Array.from(document.querySelectorAll('#sidebar .sidebar-panel'))
+        .map((node) => node.dataset.panelId)"""
+    ) == ["runtime", "history", "prompt_assets", "vision", "world", "stage", "plan", "people"]
+
+    toggle = page.locator("#plan-panel .sidebar-panel-toggle")
+    expect(toggle).to_have_text("Collapse")
+    toggle.evaluate("(node) => node.click()")
+    expect(page.locator("#plan-panel")).to_have_class(re.compile(r"\bcollapsed\b"))
+    expect(toggle).to_have_text("Expand")
 
 
 def test_dashboard_preserves_unfinished_reply_when_new_turn_starts(
