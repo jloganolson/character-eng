@@ -141,6 +141,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "accelerate" },
+    { name = "cjm-byte-track" },
     { name = "decord" },
     { name = "einops" },
     { name = "flask" },
@@ -167,6 +168,7 @@ dependencies = [
 [package.optional-dependencies]
 jetson = [
     { name = "accelerate" },
+    { name = "cjm-byte-track" },
     { name = "decord" },
     { name = "einops" },
     { name = "flask" },
@@ -190,6 +192,8 @@ jetson = [
 requires-dist = [
     { name = "accelerate" },
     { name = "accelerate", marker = "extra == 'jetson'" },
+    { name = "cjm-byte-track", specifier = ">=0.0.6" },
+    { name = "cjm-byte-track", marker = "extra == 'jetson'", specifier = ">=0.0.6" },
     { name = "decord" },
     { name = "decord", marker = "extra == 'jetson'" },
     { name = "einops" },
@@ -301,6 +305,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/40/65/e7c6c77d7aaa4c0d7974f2e403e17f0ed2cb0fc135f77d686b916bf1eead/charset_normalizer-3.4.5-cp314-cp314-win_amd64.whl", hash = "sha256:4481e6da1830c8a1cc0b746b47f603b653dadb690bcd851d039ffaefe70533aa", size = 143511, upload-time = "2026-03-06T06:02:26.195Z" },
     { url = "https://files.pythonhosted.org/packages/ba/91/52b0841c71f152f563b8e072896c14e3d83b195c188b338d3cc2e582d1d4/charset_normalizer-3.4.5-cp314-cp314-win_arm64.whl", hash = "sha256:97ab7787092eb9b50fb47fa04f24c75b768a606af1bcba1957f07f128a7219e4", size = 133775, upload-time = "2026-03-06T06:02:27.473Z" },
     { url = "https://files.pythonhosted.org/packages/c5/60/3a621758945513adfd4db86827a5bafcc615f913dbd0b4c2ed64a65731be/charset_normalizer-3.4.5-py3-none-any.whl", hash = "sha256:9db5e3fcdcee89a78c04dffb3fe33c79f77bd741a624946db2591c81b2fc85b0", size = 55455, upload-time = "2026-03-06T06:03:17.827Z" },
+]
+
+[[package]]
+name = "cjm-byte-track"
+version = "0.0.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5a/1e/8e3cab0086bbeb1f07e24ee965f5e0a84091c05b7b8f9d05f6327351d1b2/cjm-byte-track-0.0.6.tar.gz", hash = "sha256:98f9f876014e3bd245966b71addde1abbec95f51e33e18f0fea6b380e13d0ddb", size = 18077, upload-time = "2023-10-27T19:42:56.436Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/b9/6e251ea133163a517f6d32044fcbd99e4cb423e7c62b02b2118ac6fa4b23/cjm_byte_track-0.0.6-py3-none-any.whl", hash = "sha256:045dcc0f91fe423a065cbd1d85eff1217868b09ac9a32ee01a0f89d56eb1e501", size = 20378, upload-time = "2023-10-27T19:42:54.876Z" },
 ]
 
 [[package]]

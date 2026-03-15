@@ -1185,6 +1185,7 @@ if __name__ == "__main__":
         from person_tracker import PersonTracker
         pt = PersonTracker(
             cam, sam3_getter=lambda: (_sam3_model, _sam3_proc),
+            face_getter=lambda: ft.get_faces() if ft is not None else [],
             device=DEVICE, dtype=DTYPE,
         )
         print("Person tracker: available", flush=True)

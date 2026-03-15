@@ -1,9 +1,10 @@
-"""Person re-identification with SAM3 crops + torchreid ResNet50.
+"""Person tracking with SAM3 detections, ByteTrack association, and face-led identity.
 
 Pipeline:
   1. SAM3 "person" prompt -> detect all person instances (masks + bboxes)
-  2. Crop each person -> torchreid ResNet50 -> ReID embedding -> identity
-  3. Extra SAM3 prompts (user-defined) run in same encode pass
+  2. ByteTrack associates person boxes across frames
+  3. Overlapping face identity is authoritative for a person track
+  4. torchreid embeddings are only used to recover an already-known identity
 """
 
 from __future__ import annotations
@@ -16,57 +17,84 @@ import numpy as np
 import torch
 from PIL import Image
 
+try:
+    from cjm_byte_track.core import BYTETracker
+except Exception:
+    BYTETracker = None
 
-# ---------------------------------------------------------------------------
-# Identity matching (body embeddings)
-# ---------------------------------------------------------------------------
-class PersonIdentityTracker:
-    """Track person identities using ReID embeddings with cosine similarity + EMA."""
+
+def _bbox_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    ax1, ay1, aw, ah = a
+    bx1, by1, bw, bh = b
+    ax2, ay2 = ax1 + aw, ay1 + ah
+    bx2, by2 = bx1 + bw, by1 + bh
+
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+    iw = max(0, ix2 - ix1)
+    ih = max(0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+
+    union = aw * ah + bw * bh - inter
+    if union <= 0:
+        return 0.0
+    return inter / union
+
+
+def _bbox_contains_point(bbox: tuple[int, int, int, int], point: tuple[float, float]) -> bool:
+    x, y, w, h = bbox
+    px, py = point
+    return x <= px <= (x + w) and y <= py <= (y + h)
+
+
+class PersonIdentityRegistry:
+    """Store body embeddings only for already-known identities."""
 
     def __init__(self, threshold: float = 0.5, ema_alpha: float = 0.8):
         self._threshold = threshold
         self._ema_alpha = ema_alpha
-        self._identities: list[dict] = []
-        self._next_id = 1
+        self._identities: dict[str, dict] = {}
 
-    def match(self, embedding: np.ndarray) -> str:
+    def remember(self, label: str, embedding: np.ndarray):
+        embedding = embedding / (np.linalg.norm(embedding) + 1e-8)
+        record = self._identities.get(label)
+        if record is None:
+            self._identities[label] = {
+                "embedding": embedding.copy(),
+                "last_seen": time.time(),
+            }
+            return
+
+        record["embedding"] = (
+            self._ema_alpha * record["embedding"] + (1 - self._ema_alpha) * embedding
+        )
+        record["embedding"] /= np.linalg.norm(record["embedding"]) + 1e-8
+        record["last_seen"] = time.time()
+
+    def lookup(self, embedding: np.ndarray) -> str | None:
         embedding = embedding / (np.linalg.norm(embedding) + 1e-8)
 
+        best_label = None
         best_score = -1.0
-        best_idx = -1
-        for i, ident in enumerate(self._identities):
-            score = float(np.dot(embedding, ident["embedding"]))
+        for label, record in self._identities.items():
+            score = float(np.dot(embedding, record["embedding"]))
             if score > best_score:
                 best_score = score
-                best_idx = i
+                best_label = label
 
-        if best_score >= self._threshold and best_idx >= 0:
-            ident = self._identities[best_idx]
-            ident["embedding"] = (
-                self._ema_alpha * ident["embedding"]
-                + (1 - self._ema_alpha) * embedding
-            )
-            ident["embedding"] /= np.linalg.norm(ident["embedding"]) + 1e-8
-            ident["last_seen"] = time.time()
-            return ident["label"]
-
-        label = f"Person {self._next_id}"
-        self._next_id += 1
-        self._identities.append({
-            "embedding": embedding.copy(),
-            "label": label,
-            "last_seen": time.time(),
-        })
-        return label
+        if best_label is None or best_score < self._threshold:
+            return None
+        return best_label
 
     @property
     def roster(self) -> list[dict]:
-        return [{"label": i["label"]} for i in self._identities]
+        return [{"label": label} for label in sorted(self._identities)]
 
 
-# ---------------------------------------------------------------------------
-# ReID feature extractor (torchreid ResNet50)
-# ---------------------------------------------------------------------------
 class ReIDExtractor:
     """Extract person re-identification embeddings using torchreid ResNet50."""
 
@@ -82,7 +110,7 @@ class ReIDExtractor:
 
         self._model = torchreid.models.build_model(
             name="resnet50",
-            num_classes=751,  # Market-1501 pretrained classes
+            num_classes=751,
             loss="softmax",
             pretrained=True,
         )
@@ -110,24 +138,24 @@ class ReIDExtractor:
         return feat
 
 
-# ---------------------------------------------------------------------------
-# Main tracker
-# ---------------------------------------------------------------------------
 class PersonTracker:
-    """Background person tracking using SAM3 + torchreid ResNet50 ReID.
+    """Background person tracking using SAM3 + ByteTrack + face-led identity."""
 
-    Args:
-        cam: WebcamCapture instance.
-        sam3_getter: callable returning (sam3_model, sam3_processor) or (None, None).
-    """
-
-    def __init__(self, cam, sam3_getter=None, device: str = "cuda", dtype=None):
+    def __init__(self, cam, sam3_getter=None, face_getter=None, device: str = "cuda", dtype=None):
         self._cam = cam
         self._sam3_getter = sam3_getter or (lambda: (None, None))
+        self._face_getter = face_getter or (lambda: [])
         self._device = device
         self._dtype = dtype
         self._reid: ReIDExtractor | None = None
-        self._tracker = PersonIdentityTracker()
+        self._identity_registry = PersonIdentityRegistry()
+        self._byte_tracker = (
+            BYTETracker(track_thresh=0.35, track_buffer=30, match_thresh=0.8, frame_rate=3)
+            if BYTETracker is not None
+            else None
+        )
+        self._track_memory: dict[int, dict] = {}
+        self._frame_index = 0
         self._lock = threading.Lock()
         self._faces: list[dict] = []
         self._masks: list[np.ndarray | None] = []
@@ -197,6 +225,150 @@ class PersonTracker:
             self._thread.join(timeout=2)
             self._thread = None
 
+    @staticmethod
+    def _track_bbox(track) -> tuple[int, int, int, int]:
+        x1, y1, x2, y2 = [int(v) for v in track.tlbr]
+        return (x1, y1, max(0, x2 - x1), max(0, y2 - y1))
+
+    def _track_person_matches(self, tracks: list, person_dets: list[dict]) -> list[tuple[int, dict]]:
+        matches: list[tuple[int, dict]] = []
+        if not tracks or not person_dets:
+            return matches
+
+        remaining = set(range(len(person_dets)))
+        ordered_tracks = sorted(tracks, key=lambda track: float(getattr(track, "score", 0.0)), reverse=True)
+        for track in ordered_tracks:
+            track_bbox = self._track_bbox(track)
+            best_idx = None
+            best_iou = 0.0
+            for idx in remaining:
+                iou = _bbox_iou(track_bbox, person_dets[idx]["bbox"])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_idx = idx
+            if best_idx is None or best_iou < 0.3:
+                continue
+            remaining.remove(best_idx)
+            matches.append((int(track.track_id), person_dets[best_idx]))
+        return matches
+
+    @staticmethod
+    def _person_face_score(person_bbox: tuple[int, int, int, int], face: dict) -> float:
+        face_bbox = tuple(face.get("bbox", (0, 0, 0, 0)))
+        if len(face_bbox) != 4:
+            return -1.0
+        fx, fy, fw, fh = face_bbox
+        center = (fx + fw / 2.0, fy + fh / 2.0)
+        if not _bbox_contains_point(person_bbox, center):
+            return -1.0
+
+        px, py, pw, ph = person_bbox
+        if pw <= 0 or ph <= 0:
+            return -1.0
+
+        expected_x = px + pw * 0.5
+        expected_y = py + ph * 0.2
+        dx = abs(center[0] - expected_x) / max(pw, 1)
+        dy = abs(center[1] - expected_y) / max(ph, 1)
+        conf = float(face.get("confidence", 0.0))
+        return conf - dx - dy
+
+    def _assign_faces_to_tracks(self, matches: list[tuple[int, dict]], faces: list[dict]) -> dict[int, dict]:
+        assignments: dict[int, dict] = {}
+        candidates: list[tuple[float, int, dict]] = []
+        usable_faces = []
+        for face in faces:
+            identity = str(face.get("identity", "")).strip()
+            if not identity or identity.lower() == "unknown":
+                continue
+            usable_faces.append(face)
+
+        for track_id, det in matches:
+            for face in usable_faces:
+                score = self._person_face_score(det["bbox"], face)
+                if score > 0.0:
+                    candidates.append((score, track_id, face))
+
+        used_tracks: set[int] = set()
+        used_faces: set[int] = set()
+        for score, track_id, face in sorted(candidates, key=lambda item: item[0], reverse=True):
+            if track_id in used_tracks:
+                continue
+            face_key = id(face)
+            if face_key in used_faces:
+                continue
+            assignments[track_id] = face
+            used_tracks.add(track_id)
+            used_faces.add(face_key)
+        return assignments
+
+    def _extract_body_embedding(self, frame: np.ndarray, bbox: tuple[int, int, int, int]) -> np.ndarray | None:
+        if self._reid is None:
+            return None
+        x, y, w, h = bbox
+        fh, fw = frame.shape[:2]
+        x, y = max(0, x), max(0, y)
+        w, h = min(w, fw - x), min(h, fh - y)
+        if w < 24 or h < 48:
+            return None
+        return self._reid.extract(frame[y:y + h, x:x + w])
+
+    def _resolve_identity(
+        self,
+        track_id: int,
+        det: dict,
+        frame: np.ndarray,
+        face_assignments: dict[int, dict],
+    ) -> tuple[str, str, np.ndarray | None]:
+        memory = self._track_memory.setdefault(
+            track_id,
+            {
+                "identity": f"Track {track_id}",
+                "source": "track",
+                "last_seen_frame": self._frame_index,
+            },
+        )
+        memory["last_seen_frame"] = self._frame_index
+
+        bound_face = face_assignments.get(track_id)
+        embedding = None
+
+        if bound_face is not None:
+            identity = str(bound_face["identity"]).strip()
+            memory["identity"] = identity
+            memory["source"] = "face"
+            embedding = self._extract_body_embedding(frame, det["bbox"])
+            if embedding is not None:
+                self._identity_registry.remember(identity, embedding)
+            return identity, "face", embedding
+
+        if memory.get("source") == "face":
+            return str(memory["identity"]), "face-memory", None
+
+        embedding = self._extract_body_embedding(frame, det["bbox"])
+        if embedding is not None:
+            recovered = self._identity_registry.lookup(embedding)
+            if recovered is not None:
+                memory["identity"] = recovered
+                memory["source"] = "reid"
+                return recovered, "reid", embedding
+
+        identity = str(memory.get("identity", f"Track {track_id}"))
+        if not identity:
+            identity = f"Track {track_id}"
+        memory["identity"] = identity
+        memory["source"] = "track"
+        return identity, "track", embedding
+
+    def _prune_track_memory(self, active_track_ids: set[int]):
+        stale_ids = [
+            track_id
+            for track_id, memory in self._track_memory.items()
+            if track_id not in active_track_ids and (self._frame_index - int(memory.get("last_seen_frame", 0))) > 30
+        ]
+        for track_id in stale_ids:
+            self._track_memory.pop(track_id, None)
+
     def _loop(self):
         while self._running and self._enabled:
             if self._reid is None or self._reid._model is None:
@@ -210,8 +382,8 @@ class PersonTracker:
 
             try:
                 t0 = time.perf_counter()
+                self._frame_index += 1
 
-                # 1. SAM3: encode image ONCE, run all prompts
                 prompts = ["person"]
                 extra = self._sam3_extra_prompts.strip()
                 if extra:
@@ -230,30 +402,48 @@ class PersonTracker:
                         d["prompt"] = prompt
                         extra_dets_list.append(d)
 
-                # 2. ReID on person crops
-                for person in persons:
-                    x, y, w, h = person["bbox"]
-                    fh, fw = frame.shape[:2]
-                    x, y = max(0, x), max(0, y)
-                    w, h = min(w, fw - x), min(h, fh - y)
-                    if w < 10 or h < 10:
-                        continue
-                    emb = self._reid.extract(frame[y:y + h, x:x + w])
-                    if emb is not None:
-                        person["identity"] = self._tracker.match(emb)
+                detections = []
+                for det in persons:
+                    x, y, w, h = det["bbox"]
+                    detections.append([x, y, x + w, y + h, det.get("confidence", 0.0)])
+                det_array = (
+                    np.asarray(detections, dtype=np.float32)
+                    if detections
+                    else np.empty((0, 5), dtype=np.float32)
+                )
 
-                t_reid = time.perf_counter() - t0 - t_sam3
+                if self._byte_tracker is None:
+                    matches = [(index + 1, det) for index, det in enumerate(persons)]
+                else:
+                    tracks = self._byte_tracker.update(
+                        det_array,
+                        img_info=frame.shape[:2],
+                        img_size=frame.shape[:2],
+                    )
+                    matches = self._track_person_matches(tracks, persons)
 
-                # 3. Cache results
+                faces = list(self._face_getter() or [])
+                face_assignments = self._assign_faces_to_tracks(matches, faces)
+
+                t_reid_start = time.perf_counter()
                 results = []
                 masks = []
-                for p in persons:
+                active_track_ids: set[int] = set()
+                for track_id, det in matches:
+                    active_track_ids.add(track_id)
+                    identity, source, _embedding = self._resolve_identity(
+                        track_id, det, frame, face_assignments
+                    )
                     results.append({
-                        "bbox": p["bbox"],
-                        "identity": p.get("identity", "Unknown"),
-                        "confidence": p.get("confidence", 0.0),
+                        "bbox": det["bbox"],
+                        "track_id": track_id,
+                        "identity": identity,
+                        "identity_source": source,
+                        "confidence": det.get("confidence", 0.0),
                     })
-                    masks.append(p.get("mask"))
+                    masks.append(det.get("mask"))
+                t_reid = time.perf_counter() - t_reid_start
+                self._prune_track_memory(active_track_ids)
 
                 total = time.perf_counter() - t0
                 with self._lock:
@@ -267,14 +457,12 @@ class PersonTracker:
                         "fps": round(1.0 / total, 1) if total > 0 else 0,
                         "n_persons": len(results),
                         "prompts": ", ".join(prompts),
+                        "tracking": "bytetrack" if self._byte_tracker is not None else "none",
                     }
-
             except Exception as e:
                 print(f"PersonTracker error: {e}", flush=True)
 
             time.sleep(0.3)
-
-    # ---- SAM3 unified (encode once, run all prompts) ----
 
     def _run_sam3_all(
         self, frame_bgr: np.ndarray, prompts: list[str]
@@ -285,7 +473,6 @@ class PersonTracker:
 
         pil = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
         img_inputs = sam3_proc(images=pil, return_tensors="pt").to(self._device)
-        # Cast pixel values to match SAM3 model dtype (e.g. bfloat16)
         if self._dtype is not None:
             img_inputs["pixel_values"] = img_inputs["pixel_values"].to(self._dtype)
 
@@ -300,7 +487,9 @@ class PersonTracker:
                 outputs = sam3_model(vision_embeds=vision, **text_inputs)
 
             post = sam3_proc.post_process_instance_segmentation(
-                outputs, threshold=0.3, mask_threshold=0.5,
+                outputs,
+                threshold=0.3,
+                mask_threshold=0.5,
                 target_sizes=original_sizes,
             )[0]
 
@@ -330,7 +519,8 @@ class PersonTracker:
                     ys, xs = np.where(mask_np)
                     if len(xs) > 0:
                         bbox = (
-                            int(xs.min()), int(ys.min()),
+                            int(xs.min()),
+                            int(ys.min()),
                             int(xs.max()) - int(xs.min()),
                             int(ys.max()) - int(ys.min()),
                         )
@@ -343,8 +533,6 @@ class PersonTracker:
             results[prompt] = dets
 
         return results
-
-    # ---- public API ----
 
     def get_faces(self) -> list[dict]:
         with self._lock:
@@ -368,7 +556,6 @@ class PersonTracker:
 
         out = bgr.copy()
 
-        # Person masks
         for i, mask in enumerate(masks):
             if mask is None or mask.shape[:2] != out.shape[:2]:
                 continue
@@ -377,7 +564,6 @@ class PersonTracker:
             overlay[mask] = color
             out = cv2.addWeighted(out, 1.0, overlay, 0.35, 0)
 
-        # Extra SAM3 detections
         for i, det in enumerate(extra_dets):
             color = self.EXTRA_COLORS[i % len(self.EXTRA_COLORS)]
             mask = det.get("mask")
@@ -395,22 +581,23 @@ class PersonTracker:
                     label += f" {conf:.0%}"
                 cv2.putText(out, label, (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
-        # Person boxes + labels
-        for i, face in enumerate(faces):
+        for face in faces:
             x, y, bw, bh = face["bbox"]
             color = (0, 165, 255)
             cv2.rectangle(out, (x, y), (x + bw, y + bh), color, 2)
             label = face["identity"]
             conf = face.get("confidence", 0)
+            source = face.get("identity_source", "")
+            if source and source not in {"track", "face-memory"}:
+                label += f" [{source}]"
             if conf:
                 label += f" {conf:.0%}"
             cv2.putText(out, label, (x, y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
-        # Stats HUD
         if timing:
             prompts_str = timing.get("prompts", "person")
             hud_lines = [
-                f"PersonTracker | resnet50 | [{prompts_str}]",
+                f"PersonTracker | {timing.get('tracking', 'none')} | [{prompts_str}]",
                 f"SAM3: {timing.get('sam3', 0)*1000:.0f}ms  ReID: {timing.get('reid', 0)*1000:.0f}ms",
                 f"Total: {timing.get('total', 0)*1000:.0f}ms  FPS: {timing.get('fps', 0):.1f}  Persons: {timing.get('n_persons', 0)}",
             ]
@@ -433,4 +620,7 @@ class PersonTracker:
 
     @property
     def identity_roster(self) -> list[dict]:
-        return self._tracker.roster
+        active = {str(face["identity"]) for face in self.get_faces() if str(face.get("identity", "")).strip()}
+        roster = {item["label"] for item in self._identity_registry.roster}
+        labels = sorted(active | roster)
+        return [{"label": label} for label in labels]
