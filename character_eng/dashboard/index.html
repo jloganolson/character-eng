@@ -133,6 +133,120 @@
     background: var(--panel-hover);
     color: var(--text);
   }
+  .app-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(8, 12, 18, 0.58);
+    backdrop-filter: blur(10px);
+  }
+  .app-modal.open {
+    display: flex;
+  }
+  .app-modal-card {
+    width: min(860px, 100%);
+    max-height: min(82vh, 900px);
+    overflow: auto;
+    border-radius: 18px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--panel) 88%, black 12%);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+    padding: 1rem;
+  }
+  .app-modal-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+  }
+  .app-modal-title {
+    font-size: 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text);
+  }
+  .app-modal-sub {
+    color: var(--text-dim);
+    font-size: 0.82rem;
+    margin-top: 0.2rem;
+  }
+  .app-modal-close {
+    border: 1px solid var(--border);
+    background: var(--panel-hover);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 0.35em 0.7em;
+    cursor: pointer;
+  }
+  .archive-picker-search {
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 0.8rem;
+  }
+  .archive-picker-list {
+    display: grid;
+    gap: 0.55rem;
+  }
+  .archive-row {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--panel-hover);
+    padding: 0.7rem 0.8rem;
+  }
+  .archive-row-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.8rem;
+    align-items: flex-start;
+  }
+  .archive-row-title {
+    font-weight: 700;
+  }
+  .archive-row-meta {
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    margin-top: 0.2rem;
+  }
+  .archive-row-actions {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .archive-row-actions button {
+    padding: 0.3em 0.6em;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .archive-row-actions .primary {
+    background: var(--cyan);
+    color: var(--bg);
+  }
+  .archive-row-actions .secondary {
+    background: var(--ok);
+    color: var(--bg);
+  }
+  .archive-row-actions .ghost {
+    background: var(--panel);
+    color: var(--text);
+  }
+  .archive-kind {
+    display: inline-block;
+    margin-right: 0.45rem;
+    padding: 0.15em 0.5em;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
   #header {
     display: flex;
     align-items: center;
@@ -147,7 +261,43 @@
   #header .value { font-weight: 600; }
   #header .character { color: var(--npc); font-size: 1.1em; }
   #header .stage { color: var(--narrator); }
-  #report-ref-button {
+  .archive-transport {
+    display: none;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: min(42vw, 540px);
+    padding: 0.25rem 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--panel-hover) 76%, transparent);
+  }
+  .archive-transport.visible {
+    display: inline-flex;
+  }
+  .archive-transport button {
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--advance);
+    color: var(--bg);
+    cursor: pointer;
+  }
+  .archive-transport button:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .archive-transport input[type="range"] {
+    flex: 1 1 auto;
+    min-width: 180px;
+  }
+  .archive-transport-time {
+    min-width: 7.5em;
+    text-align: right;
+    color: var(--text-dim);
+    font-size: 0.82rem;
+  }
+  #report-ref-button,
+  #archive-load-button {
     background: var(--bg-alt);
     border: 1px solid var(--border);
     color: var(--text);
@@ -156,7 +306,8 @@
     border-radius: 6px;
     font-size: 0.92em;
   }
-  #report-ref-status {
+  #report-ref-status,
+  #archive-load-status {
     color: var(--text-dim);
     font-size: 0.82em;
     max-width: 40ch;
@@ -284,9 +435,24 @@
     background: linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--narrator) 70%, transparent) 20%, color-mix(in srgb, var(--narrator) 90%, transparent) 50%, color-mix(in srgb, var(--narrator) 70%, transparent) 80%, transparent 100%);
   }
   #stream-viewport {
+    position: relative;
     overflow: auto;
     min-height: 0;
     padding-right: 0.2em;
+  }
+  #stream-playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: color-mix(in srgb, var(--accent) 80%, white 20%);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+    pointer-events: none;
+    z-index: 6;
+    display: none;
+  }
+  #stream-playhead.visible {
+    display: block;
   }
   #stream-viewport::-webkit-scrollbar,
   #sidebar::-webkit-scrollbar,
@@ -312,6 +478,21 @@
     position: relative;
     height: 34px;
     min-width: 100%;
+  }
+  #archive-media-player {
+    width: 100%;
+    display: none;
+    border-radius: 8px;
+    background: #000;
+  }
+  #archive-media-player.visible {
+    display: block;
+  }
+  #archive-media-status {
+    margin-top: 0.45em;
+    color: var(--text-dim);
+    font-size: 0.78em;
+    line-height: 1.45;
   }
   .ruler-tick {
     position: absolute;
@@ -457,6 +638,10 @@
   }
   .stream-card.context {
     box-shadow: 0 0 0 1px var(--blue);
+  }
+  .stream-card.superseded {
+    opacity: 0.56;
+    border-style: dashed;
   }
   .stream-card.compact {
     padding: 0.16em 0.45em;
@@ -636,21 +821,35 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.4em;
+    align-items: flex-start;
   }
   .detail-action {
-    background: var(--bg-alt);
+    background: var(--panel-hover);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 0.32em 0.7em;
+    border-radius: 8px;
+    padding: 0.46em 0.72em;
     cursor: pointer;
     font-size: 0.72em;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+    white-space: nowrap;
+    line-height: 1.2;
+    flex: 0 0 auto;
   }
   .detail-action:disabled {
     opacity: 0.45;
     cursor: default;
+  }
+  .detail-action.primary {
+    background: var(--advance);
+    color: var(--bg);
+    border-color: transparent;
+  }
+  .detail-action.secondary {
+    background: var(--cyan);
+    color: var(--bg);
+    border-color: transparent;
   }
   #detail-type,
   #detail-lane,
@@ -956,8 +1155,7 @@
     font-size: 0.86em;
     line-height: 1.45;
   }
-  #detail-related button,
-  .chronology-row {
+  #detail-related button {
     width: 100%;
     text-align: left;
     border: 1px solid var(--border);
@@ -972,18 +1170,6 @@
     display: grid;
     gap: 0.4em;
   }
-  .chronology-pane {
-    display: grid;
-    gap: 0.35em;
-    overflow: auto;
-    min-height: 0;
-    padding-right: 0.2em;
-  }
-  .chronology-row.selected {
-    border-color: var(--narrator);
-    box-shadow: 0 0 0 1px var(--narrator);
-  }
-  .chronology-row small,
   #detail-related small {
     display: block;
     margin-top: 0.22em;
@@ -1014,12 +1200,41 @@
   .sidebar-panel {
     padding: 0.55em 0.7em;
   }
+  .sidebar-group-label {
+    font-size: 0.7em;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    padding: 0 0.1em;
+    margin-top: 0.2em;
+  }
+  .sidebar-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.45em;
+    margin-bottom: 0.45em;
+  }
   .sidebar-panel h3 {
     font-size: 0.8em;
     color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 0.45em;
+    margin: 0;
+  }
+  .sidebar-panel-toggle {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-alt);
+    color: var(--text-dim);
+    padding: 0.16em 0.52em;
+    font-size: 0.68em;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .sidebar-panel.collapsed .content {
+    display: none;
   }
   .sidebar-panel .content {
     font-size: 0.82em;
@@ -1106,7 +1321,7 @@
   }
 </style>
 </head>
-<body>
+<body class="booting">
 
 <div id="boot-overlay">
   <div class="boot-overlay-card">
@@ -1123,12 +1338,78 @@
   </div>
 </div>
 
+<div id="archive-picker" class="app-modal" aria-hidden="true">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div>
+        <div class="app-modal-title">Load Archive</div>
+        <div class="app-modal-sub">Choose a saved session or snippet by title, date, or character.</div>
+      </div>
+      <button id="archive-picker-close" class="app-modal-close" type="button">Close</button>
+    </div>
+    <input id="archive-picker-search" class="archive-picker-search" type="text" placeholder="Search archives by title, character, or date">
+    <div id="archive-picker-status" class="app-modal-sub">Loading archives...</div>
+    <div id="archive-picker-list" class="archive-picker-list"></div>
+  </div>
+</div>
+
+<div id="save-complete-modal" class="app-modal" aria-hidden="true">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div>
+        <div id="save-complete-heading" class="app-modal-title">Save Session</div>
+        <div id="save-complete-subtitle" class="app-modal-sub">Review the session name, then save it or discard it.</div>
+      </div>
+      <button id="save-complete-close" class="app-modal-close" type="button">Close</button>
+    </div>
+    <div style="display:grid;gap:0.75em;">
+      <label style="display:grid;gap:0.25em;">
+        <span style="color:var(--text-dim);font-size:0.8em;">Title</span>
+        <input id="save-complete-title" type="text" style="width:100%;box-sizing:border-box;">
+      </label>
+      <div style="display:grid;gap:0.45em;">
+        <div style="color:var(--text-dim);font-size:0.8em;">Session ID</div>
+        <div id="save-complete-session-id" style="padding:0.45em 0.55em;border-radius:8px;border:1px solid var(--border);background:var(--panel-hover);word-break:break-all;">--</div>
+      </div>
+      <div style="display:grid;gap:0.45em;">
+        <div style="color:var(--text-dim);font-size:0.8em;">Archive Path</div>
+        <div id="save-complete-session-path" style="padding:0.45em 0.55em;border-radius:8px;border:1px solid var(--border);background:var(--panel-hover);word-break:break-all;">--</div>
+      </div>
+      <div style="display:grid;gap:0.45em;">
+        <div style="color:var(--text-dim);font-size:0.8em;">Intermediate Report</div>
+        <div id="save-complete-report-path" style="padding:0.45em 0.55em;border-radius:8px;border:1px solid var(--border);background:var(--panel-hover);word-break:break-all;">--</div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.45em;">
+        <button id="save-complete-copy-ref" type="button">Copy Ref</button>
+        <button id="save-complete-copy-path" type="button">Copy Archive Path</button>
+        <button id="save-complete-copy-report" type="button">Copy Report Path</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:0.45em;justify-content:flex-end;">
+        <button id="save-complete-cancel" type="button">Cancel</button>
+        <button id="save-complete-discard" type="button" style="background:var(--error);color:var(--bg);">Discard</button>
+        <button id="save-complete-save" type="button" style="background:var(--advance);color:var(--bg);">Save</button>
+        <button id="save-complete-load" type="button">Load Now</button>
+        <button id="save-complete-okay" type="button">OK</button>
+      </div>
+      <div id="save-complete-status" class="app-modal-sub"></div>
+    </div>
+  </div>
+</div>
+
 <div id="header">
   <span class="character" id="h-character">--</span>
   <span><span class="label">model:</span> <span class="value" id="h-model">--</span></span>
   <span><span class="label">session:</span> <span class="value" id="h-session">--</span></span>
-  <button id="report-ref-button" type="button">Copy Report Ref</button>
+  <button id="report-ref-button" type="button">Copy Archive Ref</button>
+  <button id="archive-rename-button" type="button">Rename</button>
+  <button id="archive-load-button" type="button">Load Archive...</button>
+  <div id="archive-transport" class="archive-transport" aria-label="Archive playback transport">
+    <button id="archive-transport-toggle" type="button">Play</button>
+    <input id="archive-transport-scrubber" type="range" min="0" max="0" step="0.01" value="0">
+    <span id="archive-transport-time" class="archive-transport-time">0:00 / 0:00</span>
+  </div>
   <span id="report-ref-status"></span>
+  <span id="archive-load-status"></span>
   <span><span class="label">stage:</span> <span class="value stage" id="h-stage">--</span></span>
   <span><span class="label">uptime:</span> <span class="value" id="h-uptime">0s</span></span>
   <button id="theme-toggle" title="Toggle light/dark">&#9789;</button>
@@ -1151,10 +1432,6 @@
           <span id="time-window-value">30s</span>
         </div>
         <div class="toolbar-group">
-          <label for="show-chronology">Chronology</label>
-          <input id="show-chronology" type="checkbox" checked>
-        </div>
-        <div class="toolbar-group">
           <label for="follow-live">Follow</label>
           <input id="follow-live" type="checkbox" checked>
         </div>
@@ -1168,14 +1445,15 @@
       <div id="stream-main">
         <div id="stream-viewport">
           <div id="stream-ruler"><div id="stream-ruler-inner"></div></div>
-          <div id="stream-empty" class="stream-empty">Waiting for live events. The dashboard will populate as the session starts.</div>
+          <div id="stream-playhead" aria-hidden="true"></div>
+          <div id="stream-empty" class="stream-empty">Waiting for debug timeline events. The dashboard will populate as the session starts.</div>
           <div id="stream-lanes"></div>
         </div>
         <div class="pane-resizer" id="inspector-resizer" role="separator" aria-label="Resize inspector"></div>
 
         <aside id="stream-inspector">
-          <div class="detail-section">
-            <div class="inspector-title">Event Detail</div>
+          <div class="detail-section" id="inspector-summary-panel" data-panel-region="inspector" data-panel-id="event_summary" data-panel-scope="event">
+            <div class="inspector-title" id="inspector-summary-title">Debug Timeline Event</div>
             <div id="detail-summary">
               <div id="detail-meta">
                 <span id="detail-time">+0.00s</span>
@@ -1183,12 +1461,12 @@
                 <span id="detail-lane">lane</span>
                 <span id="detail-seq">seq 0</span>
               </div>
-              <div id="detail-label">Select a live event to inspect it.</div>
-              <div id="detail-detail">The stream view groups interwoven activity by lane and highlights all events from the same turn when selected.</div>
+              <div id="detail-label">Select a debug timeline event to inspect it.</div>
+              <div id="detail-detail">This timeline is for observability. Conversation memory used by the character can differ from the archived replay record when replies are interrupted.</div>
+              <div id="detail-warning" style="display:none;margin-top:0.45em;padding:0.55em 0.65em;border-radius:10px;border:1px solid var(--border);background:color-mix(in srgb, var(--panel-hover) 82%, var(--error) 18%);color:var(--text-dim);"></div>
               <div class="detail-actions">
-                <button class="detail-action" id="detail-open-window" type="button" disabled>Open In New Window</button>
-                <button class="detail-action" id="detail-export-json" type="button" disabled>Export JSON</button>
-                <button class="detail-action" id="detail-export-html" type="button" disabled>Export HTML</button>
+                <button class="detail-action primary" id="detail-continue-from-event" type="button" disabled>Continue From Here</button>
+                <button class="detail-action" id="detail-open-json" type="button" disabled>Open JSON</button>
               </div>
               <div id="detail-loop">
                 <div class="loop-title">Loop Timing</div>
@@ -1207,25 +1485,57 @@
             </div>
           </div>
 
-          <div class="detail-section">
-            <label>Related In Turn</label>
+          <div class="detail-section" id="inspector-related-panel" data-panel-region="inspector" data-panel-id="related_in_turn" data-panel-scope="event">
+            <label id="inspector-related-label">Related In Turn</label>
             <div id="detail-related"><div style="color:var(--text-dim);">No event selected.</div></div>
           </div>
 
-          <div class="detail-section fill">
-            <label>Inspector Pane</label>
-            <div class="detail-tabs">
-              <button class="detail-tab active" id="tab-chronology" type="button" data-detail-tab="chronology">Chronology</button>
-              <button class="detail-tab" id="tab-prompts" type="button" data-detail-tab="prompts">Prompt / IO</button>
-              <button class="detail-tab" id="tab-payload" type="button" data-detail-tab="payload">Raw Event JSON</button>
+          <div class="detail-section" id="inspector-annotations-panel" data-panel-region="inspector" data-panel-id="annotations" data-panel-scope="event" style="position:relative;z-index:2;">
+            <label id="inspector-annotations-label">Annotations</label>
+            <div class="detail-actions">
+              <button class="detail-action" id="annotation-toggle" type="button" disabled>Annotate Event</button>
+              <button class="detail-action" id="snippet-toggle" type="button" disabled>Capture As Snippet</button>
             </div>
-            <div class="detail-pane active" id="detail-chronology-pane">
-              <div class="chronology-pane" id="detail-chronology"></div>
+            <div id="annotation-form" style="display:none;margin-top:0.55em;">
+              <input id="annotation-tags" type="text" placeholder="tags: interruption, latency, vision" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
+              <input id="annotation-subsystem" type="text" placeholder="subsystem: prompt, vision, timing, tts" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
+              <textarea id="annotation-note" rows="4" placeholder="What went wrong?" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;"></textarea>
+              <textarea id="annotation-desired" rows="3" placeholder="Desired behavior / fix direction" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;"></textarea>
+              <div class="detail-actions">
+                <button class="detail-action" id="annotation-save" type="button">Save</button>
+                <button class="detail-action" id="annotation-cancel" type="button">Cancel</button>
+              </div>
             </div>
-            <div class="detail-pane" id="detail-prompts-pane">
+            <div id="snippet-form" style="display:none;margin-top:0.55em;">
+              <input id="snippet-title" type="text" placeholder="snippet title" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
+              <input id="snippet-tags" type="text" placeholder="tags: false-barge-in, stt, echo" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
+              <select id="snippet-mode" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
+                <option value="turn_context">Turn Context</option>
+                <option value="barge_in_turn">Barge-In Turn</option>
+                <option value="vision_full_stack">Vision Full Stack</option>
+                <option value="vision_synthesis_inputs">Vision Synthesis Inputs</option>
+              </select>
+              <div class="detail-actions">
+                <button class="detail-action" id="snippet-save" type="button">Save Snippet</button>
+                <button class="detail-action" id="snippet-cancel" type="button">Cancel</button>
+              </div>
+            </div>
+            <div id="annotation-list" style="display:grid;gap:0.45em;margin-top:0.55em;">
+              <div style="color:var(--text-dim);">Select a debug timeline event to inspect or annotate it.</div>
+            </div>
+            <div id="annotation-status" style="margin-top:0.45em;color:var(--text-dim);">Annotations save to the archived replay record for this session.</div>
+          </div>
+
+          <div class="detail-section fill" id="inspector-detail-tabs-panel" data-panel-region="inspector" data-panel-id="detail_tabs" data-panel-scope="event">
+            <label id="inspector-detail-tabs-label">Inspector Pane</label>
+            <div class="detail-tabs" id="inspector-detail-tabs">
+              <button class="detail-tab active" id="tab-prompts" type="button" data-detail-tab="prompts" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">Conversation Memory / Prompt IO</button>
+              <button class="detail-tab" id="tab-payload" type="button" data-detail-tab="payload" data-panel-region="inspector" data-panel-id="payload" data-panel-scope="event">Debug Event JSON</button>
+            </div>
+            <div class="detail-pane active" id="detail-prompts-pane" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">
               <div class="detail-prompts" id="detail-prompts"></div>
             </div>
-            <div class="detail-pane" id="detail-payload-pane">
+            <div class="detail-pane" id="detail-payload-pane" data-panel-region="inspector" data-panel-id="payload" data-panel-scope="event">
               <pre id="detail-payload">{}</pre>
             </div>
           </div>
@@ -1236,7 +1546,7 @@
   <div class="pane-resizer" id="sidebar-resizer" role="separator" aria-label="Resize right panel"></div>
 
   <div id="sidebar">
-    <div class="sidebar-panel" id="runtime-panel">
+    <div class="sidebar-panel" id="runtime-panel" data-panel-region="sidebar" data-panel-id="runtime" data-panel-scope="session">
       <h3>Runtime</h3>
       <div class="content">
         <div id="boot-panel" class="boot-panel">
@@ -1262,30 +1572,62 @@
       </div>
     </div>
 
-    <div class="sidebar-panel" id="vision-panel" style="display:none;">
+    <div class="sidebar-panel" id="vision-panel" data-panel-region="sidebar" data-panel-id="vision" data-panel-scope="session">
       <h3>Vision</h3>
       <div class="content">
         <img id="vision-feed" alt="Vision feed">
+        <video id="archive-media-player" preload="metadata" playsinline></video>
+        <audio id="archive-audio-playback" preload="auto" style="width:100%;margin-top:0.45em;display:none;" controls></audio>
+        <div id="archive-media-status"></div>
         <div id="vision-meta"></div>
       </div>
     </div>
 
-    <div class="sidebar-panel" id="world-panel">
+    <div class="sidebar-panel" id="history-panel" data-panel-region="sidebar" data-panel-id="history" data-panel-scope="session">
+      <h3>Replay Capture</h3>
+      <div class="content">
+        <div id="history-status"><span style="color:var(--text-dim)">Replay record loading...</span></div>
+        <div id="history-recording-mode" style="margin-top:0.45em;color:var(--text-dim);font-size:0.78em;"></div>
+        <div style="display:grid;gap:0.45em;margin-top:0.55em;">
+          <input id="history-checkpoint" type="number" min="0" placeholder="Optional rewind checkpoint override" style="width:100%;box-sizing:border-box;">
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
+          <button id="history-rewind" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--narrator);color:var(--bg);cursor:pointer;">Rewind Current</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:0.45em;margin-top:0.45em;">
+          <button id="history-pin" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--accent);color:var(--bg);cursor:pointer;">Pin Session</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:0.45em;margin-top:0.45em;">
+          <button id="history-prune" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--warn);color:var(--bg);cursor:pointer;">Prune Unsaved</button>
+        </div>
+        <div style="margin-top:0.45em;color:var(--text-dim);font-size:0.78em;">This panel tracks the current session’s replay/snippet capture status. For old sessions and snippets, use <b>Load Archive...</b> in the header.</div>
+      </div>
+    </div>
+
+    <div class="sidebar-panel" id="prompt-assets-panel" data-panel-region="sidebar" data-panel-id="prompt_assets" data-panel-scope="session">
+      <h3>Mutable Prompts</h3>
+      <div class="content">
+        <div id="prompt-assets-status" style="color:var(--text-dim);font-size:0.8em;">Scanning mutable prompt assets...</div>
+        <div id="prompt-assets-list" style="display:grid;gap:0.45em;margin-top:0.55em;"></div>
+      </div>
+    </div>
+
+    <div class="sidebar-panel" id="world-panel" data-panel-region="sidebar" data-panel-id="world" data-panel-scope="session">
       <h3>World State</h3>
       <div class="content" id="world-content"><span class="fact" style="color:var(--text-dim)">No world state yet</span></div>
     </div>
 
-    <div class="sidebar-panel" id="stage-panel">
+    <div class="sidebar-panel" id="stage-panel" data-panel-region="sidebar" data-panel-id="stage" data-panel-scope="session">
       <h3>Stage</h3>
       <div class="content" id="stage-content">--</div>
     </div>
 
-    <div class="sidebar-panel" id="plan-panel" style="display:none;">
+    <div class="sidebar-panel" id="plan-panel" data-panel-region="sidebar" data-panel-id="plan" data-panel-scope="session">
       <h3>Script</h3>
       <div class="content" id="plan-content"></div>
     </div>
 
-    <div class="sidebar-panel" id="people-panel">
+    <div class="sidebar-panel" id="people-panel" data-panel-region="sidebar" data-panel-id="people" data-panel-scope="session">
       <h3>People</h3>
       <div class="content" id="people-content"><span style="color:var(--text-dim)">No people tracked</span></div>
     </div>
@@ -1302,6 +1644,12 @@
       pause: "session",
       resume: "session",
       runtime_controls: "session",
+      history_status: "session",
+      history_restore: "session",
+      history_rewind: "session",
+      history_promoted: "session",
+      history_playback: "session",
+      prompt_reload: "session",
       vision_snapshot: "vision",
       vision_pass: "vision",
       world_update: "world",
@@ -1331,7 +1679,7 @@
   let compactMode = false;
   let timelineWindowSeconds = 30;
   let followLive = true;
-  let activeDetailTab = "chronology";
+  let activeDetailTab = "prompts";
   let visionPassKey = null;
   const promptTraceEvents = [];
   let isTimelineDragging = false;
@@ -1376,6 +1724,71 @@
   let statePollFailures = 0;
   let statePollingSuspended = false;
   const pageLoadedAt = Date.now();
+  const INSPECTOR_PANELS = [
+    {
+      id: "event_summary",
+      sectionId: "inspector-summary-panel",
+      titleId: "inspector-summary-title",
+      title: "Debug Timeline Event",
+      scope: "event",
+    },
+    {
+      id: "related_in_turn",
+      sectionId: "inspector-related-panel",
+      labelId: "inspector-related-label",
+      title: "Related In Turn",
+      scope: "event",
+    },
+    {
+      id: "annotations",
+      sectionId: "inspector-annotations-panel",
+      labelId: "inspector-annotations-label",
+      title: "Annotations",
+      scope: "event",
+    },
+    {
+      id: "detail_tabs",
+      sectionId: "inspector-detail-tabs-panel",
+      labelId: "inspector-detail-tabs-label",
+      title: "Inspector Pane",
+      scope: "event",
+      tabs: [
+        {id: "prompts", tabId: "tab-prompts", paneId: "detail-prompts-pane", title: "Conversation Memory / Prompt IO", scope: "event"},
+        {id: "payload", tabId: "tab-payload", paneId: "detail-payload-pane", title: "Debug Event JSON", scope: "event"},
+      ],
+    },
+  ];
+  const DETAIL_TABS = (INSPECTOR_PANELS.find((panel) => panel.id === "detail_tabs")?.tabs || []).map((tab) => ({
+    key: tab.id,
+    paneId: tab.paneId,
+    tabId: tab.tabId,
+    title: tab.title,
+  }));
+  const SIDEBAR_GROUPS = [
+    {id: "session_control", label: "Session Control", order: 10},
+    {id: "live_state", label: "Live State", order: 20},
+  ];
+  const SIDEBAR_PANELS = [
+    {id: "runtime", panelId: "runtime-panel", title: "Runtime", scope: "session", group: "session_control", order: 10, defaultVisible: true, defaultCollapsed: false, required: true},
+    {id: "history", panelId: "history-panel", title: "Replay Capture", scope: "session", group: "session_control", order: 20, defaultVisible: true, defaultCollapsed: false},
+    {id: "prompt_assets", panelId: "prompt-assets-panel", title: "Mutable Prompts", scope: "session", group: "session_control", order: 30, defaultVisible: true, defaultCollapsed: false},
+    {id: "vision", panelId: "vision-panel", title: "Vision", scope: "session", group: "live_state", order: 10, defaultVisible: true, defaultCollapsed: false, required: true, contentId: "vision-meta"},
+    {id: "world", panelId: "world-panel", title: "World State", scope: "session", group: "live_state", order: 20, defaultVisible: true, defaultCollapsed: false, contentId: "world-content"},
+    {id: "stage", panelId: "stage-panel", title: "Stage", scope: "session", group: "live_state", order: 30, defaultVisible: true, defaultCollapsed: false, contentId: "stage-content"},
+    {id: "plan", panelId: "plan-panel", title: "Script", scope: "session", group: "live_state", order: 40, defaultVisible: true, defaultCollapsed: false, contentId: "plan-content"},
+    {id: "people", panelId: "people-panel", title: "People", scope: "session", group: "live_state", order: 50, defaultVisible: true, defaultCollapsed: false, contentId: "people-content"},
+  ];
+  const sidebarPanelConfigById = new Map(SIDEBAR_PANELS.map((panel) => [panel.id, panel]));
+  const sidebarPanelState = new Map(
+    SIDEBAR_PANELS.map((panel) => [
+      panel.id,
+      {
+        visible: panel.defaultVisible !== false,
+        status: panel.defaultVisible === false ? "hidden" : "idle",
+        collapsed: !!panel.defaultCollapsed,
+      },
+    ])
+  );
 
   const hiddenLanes = new Set();
   const streamEvents = [];
@@ -1383,6 +1796,7 @@
 
   const timeline = document.getElementById("timeline");
   const streamViewport = document.getElementById("stream-viewport");
+  const streamRuler = document.getElementById("stream-ruler");
   const streamRulerInner = document.getElementById("stream-ruler-inner");
   const streamLanes = document.getElementById("stream-lanes");
   const streamEmpty = document.getElementById("stream-empty");
@@ -1396,16 +1810,343 @@
   const timeWindowValue = document.getElementById("time-window-value");
   const inspectorResizer = document.getElementById("inspector-resizer");
   const sidebarResizer = document.getElementById("sidebar-resizer");
-  const detailOpenWindowButton = document.getElementById("detail-open-window");
-  const detailExportJsonButton = document.getElementById("detail-export-json");
-  const detailExportHtmlButton = document.getElementById("detail-export-html");
+  const detailContinueFromEventButton = document.getElementById("detail-continue-from-event");
+  const detailOpenJsonButton = document.getElementById("detail-open-json");
+  const detailWarning = document.getElementById("detail-warning");
   const reportRefButton = document.getElementById("report-ref-button");
+  const archiveRenameButton = document.getElementById("archive-rename-button");
   const reportRefStatus = document.getElementById("report-ref-status");
+  const archiveLoadButton = document.getElementById("archive-load-button");
+  const archiveTransportEl = document.getElementById("archive-transport");
+  const archiveTransportToggleButton = document.getElementById("archive-transport-toggle");
+  const archiveTransportScrubber = document.getElementById("archive-transport-scrubber");
+  const archiveTransportTime = document.getElementById("archive-transport-time");
+  const archiveLoadStatus = document.getElementById("archive-load-status");
+  const archivePicker = document.getElementById("archive-picker");
+  const archivePickerCloseButton = document.getElementById("archive-picker-close");
+  const archivePickerSearchInput = document.getElementById("archive-picker-search");
+  const archivePickerStatus = document.getElementById("archive-picker-status");
+  const archivePickerList = document.getElementById("archive-picker-list");
+  const saveCompleteModal = document.getElementById("save-complete-modal");
+  const saveCompleteHeadingEl = document.getElementById("save-complete-heading");
+  const saveCompleteSubtitleEl = document.getElementById("save-complete-subtitle");
+  const saveCompleteCloseButton = document.getElementById("save-complete-close");
+  const saveCompleteTitleInput = document.getElementById("save-complete-title");
+  const saveCompleteSessionIdEl = document.getElementById("save-complete-session-id");
+  const saveCompleteSessionPathEl = document.getElementById("save-complete-session-path");
+  const saveCompleteReportPathEl = document.getElementById("save-complete-report-path");
+  const saveCompleteCopyRefButton = document.getElementById("save-complete-copy-ref");
+  const saveCompleteCopyPathButton = document.getElementById("save-complete-copy-path");
+  const saveCompleteCopyReportButton = document.getElementById("save-complete-copy-report");
+  const saveCompleteCancelButton = document.getElementById("save-complete-cancel");
+  const saveCompleteDiscardButton = document.getElementById("save-complete-discard");
+  const saveCompleteSaveButton = document.getElementById("save-complete-save");
+  const saveCompleteLoadButton = document.getElementById("save-complete-load");
+  const saveCompleteOkayButton = document.getElementById("save-complete-okay");
+  const saveCompleteStatusEl = document.getElementById("save-complete-status");
+  const annotationToggleButton = document.getElementById("annotation-toggle");
+  const annotationSaveButton = document.getElementById("annotation-save");
+  const annotationCancelButton = document.getElementById("annotation-cancel");
+  const snippetToggleButton = document.getElementById("snippet-toggle");
+  const snippetSaveButton = document.getElementById("snippet-save");
+  const snippetCancelButton = document.getElementById("snippet-cancel");
+  const snippetForm = document.getElementById("snippet-form");
+  const snippetTitleInput = document.getElementById("snippet-title");
+  const snippetTagsInput = document.getElementById("snippet-tags");
+  const snippetModeSelect = document.getElementById("snippet-mode");
+  const annotationForm = document.getElementById("annotation-form");
+  const annotationTagsInput = document.getElementById("annotation-tags");
+  const annotationSubsystemInput = document.getElementById("annotation-subsystem");
+  const annotationNoteInput = document.getElementById("annotation-note");
+  const annotationDesiredInput = document.getElementById("annotation-desired");
+  const annotationList = document.getElementById("annotation-list");
+  const annotationStatus = document.getElementById("annotation-status");
+  const historyStatusEl = document.getElementById("history-status");
+  const historyRecordingModeEl = document.getElementById("history-recording-mode");
+  const promptAssetsStatusEl = document.getElementById("prompt-assets-status");
+  const promptAssetsListEl = document.getElementById("prompt-assets-list");
+  const historyCheckpointInput = document.getElementById("history-checkpoint");
+  const historyRewindButton = document.getElementById("history-rewind");
+  const historyPinButton = document.getElementById("history-pin");
+  const historyPruneButton = document.getElementById("history-prune");
+  const archiveAudioPlayback = document.getElementById("archive-audio-playback");
+  const archiveMediaPlayer = document.getElementById("archive-media-player");
+  const archiveMediaStatusEl = document.getElementById("archive-media-status");
+  const streamPlayheadEl = document.getElementById("stream-playhead");
   const INSPECTOR_WIDTH_STORAGE_KEY = "dashboard.inspector_width";
   const SIDEBAR_WIDTH_STORAGE_KEY = "dashboard.sidebar_width";
+  const SIDEBAR_COLLAPSE_STORAGE_KEY = "dashboard.sidebar_collapsed";
   let pendingPauseState = null;
   let lastStoppedReportRefText = "";
   let lastStoppedReportRefPath = "";
+  let lastStoppedArchiveRef = "";
+  let lastStoppedArchiveTitle = "";
+  let historyState = {enabled: false, current_session: {}};
+  let historyArchives = [];
+  let archivePickerOpen = false;
+  let saveCompleteModalOpen = false;
+  let saveCompleteMeta = null;
+  let saveCompleteMode = "closed";
+  let sessionSavePending = false;
+  let saveCompletionResolving = false;
+  let discardCompletionResolving = false;
+  let discardCompletionProbeTimer = 0;
+  let saveCompleteAutoHideTimer = 0;
+  let saveCompleteAutoHideDeadline = 0;
+  let pendingFinalizeAction = "";
+  let pendingStopReviewPause = false;
+  let archiveBrowseRef = "";
+  let archiveBrowseMeta = null;
+  let archiveBrowseSeqFloor = 0;
+  let playbackVisionFrame = null;
+  let archiveHydrating = false;
+  let pendingReplayArchiveRef = "";
+  let pendingReplayEventTime = null;
+  let liveTimelineSnapshot = null;
+  let annotationFormOpen = false;
+  let snippetFormOpen = false;
+  let loadedAnnotationSessionId = "";
+  const annotationsByEventKey = new Map();
+  let debugOnlyBoundaryTimestamp = null;
+  let historyRecordMode = "full";
+  let pendingPauseSince = 0;
+  const pendingPauseTimeoutMs = 6000;
+  let promptAssets = [];
+  let archiveMediaSeekLock = false;
+  let archiveMediaScrubbing = false;
+  let archiveMediaDuration = 0;
+  let timelineRenderScale = 1;
+  let timelineRenderBaseWidth = 720;
+  const ARCHIVE_BROWSE_LIVE_EVENT_ALLOWLIST = new Set([
+    "history_playback",
+    "history_playback_frame",
+    "history_status",
+    "runtime_controls",
+    "pause",
+    "resume",
+    "session_end",
+  ]);
+
+  function syncSidebarPanel(id) {
+    const panel = sidebarPanelConfigById.get(id);
+    if (!panel) return;
+    const state = sidebarPanelState.get(id) || {visible: true, status: "idle", collapsed: false};
+    const root = document.getElementById(panel.panelId);
+    if (!root) return;
+    root.style.display = state.visible ? "" : "none";
+    root.dataset.panelVisible = state.visible ? "true" : "false";
+    root.dataset.panelStatus = state.status || "";
+    root.dataset.panelGroup = panel.group || "";
+    root.dataset.panelOrder = String(panel.order || 0);
+    root.classList.toggle("collapsed", !!state.collapsed);
+    root.dataset.panelCollapsed = state.collapsed ? "true" : "false";
+    const toggle = root.querySelector(".sidebar-panel-toggle");
+    if (toggle) {
+      toggle.textContent = state.collapsed ? "Expand" : "Collapse";
+      toggle.setAttribute("aria-expanded", state.collapsed ? "false" : "true");
+      toggle.setAttribute("aria-label", `${state.collapsed ? "Expand" : "Collapse"} ${panel.title}`);
+    }
+  }
+
+  function setSidebarPanelVisibility(id, visible, status = null) {
+    const state = sidebarPanelState.get(id);
+    if (!state) return;
+    state.visible = !!visible;
+    if (status != null) state.status = status;
+    syncSidebarPanel(id);
+  }
+
+  function setSidebarPanelStatus(id, status) {
+    const state = sidebarPanelState.get(id);
+    if (!state) return;
+    state.status = status || state.status;
+    syncSidebarPanel(id);
+  }
+
+  function persistSidebarPanelCollapseState() {
+    try {
+      const payload = Object.fromEntries(Array.from(sidebarPanelState.entries()).map(([id, state]) => [id, !!state.collapsed]));
+      localStorage.setItem(SIDEBAR_COLLAPSE_STORAGE_KEY, JSON.stringify(payload));
+    } catch (_) {}
+  }
+
+  function restoreSidebarPanelCollapseState() {
+    try {
+      const raw = localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") return;
+      Object.entries(parsed).forEach(([id, collapsed]) => {
+        const state = sidebarPanelState.get(id);
+        if (!state) return;
+        state.collapsed = !!collapsed;
+      });
+    } catch (_) {}
+  }
+
+  function setSidebarPanelCollapsed(id, collapsed, {persist = true} = {}) {
+    const state = sidebarPanelState.get(id);
+    if (!state) return;
+    state.collapsed = !!collapsed;
+    syncSidebarPanel(id);
+    if (persist) persistSidebarPanelCollapseState();
+  }
+
+  function toggleSidebarPanelCollapsed(id) {
+    const state = sidebarPanelState.get(id);
+    if (!state) return;
+    setSidebarPanelCollapsed(id, !state.collapsed);
+  }
+
+  function resetSidebarPanels() {
+    SIDEBAR_PANELS.forEach((panel) => {
+      const state = sidebarPanelState.get(panel.id);
+      if (!state) return;
+      state.visible = panel.defaultVisible !== false;
+      state.status = panel.defaultVisible === false ? "hidden" : "idle";
+      syncSidebarPanel(panel.id);
+    });
+  }
+
+  function sidebarPanelContentEl(id) {
+    const panel = sidebarPanelConfigById.get(id);
+    if (!panel?.contentId) return null;
+    return document.getElementById(panel.contentId);
+  }
+
+  function renderSidebarPanelContent(id, html, {status = "ready", visible = true} = {}) {
+    const el = sidebarPanelContentEl(id);
+    if (el) el.innerHTML = html;
+    setSidebarPanelVisibility(id, visible, status);
+  }
+
+  function resetSidebarPanelContent(id) {
+    switch (id) {
+      case "vision":
+        renderSidebarPanelContent("vision", "", {status: "idle", visible: true});
+        document.getElementById("vision-model-status").innerHTML = "";
+        break;
+      case "history":
+        historyStatusEl.innerHTML = '<span style="color:var(--text-dim)">Replay record loading...</span>';
+        historyRecordingModeEl.textContent = "";
+        setSidebarPanelStatus("history", "idle");
+        break;
+      case "prompt_assets":
+        promptAssetsStatusEl.textContent = "Scanning mutable prompt assets...";
+        promptAssetsListEl.innerHTML = "";
+        setSidebarPanelStatus("prompt_assets", "idle");
+        break;
+      case "world":
+        renderSidebarPanelContent("world", '<span class="fact" style="color:var(--text-dim)">No world state yet</span>', {status: "empty", visible: true});
+        break;
+      case "stage":
+        renderSidebarPanelContent("stage", "--", {status: "empty", visible: true});
+        break;
+      case "plan":
+        renderSidebarPanelContent("plan", '<span style="color:var(--text-dim)">No active script plan yet</span>', {status: "empty", visible: true});
+        break;
+      case "people":
+        renderSidebarPanelContent("people", '<span style="color:var(--text-dim)">No people tracked</span>', {status: "empty", visible: true});
+        break;
+      default:
+        break;
+    }
+  }
+
+  function resetSidebarPanelContentAll() {
+    SIDEBAR_PANELS.forEach((panel) => resetSidebarPanelContent(panel.id));
+  }
+
+  function buildSidebarLayout() {
+    const sidebar = document.getElementById("sidebar");
+    if (!sidebar) return;
+    const sortedGroups = [...SIDEBAR_GROUPS].sort((a, b) => (a.order || 0) - (b.order || 0));
+    const panelsByGroup = new Map(sortedGroups.map((group) => [group.id, []]));
+    SIDEBAR_PANELS.forEach((panel) => {
+      const list = panelsByGroup.get(panel.group) || [];
+      list.push(panel);
+      panelsByGroup.set(panel.group, list);
+    });
+    const fragment = document.createDocumentFragment();
+    sortedGroups.forEach((group) => {
+      const groupPanels = (panelsByGroup.get(group.id) || []).sort((a, b) => (a.order || 0) - (b.order || 0));
+      if (!groupPanels.length) return;
+      const label = document.createElement("div");
+      label.className = "sidebar-group-label";
+      label.dataset.panelGroup = group.id;
+      label.textContent = group.label;
+      fragment.appendChild(label);
+      groupPanels.forEach((panel) => {
+        const root = document.getElementById(panel.panelId);
+        if (root) fragment.appendChild(root);
+      });
+    });
+    sidebar.replaceChildren(fragment);
+  }
+
+  function applyPanelRegistryMetadata() {
+    INSPECTOR_PANELS.forEach((panel) => {
+      const section = document.getElementById(panel.sectionId);
+      if (section) {
+        section.dataset.panelId = panel.id;
+        section.dataset.panelRegion = "inspector";
+        section.dataset.panelScope = panel.scope;
+      }
+      if (panel.titleId) {
+        const titleEl = document.getElementById(panel.titleId);
+        if (titleEl) titleEl.textContent = panel.title;
+      }
+      if (panel.labelId) {
+        const labelEl = document.getElementById(panel.labelId);
+        if (labelEl) labelEl.textContent = panel.title;
+      }
+      (panel.tabs || []).forEach((tab) => {
+        const button = document.getElementById(tab.tabId);
+        if (button) {
+          button.dataset.panelId = tab.id;
+          button.dataset.panelRegion = "inspector";
+          button.dataset.panelScope = tab.scope;
+          button.textContent = tab.title;
+        }
+        const pane = document.getElementById(tab.paneId);
+        if (pane) {
+          pane.dataset.panelId = tab.id;
+          pane.dataset.panelRegion = "inspector";
+          pane.dataset.panelScope = tab.scope;
+        }
+      });
+    });
+    SIDEBAR_PANELS.forEach((panel) => {
+      const root = document.getElementById(panel.panelId);
+      if (!root) return;
+      root.dataset.panelId = panel.id;
+      root.dataset.panelRegion = "sidebar";
+      root.dataset.panelScope = panel.scope;
+      root.dataset.panelGroup = panel.group || "";
+      root.dataset.panelOrder = String(panel.order || 0);
+      const heading = root.querySelector("h3");
+      if (heading) {
+        heading.textContent = panel.title;
+        let head = root.querySelector(".sidebar-panel-head");
+        if (!head) {
+          head = document.createElement("div");
+          head.className = "sidebar-panel-head";
+          root.insertBefore(head, heading);
+        }
+        if (heading.parentElement !== head) head.prepend(heading);
+        let toggle = head.querySelector(".sidebar-panel-toggle");
+        if (!toggle) {
+          toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.className = "sidebar-panel-toggle";
+          toggle.dataset.panelCollapse = panel.id;
+          head.appendChild(toggle);
+        }
+      }
+      syncSidebarPanel(panel.id);
+    });
+    buildSidebarLayout();
+  }
 
   async function loadStreamSchema() {
     try {
@@ -1446,11 +2187,432 @@
 
   function sendInput(text) {
     if (!text.trim()) return;
-    fetch("/send", {
+    return fetch("/send", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({text: text.trim()})
+    }).then(async (response) => {
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (_) {
+        data = {};
+      }
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error || `request failed (${response.status})`);
+      }
+      return data;
     });
+  }
+
+  async function postJson(url, payload) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload || {}),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || `request failed (${response.status})`);
+    return data;
+  }
+
+  async function sendInputSequence(commands, delayMs = 80) {
+    for (const command of commands.filter(Boolean)) {
+      await sendInput(command);
+      if (delayMs > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, delayMs));
+      }
+    }
+  }
+
+  function clearPendingRuntimeAction(message = "") {
+    pendingPauseState = null;
+    pendingPauseSince = 0;
+    updateRuntimeButtons();
+    if (message) annotationStatus.textContent = message;
+  }
+
+  function notePendingRuntimeAction(state) {
+    pendingPauseState = state;
+    pendingPauseSince = Date.now();
+    updateRuntimeButtons();
+  }
+
+  function checkPendingRuntimeActionHealth() {
+    if (!pendingPauseState || !pendingPauseSince) return;
+    if (statePollingSuspended) {
+      clearPendingRuntimeAction("Runtime connection lost before the action completed. Refresh or restart the app.");
+      return;
+    }
+    if ((Date.now() - pendingPauseSince) < pendingPauseTimeoutMs) return;
+    clearPendingRuntimeAction("Runtime action timed out waiting for confirmation. Check the app logs and try again.");
+  }
+
+  function renderHistoryState(state) {
+    historyState = state || {enabled: false, current_session: {}};
+    const playbackKnown = Object.prototype.hasOwnProperty.call(historyState, "playback");
+    if (playbackKnown && !historyState.playback?.active && !(pendingPauseState === "playing" && pendingReplayArchiveRef)) {
+      playbackVisionFrame = null;
+      pendingReplayArchiveRef = "";
+      pendingReplayEventTime = null;
+      stopArchiveAudioPlayback();
+    }
+    if (!historyState.enabled) {
+      historyStatusEl.innerHTML = '<span style="color:var(--text-dim)">Replay capture disabled.</span>';
+      historyRecordingModeEl.textContent = "";
+      historyRewindButton.disabled = true;
+      historyPinButton.disabled = true;
+      historyPruneButton.disabled = true;
+      setSidebarPanelStatus("history", "error");
+      return;
+    }
+    const current = historyState.current_session || {};
+    const currentTitle = current.title || current.session_id || "--";
+    historyRecordMode = String(current.record_mode || "full");
+    const captureEnabled = current.replay_capture_enabled !== false;
+    const lines = [
+      `free: <b>${Number(historyState.free_gib || 0).toFixed(1)} GiB</b>`,
+      `sessions: <b>${historyState.sessions_count || 0}</b> · pinned: <b>${historyState.pinned_count || 0}</b> · snippets: <b>${historyState.moments_count || 0}</b>`,
+      `current: <b>${esc(currentTitle)}</b>`,
+      current.session_path ? `path: <span style="color:var(--text-dim)">${esc(current.session_path)}</span>` : "",
+      historyState.playback?.active
+        ? `playback: <b>${esc(historyState.playback.source_kind || "archive")}</b> @ <b>${esc(String(historyState.playback.checkpoint_index ?? "--"))}</b>`
+        : "",
+      historyState.playback?.warning ? `<span style="color:var(--warn)">${esc(historyState.playback.warning)}</span>` : "",
+      historyState.warning ? `<span style="color:var(--warn)">${esc(historyState.warning)}</span>` : "",
+    ].filter(Boolean);
+    historyStatusEl.innerHTML = lines.join("<br>");
+    historyRecordingModeEl.innerHTML = captureEnabled
+      ? `Recording mode: <b>${esc(historyRecordMode)}</b> · replay/snippet capture <b>on</b>`
+      : `Recording mode: <b>${esc(historyRecordMode)}</b> · replay/snippet capture <b style="color:var(--warn)">off</b>${current.debug_only_reason ? `<br><span style="color:var(--warn)">${esc(current.debug_only_reason)}</span>` : ""}<br><span style="color:var(--text-dim)">The active timeline continues below. Older future events are shown as superseded.</span>`;
+    historyRewindButton.disabled = !current.session_id;
+    historyPinButton.disabled = !current.session_id;
+    historyPruneButton.disabled = false;
+    setSidebarPanelStatus("history", current.session_id ? "ready" : "empty");
+    renderSelectedEventAnnotations();
+    if (selectedStreamKey) selectEvent(selectedStreamKey);
+    maybeResolveSaveCompleteFromState().catch(() => {});
+    maybeResolveDiscardCompleteFromState().catch(() => {});
+  }
+
+  function promptApplyModeLabel(mode) {
+    switch (mode) {
+      case "refresh_or_continue":
+        return "via /refresh or Continue";
+      case "next_call_auto":
+        return "next model call";
+      case "next_vision_cycle":
+        return "next vision cycle";
+      case "restart_required":
+        return "needs /reload";
+      default:
+        return mode || "unknown";
+    }
+  }
+
+  function renderPromptAssets(items) {
+    promptAssets = Array.isArray(items) ? items : [];
+    if (!promptAssets.length) {
+      promptAssetsStatusEl.textContent = "No mutable prompt assets discovered yet.";
+      promptAssetsListEl.innerHTML = "";
+      setSidebarPanelStatus("prompt_assets", "empty");
+      return;
+    }
+    setSidebarPanelStatus("prompt_assets", "ready");
+    promptAssetsStatusEl.innerHTML = "Edit these files locally, then use <b>Apply</b> to push the relevant refresh action.";
+    promptAssetsListEl.innerHTML = promptAssets.map((item) => `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:0.5em 0.6em;background:var(--panel-hover);">
+        <div style="display:flex;justify-content:space-between;gap:0.75em;align-items:flex-start;">
+          <div><b>${esc(item.label || item.path || "asset")}</b></div>
+          <div style="display:flex;gap:0.35em;align-items:center;flex-wrap:wrap;">
+            <button type="button" class="prompt-asset-open" data-prompt-path="${esc(item.path || "")}" style="padding:0.24em 0.5em;border-radius:999px;border:1px solid var(--border);background:var(--panel);color:var(--text);cursor:pointer;">Open</button>
+            <button type="button" class="prompt-asset-apply" data-prompt-command="${esc(item.apply_command || "")}" style="padding:0.24em 0.5em;border-radius:999px;border:1px solid var(--border);background:var(--accent);color:var(--bg);cursor:pointer;">${esc(item.apply_mode === "restart_required" ? "Reload" : "Apply")}</button>
+          </div>
+        </div>
+        <div style="margin-top:0.25em;color:var(--text-dim);font-size:0.76em;">${esc(item.path || "")}</div>
+        ${item.note ? `<div style="margin-top:0.3em;color:var(--text-dim);font-size:0.78em;">${esc(item.note)}</div>` : ""}
+      </div>
+    `).join("");
+  }
+
+  async function refreshPromptAssets() {
+    const character = (document.getElementById("h-character").textContent || "").trim();
+    const query = character && character !== "--" ? `?character=${encodeURIComponent(character)}` : "";
+    try {
+      const response = await fetch(`/prompt-assets${query}`);
+      if (!response.ok) throw new Error(`prompt assets ${response.status}`);
+      renderPromptAssets(await response.json());
+    } catch (error) {
+      promptAssetsStatusEl.textContent = `Prompt asset inventory unavailable: ${error.message || error}`;
+      promptAssetsListEl.innerHTML = "";
+      setSidebarPanelStatus("prompt_assets", "error");
+    }
+  }
+
+  async function refreshHistoryState() {
+    try {
+      const response = await fetch("/history/state");
+      if (!response.ok) throw new Error(`history ${response.status}`);
+      const data = await response.json();
+      renderHistoryState({...data, enabled: data.enabled !== false});
+    } catch (err) {
+      renderHistoryState({enabled: false, current_session: {}});
+    }
+  }
+
+  function archiveBucketLabel(item) {
+    if (!item) return "archive";
+    if (item.bucket === "sessions") return "session";
+    if (item.bucket === "moments") return "snippet";
+    if (item.bucket === "pinned") return "saved";
+    return item.bucket || "session";
+  }
+
+  function archiveDisplayTitle(item) {
+    return item?.title || item?.label || item?.session_id || item?.name || "archive";
+  }
+
+  function archiveDisplayTime(item) {
+    if (item?.started_at_iso) {
+      const parsed = new Date(item.started_at_iso);
+      if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleString();
+    }
+    if (item?.started_at) {
+      const parsed = new Date(Number(item.started_at) * 1000);
+      if (!Number.isNaN(parsed.getTime())) return parsed.toLocaleString();
+    }
+    return "unknown time";
+  }
+
+  function archiveMatchesQuery(item, query) {
+    if (!query) return true;
+    const haystack = [
+      archiveDisplayTitle(item),
+      item?.character || "",
+      item?.session_id || "",
+      item?.started_at_iso || "",
+      archiveBucketLabel(item),
+      ...(Array.isArray(item?.tags) ? item.tags : []),
+    ].join(" ").toLowerCase();
+    return haystack.includes(query.toLowerCase());
+  }
+
+  function setArchivePickerOpen(open) {
+    archivePickerOpen = !!open;
+    archivePicker.classList.toggle("open", archivePickerOpen);
+    archivePicker.setAttribute("aria-hidden", archivePickerOpen ? "false" : "true");
+    if (archivePickerOpen) {
+      archivePickerSearchInput.focus();
+      archivePickerSearchInput.select();
+    }
+  }
+
+  function cloneSnapshotPayload(value) {
+    if (typeof structuredClone === "function") return structuredClone(value);
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function captureLiveTimelineSnapshot() {
+    liveTimelineSnapshot = {
+      streamEvents: cloneSnapshotPayload(streamEvents),
+      promptTraceEvents: cloneSnapshotPayload(promptTraceEvents),
+      annotations: cloneSnapshotPayload(Array.from(annotationsByEventKey.entries())),
+      hiddenLanes: Array.from(hiddenLanes),
+      sessionStart,
+      currentSessionId,
+      turnCount,
+      currentTurnId,
+      pendingInputTurnId,
+      activeReplyKey,
+      activePostResponseKey,
+      activeWorldUpdateKey,
+      visionPassKey,
+      selectedStreamKey,
+      streamKey,
+      lastSeq,
+      debugOnlyBoundaryTimestamp,
+      historyRecordMode,
+      sessionSeen,
+      detailTab: activeDetailTab,
+      loadedAnnotationSessionId,
+      worldHtml: document.getElementById("world-content").innerHTML,
+      peopleHtml: document.getElementById("people-content").innerHTML,
+      stageHtml: document.getElementById("stage-content").innerHTML,
+      planHtml: document.getElementById("plan-content").innerHTML,
+      sidebarPanels: cloneSnapshotPayload(Array.from(sidebarPanelState.entries())),
+      headerSession: document.getElementById("h-session").textContent,
+      headerStage: document.getElementById("h-stage").textContent,
+      headerUptime: document.getElementById("h-uptime").textContent,
+    };
+  }
+
+  function restoreLiveTimelineSnapshot() {
+    if (!liveTimelineSnapshot) return false;
+    streamEvents.length = 0;
+    streamEventByKey.clear();
+    promptTraceEvents.length = 0;
+    annotationsByEventKey.clear();
+    hiddenLanes.clear();
+    cloneSnapshotPayload(liveTimelineSnapshot.streamEvents || []).forEach((event) => {
+      streamEvents.push(event);
+      if (event?.key) streamEventByKey.set(event.key, event);
+    });
+    cloneSnapshotPayload(liveTimelineSnapshot.promptTraceEvents || []).forEach((event) => promptTraceEvents.push(event));
+    (liveTimelineSnapshot.annotations || []).forEach(([eventKey, entries]) => {
+      annotationsByEventKey.set(eventKey, entries);
+    });
+    (liveTimelineSnapshot.hiddenLanes || []).forEach((lane) => hiddenLanes.add(lane));
+    sessionStart = liveTimelineSnapshot.sessionStart ?? null;
+    currentSessionId = liveTimelineSnapshot.currentSessionId || "";
+    turnCount = liveTimelineSnapshot.turnCount || 0;
+    currentTurnId = liveTimelineSnapshot.currentTurnId || 0;
+    pendingInputTurnId = liveTimelineSnapshot.pendingInputTurnId ?? null;
+    activeReplyKey = liveTimelineSnapshot.activeReplyKey || null;
+    activePostResponseKey = liveTimelineSnapshot.activePostResponseKey || null;
+    activeWorldUpdateKey = liveTimelineSnapshot.activeWorldUpdateKey || null;
+    visionPassKey = liveTimelineSnapshot.visionPassKey || null;
+    selectedStreamKey = liveTimelineSnapshot.selectedStreamKey || null;
+    streamKey = liveTimelineSnapshot.streamKey || 0;
+    lastSeq = liveTimelineSnapshot.lastSeq || 0;
+    debugOnlyBoundaryTimestamp = liveTimelineSnapshot.debugOnlyBoundaryTimestamp ?? null;
+    historyRecordMode = liveTimelineSnapshot.historyRecordMode || "full";
+    sessionSeen = !!liveTimelineSnapshot.sessionSeen;
+    loadedAnnotationSessionId = liveTimelineSnapshot.loadedAnnotationSessionId || "";
+    document.getElementById("world-content").innerHTML = liveTimelineSnapshot.worldHtml || '<span class="fact" style="color:var(--text-dim)">No world state yet</span>';
+    document.getElementById("people-content").innerHTML = liveTimelineSnapshot.peopleHtml || '<span style="color:var(--text-dim)">No people tracked</span>';
+    document.getElementById("stage-content").innerHTML = liveTimelineSnapshot.stageHtml || "--";
+    document.getElementById("plan-content").innerHTML = liveTimelineSnapshot.planHtml || '<span style="color:var(--text-dim)">No active script plan yet</span>';
+    (liveTimelineSnapshot.sidebarPanels || []).forEach(([id, savedState]) => {
+      const state = sidebarPanelState.get(id);
+      if (!state || !savedState || typeof savedState !== "object") return;
+      state.visible = savedState.visible !== false;
+      state.status = savedState.status || state.status;
+      state.collapsed = !!savedState.collapsed;
+      syncSidebarPanel(id);
+    });
+    document.getElementById("h-session").textContent = liveTimelineSnapshot.headerSession || "--";
+    document.getElementById("h-stage").textContent = liveTimelineSnapshot.headerStage || "--";
+    document.getElementById("h-uptime").textContent = liveTimelineSnapshot.headerUptime || "--";
+    renderStream();
+    setDetailTab(liveTimelineSnapshot.detailTab || activeDetailTab);
+    if (selectedStreamKey && streamEventByKey.has(selectedStreamKey)) selectEvent(selectedStreamKey);
+    renderSelectedEventAnnotations();
+    liveTimelineSnapshot = null;
+    return true;
+  }
+
+  function renderArchiveBrowseState() {
+    if (archiveBrowseRef) {
+      archiveLoadButton.textContent = "Return To Live";
+      const title = archiveBrowseMeta?.title || archiveBrowseRef;
+      archiveLoadStatus.textContent = `Browsing archive: ${title}`;
+    } else {
+      archiveLoadButton.textContent = "Load Archive...";
+      archiveLoadStatus.textContent = "";
+    }
+    syncArchiveMediaPlayer();
+    updateTimelinePlayhead();
+  }
+
+  async function loadArchiveTimeline(sessionRef) {
+    const response = await fetch(`/history/events?session_id=${encodeURIComponent(sessionRef)}`);
+    const payload = await response.json();
+    if (!response.ok || payload.ok === false) throw new Error(payload.error || `history events ${response.status}`);
+    if (!archiveBrowseRef) captureLiveTimelineSnapshot();
+    archiveBrowseSeqFloor = lastSeq;
+    archiveBrowseRef = sessionRef;
+    archiveBrowseMeta = payload;
+    clearConversationState(`Browsing archive: ${payload.title || sessionRef}`);
+    lastSeq = archiveBrowseSeqFloor;
+    archiveHydrating = true;
+    try {
+      (payload.events || []).forEach((event) => handleEvent(event, {archive: true}));
+    } finally {
+      archiveHydrating = false;
+    }
+    await refreshAnnotations(sessionRef);
+    renderArchiveBrowseState();
+    updateVisionFeedUrl();
+  }
+
+  function exitArchiveBrowseMode() {
+    if (!archiveBrowseRef) return;
+    archiveBrowseRef = "";
+    archiveBrowseMeta = null;
+    archiveBrowseSeqFloor = 0;
+    archiveMediaSeekLock = false;
+    archiveMediaScrubbing = false;
+    renderArchiveBrowseState();
+    if (restoreLiveTimelineSnapshot()) {
+      refreshAnnotations(activeArchiveSessionId());
+      renderBootStatus();
+      refreshHistoryState();
+      updateVisionFeedUrl();
+      return;
+    }
+    resetDashboardState("Connecting to the local runtime...");
+    refreshState();
+    refreshHistoryState();
+    updateVisionFeedUrl();
+  }
+
+  function renderArchivePicker() {
+    if (!historyArchives.length) {
+      archivePickerStatus.textContent = "No saved sessions or snippets yet.";
+      archivePickerList.innerHTML = "";
+      return;
+    }
+    const query = (archivePickerSearchInput.value || "").trim();
+    const filtered = historyArchives.filter((item) => archiveMatchesQuery(item, query));
+    archivePickerStatus.textContent = query
+      ? `${filtered.length} match${filtered.length === 1 ? "" : "es"}`
+      : `${historyArchives.length} archive${historyArchives.length === 1 ? "" : "s"}`;
+    if (!filtered.length) {
+      archivePickerList.innerHTML = '<div style="color:var(--text-dim);">No archives match that search.</div>';
+      return;
+    }
+    archivePickerList.innerHTML = filtered.map((item) => {
+      const checkpointCount = Number(item.checkpoint_count || 0);
+      const notes = Number(item.annotation_count || 0);
+      const bucket = archiveBucketLabel(item);
+      return `
+        <div class="archive-row">
+          <div class="archive-row-head">
+            <div>
+              <div class="archive-row-title"><span class="archive-kind">${esc(bucket)}</span>${esc(archiveDisplayTitle(item))}</div>
+              <div class="archive-row-meta">${esc(archiveDisplayTime(item))} · ${esc(item.character || "unknown")} · ${esc(item.session_id || item.ref || "")} · ${checkpointCount} ckpt · ${notes} note${notes === 1 ? "" : "s"}</div>
+            </div>
+            <div class="archive-row-actions">
+              <button type="button" class="ghost archive-copy-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}" data-title="${esc(archiveDisplayTitle(item))}">Copy Ref</button>
+              <button type="button" class="ghost archive-rename-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}" data-title="${esc(archiveDisplayTitle(item))}">Rename</button>
+              <button type="button" class="secondary archive-replay-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}">Replay</button>
+              <button type="button" class="primary archive-load-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}">Load</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function renderHistoryArchives(items) {
+    historyArchives = Array.isArray(items) ? items : [];
+    if (saveCompleteModalOpen) renderSaveCompleteModal();
+    renderArchivePicker();
+  }
+
+  async function refreshHistoryArchives() {
+    try {
+      const response = await fetch("/history/list");
+      if (!response.ok) throw new Error(`list ${response.status}`);
+      renderHistoryArchives(await response.json());
+    } catch (err) {
+      renderHistoryArchives([]);
+    }
+  }
+
+  function archiveItemByRef(ref) {
+    if (!ref) return null;
+    return historyArchives.find((item) => String(item.ref || item.session_id || item.path || "") === String(ref)) || null;
   }
 
   async function copyText(text) {
@@ -1480,6 +2642,177 @@
     reportRefStatus.title = title || "";
   }
 
+  function activeArchiveRef() {
+    if (archiveBrowseRef) return archiveBrowseRef;
+    if (currentSessionId) return currentSessionId;
+    if (historyState.current_session?.session_id) return historyState.current_session.session_id;
+    return lastStoppedArchiveRef || "";
+  }
+
+  function activeArchiveTitle() {
+    if (archiveBrowseRef) return archiveBrowseMeta?.title || archiveBrowseRef;
+    if (historyState.current_session?.title) return historyState.current_session.title;
+    return lastStoppedArchiveTitle || activeArchiveRef();
+  }
+
+  function stopButtonLabel() {
+    return "Save + Stop";
+  }
+
+  function stopArchiveAudioPlayback() {
+    archiveAudioPlayback.pause();
+    archiveAudioPlayback.removeAttribute("src");
+    archiveAudioPlayback.load();
+    archiveAudioPlayback.style.display = "none";
+  }
+
+  function playArchiveAudio(sessionId, startSeconds = 0) {
+    if (!sessionId) return;
+    archiveAudioPlayback.src = `/history/audio?session_id=${encodeURIComponent(sessionId)}&_=${Date.now()}`;
+    archiveAudioPlayback.style.display = "";
+    const startAt = Math.max(0, Number(startSeconds || 0));
+    const applyOffset = () => {
+      try {
+        archiveAudioPlayback.currentTime = startAt;
+      } catch (_) {}
+      archiveAudioPlayback.play().catch(() => {});
+    };
+    if (archiveAudioPlayback.readyState >= 1) {
+      applyOffset();
+    } else {
+      archiveAudioPlayback.onloadedmetadata = () => {
+        archiveAudioPlayback.onloadedmetadata = null;
+        applyOffset();
+      };
+    }
+  }
+
+  function archivePlaybackMediaAvailable() {
+    return !!(archiveBrowseMeta?.media?.playback_available);
+  }
+
+  function archivePlaybackMediaUrl(sessionId) {
+    if (!sessionId) return "";
+    return `/history/media?session_id=${encodeURIComponent(sessionId)}`;
+  }
+
+  function setArchiveMediaStatus(text = "") {
+    archiveMediaStatusEl.textContent = text;
+  }
+
+  function formatMediaClock(value) {
+    const total = Math.max(0, Number(value || 0));
+    const minutes = Math.floor(total / 60);
+    const seconds = Math.floor(total % 60);
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  function renderArchiveTransport() {
+    const active = !!(archiveBrowseRef && archivePlaybackMediaAvailable());
+    archiveTransportEl.classList.toggle("visible", active);
+    if (!active) {
+      archiveTransportToggleButton.textContent = "Play";
+      archiveTransportToggleButton.disabled = true;
+      archiveTransportScrubber.max = "0";
+      archiveTransportScrubber.value = "0";
+      archiveTransportScrubber.disabled = true;
+      archiveTransportTime.textContent = "0:00 / 0:00";
+      return;
+    }
+    const current = Math.max(0, Number(archiveMediaPlayer.currentTime || 0));
+    const duration = Math.max(0, Number(archiveMediaDuration || archiveMediaPlayer.duration || 0));
+    archiveTransportToggleButton.textContent = archiveMediaPlayer.paused ? "Play" : "Pause";
+    archiveTransportToggleButton.disabled = duration <= 0 && archiveMediaPlayer.readyState < 1;
+    archiveTransportScrubber.max = String(duration > 0 ? duration : 0);
+    archiveTransportScrubber.value = String(Math.min(current, duration || current));
+    archiveTransportScrubber.disabled = duration <= 0;
+    archiveTransportTime.textContent = `${formatMediaClock(current)} / ${formatMediaClock(duration)}`;
+  }
+
+  function syncArchiveMediaPlayer() {
+    const active = !!(archiveBrowseRef && archivePlaybackMediaAvailable());
+    if (!active) {
+      archiveMediaPlayer.pause();
+      archiveMediaPlayer.classList.remove("visible");
+      archiveMediaPlayer.removeAttribute("src");
+      archiveMediaPlayer.load();
+      archiveMediaDuration = 0;
+      setArchiveMediaStatus("");
+      renderArchiveTransport();
+      return;
+    }
+    const nextSrc = archivePlaybackMediaUrl(archiveBrowseRef);
+    if (archiveMediaPlayer.getAttribute("src") !== nextSrc) {
+      archiveMediaPlayer.src = nextSrc;
+      archiveMediaPlayer.load();
+    }
+    archiveMediaPlayer.classList.add("visible");
+    const title = archiveBrowseMeta?.title || archiveBrowseRef;
+    setArchiveMediaStatus(`Loaded archive media: ${title}`);
+    renderArchiveTransport();
+  }
+
+  function archiveMediaCurrentTime() {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return null;
+    if (!Number.isFinite(archiveMediaPlayer.currentTime)) return null;
+    return Math.max(0, Number(archiveMediaPlayer.currentTime || 0));
+  }
+
+  function updateTimelinePlayhead() {
+    const playerTime = archiveMediaCurrentTime();
+    if (playerTime == null || !streamEvents.length) {
+      streamPlayheadEl.classList.remove("visible");
+      renderArchiveTransport();
+      return;
+    }
+    const contentLeft = 20 + playerTime * timelineRenderScale;
+    if (archiveBrowseRef && archivePlaybackMediaAvailable() && !archiveMediaPlayer.paused && followLive) {
+      const maxScroll = Math.max(0, streamViewport.scrollWidth - streamViewport.clientWidth);
+      const desired = Math.max(0, Math.min(maxScroll, contentLeft - streamViewport.clientWidth * 0.55));
+      if (Math.abs(streamViewport.scrollLeft - desired) > 4) {
+        streamViewport.scrollLeft = desired;
+      }
+    }
+    const left = contentLeft - streamViewport.scrollLeft;
+    streamPlayheadEl.style.left = `${left}px`;
+    streamPlayheadEl.classList.add("visible");
+    renderArchiveTransport();
+  }
+
+  function nearestEventKeyForTime(timeS) {
+    if (!streamEvents.length) return "";
+    const target = Math.max(0, Number(timeS || 0));
+    let best = streamEvents[0];
+    let bestDelta = Math.abs(relativeTime(best.timestamp) - target);
+    for (const event of streamEvents) {
+      const delta = Math.abs(relativeTime(event.timestamp) - target);
+      if (delta < bestDelta) {
+        best = event;
+        bestDelta = delta;
+      }
+    }
+    return best?.key || "";
+  }
+
+  function seekArchiveMedia(timeS, {syncSelection = true, autoPlay = false} = {}) {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    const target = Math.max(0, Number(timeS || 0));
+    archiveMediaSeekLock = true;
+    try {
+      archiveMediaPlayer.currentTime = target;
+    } catch (_) {}
+    window.setTimeout(() => { archiveMediaSeekLock = false; }, 80);
+    if (autoPlay) {
+      archiveMediaPlayer.play().catch(() => {});
+    }
+    if (syncSelection) {
+      const key = nearestEventKeyForTime(target);
+      if (key) selectEvent(key, {seekMedia: false});
+    }
+    updateTimelinePlayhead();
+    renderArchiveTransport();
+  }
+
   function clearStickyStoppedReportRef() {
     lastStoppedReportRefText = "";
     lastStoppedReportRefPath = "";
@@ -1496,7 +2829,249 @@
     setReportRefStatus(`Last stopped session: ${lastStoppedReportRefText}`, lastStoppedReportRefPath || "");
   }
 
+  function setLastStoppedArchive(ref = "", title = "") {
+    lastStoppedArchiveRef = ref || "";
+    lastStoppedArchiveTitle = title || ref || "";
+  }
+
+  function cancelSaveCompleteAutoHide() {
+    if (saveCompleteAutoHideTimer) {
+      window.clearInterval(saveCompleteAutoHideTimer);
+      saveCompleteAutoHideTimer = 0;
+    }
+    saveCompleteAutoHideDeadline = 0;
+  }
+
+  function setSaveCompleteMode(mode) {
+    saveCompleteMode = mode || "closed";
+    renderSaveCompleteModal();
+  }
+
+  function scheduleSaveCompleteAutoHide(ms = 3000) {
+    cancelSaveCompleteAutoHide();
+    saveCompleteAutoHideDeadline = Date.now() + ms;
+    renderSaveCompleteModal();
+    saveCompleteAutoHideTimer = window.setInterval(() => {
+      if (!saveCompleteModalOpen) {
+        cancelSaveCompleteAutoHide();
+        return;
+      }
+      if (Date.now() >= saveCompleteAutoHideDeadline) {
+        cancelSaveCompleteAutoHide();
+        closeSaveCompleteModal();
+        return;
+      }
+      renderSaveCompleteModal();
+    }, 200);
+  }
+
+  function closeSaveCompleteModal() {
+    cancelSaveCompleteAutoHide();
+    if (discardCompletionProbeTimer) {
+      window.clearTimeout(discardCompletionProbeTimer);
+      discardCompletionProbeTimer = 0;
+    }
+    saveCompleteModalOpen = false;
+    saveCompleteMeta = null;
+    saveCompleteMode = "closed";
+    saveCompleteModal.classList.remove("open");
+    saveCompleteModal.setAttribute("aria-hidden", "true");
+    saveCompleteStatusEl.textContent = "";
+    renderBootStatus();
+  }
+
+  function renderSaveCompleteModal() {
+    const meta = saveCompleteMeta || {};
+    const item = archiveItemByRef(meta.sessionId || "");
+    const title = saveCompleteTitleInput === document.activeElement
+      ? saveCompleteTitleInput.value
+      : (item?.title || meta.title || meta.sessionId || "--");
+    const sessionPath = item?.path || meta.sessionPath || "--";
+    const reportPath = meta.reportPath || "--";
+    const countdownSeconds = saveCompleteAutoHideDeadline
+      ? Math.max(1, Math.ceil((saveCompleteAutoHideDeadline - Date.now()) / 1000))
+      : 0;
+    const mode = saveCompleteMode;
+    saveCompleteTitleInput.value = title;
+    saveCompleteSessionIdEl.textContent = meta.sessionId || "--";
+    saveCompleteSessionPathEl.textContent = sessionPath;
+    saveCompleteReportPathEl.textContent = reportPath;
+    const reviewMode = mode === "review";
+    const preparingMode = mode === "preparing_review" || mode === "preparing_save" || mode === "preparing_discard";
+    const savingMode = mode === "saving" || mode === "discarding" || preparingMode;
+    const savedMode = mode === "saved" || mode === "discarded";
+    saveCompleteHeadingEl.textContent =
+      mode === "preparing_review" ? "Pausing Session" :
+      mode === "preparing_save" ? "Pausing Session" :
+      mode === "preparing_discard" ? "Pausing Session" :
+      mode === "saving" ? "Saving Session" :
+      mode === "saved" ? "Session Saved" :
+      mode === "discarding" ? "Discarding Session" :
+      mode === "discarded" ? "Session Discarded" :
+      "Save Session";
+    saveCompleteSubtitleEl.textContent =
+      mode === "preparing_review" ? "Pausing the live session before opening save/discard review." :
+      mode === "preparing_save" ? "Pausing the live session before saving so the archive is consistent." :
+      mode === "preparing_discard" ? "Pausing the live session before discarding it." :
+      mode === "saving" ? "Saving the session now. This dialog will update when the archive is ready." :
+      mode === "saved" ? "The session is saved. You can load it now or let this dialog hide automatically." :
+      mode === "discarding" ? "Discarding this session now." :
+      mode === "discarded" ? "The session was discarded. This dialog will hide automatically." :
+      "Review the session name, then save it or discard it.";
+    saveCompleteTitleInput.disabled = !reviewMode;
+    saveCompleteCopyRefButton.hidden = !savedMode || mode === "discarded";
+    saveCompleteCopyPathButton.hidden = !savedMode || mode === "discarded";
+    saveCompleteCopyReportButton.hidden = !savedMode || mode === "discarded";
+    saveCompleteCopyReportButton.disabled = !meta.reportPath;
+    saveCompleteLoadButton.hidden = !savedMode || mode === "discarded";
+    saveCompleteLoadButton.disabled = !meta.sessionId;
+    saveCompleteCancelButton.hidden = !reviewMode;
+    saveCompleteDiscardButton.hidden = !reviewMode;
+    saveCompleteSaveButton.hidden = !reviewMode;
+    saveCompleteOkayButton.hidden = !savedMode;
+    saveCompleteCloseButton.textContent = reviewMode ? "Cancel" : "Close";
+    if (savedMode && countdownSeconds) {
+      const base = mode === "discarded" ? "Discarded successfully." : "Saved successfully.";
+      saveCompleteStatusEl.textContent = `${base} Hiding in ${countdownSeconds}s.`;
+    }
+    if (preparingMode) {
+      saveCompleteStatusEl.textContent =
+        mode === "preparing_review" ? "Pausing before review..." :
+        mode === "preparing_discard" ? "Pausing before discard..." :
+        "Pausing before save...";
+    } else if (savingMode) {
+      saveCompleteStatusEl.textContent = mode === "discarding" ? "Discarding..." : "Saving...";
+    }
+  }
+
+  async function openSaveCompleteModal({sessionId = "", title = "", reportPath = "", sessionPath = "", mode = "saved"} = {}) {
+    if (mode === "saved") await refreshHistoryArchives();
+    saveCompleteMeta = {
+      sessionId: sessionId || "",
+      title: title || "",
+      reportPath: reportPath || "",
+      sessionPath: sessionPath || "",
+    };
+    saveCompleteMode = mode;
+    renderSaveCompleteModal();
+    saveCompleteModalOpen = true;
+    saveCompleteModal.classList.add("open");
+    saveCompleteModal.setAttribute("aria-hidden", "false");
+  }
+
+  async function maybeResolveSaveCompleteFromState() {
+    if (!sessionSavePending || saveCompletionResolving || archiveBrowseRef) return;
+    if (saveCompleteMode === "discarding") return;
+    if (saveCompleteModalOpen && saveCompleteMode !== "saving" && saveCompleteMode !== "discarding") return;
+    if (!sessionStopped) return;
+    const current = historyState.current_session || {};
+    const sessionId = String(lastStoppedArchiveRef || current.session_id || "").trim();
+    if (!sessionId) return;
+    let archiveItem = archiveItemByRef(sessionId);
+    if (!archiveItem) {
+      saveCompletionResolving = true;
+      try {
+        await refreshHistoryArchives();
+      } finally {
+        saveCompletionResolving = false;
+      }
+      archiveItem = archiveItemByRef(sessionId);
+    }
+    const resolvedTitle = archiveItem?.title || current.title || lastStoppedArchiveTitle || sessionId;
+    const resolvedPath = archiveItem?.path || current.session_path || "";
+    if (!archiveItem && !resolvedPath) return;
+    sessionSavePending = false;
+    updateRuntimeButtons();
+    renderBootStatus();
+    saveCompleteMeta = {
+      sessionId,
+      title: resolvedTitle,
+      reportPath: lastStoppedReportRefPath || "",
+      sessionPath: resolvedPath,
+    };
+    saveCompleteMode = "saved";
+    renderSaveCompleteModal();
+    saveCompleteModalOpen = true;
+    saveCompleteModal.classList.add("open");
+    saveCompleteModal.setAttribute("aria-hidden", "false");
+    scheduleSaveCompleteAutoHide(3000);
+  }
+
+  async function maybeResolveDiscardCompleteFromState() {
+    if (!sessionSavePending || discardCompletionResolving) return;
+    if (saveCompleteMode !== "discarding") return;
+    if (!sessionStopped) return;
+    const expectedSessionId = String(saveCompleteMeta?.sessionId || currentSessionId || "").trim();
+    const current = historyState.current_session || {};
+    const currentSessionIdFromState = String(current.session_id || "").trim();
+    if (currentSessionIdFromState && (!expectedSessionId || currentSessionIdFromState === expectedSessionId)) return;
+    sessionSavePending = false;
+    pendingFinalizeAction = "";
+    if (discardCompletionProbeTimer) {
+      window.clearTimeout(discardCompletionProbeTimer);
+      discardCompletionProbeTimer = 0;
+    }
+    updateRuntimeButtons();
+    renderBootStatus();
+    saveCompleteMeta = {
+      sessionId: expectedSessionId,
+      title: "",
+      reportPath: "",
+      sessionPath: "",
+    };
+    saveCompleteMode = "discarded";
+    renderSaveCompleteModal();
+    saveCompleteModalOpen = true;
+    saveCompleteModal.classList.add("open");
+    saveCompleteModal.setAttribute("aria-hidden", "false");
+    scheduleSaveCompleteAutoHide(3000);
+  }
+
+  function scheduleDiscardCompletionProbe(delayMs = 250) {
+    if (discardCompletionProbeTimer) window.clearTimeout(discardCompletionProbeTimer);
+    discardCompletionProbeTimer = window.setTimeout(async () => {
+      discardCompletionProbeTimer = 0;
+      if (!sessionSavePending || saveCompleteMode !== "discarding") return;
+      discardCompletionResolving = true;
+      try {
+        await refreshHistoryState();
+      } finally {
+        discardCompletionResolving = false;
+      }
+      await maybeResolveDiscardCompleteFromState();
+      if (sessionSavePending && saveCompleteMode === "discarding") scheduleDiscardCompletionProbe(500);
+    }, delayMs);
+  }
+
+  async function flushPendingFinalizeAction() {
+    if (!pendingFinalizeAction || !sessionSavePending) return;
+    if (!conversationPaused || sessionStopped) return;
+    const command = pendingFinalizeAction;
+    pendingFinalizeAction = "";
+    saveCompleteMode = command === "/discard" ? "discarding" : "saving";
+    notePendingRuntimeAction("stopping");
+    renderSaveCompleteModal();
+    try {
+      await sendInput(command);
+      if (command === "/discard") scheduleDiscardCompletionProbe(250);
+    } catch (error) {
+      sessionSavePending = false;
+      if (discardCompletionProbeTimer) {
+        window.clearTimeout(discardCompletionProbeTimer);
+        discardCompletionProbeTimer = 0;
+      }
+      clearPendingRuntimeAction(`${command === "/discard" ? "Discard" : "Save"} failed: ${error.message || error}`);
+      saveCompleteMode = "review";
+      renderSaveCompleteModal();
+      saveCompleteStatusEl.textContent = `${command === "/discard" ? "Discard" : "Save"} failed: ${error.message || error}`;
+    }
+  }
+
   document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && archivePickerOpen) {
+      setArchivePickerOpen(false);
+      return;
+    }
     switch (e.key) {
       case "b": sendInput("/beat"); break;
       case "i": sendInput("/info"); break;
@@ -1583,13 +3158,14 @@
   }
 
   function setDetailTab(tab) {
-    activeDetailTab = tab;
+    const resolvedTab = DETAIL_TABS.some((item) => item.key === tab) ? tab : DETAIL_TABS[0].key;
+    activeDetailTab = resolvedTab;
     document.querySelectorAll(".detail-tab").forEach((button) => {
-      button.classList.toggle("active", button.dataset.detailTab === tab);
+      button.classList.toggle("active", button.dataset.detailTab === resolvedTab);
     });
-    document.getElementById("detail-chronology-pane").classList.toggle("active", tab === "chronology");
-    document.getElementById("detail-prompts-pane").classList.toggle("active", tab === "prompts");
-    document.getElementById("detail-payload-pane").classList.toggle("active", tab === "payload");
+    DETAIL_TABS.forEach((item) => {
+      document.getElementById(item.paneId).classList.toggle("active", item.key === resolvedTab);
+    });
   }
 
   function scrollTimelineToStart() {
@@ -1834,6 +3410,10 @@
     return Array.isArray(event?.data?.claim_traces) ? event.data.claim_traces : [];
   }
 
+  function traceProvenance(trace) {
+    return trace?.provenance || null;
+  }
+
   function visionPassEffects(event) {
     const results = [];
     const seen = new Set();
@@ -1904,9 +3484,9 @@
         ...(focus?.constant_sam_targets || []).map((item) => ({kind: "input", key: "constant sam", value: item})),
         ...(focus?.ephemeral_sam_targets || []).map((item) => ({kind: "input", key: "active sam", value: item})),
       ];
-      sections.push(structureSection("Inputs", [...inputItems, ...questions, ...samTargets], `${questions.length} q · ${samTargets.length} sam`));
+      sections.push(structureSection("Vision Input", [...inputItems, ...questions, ...samTargets], `${questions.length} q · ${samTargets.length} sam`));
 
-      sections.push(structureSection("Raw Answers", answers.map((item) => ({
+      sections.push(structureSection("Vision Synthesis Inputs", answers.map((item) => ({
         kind: "answer",
         key: typeof item === "string" ? "vision" : (item.question || "vision"),
         value: typeof item === "string" ? item : (item.answer || ""),
@@ -1915,7 +3495,10 @@
       const claimItems = (claimTraces.length ? claimTraces : claims.map((item) => ({description: item}))).map((item) => {
         const support = (item.supporting_answers || []).map((answer) => `${answer.question} -> ${answer.answer}`).join("\n");
         const contradiction = (item.contradicting_answers || []).map((answer) => `${answer.question} -> ${answer.answer}`).join("\n");
+        const provenance = item.provenance;
         const suffix = [
+          provenance?.label ? `provenance:\n${provenance.label}${provenance.primary ? ` (${provenance.primary})` : ""}` : "",
+          provenance?.components?.length ? `components:\n${provenance.components.join(", ")}` : "",
           support ? `support:\n${support}` : "",
           contradiction ? `contradicted by:\n${contradiction}` : "",
         ].filter(Boolean).join("\n\n");
@@ -1934,6 +3517,18 @@
       })), `${effects.length} linked`));
     } else if (event.type === "perception") {
       const trace = event.data?.source_trace || {};
+      const provenance = traceProvenance(trace);
+      sections.push(structureSection("Vision Input", [
+        trace.object_labels?.length ? {kind: "input", key: "objects", value: trace.object_labels.join(", ")} : null,
+        ...(trace.focus?.ephemeral_questions || []).map((item) => ({kind: "input", key: "active q", value: item})),
+        ...(trace.focus?.ephemeral_sam_targets || []).map((item) => ({kind: "input", key: "active sam", value: item})),
+      ].filter(Boolean)));
+      sections.push(structureSection("Claim Provenance", [
+        provenance?.label ? {kind: "meta", key: "source", value: provenance.label} : null,
+        provenance?.primary ? {kind: "meta", key: "primary", value: provenance.primary} : null,
+        provenance?.components?.length ? {kind: "meta", key: "components", value: provenance.components.join(", ")} : null,
+        provenance?.inference ? {kind: "meta", key: "inference", value: provenance.inference} : null,
+      ].filter(Boolean)));
       const evidenceItems = [
         ...(trace.supporting_answers || []).map((answer) => ({
           kind: "answer",
@@ -1951,6 +3546,11 @@
         key: event.data?.source || "source",
         value: event.data?.description || event.label || "",
       }]));
+      sections.push(structureSection("Vision Synthesis Inputs", (trace.vlm_answers || []).map((answer) => ({
+        kind: "answer",
+        key: answer.question || "vision",
+        value: answer.answer || "",
+      }))));
       sections.push(structureSection("Evidence", evidenceItems));
     } else if (event.type === "assistant_reply") {
       const inputItems = [];
@@ -2014,14 +3614,20 @@
     const lines = [];
 
     if (event.type === "perception" || event.type === "vision_pass") {
+      const provenance = traceProvenance(trace);
       lines.push(`source: ${event.data?.source || "unknown"}`);
       if (event.type === "vision_pass") {
         lines[0] = "source: visual";
       }
       if (trace?.kind) lines.push(`derived by: ${trace.kind}`);
       if (event.type === "vision_pass" && !trace?.kind) lines.push("derived by: vision_synthesis");
+      if (provenance?.label) lines.push(`provenance: ${provenance.label}`);
+      if (provenance?.primary) lines.push(`primary: ${provenance.primary}`);
+      if (provenance?.components?.length) lines.push(`components: ${provenance.components.join(", ")}`);
       if (trace?.identity) lines.push(`identity: ${trace.identity}`);
       if (trace?.object_labels?.length) chipList.push(...trace.object_labels.slice(0, 5).map((item) => `object ${item}`));
+      if (provenance?.label) chipList.push(`prov ${provenance.label}`);
+      if (provenance?.primary) chipList.push(`via ${provenance.primary}`);
       if (trace?.vlm_answers?.length) {
         chipList.push(...trace.vlm_answers.slice(0, 3).map((item) => `${item.question || "vision"}: ${item.answer || ""}`));
       }
@@ -2089,7 +3695,9 @@
   }
 
   function bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState) {
+    if (archiveBrowseRef) return "archive loaded";
     if (statePollingSuspended) return "dashboard disconnected";
+    if (sessionSavePending) return "saving session";
     if (!runtimeStateSeen) return "attaching app runtime";
     if (sessionStopped) return "ready to start";
     if (!(sessionSeen || restartPending)) return restartPending ? "waiting for fresh session" : "waiting for session init";
@@ -2112,14 +3720,20 @@
     const overlaySubEl = document.getElementById("boot-overlay-sub");
     const overlayGridEl = document.getElementById("boot-overlay-grid");
     const now = Date.now();
-    const runtimeState = runtimeStateSeen ? (sessionStopped ? "ready" : (conversationPaused ? "ready" : "active")) : "waiting";
-    const runtimeDetail = runtimeStateSeen
+    const runtimeState = archiveBrowseRef
+      ? "ready"
+      : (sessionSavePending ? "active" : (runtimeStateSeen ? (sessionStopped ? "ready" : (conversationPaused ? "ready" : "active")) : "waiting"));
+    const runtimeDetail = archiveBrowseRef
+      ? `Loaded archive ${archiveBrowseMeta?.title || archiveBrowseRef}. Use the header transport to play or scrub the recording, or Return To Live to go back.`
+      : (sessionSavePending
+      ? "The current session is being finalized and archived."
+      : (runtimeStateSeen
       ? (sessionStopped
         ? "Fresh session is prepared. Hit Start when you want to begin."
         : (conversationPaused
           ? (startupPausePending ? "Fresh session is loaded. Hit Play when you want to begin." : "Conversation is paused. Hit Play when you want to continue.")
           : "Runtime is live and accepting turns."))
-      : "Waiting for the app to publish runtime controls.";
+      : "Waiting for the app to publish runtime controls."));
 
     const voiceState = runtimeStateSeen
       ? (
@@ -2139,15 +3753,25 @@
     let visionServiceState = "waiting";
     let visionServiceDetail = "Waiting for runtime vision service info.";
     if (runtimeStateSeen) {
-      if (visionService.state === "managed" || visionService.state === "external") {
+      const visionSource = currentVisionSourceKind();
+      if (!visionSource) {
+        visionServiceState = "error";
+        visionServiceDetail = "No live vision feed or archive source is available.";
+      } else if (archiveBrowseRef || (historyState.playback?.active && playbackVisionFrame?.sessionId)) {
+        visionServiceState = "ready";
+        visionServiceDetail = `Using ${visionSource}.`;
+      } else if (visionService.state === "managed" || visionService.state === "external") {
         visionServiceState = "ready";
         visionServiceDetail = `${visionService.state} at ${visionService.url || "local service"}${visionManagerActive ? " · manager attached" : ""}`;
       } else if (visionService.state === "starting") {
         visionServiceState = "active";
         visionServiceDetail = `Vision service is booting at ${visionService.url || "local service"}`;
+      } else if (visionService.health) {
+        visionServiceState = "ready";
+        visionServiceDetail = `${visionSource} is available.`;
       } else {
-        visionServiceState = "off";
-        visionServiceDetail = "Vision service has not started yet.";
+        visionServiceState = "waiting";
+        visionServiceDetail = `${visionSource} is available, waiting for runtime confirmation.`;
       }
     }
 
@@ -2171,12 +3795,16 @@
       modelState = allReady ? "ready" : (anyLoading ? "active" : "waiting");
     }
 
-    const sessionState = sessionStopped ? "ready" : (sessionSeen ? "ready" : (restartPending ? "active" : "waiting"));
-    const sessionDetail = sessionSeen
+    const sessionState = archiveBrowseRef ? "ready" : (sessionSavePending ? "active" : (sessionStopped ? "ready" : (sessionSeen ? "ready" : (restartPending ? "active" : "waiting"))));
+    const sessionDetail = archiveBrowseRef
+      ? `Browsing archive ${archiveBrowseMeta?.title || archiveBrowseRef}`
+      : (sessionSavePending
+      ? `Saving ${lastStoppedArchiveTitle || document.getElementById("h-session").textContent || "current session"}`
+      : (sessionSeen
       ? `Session ${document.getElementById("h-session").textContent || "--"} for ${document.getElementById("h-character").textContent || "character"}`
       : (sessionStopped
         ? "No active session. Hit Start to create a fresh one."
-        : (restartPending ? "Waiting for the fresh session to attach." : "Waiting for session start."));
+        : (restartPending ? "Waiting for the fresh session to attach." : "Waiting for session start."))));
 
     const phase = bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState);
     const lastEventText = lastEventAt ? `last event ${formatAge(now - lastEventAt)} ago` : "waiting for first event";
@@ -2188,16 +3816,18 @@
       !runtimeStateSeen ? "Connecting to the local runtime... waiting for app runtime controls." :
       restartPending ? "Restarting conversation..." :
       statePollingSuspended ? "Dashboard disconnected. Refresh after the local runtime comes back." :
+      visionServiceState === "error" ? "Vision needs attention before the runtime is ready." :
       modelPollError ? "Vision models need attention before the runtime is ready." :
       voiceState === "error" ? "Voice needs attention before the runtime is ready." :
+      sessionSavePending ? "Saving the finished session. A completion modal will appear when the archive is ready." :
       sessionStopped ? "Everything is warm. Start when you want to begin a fresh session." :
       conversationPaused ? (startupPausePending ? "Fresh session is ready. Press Play when you want to begin." : "Conversation is paused. Press Play when you want to continue.") :
       "Runtime is live. You can speak or type now.";
 
     const modelReady = modelState === "ready" || modelState === "off";
     const voiceReady = voiceState === "ready" || voiceState === "off";
-    const visionReady = !visionService.url || visionServiceState === "ready" || visionServiceState === "off";
-    const bootReady = runtimeStateSeen && (sessionStopped || sessionSeen || restartPending) && visionReady && voiceReady && modelReady && !modelPollError;
+    const visionReady = visionServiceState === "ready";
+    const bootReady = runtimeStateSeen && (sessionSavePending || sessionStopped || sessionSeen || restartPending) && visionReady && voiceReady && modelReady && !modelPollError;
     document.body.classList.toggle("booting", !bootReady);
 
     summaryEl.textContent = summary;
@@ -2220,7 +3850,17 @@
   }
 
   function updateRuntimeButtons() {
-    if (pendingPauseState === "pausing") {
+    if (sessionSavePending) {
+      runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Play" : "Pause");
+      runtimeToggleButton.disabled = true;
+      runtimeToggleButton.style.opacity = "0.75";
+      runtimeToggleButton.style.background = sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)");
+    } else if (archiveBrowseRef && pendingPauseState === "playing") {
+      runtimeToggleButton.textContent = "Replaying...";
+      runtimeToggleButton.style.background = "var(--hold)";
+      runtimeToggleButton.disabled = true;
+      runtimeToggleButton.style.opacity = "0.75";
+    } else if (pendingPauseState === "pausing") {
       runtimeToggleButton.textContent = "Pausing...";
       runtimeToggleButton.style.background = "var(--hold)";
       runtimeToggleButton.disabled = true;
@@ -2240,6 +3880,12 @@
       runtimeToggleButton.style.background = "var(--hold)";
       runtimeToggleButton.disabled = true;
       runtimeToggleButton.style.opacity = "0.75";
+    } else if (archiveBrowseRef) {
+      const mediaActive = archivePlaybackMediaAvailable();
+      runtimeToggleButton.textContent = mediaActive ? "Archive Loaded" : "Replay";
+      runtimeToggleButton.style.background = "var(--advance)";
+      runtimeToggleButton.disabled = mediaActive;
+      runtimeToggleButton.style.opacity = mediaActive ? "0.6" : "1";
     } else {
       runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Play" : "Pause");
       runtimeToggleButton.style.background = sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)");
@@ -2247,18 +3893,21 @@
       runtimeToggleButton.style.opacity = "1";
     }
     runtimeToggleButton.style.color = "var(--bg)";
-    runtimeStopButton.textContent = pendingPauseState === "stopping" ? "Stopping..." : "Stop Session";
-    runtimeStopButton.disabled = pendingPauseState === "stopping" || restartPending || sessionStopped;
+    runtimeStopButton.textContent = sessionSavePending
+      ? (saveCompleteMode === "discarding" ? "Discarding..." : "Saving...")
+      : (pendingPauseState === "stopping" ? "Saving..." : stopButtonLabel());
+    runtimeStopButton.disabled = !!archiveBrowseRef || sessionSavePending || pendingPauseState === "stopping" || restartPending || sessionStopped;
     runtimeStopButton.style.opacity = runtimeStopButton.disabled ? "0.6" : "1";
+    runtimeStopButton.title = activeArchiveTitle() ? `Finalize archive: ${activeArchiveTitle()}` : "Finalize the current session archive and stop.";
     runtimeRestartButton.textContent = "Restart Session";
-    runtimeRestartButton.disabled = false;
-    runtimeRestartButton.style.opacity = "1";
+    runtimeRestartButton.disabled = !!archiveBrowseRef;
+    runtimeRestartButton.style.opacity = runtimeRestartButton.disabled ? "0.6" : "1";
     bootRestartButton.textContent = "Restart Session";
-    bootRestartButton.disabled = false;
-    bootRestartButton.style.opacity = "1";
+    bootRestartButton.disabled = !!archiveBrowseRef;
+    bootRestartButton.style.opacity = bootRestartButton.disabled ? "0.6" : "1";
   }
 
-  function requestRestart() {
+  async function requestRestart() {
     runtimeRestartButton.textContent = "Restarting...";
     runtimeRestartButton.disabled = true;
     runtimeRestartButton.style.opacity = "0.6";
@@ -2268,14 +3917,17 @@
     restartPending = true;
     currentSessionId = "";
     clearConversationState("Restarting conversation...");
-    sendInput("/restart");
+    try {
+      await sendInput("/restart");
+    } catch (error) {
+      restartPending = false;
+      annotationStatus.textContent = `Restart failed: ${error.message || error}`;
+      updateRuntimeButtons();
+    }
   }
 
-  function requestStop() {
-    pendingPauseState = "stopping";
-    updateRuntimeButtons();
-    clearConversationState("Stopping session and preparing a fresh one...");
-    sendInput("/stop");
+  async function requestStop() {
+    await prepareStopReviewModal();
   }
 
   function clearConversationState(message = "Waiting for conversation...") {
@@ -2294,17 +3946,28 @@
     visionPassKey = null;
     selectedStreamKey = null;
     streamKey = 0;
+    lastSeq = 0;
+    debugOnlyBoundaryTimestamp = null;
+    historyRecordMode = "full";
+    pendingReplayArchiveRef = "";
+    pendingReplayEventTime = null;
+    playbackVisionFrame = null;
+    stopArchiveAudioPlayback();
+    archiveMediaPlayer.pause();
+    archiveMediaPlayer.classList.remove("visible");
+    archiveMediaPlayer.removeAttribute("src");
+    archiveMediaPlayer.load();
+    archiveMediaDuration = 0;
+    setArchiveMediaStatus("");
+    clearAnnotationState();
     document.getElementById("h-session").textContent = "--";
     document.getElementById("h-stage").textContent = "--";
-    document.getElementById("world-content").innerHTML = '<span class="fact" style="color:var(--text-dim)">No world state yet</span>';
-    document.getElementById("people-content").innerHTML = '<span style="color:var(--text-dim)">No people tracked</span>';
-    document.getElementById("stage-content").textContent = "--";
-    document.getElementById("detail-label").textContent = "Select a live event to inspect it.";
+    resetSidebarPanelContentAll();
+    document.getElementById("detail-label").textContent = "Select a debug timeline event to inspect it.";
     document.getElementById("detail-detail").textContent = "The stream view groups interwoven activity by lane and highlights all events from the same turn when selected.";
     document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Raw event JSON appears here for the selected item.\"\n}";
     document.getElementById("detail-prompts").innerHTML = '<div style="color:var(--text-dim);">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-related").innerHTML = '<div style="color:var(--text-dim);">No event selected.</div>';
-    document.getElementById("detail-chronology").innerHTML = "";
     document.getElementById("detail-loop").classList.remove("active");
     document.getElementById("detail-loop-track").innerHTML = "";
     document.getElementById("detail-loop-chips").innerHTML = "";
@@ -2313,13 +3976,17 @@
     document.getElementById("detail-trace-chips").innerHTML = "";
     document.getElementById("detail-structure").classList.remove("active");
     document.getElementById("detail-structure-grid").innerHTML = "";
-    detailOpenWindowButton.disabled = true;
-    detailExportJsonButton.disabled = true;
-    detailExportHtmlButton.disabled = true;
+    detailContinueFromEventButton.disabled = true;
+    detailOpenJsonButton.disabled = true;
+    detailWarning.style.display = "none";
+    detailWarning.textContent = "";
     document.getElementById("boot-summary").textContent = message;
     document.getElementById("boot-overlay-summary").textContent = message;
     setDetailTab(activeDetailTab);
+    resetSidebarPanels();
+    renderVisionServiceStatus();
     renderStream();
+    renderSelectedEventAnnotations();
     renderBootStatus();
     updateRuntimeButtons();
   }
@@ -2344,6 +4011,20 @@
     visionPassKey = null;
     selectedStreamKey = null;
     streamKey = 0;
+    lastSeq = 0;
+    debugOnlyBoundaryTimestamp = null;
+    historyRecordMode = "full";
+    pendingReplayArchiveRef = "";
+    pendingReplayEventTime = null;
+    playbackVisionFrame = null;
+    stopArchiveAudioPlayback();
+    archiveMediaPlayer.pause();
+    archiveMediaPlayer.classList.remove("visible");
+    archiveMediaPlayer.removeAttribute("src");
+    archiveMediaPlayer.load();
+    archiveMediaDuration = 0;
+    setArchiveMediaStatus("");
+    clearAnnotationState();
     conversationPaused = true;
     voiceActive = false;
     voiceStatus = {
@@ -2371,18 +4052,14 @@
     visionMemory = null;
     modelPollError = "";
     visionFeedSrc = "";
-    document.getElementById("vision-panel").style.display = "none";
-    document.getElementById("vision-meta").innerHTML = "";
-    document.getElementById("world-content").innerHTML = '<span class="fact" style="color:var(--text-dim)">No world state yet</span>';
-    document.getElementById("people-content").innerHTML = '<span style="color:var(--text-dim)">No people tracked</span>';
-    document.getElementById("stage-content").textContent = "--";
+    resetSidebarPanels();
+    resetSidebarPanelContentAll();
     document.getElementById("runtime-status").innerHTML = "Waiting for runtime state...";
-    document.getElementById("detail-label").textContent = "Select a live event to inspect it.";
+    document.getElementById("detail-label").textContent = "Select a debug timeline event to inspect it.";
     document.getElementById("detail-detail").textContent = "The stream view groups interwoven activity by lane and highlights all events from the same turn when selected.";
     document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Raw event JSON appears here for the selected item.\"\n}";
     document.getElementById("detail-prompts").innerHTML = '<div style="color:var(--text-dim);">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-related").innerHTML = '<div style="color:var(--text-dim);">No event selected.</div>';
-    document.getElementById("detail-chronology").innerHTML = "";
     document.getElementById("detail-loop").classList.remove("active");
     document.getElementById("detail-loop-track").innerHTML = "";
     document.getElementById("detail-loop-chips").innerHTML = "";
@@ -2391,13 +4068,16 @@
     document.getElementById("detail-trace-chips").innerHTML = "";
     document.getElementById("detail-structure").classList.remove("active");
     document.getElementById("detail-structure-grid").innerHTML = "";
-    detailOpenWindowButton.disabled = true;
-    detailExportJsonButton.disabled = true;
-    detailExportHtmlButton.disabled = true;
+    detailContinueFromEventButton.disabled = true;
+    detailOpenJsonButton.disabled = true;
+    detailWarning.style.display = "none";
+    detailWarning.textContent = "";
     setDetailTab(activeDetailTab);
+    renderVisionServiceStatus();
     document.getElementById("boot-summary").textContent = message;
     document.getElementById("boot-overlay-summary").textContent = message;
     renderStream();
+    renderSelectedEventAnnotations();
     updateRuntimeButtons();
   }
 
@@ -2413,10 +4093,56 @@
     </div>`;
   }
 
+  function currentVisionSourceKind() {
+    if (archiveBrowseRef && archivePlaybackMediaAvailable()) return "archive media";
+    if (historyState.playback?.active && playbackVisionFrame?.sessionId) return "archive playback";
+    if (archiveBrowseRef) return "archive frame";
+    if (visionService.url && visionService.managed) return "managed by app";
+    if (visionService.url && visionService.external) return "external service";
+    if (visionService.url) return "live service";
+    return "";
+  }
+
   function updateVisionFeedUrl() {
     const visionFeed = document.getElementById("vision-feed");
-    if (!visionService.url) return;
-    const nextSrc = `${visionService.url.replace(/\/$/, "")}/video_feed`;
+    if (archiveBrowseRef && archivePlaybackMediaAvailable()) {
+      visionFeed.style.display = "none";
+      visionFeed.removeAttribute("src");
+      visionFeedSrc = "";
+      archiveAudioPlayback.style.display = "none";
+      syncArchiveMediaPlayer();
+      updateTimelinePlayhead();
+      return;
+    }
+    let nextSrc = "";
+    const browsingArchivePlayback = !!(
+      archiveBrowseRef &&
+      historyState.playback?.active &&
+      playbackVisionFrame?.sessionId &&
+      playbackVisionFrame?.frameTimestamp != null &&
+      String(playbackVisionFrame.sessionId) === String(archiveBrowseRef)
+    );
+    if (browsingArchivePlayback) {
+      nextSrc = `/history/frame?session_id=${encodeURIComponent(playbackVisionFrame.sessionId)}&frame_timestamp=${encodeURIComponent(String(playbackVisionFrame.frameTimestamp))}&raw=1&_=${encodeURIComponent(String(playbackVisionFrame.token || playbackVisionFrame.frameTimestamp))}`;
+    } else if (archiveBrowseRef) {
+      const targetEvent = selectedEvent() || streamEvents[streamEvents.length - 1] || null;
+      if (targetEvent) {
+        const eventTimeS = Number(relativeTime(targetEvent.timestamp).toFixed(3));
+        nextSrc = `/history/frame?session_id=${encodeURIComponent(archiveBrowseRef)}&event_time_s=${encodeURIComponent(String(eventTimeS))}&raw=1&_=${encodeURIComponent(selectedStreamKey || String(eventTimeS))}`;
+      }
+    } else if (pendingReplayArchiveRef && pendingReplayEventTime != null) {
+      nextSrc = `/history/frame?session_id=${encodeURIComponent(pendingReplayArchiveRef)}&event_time_s=${encodeURIComponent(String(Number(pendingReplayEventTime)))}&raw=1&_=${Date.now()}`;
+    } else if (historyState.playback?.active && playbackVisionFrame?.sessionId && playbackVisionFrame?.frameTimestamp != null) {
+      nextSrc = `/history/frame?session_id=${encodeURIComponent(playbackVisionFrame.sessionId)}&frame_timestamp=${encodeURIComponent(String(playbackVisionFrame.frameTimestamp))}&raw=1&_=${encodeURIComponent(String(playbackVisionFrame.token || playbackVisionFrame.frameTimestamp))}`;
+    } else if (visionService.url) {
+      nextSrc = `${visionService.url.replace(/\/$/, "")}/video_feed`;
+    }
+    if (!nextSrc) {
+      visionFeed.style.display = "none";
+      visionFeed.removeAttribute("src");
+      visionFeedSrc = "";
+      return;
+    }
     if (nextSrc === visionFeedSrc) return;
     visionFeedSrc = nextSrc;
     visionFeed.style.display = "";
@@ -2426,29 +4152,31 @@
   function renderVisionServiceStatus() {
     const statusEl = document.getElementById("vision-service-status");
     const linkEl = document.getElementById("vision-service-link");
-    const health = modelPollError ? "unreachable" : (visionService.health ? "ok" : "unknown");
-    const effectiveState = modelPollError ? "error" : (visionService.state || "stopped");
-    const source = visionService.managed ? "managed by app"
-      : visionService.external ? "external service"
-      : "not running";
+    const source = currentVisionSourceKind();
+    const missingVisionSource = !source;
+    const health = missingVisionSource ? "missing source" : (modelPollError ? "unreachable" : (visionService.health ? "ok" : "unknown"));
+    const effectiveState = missingVisionSource ? "error" : (modelPollError ? "error" : (visionService.state || "stopped"));
+    setSidebarPanelVisibility("vision", true, effectiveState);
     statusEl.innerHTML = [
       `service: <b style="color:${statusColor(effectiveState)}">${esc(effectiveState)}</b>`,
-      `health: <b style="color:${statusColor(modelPollError ? "error" : (visionService.health ? "ready" : "waiting"))}">${esc(health)}</b>`,
-      `source: <b>${esc(source)}</b>`,
-      visionService.url ? `url: <b>${esc(visionService.url)}</b>` : "",
+      `health: <b style="color:${statusColor(missingVisionSource || modelPollError ? "error" : (visionService.health ? "ready" : "waiting"))}">${esc(health)}</b>`,
+      `source: <b>${esc(source || "missing")}</b>`,
+      archiveBrowseRef ? `archive: <b>${esc(archiveBrowseMeta?.title || archiveBrowseRef)}</b>` : "",
+      visionService.url && !archiveBrowseRef ? `url: <b>${esc(visionService.url)}</b>` : "",
       visionService.mockReplay ? `mock: <b>${esc(visionService.mockReplay)}</b>` : "",
+      missingVisionSource ? `error: <b style="color:var(--error)">No live vision feed or archive source is available.</b>` : "",
       modelPollError ? `error: <b style="color:var(--error)">${esc(modelPollError)}</b>` : "",
     ].filter(Boolean).join("<br>");
-    if (visionService.url) {
+    if (visionService.url && !archiveBrowseRef) {
       linkEl.href = visionService.url;
       linkEl.style.pointerEvents = "auto";
       linkEl.style.opacity = "1";
-      updateVisionFeedUrl();
     } else {
       linkEl.href = "#";
       linkEl.style.pointerEvents = "none";
       linkEl.style.opacity = "0.55";
     }
+    updateVisionFeedUrl();
     renderBootStatus();
   }
 
@@ -2515,10 +4243,27 @@
     return eventLaneMap[type] || "other";
   }
 
-  function relativeTime(timestamp) {
+  function timelineOrigin() {
+    if (sessionStart != null) return Number(sessionStart);
     if (!streamEvents.length) return 0;
-    const origin = streamEvents[0].timestamp;
+    return Number(streamEvents[0].timestamp || 0);
+  }
+
+  function relativeTime(timestamp) {
+    const origin = timelineOrigin();
+    if (!origin) return 0;
     return Math.max(0, Number(timestamp || origin) - origin);
+  }
+
+  function activeArchiveSessionId() {
+    return archiveBrowseRef || historyState.current_session?.session_id || currentSessionId || "";
+  }
+
+  function selectedArchiveVisionEventTime() {
+    if (!streamEvents.length) return null;
+    const target = selectedEvent() || streamEvents[streamEvents.length - 1];
+    if (!target) return null;
+    return Number(relativeTime(target.timestamp).toFixed(3));
   }
 
   function previewText(type, data) {
@@ -2541,7 +4286,11 @@
       case "user_transcript_final":
         return data.text || data.stt_text || "(voice transcript)";
       case "assistant_reply":
-        return data.full_text || data.text || "(streaming reply)";
+        return data.full_text || data.text || (data.partial ? "(partial reply)" : "(streaming reply)");
+      case "response_interrupted":
+        return data.truncated_text
+          ? `Interrupted after: ${data.truncated_text}`
+          : "Reply interrupted";
       case "post_response": {
         const bits = [];
         if (data.script_status) bits.push(`eval ${data.script_status}`);
@@ -2604,6 +4353,19 @@
         return `faces ${data.faces || 0} · people ${data.persons || 0}`;
       case "runtime_controls":
         return `state ${data.conversation_paused ? "paused" : "live"} · stt ${data.voice_status?.stt?.state || "off"} · tts ${data.voice_status?.tts?.state || "off"}`;
+      case "history_status":
+        return data.current_session?.replay_capture_enabled === false
+          ? "debug-only after rewind"
+          : (data.warning ? data.warning : `history ${Number(data.free_gib || 0).toFixed(1)} GiB free`);
+      case "history_restore":
+        return `${data.mode || "restore"} · checkpoint ${data.checkpoint_index ?? "latest"}`;
+      case "history_rewind":
+        return `debug-only boundary · checkpoint ${data.checkpoint_index ?? "latest"}`;
+      case "prompt_reload":
+        if (data.reason === "vision_refresh") return "vision prompt assets refreshed";
+        return data.reason === "forced" ? "prompt files refreshed in place" : "prompt files reloaded from disk";
+      case "history_promoted":
+        return `saved to ${data.kind || "pinned"}`;
       default:
         return JSON.stringify(data);
     }
@@ -2621,8 +4383,16 @@
         if (data.first_audio_ms != null) bits.push(`first audio ${data.first_audio_ms}ms`);
         if (data.tts_synth_done_ms != null) bits.push(`tts done ${data.tts_synth_done_ms}ms`);
         if (data.audio_ms != null) bits.push(`clip ${data.audio_ms}ms`);
+        if (data.interrupted) bits.push("interrupted");
+        else if (data.partial) bits.push("partial");
         return bits.join(" · ");
       }
+      case "response_interrupted":
+        return [
+          data.reason || "interruption",
+          data.raw_full_text ? "full text captured" : "",
+          data.truncated_text ? `spoken ${data.truncated_text}` : "",
+        ].filter(Boolean).join(" · ");
       case "user_transcript_final":
         return data.text ? `final transcript` : "";
       case "vision_snapshot":
@@ -2643,6 +4413,11 @@
           data.vlm_answer_count ? `${data.vlm_answer_count} answer${data.vlm_answer_count === 1 ? "" : "s"}` : "",
           data.object_count ? `${data.object_count} object${data.object_count === 1 ? "" : "s"}` : "",
         ].filter(Boolean).join(" · ");
+      case "prompt_reload":
+        return [
+          data.reason === "vision_refresh" ? "vision focus refresh" : (data.reason || "filesystem change"),
+          Array.isArray(data.files) ? `${data.files.length} file${data.files.length === 1 ? "" : "s"}` : "",
+        ].filter(Boolean).join(" · ");
       case "post_response":
         return [
           data.eval_thought || "",
@@ -2657,7 +4432,7 @@
       case "perception":
         return [
           data.source || "",
-          data.source_trace?.kind || "",
+          data.source_trace?.provenance?.label || data.source_trace?.kind || "",
           data.source_trace?.object_labels?.length ? `objects ${data.source_trace.object_labels.join(", ")}` : "",
         ].filter(Boolean).join(" · ");
       case "runtime_controls":
@@ -2667,6 +4442,24 @@
           `vision manager ${data.vision_active ? "on" : "off"}`,
           `reconcile ${data.reconcile_thread_alive ? "running" : "idle"}`
         ].join(" · ");
+      case "history_status":
+        return [
+          data.current_session?.session_id ? `session ${data.current_session.session_id}` : "",
+          data.current_session?.replay_capture_enabled === false ? "replay/snippet capture off" : "",
+          data.warning || "",
+        ].filter(Boolean).join(" · ");
+      case "history_restore":
+        return [
+          data.source_session_id || "",
+          data.label || "",
+        ].filter(Boolean).join(" · ");
+      case "history_rewind":
+        return [
+          data.label || "",
+          data.debug_only_reason || "",
+        ].filter(Boolean).join(" · ");
+      case "history_promoted":
+        return data.path || "";
       default:
         return "";
     }
@@ -2705,7 +4498,7 @@
     const causal = causalEventsForBundle(event);
     return {
       exported_at: new Date().toISOString(),
-      session_id: currentSessionId || "",
+      session_id: activeArchiveSessionId(),
       event: {
         key: event.key,
         type: event.type,
@@ -2715,12 +4508,320 @@
         label: event.label,
         detail: event.detail,
         data: event.data || {},
+        superseded: !!event.superseded,
+        debug_only: !!event.debugOnly,
       },
       prompt_blocks: promptBlocks,
       structure_sections: structuredSectionsForEvent(event),
       upstream_events: causal.upstream,
       downstream_events: causal.downstream,
     };
+  }
+
+  function isVisionEvent(event) {
+    return !!event && ["vision_pass", "vision_snapshot", "vision_focus", "perception"].includes(event.type);
+  }
+
+  function defaultSnippetModeForEvent(event) {
+    if (!event) return "turn_context";
+    if (event.type === "response_interrupted" || (event.type === "assistant_reply" && event.data?.interrupted)) return "barge_in_turn";
+    if (event.type === "vision_pass" || event.type === "perception") return "vision_synthesis_inputs";
+    if (event.type === "vision_snapshot" || event.type === "vision_focus") return "vision_full_stack";
+    return "turn_context";
+  }
+
+  function bargeInInputsForEvent(event, bundle) {
+    if (!event) return {};
+    const upstream = Array.isArray(bundle?.upstream_events) ? bundle.upstream_events : [];
+    const downstream = Array.isArray(bundle?.downstream_events) ? bundle.downstream_events : [];
+    const current = bundle?.event || {};
+    const all = [...upstream, current, ...downstream];
+    const assistantReply = event.type === "assistant_reply"
+      ? current
+      : [...upstream].reverse().find((item) => item.type === "assistant_reply") || null;
+    const interruption = event.type === "response_interrupted"
+      ? current
+      : downstream.find((item) => item.type === "response_interrupted") || null;
+    const speechStarted = upstream.find((item) => item.type === "user_speech_started")
+      || downstream.find((item) => item.type === "user_speech_started")
+      || null;
+    const transcriptFinal = upstream.find((item) => item.type === "user_transcript_final")
+      || downstream.find((item) => item.type === "user_transcript_final")
+      || null;
+    const turnStart = upstream.find((item) => item.type === "turn_start")
+      || downstream.find((item) => item.type === "turn_start")
+      || null;
+    const firstAudioS = assistantReply?.data?.first_audio_ms != null
+      ? Number((Number(assistantReply.data.first_audio_ms) / 1000).toFixed(3))
+      : null;
+    const speechStartedS = speechStarted?.time_s ?? null;
+    return {
+      reason: interruption?.data?.reason || assistantReply?.data?.interrupted_reason || "",
+      transcript_text: transcriptFinal?.data?.text || turnStart?.data?.stt_text || "",
+      speech_started_s: speechStartedS,
+      transcript_final_s: transcriptFinal?.time_s ?? null,
+      turn_start_s: turnStart?.time_s ?? null,
+      assistant_first_audio_s: firstAudioS,
+      audio_started_before_speech: firstAudioS != null && speechStartedS != null ? firstAudioS <= speechStartedS : null,
+      assistant_text: assistantReply?.data?.full_text || assistantReply?.label || "",
+      interrupted_text: interruption?.data?.truncated_text || assistantReply?.data?.truncated_text || "",
+      interruption_event_time_s: interruption?.time_s ?? null,
+      source_event_type: event.type,
+      source_event_key: event.key,
+    };
+  }
+
+  function setSnippetFormOpen(open) {
+    snippetFormOpen = !!open;
+    snippetForm.style.display = snippetFormOpen ? "" : "none";
+    snippetToggleButton.textContent = snippetFormOpen ? "Close Snippet Form" : "Capture As Snippet";
+    if (!snippetFormOpen) {
+      snippetTitleInput.value = "";
+      snippetTagsInput.value = "";
+      snippetModeSelect.value = "turn_context";
+    }
+  }
+
+  async function visionInputsForEvent(event) {
+    if (!event || !isVisionEvent(event)) return {};
+    const sessionId = activeArchiveSessionId();
+    if (!sessionId) return {};
+    try {
+      const response = await fetch(
+        `/history/frame?session_id=${encodeURIComponent(sessionId)}&event_time_s=${encodeURIComponent(String(Number(relativeTime(event.timestamp).toFixed(3))))}`
+      );
+      const data = await response.json();
+      const frame = data?.frame || {};
+      return {
+        nearest_frame: frame,
+        source_trace: event.data?.source_trace || {},
+        snapshot: event.data?.snapshot || {},
+        focus: visionPassFocus(event) || event.data?.focus || {},
+        replay_mode: defaultSnippetModeForEvent(event),
+      };
+    } catch (_) {
+      return {
+        source_trace: event.data?.source_trace || {},
+        snapshot: event.data?.snapshot || {},
+        focus: visionPassFocus(event) || event.data?.focus || {},
+        replay_mode: defaultSnippetModeForEvent(event),
+      };
+    }
+  }
+
+  function turnStartForEvent(event) {
+    if (!event) return null;
+    if (event.type === "turn_start") return event;
+    return eventForTurnType(event, "turn_start");
+  }
+
+  function inputCommandForTurn(turnEvent, fallbackText = "") {
+    const inputType = String(turnEvent?.data?.input_type || "").toLowerCase();
+    const inputText = String(turnEvent?.data?.input_text || fallbackText || "").trim();
+    if (inputType === "beat") return "/beat";
+    if (inputType === "world") return `/world ${inputText}`.trim();
+    if (inputType === "see") return `/see ${inputText}`.trim();
+    return inputText;
+  }
+
+  function selectedEvent() {
+    return selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
+  }
+
+  function clearAnnotationState() {
+    annotationsByEventKey.clear();
+    loadedAnnotationSessionId = "";
+    annotationFormOpen = false;
+    snippetFormOpen = false;
+    annotationForm.style.display = "none";
+    snippetForm.style.display = "none";
+    annotationToggleButton.textContent = "Annotate Event";
+    snippetToggleButton.textContent = "Capture As Snippet";
+    annotationTagsInput.value = "";
+    annotationSubsystemInput.value = "";
+    annotationNoteInput.value = "";
+    annotationDesiredInput.value = "";
+    snippetTitleInput.value = "";
+    snippetTagsInput.value = "";
+    snippetModeSelect.value = "turn_context";
+    annotationList.innerHTML = '<div style="color:var(--text-dim);">Select a debug timeline event to inspect or annotate it.</div>';
+  }
+
+  function normalizeAnnotationEntry(entry) {
+    const eventKey = entry?.event_key || entry?.bundle?.event?.key || "";
+    if (!eventKey) return null;
+    return {
+      saved_at: entry.saved_at || "",
+      event_key: eventKey,
+      event_type: entry.event_type || entry?.bundle?.event?.type || "",
+      subsystem: entry.subsystem || "",
+      tags: Array.isArray(entry.tags) ? entry.tags : [],
+      note: entry.note || "",
+      desired_behavior: entry.desired_behavior || "",
+      path: entry.path || "",
+    };
+  }
+
+  function annotationEntriesForEvent(event) {
+    if (!event) return [];
+    return annotationsByEventKey.get(event.key) || [];
+  }
+
+  function annotationSummaryHtml(entry) {
+    const chips = [
+      ...(entry.tags || []).slice(0, 3),
+      entry.subsystem ? `subsystem:${entry.subsystem}` : "",
+    ].filter(Boolean);
+    return `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:0.55em 0.6em;background:var(--panel-hover);">
+        <div style="display:flex;justify-content:space-between;gap:0.75em;align-items:flex-start;">
+          <div style="font-size:0.84em;color:var(--text-dim);">${esc(entry.saved_at ? new Date(entry.saved_at).toLocaleString() : "saved")}</div>
+          ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+        </div>
+        ${entry.note ? `<div style="margin-top:0.35em;">${esc(entry.note)}</div>` : ""}
+        ${entry.desired_behavior ? `<div style="margin-top:0.35em;color:var(--text-dim);">Desired: ${esc(entry.desired_behavior)}</div>` : ""}
+      </div>
+    `;
+  }
+
+  function renderSelectedEventAnnotations() {
+    const event = selectedEvent();
+    annotationToggleButton.disabled = !event;
+    snippetToggleButton.disabled = !event || !!event?.debugOnly;
+    if (!event) {
+      annotationList.innerHTML = '<div style="color:var(--text-dim);">Select a debug timeline event to inspect or annotate it.</div>';
+      return;
+    }
+    const entries = annotationEntriesForEvent(event);
+    if (!entries.length) {
+      annotationList.innerHTML = '<div style="color:var(--text-dim);">No annotations saved for this event yet.</div>';
+      return;
+    }
+    annotationList.innerHTML = entries.map(annotationSummaryHtml).join("");
+  }
+
+  function renderAnnotationBadge(event) {
+    const entries = annotationEntriesForEvent(event);
+    if (!entries.length) return "";
+    const leadTag = entries[0].tags?.[0] || entries[0].subsystem || "note";
+    return `<span class="reply-marker" title="${esc(`${entries.length} annotation${entries.length === 1 ? "" : "s"}`)}">${entries.length} note${entries.length === 1 ? "" : "s"} · ${esc(leadTag)}</span>`;
+  }
+
+  function renderStateBadges(event) {
+    const badges = [];
+    if (event.superseded) badges.push('<span class="reply-marker">Superseded</span>');
+    return badges.join("");
+  }
+
+  function setAnnotationFormOpen(open) {
+    annotationFormOpen = !!open;
+    annotationForm.style.display = annotationFormOpen ? "" : "none";
+    annotationToggleButton.textContent = annotationFormOpen ? "Close Form" : "Annotate Event";
+    if (!annotationFormOpen) {
+      annotationTagsInput.value = "";
+      annotationSubsystemInput.value = "";
+      annotationNoteInput.value = "";
+      annotationDesiredInput.value = "";
+    }
+  }
+
+  function mergeAnnotations(entries, {replace = false} = {}) {
+    if (replace) annotationsByEventKey.clear();
+    entries.forEach((rawEntry) => {
+      const entry = normalizeAnnotationEntry(rawEntry);
+      if (!entry) return;
+      const existing = annotationsByEventKey.get(entry.event_key) || [];
+      const dedupeKey = `${entry.saved_at}|${entry.note}|${entry.desired_behavior}`;
+      if (existing.some((candidate) => `${candidate.saved_at}|${candidate.note}|${candidate.desired_behavior}` === dedupeKey)) {
+        return;
+      }
+      annotationsByEventKey.set(entry.event_key, [...existing, entry].sort((a, b) => String(b.saved_at).localeCompare(String(a.saved_at))));
+    });
+  }
+
+  async function refreshAnnotations(sessionId = activeArchiveSessionId()) {
+    if (!sessionId) {
+      clearAnnotationState();
+      return;
+    }
+    try {
+      const response = await fetch(`/history/annotations?session_id=${encodeURIComponent(sessionId)}`);
+      if (!response.ok) throw new Error(`annotations ${response.status}`);
+      const entries = await response.json();
+      loadedAnnotationSessionId = sessionId;
+      mergeAnnotations(entries, {replace: true});
+      renderStream();
+      renderSelectedEventAnnotations();
+    } catch (_) {
+      if (loadedAnnotationSessionId === sessionId) return;
+      clearAnnotationState();
+    }
+  }
+
+  async function resolveSelectedEventCheckpoint(event) {
+    if (!event) throw new Error("Select an event first.");
+    const sessionId = activeArchiveSessionId();
+    if (!sessionId) throw new Error("No session is active or loaded.");
+    let anchorEvent = event;
+    if (event.type === "assistant_reply" || event.type === "response_interrupted") {
+      anchorEvent = turnStartForEvent(event) || event;
+    }
+    const eventTimeS = Math.max(0, Number((relativeTime(anchorEvent.timestamp) - 0.001).toFixed(3)));
+    const response = await fetch(
+      `/history/checkpoint?session_id=${encodeURIComponent(sessionId)}&event_time_s=${encodeURIComponent(String(eventTimeS))}`
+    );
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || `checkpoint lookup failed (${response.status})`);
+    return data;
+  }
+
+  async function startFromSelectedEvent() {
+    const event = selectedEvent();
+    if (!event) {
+      annotationStatus.textContent = "Select a debug timeline event before continuing.";
+      return;
+    }
+    try {
+      const resolved = await resolveSelectedEventCheckpoint(event);
+      const activeSessionId = activeArchiveSessionId();
+      const targetSessionId = resolved.session_id || activeSessionId;
+      const eventTimeS = Number(relativeTime(event.timestamp).toFixed(3));
+      if (isVisionEvent(event)) {
+        await sendInputSequence([`/replay_event ${targetSessionId} ${eventTimeS} ${defaultSnippetModeForEvent(event)}`], 0);
+        annotationStatus.textContent = `Continuing from visual event → ${targetSessionId} @ +${eventTimeS.toFixed(2)}s`;
+        return;
+      }
+      const turnEvent = turnStartForEvent(event);
+      const transcriptEvent = event.type === "user_transcript_final" ? event : eventForTurnType(event, "user_transcript_final");
+      const inputCommand = inputCommandForTurn(turnEvent, transcriptEvent?.data?.text || "");
+      if (!inputCommand) throw new Error("No replayable turn input was found for this event.");
+      const restoreCommand = activeSessionId && targetSessionId === activeSessionId && !sessionStopped
+        ? `/rewind ${resolved.checkpoint_index}`
+        : `/restore ${targetSessionId} ${resolved.checkpoint_index}`;
+      const commands = [restoreCommand];
+      if (conversationPaused || sessionStopped || startupPausePending) commands.push("/play");
+      commands.push(inputCommand);
+      await sendInputSequence(commands);
+      annotationStatus.textContent = `Continuing from event → ${targetSessionId} @ checkpoint ${resolved.checkpoint_index}`;
+    } catch (error) {
+      annotationStatus.textContent = `Continue from event failed: ${error.message || error}`;
+    }
+  }
+
+  async function replayFromSelectedEvent() {
+    const event = selectedEvent();
+    if (!event) {
+      annotationStatus.textContent = "Select a debug timeline event before replaying.";
+      return;
+    }
+    try {
+      const resolved = await resolveSelectedEventCheckpoint(event);
+      const targetSessionId = resolved.session_id || activeArchiveSessionId();
+      sendInput(`/replay ${targetSessionId} ${resolved.checkpoint_index}`);
+      annotationStatus.textContent = `Requested replay from event → ${targetSessionId} @ ${resolved.checkpoint_index}`;
+    } catch (error) {
+      annotationStatus.textContent = `Replay from event failed: ${error.message || error}`;
+    }
   }
 
   function buildReportSnapshotPayload(event = null, sessionIdOverride = null) {
@@ -2736,6 +4837,88 @@
     };
   }
 
+  async function saveSelectedAnnotation() {
+    const event = selectedEvent();
+    if (!event) {
+      annotationStatus.textContent = "Select a debug timeline event before saving an annotation.";
+      return;
+    }
+    const note = annotationNoteInput.value.trim();
+    const desired = annotationDesiredInput.value.trim();
+    if (!note && !desired) {
+      annotationStatus.textContent = "Add a note or desired behavior first.";
+      return;
+    }
+    annotationSaveButton.disabled = true;
+    annotationStatus.textContent = "Saving annotation...";
+    try {
+      const result = await postJson("/history/annotation", {
+        session_id: activeArchiveSessionId(),
+        event_key: event?.key || "",
+        event_type: event?.type || "",
+        event_time_s: event ? Number(relativeTime(event.timestamp).toFixed(3)) : null,
+        tags: annotationTagsInput.value.split(",").map((item) => item.trim()).filter(Boolean),
+        subsystem: annotationSubsystemInput.value.trim(),
+        note,
+        desired_behavior: desired,
+        bundle: event ? selectedEventBundle(event) : null,
+      });
+      renderHistoryState({...result.status, enabled: true});
+      refreshHistoryArchives();
+      await refreshAnnotations(activeArchiveSessionId());
+      setAnnotationFormOpen(false);
+      annotationStatus.textContent = `Saved annotation: ${result.path}`;
+    } catch (error) {
+      annotationStatus.textContent = `Annotation save failed: ${error.message || error}`;
+    } finally {
+      annotationSaveButton.disabled = false;
+    }
+  }
+
+  async function captureSelectedMoment() {
+    const event = selectedEvent();
+    if (!event) {
+      annotationStatus.textContent = "Select a debug timeline event before capturing a snippet.";
+      return;
+    }
+    if (event.debugOnly) {
+      annotationStatus.textContent = "This event is on the debug-only path after rewind, so it cannot become a replayable snippet.";
+      return;
+    }
+    snippetSaveButton.disabled = true;
+    annotationStatus.textContent = "Capturing snippet...";
+    try {
+      const bundle = selectedEventBundle(event) || {};
+      bundle.vision_inputs = await visionInputsForEvent(event);
+      bundle.capture_mode = snippetModeSelect.value || defaultSnippetModeForEvent(event);
+      if (bundle.capture_mode === "barge_in_turn") {
+        bundle.barge_in = bargeInInputsForEvent(event, bundle);
+      }
+      const snippetTags = snippetTagsInput.value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const result = await postJson("/history/snippet", {
+        session_id: activeArchiveSessionId(),
+        title: snippetTitleInput.value.trim() || event.label || event.type || "snippet",
+        tags: snippetTags,
+        capture_mode: bundle.capture_mode,
+        event_time_s: Number(relativeTime(event.timestamp).toFixed(3)),
+        bundle,
+        window_before_s: 10,
+        window_after_s: 10,
+      });
+      renderHistoryState({...result.status, enabled: true});
+      refreshHistoryArchives();
+      setSnippetFormOpen(false);
+      annotationStatus.textContent = `Captured snippet: ${result.path}`;
+    } catch (error) {
+      annotationStatus.textContent = `Snippet capture failed: ${error.message || error}`;
+    } finally {
+      snippetSaveButton.disabled = false;
+    }
+  }
+
   async function postReportSnapshot(payload) {
     const response = await fetch("/report-snapshot", {
       method: "POST",
@@ -2748,33 +4931,151 @@
   }
 
   async function saveReportReference() {
-    if (!currentSessionId && lastStoppedReportRefText) {
-      reportRefButton.disabled = true;
-      setReportRefStatus("Copying last stopped session ref...", lastStoppedReportRefPath || "");
-      try {
-        await copyText(lastStoppedReportRefText);
-        setStickyStoppedReportRef(lastStoppedReportRefText, lastStoppedReportRefPath);
-      } catch (error) {
-        setReportRefStatus(`Report ref failed: ${error.message || error}`, lastStoppedReportRefPath || "");
-      } finally {
-        reportRefButton.disabled = false;
-      }
+    const ref = activeArchiveRef();
+    if (!ref) {
+      setReportRefStatus("No archive or session ref is available yet.");
       return;
     }
-
-    const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
-    const payload = buildReportSnapshotPayload(event);
+    const title = activeArchiveTitle();
+    const text = title && title !== ref ? `archive: ${title} (${ref})` : ref;
     reportRefButton.disabled = true;
-    setReportRefStatus("Saving report ref...");
+    setReportRefStatus("Copying archive ref...");
     try {
-      const data = await postReportSnapshot(payload);
-      const pasteText = data.paste_text || `intermediate session log: ${data.path}`;
-      await copyText(pasteText);
-      setReportRefStatus(pasteText, data.path || "");
+      await copyText(text);
+      setReportRefStatus(`Copied archive ref: ${text}`, ref);
     } catch (error) {
-      setReportRefStatus(`Report ref failed: ${error.message || error}`);
+      setReportRefStatus(`Archive ref copy failed: ${error.message || error}`, ref);
     } finally {
       reportRefButton.disabled = false;
+    }
+  }
+
+  async function renameActiveArchive() {
+    const ref = activeArchiveRef();
+    if (!ref) {
+      archiveLoadStatus.textContent = "No archive or session is available to rename.";
+      return;
+    }
+    const currentTitle = activeArchiveTitle() || ref;
+    const title = window.prompt("Archive title", currentTitle);
+    if (title == null) return;
+    try {
+      await postJson("/history/rename", {session_id: ref, title});
+      if (archiveBrowseRef === ref && archiveBrowseMeta) archiveBrowseMeta.title = title.trim() || currentTitle;
+      if (historyState.current_session?.session_id === ref) historyState.current_session.title = title.trim() || currentTitle;
+      if (lastStoppedArchiveRef === ref) lastStoppedArchiveTitle = title.trim() || currentTitle;
+      archiveLoadStatus.textContent = `Renamed archive: ${(title || currentTitle).trim()}`;
+      refreshHistoryArchives();
+      refreshHistoryState();
+      renderArchiveBrowseState();
+      setReportRefStatus("", "");
+    } catch (error) {
+      archiveLoadStatus.textContent = `Rename failed: ${error.message || error}`;
+    }
+  }
+
+  async function prepareStopReviewModal() {
+    const current = historyState.current_session || {};
+    const sessionId = currentSessionId || current.session_id || document.getElementById("h-session").textContent || "";
+    const title = current.title || activeArchiveTitle() || sessionId || "session";
+    const needsPauseFirst = !conversationPaused && !sessionStopped;
+    await openSaveCompleteModal({
+      sessionId,
+      title,
+      reportPath: "",
+      sessionPath: current.session_path || "",
+      mode: needsPauseFirst ? "preparing_review" : "review",
+    });
+    if (!needsPauseFirst) return;
+    pendingStopReviewPause = true;
+    notePendingRuntimeAction("pausing");
+    try {
+      await sendInput("/pause");
+    } catch (error) {
+      pendingStopReviewPause = false;
+      clearPendingRuntimeAction(`Pause before review failed: ${error.message || error}`);
+      saveCompleteMode = "review";
+      renderSaveCompleteModal();
+      saveCompleteStatusEl.textContent = `Pause before review failed: ${error.message || error}`;
+    }
+  }
+
+  async function confirmSaveAndStop() {
+    const ref = saveCompleteMeta?.sessionId || currentSessionId || "";
+    const fallbackTitle = archiveItemByRef(ref)?.title || saveCompleteMeta?.title || ref;
+    const title = saveCompleteTitleInput.value.trim() || fallbackTitle;
+    if (!ref) {
+      saveCompleteStatusEl.textContent = "No active session is available to save.";
+      return;
+    }
+    try {
+      if (title && title !== fallbackTitle) {
+        await postJson("/history/rename", {session_id: ref, title});
+        if (lastStoppedArchiveRef === ref) lastStoppedArchiveTitle = title;
+        if (historyState.current_session?.session_id === ref) historyState.current_session.title = title;
+      }
+      saveCompleteMeta = {
+        ...(saveCompleteMeta || {}),
+        sessionId: ref,
+        title,
+      };
+      cancelSaveCompleteAutoHide();
+      saveCompleteMode = "saving";
+      saveCompleteStatusEl.textContent = "Saving...";
+      sessionSavePending = true;
+      updateRuntimeButtons();
+      renderBootStatus();
+      renderSaveCompleteModal();
+      if (!conversationPaused && !sessionStopped) {
+        pendingFinalizeAction = "/stop";
+        notePendingRuntimeAction("pausing");
+        saveCompleteMode = "preparing_save";
+        renderSaveCompleteModal();
+        await sendInput("/pause");
+      } else {
+        pendingFinalizeAction = "";
+        notePendingRuntimeAction("stopping");
+        await sendInput("/stop");
+      }
+    } catch (error) {
+      pendingFinalizeAction = "";
+      sessionSavePending = false;
+      clearPendingRuntimeAction(`Stop failed: ${error.message || error}`);
+      saveCompleteMode = "review";
+      renderSaveCompleteModal();
+      saveCompleteStatusEl.textContent = `Save failed: ${error.message || error}`;
+    }
+  }
+
+  async function confirmDiscardSession() {
+    const ref = saveCompleteMeta?.sessionId || currentSessionId || "";
+    cancelSaveCompleteAutoHide();
+    saveCompleteMode = "discarding";
+    saveCompleteStatusEl.textContent = "Discarding...";
+    sessionSavePending = true;
+    updateRuntimeButtons();
+    renderBootStatus();
+    renderSaveCompleteModal();
+    try {
+      if (!conversationPaused && !sessionStopped) {
+        pendingFinalizeAction = "/discard";
+        notePendingRuntimeAction("pausing");
+        saveCompleteMode = "preparing_discard";
+        renderSaveCompleteModal();
+        await sendInput("/pause");
+      } else {
+        pendingFinalizeAction = "";
+        notePendingRuntimeAction("stopping");
+        await sendInput("/discard");
+      }
+      if (ref) setLastStoppedArchive(ref, "");
+    } catch (error) {
+      pendingFinalizeAction = "";
+      sessionSavePending = false;
+      clearPendingRuntimeAction(`Discard failed: ${error.message || error}`);
+      saveCompleteMode = "review";
+      renderSaveCompleteModal();
+      saveCompleteStatusEl.textContent = `Discard failed: ${error.message || error}`;
     }
   }
 
@@ -2869,7 +5170,7 @@
     <div class="muted">${esc(bundle.event.detail || "")}</div>
   </section>
   <section class="panel">
-    <h2>Prompt / IO</h2>
+    <h2>Conversation Memory / Prompt IO</h2>
     ${promptHtml || '<div class="muted">No prompt snapshot captured for this event.</div>'}
   </section>
   <section class="panel">
@@ -2885,7 +5186,7 @@
     ${downstreamHtml || '<div class="muted">No downstream events captured for this event.</div>'}
   </section>
   <section class="panel">
-    <h2>Raw Event JSON</h2>
+    <h2>Debug Event JSON</h2>
     <pre>${esc(JSON.stringify(bundle, null, 2))}</pre>
   </section>
 </body>
@@ -3019,21 +5320,39 @@
 
   function addStreamEvent(type, data, rawEvent) {
     const key = `evt-${++streamKey}`;
+    const timestamp = Number(rawEvent.timestamp || Date.now() / 1000);
+    const debugOnly = historyRecordMode === "debug_only"
+      && debugOnlyBoundaryTimestamp != null
+      && timestamp >= debugOnlyBoundaryTimestamp
+      && !String(type).startsWith("history_");
     const event = {
       key,
       type,
       sourceType: rawEvent.type,
       lane: laneForType(type),
-      timestamp: Number(rawEvent.timestamp || Date.now() / 1000),
+      timestamp,
       seq: rawEvent.seq || 0,
       data: data,
       label: previewText(type, data),
       detail: detailText(type, data),
-      turnId: rawEvent.turnId || null
+      turnId: rawEvent.turnId || null,
+      superseded: false,
+      debugOnly,
     };
     streamEvents.push(event);
     streamEventByKey.set(key, event);
     return event;
+  }
+
+  function applyHistoryBoundary(boundary) {
+    const checkpointTimestamp = Number(boundary?.checkpoint_timestamp || 0);
+    if (!(checkpointTimestamp > 0)) return;
+    streamEvents.forEach((event) => {
+      if (event.type === "history_restore" || event.type === "history_rewind") return;
+      if (event.timestamp > checkpointTimestamp && !event.debugOnly) {
+        event.superseded = true;
+      }
+    });
   }
 
   function ensureReplyEvent(rawEvent) {
@@ -3120,12 +5439,11 @@
       return;
     }
     if (event.data && event.data.response_done_ts) return;
-    const index = streamEvents.findIndex((item) => item.key === activeReplyKey);
-    if (index >= 0) streamEvents.splice(index, 1);
-    streamEventByKey.delete(activeReplyKey);
-    if (selectedStreamKey === activeReplyKey) {
-      selectedStreamKey = null;
-    }
+    event.data.partial = true;
+    event.data.interrupted = true;
+    event.data.interrupted_reason = event.data.interrupted_reason || "next_turn_started";
+    event.label = previewText("assistant_reply", event.data);
+    event.detail = detailText("assistant_reply", event.data);
     activeReplyKey = null;
   }
 
@@ -3136,24 +5454,34 @@
     visionPassKey = null;
   }
 
-  function selectEvent(key) {
+  function selectEvent(key, options = {}) {
     const event = streamEventByKey.get(key);
     if (!event) return;
     selectedStreamKey = key;
-    detailOpenWindowButton.disabled = false;
-    detailExportJsonButton.disabled = false;
-    detailExportHtmlButton.disabled = false;
+    detailContinueFromEventButton.disabled = false;
+    detailOpenJsonButton.disabled = false;
     document.getElementById("detail-time").textContent = `+${relativeTime(event.timestamp).toFixed(2)}s`;
     document.getElementById("detail-type").textContent = event.type;
     document.getElementById("detail-lane").textContent = event.lane;
     document.getElementById("detail-seq").textContent = `seq ${event.seq || 0}`;
     document.getElementById("detail-label").textContent = event.label || "";
     document.getElementById("detail-detail").textContent = event.detail || "No compact detail";
+    const warnings = [];
+    if (event.superseded) warnings.push("This event is on the superseded pre-rewind path. It stays visible for debugging, but it is not the active conversation path.");
+    if (event.debugOnly) warnings.push("This event is on the active exploratory path after rewind. It remains visible in the timeline, but it is not replay/snippet-capturable.");
+    if (warnings.length) {
+      detailWarning.style.display = "";
+      detailWarning.textContent = warnings.join(" ");
+    } else {
+      detailWarning.style.display = "none";
+      detailWarning.textContent = "";
+    }
     document.getElementById("detail-payload").textContent = JSON.stringify(event.data || {}, null, 2);
     renderPromptBlocks(promptTraceBlocksForEvent(event));
     renderLoopTiming(event);
     renderSourceTrace(event);
     renderStructuredDetail(event);
+    renderSelectedEventAnnotations();
 
     const related = relatedKeysFor(event);
     const relatedEl = document.getElementById("detail-related");
@@ -3180,25 +5508,10 @@
       const card = document.querySelector(`.stream-card[data-event-key="${relatedKey}"]`);
       if (card) card.classList.add("context");
     });
-    document.querySelectorAll(".chronology-row").forEach((row) => {
-      const active = row.dataset.eventKey === key;
-      row.classList.toggle("selected", active);
-      if (active) row.scrollIntoView({block: "nearest"});
-    });
-  }
-
-  function renderChronology() {
-    const root = document.getElementById("detail-chronology");
-    root.innerHTML = "";
-    streamEvents.forEach((event) => {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "chronology-row";
-      row.dataset.eventKey = event.key;
-      row.onclick = () => selectEvent(event.key);
-      row.innerHTML = `<div><b>${esc(event.type)}</b> · ${esc(event.label)}</div><small>${esc(event.lane)} · +${relativeTime(event.timestamp).toFixed(2)}s</small>`;
-      root.appendChild(row);
-    });
+    if (archiveBrowseRef && archivePlaybackMediaAvailable() && options.seekMedia !== false) {
+      seekArchiveMedia(relativeTime(event.timestamp), {syncSelection: false});
+    }
+    updateVisionFeedUrl();
   }
 
   function cardWidth(event) {
@@ -3207,6 +5520,9 @@
     }
     if (event.type === "assistant_reply") {
       return Math.max(260, Math.min(520, 220 + event.label.length * 3));
+    }
+    if (event.type === "response_interrupted") {
+      return Math.max(220, Math.min(380, 180 + event.label.length * 2.6));
     }
     if (event.type === "vision_pass") {
       return Math.max(240, Math.min(420, 210 + event.label.length * 2.4));
@@ -3220,6 +5536,7 @@
   function cardHeight(event) {
     if (compactMode) return 24;
     if (event.type === "assistant_reply") return 92;
+    if (event.type === "response_interrupted") return 84;
     if (event.type === "vision_pass") return 132;
     if (event.type === "post_response" || event.type === "world_update") return 84;
     if (event.detail) return 72;
@@ -3237,6 +5554,8 @@
     if (event.data.tts_synth_done_ms != null) markers.push(`TTS done ${event.data.tts_synth_done_ms}ms`);
     if (event.data.total_ms != null) markers.push(`Spoken ${event.data.total_ms}ms`);
     if (event.data.audio_ms != null) markers.push(`Clip ${event.data.audio_ms}ms`);
+    if (event.data.interrupted) markers.push("Interrupted");
+    else if (event.data.partial) markers.push("Partial");
     if (!markers.length) return "";
     return `<div class="reply-markers">${markers.map((marker) => `<span class="reply-marker">${esc(marker)}</span>`).join("")}</div>`;
   }
@@ -3256,7 +5575,16 @@
       return `
         <div class="stream-card-label">${esc(event.label)}</div>
         ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${event.data.interrupted && event.data.truncated_text ? `<div class="stream-card-subdetail">spoken: ${esc(event.data.truncated_text)}</div>` : ""}
         ${renderReplyMarkers(event)}
+      `;
+    }
+    if (event.type === "response_interrupted") {
+      return `
+        <div class="stream-card-kicker">interrupt</div>
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.data.raw_full_text ? `<div class="stream-card-subdetail">generated: ${esc(event.data.raw_full_text)}</div>` : ""}
+        ${event.data.truncated_text ? `<div class="stream-card-subdetail">spoken: ${esc(event.data.truncated_text)}</div>` : ""}
       `;
     }
     if (event.type === "post_response") {
@@ -3365,6 +5693,8 @@
     const usableWidth = Math.max(720, streamViewport.clientWidth - 48);
     const scale = usableWidth / Math.max(timelineWindowSeconds, 1);
     const baseWidth = Math.max(usableWidth + 40, 40 + (maxRelative + 1.5) * scale);
+    timelineRenderScale = scale;
+    timelineRenderBaseWidth = baseWidth;
     streamRulerInner.style.width = `${baseWidth}px`;
     const roughTickTarget = timelineWindowSeconds / 6;
     const step = roughTickTarget <= 2 ? 0.5
@@ -3386,12 +5716,12 @@
 
   function renderStream() {
     renderLaneToggles();
-    renderChronology();
 
     if (!streamEvents.length) {
       streamEmpty.style.display = "";
       streamLanes.innerHTML = "";
       streamRulerInner.innerHTML = "";
+      updateTimelinePlayhead();
       return;
     }
 
@@ -3425,10 +5755,14 @@
         const top = compactMode ? 6 + row * rowStep : 8 + row * rowStep;
         trackHeight = Math.max(trackHeight, top + height + 10);
         cards.push(
-          `<article class="stream-card type-${esc(typeClass(event.type))}${compactMode ? " compact" : ""}" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;">
+          `<article class="stream-card type-${esc(typeClass(event.type))}${compactMode ? " compact" : ""}${event.superseded ? " superseded" : ""}" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;">
             <div class="stream-card-head">
               <span class="stream-card-type">${esc(event.type)}</span>
-              <span class="stream-card-time">+${relativeTime(event.timestamp).toFixed(2)}s</span>
+              <span style="display:flex;align-items:center;gap:0.35em;">
+                ${renderStateBadges(event)}
+                ${renderAnnotationBadge(event)}
+                <span class="stream-card-time">+${relativeTime(event.timestamp).toFixed(2)}s</span>
+              </span>
             </div>
             ${renderCardBody(event)}
           </article>`
@@ -3450,11 +5784,15 @@
       card.addEventListener("click", () => selectEvent(card.dataset.eventKey));
     });
     if (selectedStreamKey && streamEventByKey.has(selectedStreamKey)) {
-      selectEvent(selectedStreamKey);
+      selectEvent(selectedStreamKey, {seekMedia: false});
     } else {
-      selectEvent(streamEvents[streamEvents.length - 1].key);
+      selectEvent(streamEvents[streamEvents.length - 1].key, {seekMedia: false});
     }
-    if (followLive) scrollTimelineToEnd();
+    updateTimelinePlayhead();
+    if (followLive) {
+      scrollTimelineToEnd();
+      updateTimelinePlayhead();
+    }
   }
 
   function recordEvent(type, data, rawEvent) {
@@ -3465,13 +5803,15 @@
 
   const handlers = {
     session_start(data, rawEvent) {
-      if (data.session_id && data.session_id !== currentSessionId) {
-        if (restartPending) clearConversationState("Starting a fresh session...");
-        else resetDashboardState("Starting a fresh session...");
+      if (!archiveHydrating && data.session_id && data.session_id !== currentSessionId) {
+        clearConversationState("Starting a fresh session...");
       }
       restartPending = false;
+      debugOnlyBoundaryTimestamp = null;
+      historyRecordMode = "full";
       clearStickyStoppedReportRef();
       currentSessionId = data.session_id || currentSessionId;
+      refreshAnnotations(currentSessionId);
       sessionStart = Number(rawEvent.timestamp || Date.now() / 1000);
       sessionSeen = true;
       document.getElementById("h-character").textContent = data.character || "--";
@@ -3479,6 +5819,7 @@
       document.getElementById("h-session").textContent = data.session_id || "--";
       if (data.stage) document.getElementById("h-stage").textContent = data.stage;
       document.title = `${data.character || "Character"} Dashboard`;
+      refreshPromptAssets();
       recordEvent("session_start", data, rawEvent);
       renderBootStatus();
     },
@@ -3541,9 +5882,40 @@
       event.data.tts_synth_done_ms = data.tts_synth_done_ms ?? data.synth_ms ?? event.data.tts_synth_done_ms;
       event.data.first_audio_ms = data.first_audio_ms ?? event.data.first_audio_ms;
       event.data.audio_ms = data.audio_ms ?? event.data.audio_ms;
+      event.data.partial = false;
+      event.data.interrupted = false;
+      event.data.interrupted_reason = "";
       event.data.prompt_blocks = promptTraceBlocksForEvent(event);
       event.label = previewText("assistant_reply", event.data);
       event.detail = detailText("assistant_reply", event.data);
+      renderStream();
+    },
+
+    response_interrupted(data, rawEvent) {
+      const event = activeReplyKey ? streamEventByKey.get(activeReplyKey) : null;
+      const target = event || [...streamEvents].reverse().find((candidate) => {
+        if (candidate.type !== "assistant_reply") return false;
+        if (!candidate.data?.response_done_ts) return true;
+        return candidate.data?.partial || candidate.data?.interrupted;
+      });
+      if (!target) {
+        rawEvent.turnId = currentTurnId || null;
+        recordEvent("response_interrupted", data, rawEvent);
+        return;
+      }
+      rawEvent.turnId = target.turnId || currentTurnId || null;
+      target.data.partial = true;
+      target.data.interrupted = true;
+      target.data.interrupted_reason = data.reason || "barge_in";
+      target.data.raw_full_text = data.raw_full_text || target.data.raw_full_text || target.data.full_text || "";
+      target.data.truncated_text = data.truncated_text || target.data.truncated_text || "";
+      target.label = previewText("assistant_reply", target.data);
+      target.detail = detailText("assistant_reply", target.data);
+      recordEvent("response_interrupted", {
+        ...data,
+        reply_key: target.key,
+        reply_label: target.label || "",
+      }, rawEvent);
       renderStream();
     },
 
@@ -3616,7 +5988,6 @@
     },
 
     world_state(data, rawEvent) {
-      const el = document.getElementById("world-content");
       let html = "";
       if (data.static_facts && data.static_facts.length) {
         html += data.static_facts.map((fact) => `<div class="fact"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}</div>`).join("");
@@ -3627,7 +5998,7 @@
       if (data.pending && data.pending.length) {
         html += data.pending.map((fact) => `<div class="fact fact-add">~ ${esc(fact)}</div>`).join("");
       }
-      el.innerHTML = html || '<span style="color:var(--text-dim)">Empty</span>';
+      renderSidebarPanelContent("world", html || '<span style="color:var(--text-dim)">Empty</span>', {status: html ? "ready" : "empty", visible: true});
       rawEvent.turnId = currentTurnId || null;
       const event = ensureCompoundEvent("world_update", rawEvent, {
         add_count: 0,
@@ -3649,14 +6020,13 @@
     },
 
     people_state(data, rawEvent) {
-      const el = document.getElementById("people-content");
       if (!data.people || !data.people.length) {
-        el.innerHTML = '<span style="color:var(--text-dim)">No people tracked</span>';
+        renderSidebarPanelContent("people", '<span style="color:var(--text-dim)">No people tracked</span>', {status: "empty", visible: true});
       } else {
-        el.innerHTML = data.people.map((person) => {
+        renderSidebarPanelContent("people", data.people.map((person) => {
           const facts = (person.facts || []).map((fact) => `<div class="fact" style="padding-left:1em"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}</div>`).join("");
           return `<div class="person-entry"><span class="person-name">${esc(person.name || person.id)}</span> <span style="color:var(--text-dim)">${esc(person.id)}</span>${facts}</div>`;
-        }).join("");
+        }).join(""), {status: "ready", visible: true});
       }
       rawEvent.turnId = currentTurnId || null;
       const event = ensureCompoundEvent("world_update", rawEvent, {
@@ -3676,10 +6046,9 @@
 
     stage_change(data, rawEvent) {
       document.getElementById("h-stage").textContent = data.new_stage || "--";
-      const el = document.getElementById("stage-content");
       let html = `<div><b>${esc(data.new_stage || "--")}</b></div>`;
       if (data.new_goal) html += `<div style="color:var(--text-dim)">${esc(data.new_goal)}</div>`;
-      el.innerHTML = html;
+      renderSidebarPanelContent("stage", html, {status: data.new_stage || data.new_goal ? "ready" : "empty", visible: true});
       rawEvent.turnId = currentTurnId || null;
       const event = ensureCompoundEvent("post_response", rawEvent, {
         script_status: "",
@@ -3699,16 +6068,13 @@
     },
 
     plan(data, rawEvent) {
-      const panel = document.getElementById("plan-panel");
-      const el = document.getElementById("plan-content");
       if (!data.beats || !data.beats.length) {
-        panel.style.display = "none";
+        renderSidebarPanelContent("plan", '<span style="color:var(--text-dim)">No active script plan yet</span>', {status: "empty", visible: true});
       } else {
-        panel.style.display = "";
-        el.innerHTML = '<div class="beat-list">' + data.beats.map((beat, index) => {
+        renderSidebarPanelContent("plan", '<div class="beat-list">' + data.beats.map((beat, index) => {
           const cls = index === 0 ? "beat-item current" : "beat-item";
           return `<div class="${cls}">${index}. [${esc(beat.intent)}]</div>`;
-        }).join("") + "</div>";
+        }).join("") + "</div>", {status: "ready", visible: true});
       }
       rawEvent.turnId = currentTurnId || null;
       const event = ensureCompoundEvent("post_response", rawEvent, {
@@ -3766,6 +6132,7 @@
           description: data.description || "visual perception",
           supporting_answers: data.source_trace?.supporting_answers || [],
           contradicting_answers: data.source_trace?.contradicting_answers || [],
+          provenance: data.source_trace?.provenance || null,
         });
         event.data.claim_traces = nextClaimTraces.slice(-8);
         event.data.perception_count = nextPerceptions.length;
@@ -3798,9 +6165,6 @@
 
     vision_snapshot(data, rawEvent) {
       if (conversationPaused) return;
-      const panel = document.getElementById("vision-panel");
-      panel.style.display = "";
-      const meta = document.getElementById("vision-meta");
       let html = "";
       if (data.faces !== undefined) html += `Faces: ${data.faces} `;
       if (data.persons !== undefined) html += `People: ${data.persons} `;
@@ -3811,7 +6175,7 @@
           return `<b>${esc(answer.question || "vision")}</b>: ${esc(answer.answer || "")}`;
         }).join("<br>");
       }
-      meta.innerHTML = html;
+      renderSidebarPanelContent("vision", html, {status: "ready", visible: true});
       rawEvent.turnId = currentTurnId || null;
       const event = ensureVisionPassEvent(rawEvent);
       event.data.object_labels = data.object_labels || event.data.object_labels || [];
@@ -3849,19 +6213,58 @@
 
     async session_end(data, rawEvent) {
       recordEvent("session_end", data, rawEvent);
+      if (archiveHydrating) {
+        setLastStoppedArchive(data.session_id || currentSessionId || "", data.title || activeArchiveTitle());
+        return;
+      }
+      if (data.discarded) {
+        sessionSavePending = false;
+        sessionStopped = true;
+        conversationPaused = true;
+        startupPausePending = false;
+        pendingFinalizeAction = "";
+        pendingPauseState = null;
+        pendingPauseSince = 0;
+        if (discardCompletionProbeTimer) {
+          window.clearTimeout(discardCompletionProbeTimer);
+          discardCompletionProbeTimer = 0;
+        }
+        updateRuntimeButtons();
+        renderBootStatus();
+        saveCompleteMeta = {
+          sessionId: data.session_id || saveCompleteMeta?.sessionId || "",
+          title: "",
+          reportPath: "",
+          sessionPath: "",
+        };
+        saveCompleteMode = "discarded";
+        saveCompleteModalOpen = true;
+        renderSaveCompleteModal();
+        saveCompleteModal.classList.add("open");
+        saveCompleteModal.setAttribute("aria-hidden", "false");
+        scheduleSaveCompleteAutoHide(3000);
+        return;
+      }
       const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
       const finishedSessionId = data.session_id || currentSessionId || "";
+      setLastStoppedArchive(finishedSessionId, data.title || historyState.current_session?.title || finishedSessionId);
+      playbackVisionFrame = null;
       const payload = buildReportSnapshotPayload(event, finishedSessionId);
-      sessionSeen = false;
-      currentSessionId = "";
-      clearConversationState("Session ended.");
+      sessionSavePending = false;
+      sessionStopped = true;
+      conversationPaused = true;
+      startupPausePending = false;
+      pendingPauseState = null;
+      pendingPauseSince = 0;
       updateRuntimeButtons();
       renderBootStatus();
       reportRefButton.disabled = true;
       setReportRefStatus("Saving last stopped session ref...");
+      let reportPath = "";
       try {
         const result = await postReportSnapshot(payload);
         const pasteText = result.paste_text || `intermediate session log: ${result.path}`;
+        reportPath = result.path || "";
         await copyText(pasteText);
         setStickyStoppedReportRef(pasteText, result.path || "");
       } catch (error) {
@@ -3869,14 +6272,35 @@
       } finally {
         reportRefButton.disabled = false;
       }
+      cancelSaveCompleteAutoHide();
+      await openSaveCompleteModal({
+        sessionId: finishedSessionId,
+        title: data.title || historyState.current_session?.title || finishedSessionId,
+        reportPath,
+        sessionPath: data.history_path || historyState.current_session?.session_path || "",
+        mode: "saved",
+      });
+      scheduleSaveCompleteAutoHide(3000);
     },
 
     pause(data, rawEvent) {
       conversationPaused = true;
-      if (pendingPauseState === "pausing") pendingPauseState = null;
+      if (pendingPauseState === "pausing") {
+        pendingPauseState = null;
+        pendingPauseSince = 0;
+      }
+      if (pendingStopReviewPause) {
+        pendingStopReviewPause = false;
+        if (saveCompleteModalOpen && saveCompleteMode === "preparing_review") {
+          saveCompleteMode = "review";
+          renderSaveCompleteModal();
+          saveCompleteStatusEl.textContent = "Paused. Save or discard this session.";
+        }
+      }
       recordEvent("pause", data, rawEvent);
       updateRuntimeButtons();
       renderBootStatus();
+      flushPendingFinalizeAction().catch(() => {});
     },
 
     resume(data, rawEvent) {
@@ -3884,6 +6308,7 @@
       sessionStopped = false;
       startupPausePending = false;
       pendingPauseState = null;
+      pendingPauseSince = 0;
       recordEvent("resume", data, rawEvent);
       updateRuntimeButtons();
       renderBootStatus();
@@ -3902,6 +6327,15 @@
         (pendingPauseState === "stopping" && sessionStopped)
       ) {
         pendingPauseState = null;
+        pendingPauseSince = 0;
+      }
+      if (pendingStopReviewPause && conversationPaused && !sessionStopped) {
+        pendingStopReviewPause = false;
+        if (saveCompleteModalOpen && saveCompleteMode === "preparing_review") {
+          saveCompleteMode = "review";
+          renderSaveCompleteModal();
+          saveCompleteStatusEl.textContent = "Paused. Save or discard this session.";
+        }
       }
       voiceActive = !!data.voice_active;
       voiceStatus = data.voice_status || voiceStatus;
@@ -3939,12 +6373,94 @@
       pollVisionModelStatus();
       recordEvent("runtime_controls", data, rawEvent);
       renderBootStatus();
+      flushPendingFinalizeAction().catch(() => {});
+      maybeResolveSaveCompleteFromState().catch(() => {});
+      maybeResolveDiscardCompleteFromState().catch(() => {});
+    },
+
+    history_status(data, rawEvent) {
+      renderHistoryState({...data, enabled: true});
+      recordEvent("history_status", data, rawEvent);
+      maybeResolveDiscardCompleteFromState().catch(() => {});
+    },
+
+    history_restore(data, rawEvent) {
+      if (data.record_mode === "debug_only") {
+        historyRecordMode = "debug_only";
+        debugOnlyBoundaryTimestamp = Number(rawEvent.timestamp || Date.now() / 1000);
+        applyHistoryBoundary(data);
+      }
+      recordEvent("history_restore", data, rawEvent);
+      currentSessionId = data.source_session_id || currentSessionId;
+      refreshAnnotations(currentSessionId);
+      annotationStatus.textContent = `Restored ${data.label || "checkpoint"} from ${data.source_session_id || "history"}`;
+    },
+
+    history_rewind(data, rawEvent) {
+      if (data.debug_only_reason) {
+        historyRecordMode = "debug_only";
+        debugOnlyBoundaryTimestamp = Number(rawEvent.timestamp || Date.now() / 1000);
+        applyHistoryBoundary(data);
+      }
+      recordEvent("history_rewind", data, rawEvent);
+    },
+
+    history_promoted(data, rawEvent) {
+      recordEvent("history_promoted", data, rawEvent);
+      annotationStatus.textContent = `Pinned session: ${data.path || ""}`;
+      refreshHistoryState();
+    },
+
+    history_playback(data, rawEvent) {
+      recordEvent("history_playback", data, rawEvent);
+      currentSessionId = data.session_id || currentSessionId;
+      playbackVisionFrame = {
+        sessionId: data.session_id || currentSessionId,
+        frameTimestamp: null,
+        token: Date.now(),
+      };
+      if (!data.video) {
+        pendingReplayArchiveRef = "";
+        pendingReplayEventTime = null;
+      }
+      if (data.audio) {
+        playArchiveAudio(data.session_id || currentSessionId, Number(data.audio_start_s || 0));
+      } else {
+        stopArchiveAudioPlayback();
+      }
+      refreshAnnotations(currentSessionId);
+      archiveLoadStatus.textContent = "";
+      annotationStatus.textContent = `Playback started from ${data.session_id || "history"} @ ${data.checkpoint_index ?? "--"}`;
+      refreshHistoryState();
+      renderVisionServiceStatus();
+    },
+
+    history_playback_frame(data) {
+      playbackVisionFrame = {
+        sessionId: data.source_session_id || currentSessionId || activeArchiveRef(),
+        frameTimestamp: Number(data.frame_timestamp || 0) || null,
+        token: Date.now(),
+      };
+      pendingReplayArchiveRef = "";
+      pendingReplayEventTime = null;
+      updateVisionFeedUrl();
+    },
+
+    prompt_reload(data, rawEvent) {
+      recordEvent("prompt_reload", data, rawEvent);
+      refreshPromptAssets();
+      annotationStatus.textContent = data.reason === "vision_refresh"
+        ? "Vision prompt assets refreshed."
+        : (data.reason === "forced"
+          ? "Prompt files refreshed in place."
+          : "Prompt files changed on disk and were reloaded.");
     }
   };
 
-  function handleEvent(event) {
+  function handleEvent(event, options = {}) {
+    if (archiveBrowseRef && !options.archive && !ARCHIVE_BROWSE_LIVE_EVENT_ALLOWLIST.has(event.type)) return;
     lastEventAt = Date.now();
-    if (typeof event.seq === "number") {
+    if (!options.archive && typeof event.seq === "number") {
       if (event.seq <= lastSeq) return;
       lastSeq = event.seq;
     }
@@ -3972,7 +6488,10 @@
       })
       .catch(() => {
         statePollFailures += 1;
-        if (statePollFailures >= 2) statePollingSuspended = true;
+        if (statePollFailures >= 2) {
+          statePollingSuspended = true;
+          checkPendingRuntimeActionHealth();
+        }
         sseConnected = false;
         renderBootStatus();
       });
@@ -3986,12 +6505,6 @@
     timelineWindowSeconds = sliderToWindow(e.target.value);
     timeWindowValue.textContent = formatWindow(timelineWindowSeconds);
     renderStream();
-  });
-  document.getElementById("show-chronology").addEventListener("change", (e) => {
-    const show = e.target.checked;
-    document.getElementById("tab-chronology").style.display = show ? "" : "none";
-    if (!show && activeDetailTab === "chronology") setDetailTab("payload");
-    if (show && activeDetailTab !== "chronology" && !selectedStreamKey) setDetailTab("chronology");
   });
   document.getElementById("follow-live").addEventListener("change", (e) => {
     followLive = !!e.target.checked;
@@ -4053,18 +6566,296 @@
       followLive = false;
       document.getElementById("follow-live").checked = false;
     }
+    updateTimelinePlayhead();
   });
 
-  runtimeToggleButton.addEventListener("click", () => {
-    if (pendingPauseState) return;
-    pendingPauseState = sessionStopped ? "starting" : (conversationPaused ? "playing" : "pausing");
+  function seekArchiveMediaFromPointer(clientX) {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    const bounds = streamViewport.getBoundingClientRect();
+    const contentX = streamViewport.scrollLeft + (clientX - bounds.left);
+    const timeS = Math.max(0, (contentX - 20) / Math.max(timelineRenderScale, 0.001));
+    seekArchiveMedia(timeS, {syncSelection: true});
+  }
+
+  archiveMediaPlayer.addEventListener("loadedmetadata", () => {
+    archiveMediaDuration = Number.isFinite(archiveMediaPlayer.duration) ? Number(archiveMediaPlayer.duration) : 0;
+    setArchiveMediaStatus(
+      archiveMediaDuration > 0
+        ? `Loaded archive media · ${formatWindow(archiveMediaDuration)}`
+        : "Loaded archive media"
+    );
     updateRuntimeButtons();
-    sendInput(sessionStopped ? "/start" : (conversationPaused ? "/play" : "/pause"));
+    updateTimelinePlayhead();
+    renderArchiveTransport();
+  });
+  archiveMediaPlayer.addEventListener("play", () => {
+    updateRuntimeButtons();
+    renderArchiveTransport();
+  });
+  archiveMediaPlayer.addEventListener("pause", () => {
+    updateRuntimeButtons();
+    renderArchiveTransport();
+  });
+  archiveMediaPlayer.addEventListener("timeupdate", () => {
+    updateTimelinePlayhead();
+    if (archiveMediaSeekLock || archiveMediaScrubbing) return;
+    const key = nearestEventKeyForTime(archiveMediaPlayer.currentTime || 0);
+    if (key && key !== selectedStreamKey) selectEvent(key, {seekMedia: false});
+  });
+  streamRuler.addEventListener("pointerdown", (event) => {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    archiveMediaScrubbing = true;
+    seekArchiveMediaFromPointer(event.clientX);
+    event.preventDefault();
+  });
+  streamViewport.addEventListener("pointerdown", (event) => {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    if (event.target.closest(".stream-card")) return;
+    archiveMediaScrubbing = true;
+    seekArchiveMediaFromPointer(event.clientX);
+    event.preventDefault();
+  });
+  window.addEventListener("pointermove", (event) => {
+    if (!archiveMediaScrubbing) return;
+    seekArchiveMediaFromPointer(event.clientX);
+  });
+  window.addEventListener("pointerup", () => {
+    archiveMediaScrubbing = false;
+    renderArchiveTransport();
+  });
+
+  archiveTransportToggleButton.addEventListener("click", () => {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    if (archiveMediaPlayer.paused) {
+      archiveMediaPlayer.play().catch(() => {});
+    } else {
+      archiveMediaPlayer.pause();
+    }
+    renderArchiveTransport();
+  });
+  archiveTransportScrubber.addEventListener("input", (event) => {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    archiveMediaScrubbing = true;
+    seekArchiveMedia(Number(event.target.value || 0), {syncSelection: true});
+  });
+  archiveTransportScrubber.addEventListener("change", (event) => {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    archiveMediaScrubbing = false;
+    seekArchiveMedia(Number(event.target.value || 0), {syncSelection: true});
+  });
+
+  runtimeToggleButton.addEventListener("click", async () => {
+    if (pendingPauseState) return;
+    if (archiveBrowseRef) {
+      if (archivePlaybackMediaAvailable()) {
+        return;
+      }
+      const target = archiveBrowseRef;
+      pendingReplayArchiveRef = target;
+      pendingReplayEventTime = 0;
+      notePendingRuntimeAction("playing");
+      try {
+        updateVisionFeedUrl();
+        await sendInput(`/replay ${target}`);
+        archiveLoadStatus.textContent = `Replaying archive: ${target}`;
+        annotationStatus.textContent = `Requested replay: ${target}`;
+      } catch (error) {
+        pendingReplayArchiveRef = "";
+        pendingReplayEventTime = null;
+        clearPendingRuntimeAction(`Replay failed: ${error.message || error}`);
+      }
+      return;
+    }
+    const nextState = sessionStopped ? "starting" : (conversationPaused ? "playing" : "pausing");
+    const command = sessionStopped ? "/start" : (conversationPaused ? "/play" : "/pause");
+    notePendingRuntimeAction(nextState);
+    try {
+      await sendInput(command);
+    } catch (error) {
+      clearPendingRuntimeAction(`Runtime action failed: ${error.message || error}`);
+    }
   });
   runtimeStopButton.addEventListener("click", requestStop);
   runtimeRestartButton.addEventListener("click", requestRestart);
   bootRestartButton.addEventListener("click", requestRestart);
   reportRefButton.addEventListener("click", saveReportReference);
+  archiveRenameButton.addEventListener("click", renameActiveArchive);
+  annotationToggleButton.addEventListener("click", () => {
+    if (!selectedEvent()) {
+      annotationStatus.textContent = "Select a debug timeline event before annotating it.";
+      return;
+    }
+    setAnnotationFormOpen(!annotationFormOpen);
+  });
+  annotationSaveButton.addEventListener("click", saveSelectedAnnotation);
+  annotationCancelButton.addEventListener("click", () => setAnnotationFormOpen(false));
+  snippetToggleButton.addEventListener("click", () => {
+    const event = selectedEvent();
+    if (!event) {
+      annotationStatus.textContent = "Select a debug timeline event before capturing a snippet.";
+      return;
+    }
+    if (event.debugOnly) {
+      annotationStatus.textContent = "This event is on the debug-only post-rewind path, so it cannot become a replayable snippet.";
+      return;
+    }
+    snippetModeSelect.value = defaultSnippetModeForEvent(event);
+    snippetTitleInput.value = event.label || event.type || "snippet";
+    snippetTagsInput.value = snippetModeSelect.value === "barge_in_turn" ? "barge-in" : "";
+    setSnippetFormOpen(!snippetFormOpen);
+  });
+  snippetSaveButton.addEventListener("click", captureSelectedMoment);
+  snippetCancelButton.addEventListener("click", () => setSnippetFormOpen(false));
+  archiveLoadButton.addEventListener("click", async () => {
+    if (archiveBrowseRef) {
+      exitArchiveBrowseMode();
+      return;
+    }
+    await refreshHistoryArchives();
+    setArchivePickerOpen(true);
+  });
+  archivePickerCloseButton.addEventListener("click", () => setArchivePickerOpen(false));
+  saveCompleteCloseButton.addEventListener("click", () => {
+    if (saveCompleteMode === "saving" || saveCompleteMode === "discarding") return;
+    closeSaveCompleteModal();
+  });
+  archivePicker.addEventListener("click", (event) => {
+    if (event.target === archivePicker) setArchivePickerOpen(false);
+  });
+  saveCompleteModal.addEventListener("click", (event) => {
+    if (event.target === saveCompleteModal && saveCompleteMode !== "saving" && saveCompleteMode !== "discarding") closeSaveCompleteModal();
+  });
+  saveCompleteCopyRefButton.addEventListener("click", async () => {
+    const ref = saveCompleteMeta?.sessionId || "";
+    if (!ref) return;
+    cancelSaveCompleteAutoHide();
+    const title = archiveItemByRef(ref)?.title || saveCompleteTitleInput.value.trim() || ref;
+    const text = title && title !== ref ? `archive: ${title} (${ref})` : ref;
+    const ok = await copyText(text);
+    saveCompleteStatusEl.textContent = ok ? `Copied archive ref: ${text}` : "Copy ref failed.";
+  });
+  saveCompleteCopyPathButton.addEventListener("click", async () => {
+    const path = archiveItemByRef(saveCompleteMeta?.sessionId || "")?.path || saveCompleteSessionPathEl.textContent || "";
+    if (!path || path === "--") return;
+    cancelSaveCompleteAutoHide();
+    const ok = await copyText(path);
+    saveCompleteStatusEl.textContent = ok ? `Copied archive path: ${path}` : "Copy archive path failed.";
+  });
+  saveCompleteCopyReportButton.addEventListener("click", async () => {
+    const path = saveCompleteMeta?.reportPath || "";
+    if (!path) return;
+    cancelSaveCompleteAutoHide();
+    const ok = await copyText(path);
+    saveCompleteStatusEl.textContent = ok ? `Copied report path: ${path}` : "Copy report path failed.";
+  });
+  saveCompleteCancelButton.addEventListener("click", closeSaveCompleteModal);
+  saveCompleteDiscardButton.addEventListener("click", confirmDiscardSession);
+  saveCompleteSaveButton.addEventListener("click", confirmSaveAndStop);
+  saveCompleteLoadButton.addEventListener("click", async () => {
+    const ref = saveCompleteMeta?.sessionId || "";
+    if (!ref) return;
+    cancelSaveCompleteAutoHide();
+    try {
+      await loadArchiveTimeline(ref);
+      closeSaveCompleteModal();
+      annotationStatus.textContent = `Loaded archive timeline: ${ref}`;
+    } catch (error) {
+      saveCompleteStatusEl.textContent = `Load failed: ${error.message || error}`;
+    }
+  });
+  saveCompleteOkayButton.addEventListener("click", closeSaveCompleteModal);
+  archivePickerSearchInput.addEventListener("input", renderArchivePicker);
+  archivePickerList.addEventListener("click", async (event) => {
+    const loadButton = event.target.closest(".archive-load-action");
+    const replayButton = event.target.closest(".archive-replay-action");
+    const renameButton = event.target.closest(".archive-rename-action");
+    const copyButton = event.target.closest(".archive-copy-action");
+    if (copyButton) {
+      const target = copyButton.dataset.sessionRef || "";
+      if (!target) return;
+      const title = (copyButton.dataset.title || "").trim();
+      const text = title ? `archive: ${title} (${target})` : target;
+      const ok = await copyText(text);
+      archiveLoadStatus.textContent = ok ? `Copied archive ref: ${target}` : `Copy failed for archive ref: ${target}`;
+      return;
+    }
+    if (loadButton) {
+      const target = loadButton.dataset.sessionRef || "";
+      if (!target) return;
+      try {
+        await loadArchiveTimeline(target);
+        annotationStatus.textContent = `Loaded archive timeline: ${target}`;
+        setArchivePickerOpen(false);
+      } catch (error) {
+        archiveLoadStatus.textContent = `Load failed: ${error.message || error}`;
+      }
+      return;
+    }
+    if (replayButton) {
+      const target = replayButton.dataset.sessionRef || "";
+      if (!target) return;
+      pendingReplayArchiveRef = target;
+      pendingReplayEventTime = 0;
+      updateVisionFeedUrl();
+      sendInput(`/replay ${target}`);
+      archiveLoadStatus.textContent = `Replaying archive: ${target}`;
+      annotationStatus.textContent = `Requested replay: ${target}`;
+      setArchivePickerOpen(false);
+      return;
+    }
+    if (renameButton) {
+      const target = renameButton.dataset.sessionRef || "";
+      if (!target) return;
+      const currentTitle = renameButton.dataset.title || "";
+      const title = window.prompt("Archive title", currentTitle);
+      if (title == null) return;
+      try {
+        await postJson("/history/rename", {session_id: target, title});
+        archiveLoadStatus.textContent = `Renamed archive: ${(title || currentTitle).trim()}`;
+        refreshHistoryArchives();
+        refreshHistoryState();
+      } catch (error) {
+        archiveLoadStatus.textContent = `Rename failed: ${error.message || error}`;
+      }
+    }
+  });
+  historyPinButton.addEventListener("click", async () => {
+    try {
+      const result = await postJson("/history/promote", {
+        session_id: activeArchiveSessionId(),
+        kind: "pinned",
+      });
+      renderHistoryState({...result.status, enabled: true});
+      refreshHistoryArchives();
+      annotationStatus.textContent = `Pinned session: ${result.path}`;
+    } catch (error) {
+      annotationStatus.textContent = `Pin failed: ${error.message || error}`;
+    }
+  });
+  historyRewindButton.addEventListener("click", () => {
+    const checkpoint = historyCheckpointInput.value.trim();
+    sendInput(checkpoint ? `/rewind ${checkpoint}` : "/rewind");
+    annotationStatus.textContent = `Requested rewind${checkpoint ? ` @ ${checkpoint}` : ""}`;
+  });
+  historyPruneButton.addEventListener("click", async () => {
+    try {
+      const result = await postJson("/history/prune", {
+        older_than_days: 0,
+      });
+      renderHistoryState({...result.status, enabled: true});
+      refreshHistoryArchives();
+      annotationStatus.textContent = `Pruned ${result.removed?.length || 0} unsaved session(s).`;
+    } catch (error) {
+      annotationStatus.textContent = `Prune failed: ${error.message || error}`;
+    }
+  });
+  document.getElementById("sidebar").addEventListener("click", (event) => {
+    const toggle = event.target.closest(".sidebar-panel-toggle");
+    if (!toggle) return;
+    const panelId = toggle.dataset.panelCollapse || "";
+    if (!panelId) return;
+    toggleSidebarPanelCollapsed(panelId);
+  });
   runtimeControlGrid.addEventListener("click", (event) => {
     const button = event.target.closest("[data-runtime-control]");
     if (!button) return;
@@ -4072,32 +6863,32 @@
     if (!key) return;
     sendInput(`/threads ${key.replace(/_/g, "-")} toggle`);
   });
-  detailOpenWindowButton.addEventListener("click", () => {
-    const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
-    const bundle = selectedEventBundle(event);
-    if (!bundle) return;
-    const html = bundleToHtml(bundle);
-    const blob = new Blob([html], {type: "text/html"});
-    const url = URL.createObjectURL(blob);
-    const popup = window.open(url, "_blank", "noopener,noreferrer");
-    if (popup) {
-      popup.addEventListener("load", () => setTimeout(() => URL.revokeObjectURL(url), 1000), {once: true});
-    } else {
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+  promptAssetsListEl.addEventListener("click", async (event) => {
+    const openButton = event.target.closest(".prompt-asset-open");
+    if (openButton) {
+      const path = openButton.dataset.promptPath || "";
+      try {
+        await postJson("/prompt-assets/action", {action: "open", path});
+        annotationStatus.textContent = "Opened prompt asset.";
+      } catch (error) {
+        annotationStatus.textContent = `Open failed: ${error.message || error}`;
+      }
+      return;
+    }
+    const applyButton = event.target.closest(".prompt-asset-apply");
+    if (applyButton) {
+      const command = (applyButton.dataset.promptCommand || "").trim();
+      if (!command) return;
+      try {
+        await sendInput(command);
+        annotationStatus.textContent = `Applied prompt action: ${command}`;
+      } catch (error) {
+        annotationStatus.textContent = `Apply failed: ${error.message || error}`;
+      }
     }
   });
-  detailExportJsonButton.addEventListener("click", () => {
-    const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
-    const bundle = selectedEventBundle(event);
-    if (!bundle) return;
-    downloadBlob(`event-${typeClass(bundle.event.type)}-${bundle.event.seq || 0}.json`, "application/json", JSON.stringify(bundle, null, 2));
-  });
-  detailExportHtmlButton.addEventListener("click", () => {
-    const event = selectedStreamKey ? streamEventByKey.get(selectedStreamKey) : null;
-    const bundle = selectedEventBundle(event);
-    if (!bundle) return;
-    downloadBlob(`event-${typeClass(bundle.event.type)}-${bundle.event.seq || 0}.html`, "text/html", bundleToHtml(bundle));
-  });
+  detailContinueFromEventButton.addEventListener("click", startFromSelectedEvent);
+  detailOpenJsonButton.addEventListener("click", () => setDetailTab("payload"));
   setupPaneResizer(inspectorResizer, (event) => {
     const streamMain = document.getElementById("stream-main");
     const rect = streamMain.getBoundingClientRect();
@@ -4111,17 +6902,28 @@
     setSidebarWidth(width);
   });
 
+  restoreSidebarPanelCollapseState();
+  applyPanelRegistryMetadata();
+  resetSidebarPanels();
+  resetSidebarPanelContentAll();
   loadStreamSchema();
   timelineWindowSeconds = sliderToWindow(timeWindowSlider.value);
   timeWindowValue.textContent = formatWindow(timelineWindowSeconds);
   restoreLayoutWidths();
-  setDetailTab("chronology");
+  setDetailTab("prompts");
   updateRuntimeButtons();
   renderBootStatus();
+  renderArchiveBrowseState();
   refreshState();
+  refreshHistoryState();
+  refreshHistoryArchives();
+  refreshPromptAssets();
+  pollVisionModelStatus();
   renderRuntimeControlButtons();
   setInterval(refreshState, 1000);
+  setInterval(refreshHistoryArchives, 4000);
   setInterval(pollVisionModelStatus, 4000);
+  setInterval(checkPendingRuntimeActionHealth, 1000);
   setInterval(renderBootStatus, 1000);
 
   const visionFeed = document.getElementById("vision-feed");

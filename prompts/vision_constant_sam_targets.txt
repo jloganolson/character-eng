@@ -1,0 +1,3 @@
+# One constant SAM target per line.
+person
+rude gesture

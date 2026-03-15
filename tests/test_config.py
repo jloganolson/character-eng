@@ -17,7 +17,12 @@ def test_save_config_round_trip(tmp_path, monkeypatch):
     cfg.vision.auto_launch = False
     cfg.vision.service_url = "http://127.0.0.1:9999"
     cfg.dashboard.port = 9000
+    cfg.dashboard.prompt_asset_open_target = "folder"
+    cfg.dashboard.prompt_asset_vscode_cmd = "cursor"
     cfg.bridge.enabled = True
+    cfg.history.enabled = True
+    cfg.history.free_warning_gib = 12.5
+    cfg.history.vision_capture_fps = 4.0
 
     save_config(cfg, path=path)
     monkeypatch.setattr(config_mod, "CONFIG_PATH", path)
@@ -34,4 +39,9 @@ def test_save_config_round_trip(tmp_path, monkeypatch):
     assert loaded.vision.auto_launch is False
     assert loaded.vision.service_url == "http://127.0.0.1:9999"
     assert loaded.dashboard.port == 9000
+    assert loaded.dashboard.prompt_asset_open_target == "folder"
+    assert loaded.dashboard.prompt_asset_vscode_cmd == "cursor"
     assert loaded.bridge.enabled is True
+    assert loaded.history.enabled is True
+    assert loaded.history.free_warning_gib == 12.5
+    assert loaded.history.vision_capture_fps == 4.0

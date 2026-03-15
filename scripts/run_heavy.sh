@@ -17,11 +17,20 @@ VISION_TIMEOUT="${VISION_TIMEOUT:-240}"
 POCKET_TIMEOUT="${POCKET_TIMEOUT:-30}"
 VISION_PIDFILE="$HEAVY_LOG_DIR/vision_stack.pid"
 POCKET_PIDFILE="$HEAVY_LOG_DIR/pocket_tts.pid"
+STALE_VLLM_CLEARED=0
 
 mkdir -p "$HEAVY_LOG_DIR"
 
 log() {
   printf '==> %s\n' "$*"
+}
+
+vllm_http_ready() {
+  curl -sf "http://127.0.0.1:${VLLM_PORT}/v1/models" >/dev/null 2>&1
+}
+
+vision_http_ready() {
+  curl -sf "http://127.0.0.1:${VISION_PORT}/model_status" >/dev/null 2>&1
 }
 
 kill_stale_vllm_gpu_compute() {
@@ -31,6 +40,7 @@ kill_stale_vllm_gpu_compute() {
   if [[ -z "$pids" ]]; then
     return 0
   fi
+  STALE_VLLM_CLEARED=1
   log "Clearing stale vLLM GPU compute: ${pids//$'\n'/ }"
   while IFS= read -r pid; do
     [[ -n "$pid" ]] || continue
@@ -145,6 +155,25 @@ wait_for_models_ready() {
   print_model_status
 }
 
+restart_vision_stack() {
+  local pids
+  pids="$(lsof -ti:"$VISION_PORT" 2>/dev/null || true)"
+  if [[ -n "$pids" ]]; then
+    log "Clearing stale vision app on :${VISION_PORT}: ${pids//$'\n'/ }"
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] || continue
+      kill "$pid" >/dev/null 2>&1 || true
+    done <<< "$pids"
+    sleep 1
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] || continue
+      kill -9 "$pid" >/dev/null 2>&1 || true
+    done <<< "$(lsof -ti:"$VISION_PORT" 2>/dev/null || true)"
+  fi
+  rm -f "$VISION_PIDFILE"
+  start_bg "vision stack" "$HEAVY_LOG_DIR/vision_stack.log" "$VISION_PIDFILE" "$ROOT/services/vision/start.sh"
+}
+
 if [[ -z "$POCKET_BIN" ]]; then
   if [[ -x "$ROOT/.venv/bin/pocket-tts" ]]; then
     POCKET_BIN="$ROOT/.venv/bin/pocket-tts"
@@ -155,10 +184,17 @@ fi
 
 kill_stale_vllm_gpu_compute
 
-if curl -sf "http://127.0.0.1:${VISION_PORT}/" >/dev/null 2>&1; then
+if (( STALE_VLLM_CLEARED )); then
+  log "Restarting vision stack after clearing stale vLLM compute"
+  restart_vision_stack
+elif vision_http_ready && vllm_http_ready; then
   log "Vision service already running on :${VISION_PORT}"
+elif vision_http_ready || curl -sf "http://127.0.0.1:${VISION_PORT}/" >/dev/null 2>&1; then
+  log "Vision stack is up but unhealthy; restarting it"
+  print_model_status || true
+  restart_vision_stack
 else
-  start_bg "vision stack" "$HEAVY_LOG_DIR/vision_stack.log" "$VISION_PIDFILE" "$ROOT/services/vision/start.sh"
+  restart_vision_stack
 fi
 
 if curl -sf "http://127.0.0.1:${POCKET_PORT}/" >/dev/null 2>&1; then

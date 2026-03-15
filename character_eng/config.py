@@ -37,6 +37,8 @@ class VisionConfig:
 class DashboardConfig:
     enabled: bool = True
     port: int = 7862
+    prompt_asset_open_target: str = "vscode"  # "vscode" or "folder"
+    prompt_asset_vscode_cmd: str = "code"
 
 
 @dataclass
@@ -46,11 +48,20 @@ class BridgeConfig:
 
 
 @dataclass
+class HistoryConfig:
+    enabled: bool = True
+    free_warning_gib: float = 50.0
+    vision_capture_fps: float = 2.0
+    playback_video_fps: float = 30.0
+
+
+@dataclass
 class AppConfig:
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     bridge: BridgeConfig = field(default_factory=BridgeConfig)
+    history: HistoryConfig = field(default_factory=HistoryConfig)
 
 
 def _toml_string(value: str) -> str:
@@ -84,10 +95,18 @@ def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
         "[dashboard]",
         f"enabled = {'true' if config.dashboard.enabled else 'false'}",
         f"port = {int(config.dashboard.port)}",
+        f"prompt_asset_open_target = {_toml_string(config.dashboard.prompt_asset_open_target)}",
+        f"prompt_asset_vscode_cmd = {_toml_string(config.dashboard.prompt_asset_vscode_cmd)}",
         "",
         "[bridge]",
         f"enabled = {'true' if config.bridge.enabled else 'false'}",
         f"port = {int(config.bridge.port)}",
+        "",
+        "[history]",
+        f"enabled = {'true' if config.history.enabled else 'false'}",
+        f"free_warning_gib = {config.history.free_warning_gib}",
+        f"vision_capture_fps = {config.history.vision_capture_fps}",
+        f"playback_video_fps = {config.history.playback_video_fps}",
         "",
     ]
 
@@ -140,6 +159,8 @@ def load_config() -> AppConfig:
     dashboard = DashboardConfig(
         enabled=dashboard_data.get("enabled", True),
         port=dashboard_data.get("port", 7862),
+        prompt_asset_open_target=dashboard_data.get("prompt_asset_open_target", "vscode"),
+        prompt_asset_vscode_cmd=dashboard_data.get("prompt_asset_vscode_cmd", "code"),
     )
 
     bridge_data = data.get("bridge", {})
@@ -148,4 +169,12 @@ def load_config() -> AppConfig:
         port=bridge_data.get("port", 7862),
     )
 
-    return AppConfig(voice=voice, vision=vision, dashboard=dashboard, bridge=bridge)
+    history_data = data.get("history", {})
+    history = HistoryConfig(
+        enabled=history_data.get("enabled", True),
+        free_warning_gib=history_data.get("free_warning_gib", 50.0),
+        vision_capture_fps=history_data.get("vision_capture_fps", 2.0),
+        playback_video_fps=history_data.get("playback_video_fps", 30.0),
+    )
+
+    return AppConfig(voice=voice, vision=vision, dashboard=dashboard, bridge=bridge, history=history)

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from character_eng.voice import (
     AUTO_BEAT_DELAY,
+    DeepgramSTT,
     MicStream,
     SpeakerStream,
     VoiceIO,
@@ -262,6 +263,35 @@ def test_deepgram_stt_utterance_end_fires_pending():
     # UtteranceEnd should flush it
     stt._on_message({"type": "UtteranceEnd"})
     on_transcript.assert_called_once_with("Hello")
+
+
+def test_deepgram_stt_send_audio_failure_sets_error_and_clears_ws_open():
+    on_transcript = MagicMock()
+    on_turn_start = MagicMock()
+    stt = DeepgramSTT(on_transcript, on_turn_start)
+    socket = MagicMock()
+    socket.send_media.side_effect = RuntimeError("socket closed")
+    stt._socket = socket
+    stt._ws_open.set()
+
+    stt.send_audio(b"\x00" * 32)
+
+    status = stt.status_snapshot()
+    assert status["ws_open"] is False
+    assert "socket closed" in status["error"]
+
+
+def test_deepgram_stt_on_error_clears_ws_open():
+    on_transcript = MagicMock()
+    on_turn_start = MagicMock()
+    stt = DeepgramSTT(on_transcript, on_turn_start)
+    stt._ws_open.set()
+
+    stt._on_error(RuntimeError("deepgram lost connection"))
+
+    status = stt.status_snapshot()
+    assert status["ws_open"] is False
+    assert "deepgram lost connection" in status["error"]
 
 
 # --- ElevenLabsTTS ---
@@ -557,6 +587,18 @@ def test_voice_io_speaker_playback_ratio_no_speaker():
     voice = VoiceIO()
     voice._speaker = None
     assert voice.speaker_playback_ratio == 1.0
+
+
+def test_voice_io_inject_input_audio_uses_live_mic_path():
+    voice = VoiceIO()
+    seen = []
+    voice._input_audio_hook = seen.append
+    voice._stt = MagicMock()
+
+    voice.inject_input_audio(b"\x00\x01" * 4)
+
+    assert seen == [b"\x00\x01" * 4]
+    voice._stt.send_audio.assert_called_once_with(b"\x00\x01" * 4)
 
 
 def test_voice_io_turn_start_cancels_auto_beat_when_not_speaking():

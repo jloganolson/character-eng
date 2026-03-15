@@ -97,11 +97,6 @@ class ChatSession:
             configs.append((fb, _make_chat_client(fb)))
 
         for i, (cfg, client) in enumerate(configs):
-            if i == 0:
-                _console.print(f"[dim]  {_ts()} → {cfg['name']} (chat)[/dim]")
-            else:
-                _console.print(f"[yellow]  {_ts()} → fallback: {cfg['name']} (chat)[/yellow]")
-
             stream = self._create_stream(cfg, client)
             if stream is None:
                 continue
@@ -152,6 +147,16 @@ class ChatSession:
         """Add an assistant message to history without making an LLM call."""
         self._messages.append({"role": "assistant", "content": content})
 
+    def replace_system_prompt(self, content: str):
+        """Update the base system prompt in place without resetting turn history."""
+        self.system_prompt = content
+        if self._messages and self._messages[0].get("role") == "system":
+            self._messages[0]["content"] = content
+            return
+        self._messages.insert(0, {"role": "system", "content": content})
+        for key, value in list(self._tagged_system_indices.items()):
+            self._tagged_system_indices[key] = value + 1
+
     def replace_last_assistant(self, content: str):
         """Replace or remove the most recent assistant message."""
         for i in range(len(self._messages) - 1, -1, -1):
@@ -200,6 +205,27 @@ class ChatSession:
     def get_history(self) -> list[dict]:
         """Return a copy of the message history."""
         return list(self._messages)
+
+    def snapshot_state(self) -> dict:
+        """Serialize the mutable session state for rewind/replay checkpoints."""
+        return {
+            "system_prompt": self.system_prompt,
+            "messages": [dict(message) for message in self._messages],
+            "tagged_system_indices": dict(self._tagged_system_indices),
+        }
+
+    def restore_state(self, payload: dict) -> None:
+        """Replace the mutable session state from a prior checkpoint snapshot."""
+        self.system_prompt = payload.get("system_prompt", self.system_prompt)
+        messages = payload.get("messages", [])
+        if messages:
+            self._messages = [dict(message) for message in messages]
+        else:
+            self._messages = [{"role": "system", "content": self.system_prompt}]
+        self._tagged_system_indices = {
+            str(key): int(value)
+            for key, value in payload.get("tagged_system_indices", {}).items()
+        }
 
     def trace_info(self) -> dict:
         """Return diagnostic info about the session."""

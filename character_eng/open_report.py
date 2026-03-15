@@ -23,6 +23,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
+from character_eng.history import catalog_report_annotation
+
 LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
 ANNOTATED_DIR = LOGS_DIR / "annotated"
 
@@ -122,6 +124,7 @@ class ReportHandler(BaseHTTPRequestHandler):
                 ANNOTATED_DIR.mkdir(parents=True, exist_ok=True)
                 out_path = ANNOTATED_DIR / f"{safe_name}.annotations.json"
                 out_path.write_text(json.dumps(data, indent=2))
+                catalog_report_annotation(data)
 
                 response = json.dumps({"ok": True, "path": str(out_path)}).encode()
                 self.send_response(HTTPStatus.OK)
