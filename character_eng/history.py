@@ -38,6 +38,7 @@ DEFAULT_FREE_WARNING_GIB = 50.0
 DEFAULT_VISION_CAPTURE_FPS = 2.0
 DEFAULT_PLAYBACK_VIDEO_FPS = 30.0
 DEFAULT_EVENT_PLAYBACK_WINDOW_S = 0.85
+VISION_RECORDER_STOP_TIMEOUT_S = 5.0
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -802,16 +803,12 @@ class VisionVideoRecorder:
             "-i",
             "pipe:0",
             "-an",
-            "-vf",
-            f"fps={self._fps:.2f}",
             "-c:v",
             "libx264",
             "-preset",
             "veryfast",
             "-pix_fmt",
             "yuv420p",
-            "-movflags",
-            "+faststart",
             str(self._output_path),
         ]
         try:
@@ -906,7 +903,7 @@ class VisionVideoRecorder:
             self._thread.join(timeout=1.0)
             self._thread = None
         try:
-            proc.wait(timeout=1.5)
+            proc.wait(timeout=VISION_RECORDER_STOP_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             proc.terminate()
             try:
