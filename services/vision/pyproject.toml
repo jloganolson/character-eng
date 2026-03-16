@@ -19,6 +19,7 @@ dependencies = [
     "einops",
     "openai",
     "insightface>=0.7",
+    "cjm-byte-track>=0.0.6",
     "onnxruntime-gpu",
     "pydantic>=2.0",
     "torchreid>=0.2.5",
@@ -43,6 +44,7 @@ jetson = [
     "einops",
     "openai",
     "insightface>=0.7",
+    "cjm-byte-track>=0.0.6",
     "pydantic>=2.0",
     "torchreid>=0.2.5",
     "gdown>=5.2.1",
@@ -67,4 +69,3 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
 torchvision = { index = "pytorch-cu128" }
-
