@@ -76,6 +76,8 @@ _history_playback_state = {
     "video": False,
     "warning": "",
 }
+_archive_only_mode = False
+_archive_only_reason = ""
 _vision_runtime = {
     "cfg": None,
     "proc": None,
@@ -396,6 +398,8 @@ def _runtime_controls_snapshot(voice_io=None, vision_mgr=None, vision_cfg=None) 
         "vision_service_autostart": vision_status["auto_launch"],
         "vision_service_mode": vision_status["mode"],
         "vision_mock_replay": vision_status["mock_replay"],
+        "archive_only": bool(_archive_only_mode),
+        "archive_only_reason": str(_archive_only_reason or ""),
     }
 
 
@@ -434,6 +438,30 @@ def _push_history_status() -> None:
     if _history_service is None:
         return
     _push("history_status", _history_status_payload())
+
+
+def _run_archive_only_mode(cfg) -> None:
+    global _conversation_paused, _session_stopped, _startup_pause_pending
+
+    _conversation_paused = True
+    _session_stopped = True
+    _startup_pause_pending = False
+    _push_runtime_controls(vision_cfg=cfg.vision)
+    _push_history_status()
+    console.print("[yellow]Archive-only mode[/yellow] — dashboard and history are available, live runtime is disabled.")
+
+    import queue as _queue
+
+    while True:
+        if _dashboard_input_queue is None:
+            time.sleep(0.5)
+            continue
+        try:
+            text = _dashboard_input_queue.get(timeout=0.5)
+        except _queue.Empty:
+            continue
+        if str(text).strip().lower() in {"/quit", "/exit"}:
+            break
 
 
 def _set_history_playback_state(**updates) -> None:
@@ -4338,14 +4366,21 @@ def main():
     parser.add_argument("--no-dashboard", action="store_true", help="Disable the HTML dashboard")
     parser.add_argument("--browser", action="store_true",
         help="Browser audio/video mode (WebSocket bridge for remote mic/camera)")
+    parser.add_argument("--archive-only", action="store_true",
+        help="Start dashboard/history only without loading the live conversation runtime")
     args = parser.parse_args()
 
     if args.smoke:
         sys.exit(run_smoke())
 
-    global _app_config, _history_service
+    global _app_config, _history_service, _archive_only_mode, _archive_only_reason
     cfg = load_config()
     _app_config = cfg
+    _archive_only_mode = bool(args.archive_only)
+    _archive_only_reason = (
+        "Archive-only mode is active. Load archives to inspect them; live conversation is disabled."
+        if _archive_only_mode else ""
+    )
     _history_service = HistoryService(
         root=HISTORY_ROOT,
         free_warning_gib=float(getattr(cfg.history, "free_warning_gib", 50.0)),
@@ -4355,9 +4390,9 @@ def main():
     # --voice flag overrides config; config.voice.enabled is the default
     # --sim forces text mode (voice doesn't make sense for non-interactive runs)
     # --browser implies voice mode (audio comes from browser)
-    voice_mode = False if args.sim else (args.voice or cfg.voice.enabled or browser_mode)
+    voice_mode = False if (args.sim or _archive_only_mode) else (args.voice or cfg.voice.enabled or browser_mode)
     # --vision or --vision-mock overrides config; config.vision.enabled is the default
-    vision_mode = args.vision or args.vision_mock or cfg.vision.enabled
+    vision_mode = False if _archive_only_mode else (args.vision or args.vision_mock or cfg.vision.enabled)
 
     # --- Bridge setup (browser mic/camera via WebSocket) ---
     bridge = None
@@ -4399,11 +4434,12 @@ def main():
 
     console.print(Panel("[bold]NPC Character Chat[/bold]", border_style="green"))
     model_config = get_chat_model_config()
-    if model_config is None:
+    if model_config is None and not _archive_only_mode:
         chat_cfg = MODELS.get(CHAT_MODEL, {})
         console.print(f"[red]Chat model unavailable — set {chat_cfg.get('api_key_env', 'API key')} in .env[/red]")
         return
-    console.print(f"[dim]Chat: {model_config['name']}[/dim]")
+    if model_config is not None:
+        console.print(f"[dim]Chat: {model_config['name']}[/dim]")
 
     # Auto-launch vision service (real or mock)
     vision_proc = None
@@ -4428,6 +4464,9 @@ def main():
             vision_mode = False
 
     _push_history_status()
+    if _archive_only_mode:
+        _run_archive_only_mode(cfg)
+        return
 
     try:
         while True:

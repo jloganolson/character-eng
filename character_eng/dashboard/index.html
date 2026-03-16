@@ -1333,6 +1333,7 @@
     </div>
     <div id="boot-overlay-grid" class="boot-grid"></div>
     <div class="boot-overlay-actions">
+      <button id="boot-load-archive">Load Archive...</button>
       <button id="boot-restart">Restart Session</button>
     </div>
   </div>
@@ -1805,6 +1806,7 @@
   const runtimeStopButton = document.getElementById("runtime-stop");
   const runtimeRestartButton = document.getElementById("runtime-restart");
   const runtimeControlGrid = document.getElementById("runtime-control-grid");
+  const bootLoadArchiveButton = document.getElementById("boot-load-archive");
   const bootRestartButton = document.getElementById("boot-restart");
   const timeWindowSlider = document.getElementById("time-window");
   const timeWindowValue = document.getElementById("time-window-value");
@@ -1877,6 +1879,8 @@
   const SIDEBAR_WIDTH_STORAGE_KEY = "dashboard.sidebar_width";
   const SIDEBAR_COLLAPSE_STORAGE_KEY = "dashboard.sidebar_collapsed";
   let pendingPauseState = null;
+  let archiveOnlyRuntime = false;
+  let archiveOnlyReason = "";
   let lastStoppedReportRefText = "";
   let lastStoppedReportRefPath = "";
   let lastStoppedArchiveRef = "";
@@ -2575,6 +2579,9 @@
       const checkpointCount = Number(item.checkpoint_count || 0);
       const notes = Number(item.annotation_count || 0);
       const bucket = archiveBucketLabel(item);
+      const replayButton = archiveOnlyRuntime
+        ? `<button type="button" class="secondary archive-replay-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}" disabled title="Live runtime disabled in archive-only mode">Replay Disabled</button>`
+        : `<button type="button" class="secondary archive-replay-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}">Replay</button>`;
       return `
         <div class="archive-row">
           <div class="archive-row-head">
@@ -2585,7 +2592,7 @@
             <div class="archive-row-actions">
               <button type="button" class="ghost archive-copy-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}" data-title="${esc(archiveDisplayTitle(item))}">Copy Ref</button>
               <button type="button" class="ghost archive-rename-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}" data-title="${esc(archiveDisplayTitle(item))}">Rename</button>
-              <button type="button" class="secondary archive-replay-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}">Replay</button>
+              ${replayButton}
               <button type="button" class="primary archive-load-action" data-session-ref="${esc(item.ref || item.session_id || item.path || "")}">Load</button>
             </div>
           </div>
@@ -3697,6 +3704,7 @@
 
   function bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState) {
     if (archiveBrowseRef) return "archive loaded";
+    if (archiveOnlyRuntime) return "archive-only ready";
     if (statePollingSuspended) return "dashboard disconnected";
     if (sessionSavePending) return "saving session";
     if (!runtimeStateSeen) return "attaching app runtime";
@@ -3723,9 +3731,13 @@
     const now = Date.now();
     const runtimeState = archiveBrowseRef
       ? "ready"
+      : archiveOnlyRuntime
+        ? "ready"
       : (sessionSavePending ? "active" : (runtimeStateSeen ? (sessionStopped ? "ready" : (conversationPaused ? "ready" : "active")) : "waiting"));
     const runtimeDetail = archiveBrowseRef
       ? `Loaded archive ${archiveBrowseMeta?.title || archiveBrowseRef}. Use the header transport to play or scrub the recording, or Return To Live to go back.`
+      : archiveOnlyRuntime
+        ? (archiveOnlyReason || "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.")
       : (sessionSavePending
       ? "The current session is being finalized and archived."
       : (runtimeStateSeen
@@ -3736,7 +3748,9 @@
           : "Runtime is live and accepting turns."))
       : "Waiting for the app to publish runtime controls."));
 
-    const voiceState = runtimeStateSeen
+    const voiceState = archiveOnlyRuntime
+      ? "off"
+      : runtimeStateSeen
       ? (
         !voiceActive ? "off"
         : (voiceStatus.stt?.state === "error" || voiceStatus.tts?.state === "error") ? "error"
@@ -3744,7 +3758,9 @@
         : "ready"
       )
       : "waiting";
-    const voiceDetail = runtimeStateSeen
+    const voiceDetail = archiveOnlyRuntime
+      ? "Archive-only mode does not start voice services."
+      : runtimeStateSeen
       ? (
         !voiceActive ? "Voice path is not active yet."
         : `${voiceStatus.stt?.detail || "STT unknown."} · ${voiceStatus.tts?.detail || "TTS unknown."}`
@@ -3755,7 +3771,10 @@
     let visionServiceDetail = "Waiting for runtime vision service info.";
     if (runtimeStateSeen) {
       const visionSource = currentVisionSourceKind();
-      if (!visionSource) {
+      if (archiveOnlyRuntime && !archiveBrowseRef && !(historyState.playback?.active && playbackVisionFrame?.sessionId)) {
+        visionServiceState = "off";
+        visionServiceDetail = "Archive-only mode does not use live vision.";
+      } else if (!visionSource) {
         visionServiceState = "error";
         visionServiceDetail = "No live vision feed or archive source is available.";
       } else if (archiveBrowseRef || (historyState.playback?.active && playbackVisionFrame?.sessionId)) {
@@ -3778,7 +3797,10 @@
 
     let modelState = "waiting";
     let modelDetail = "Waiting for per-model status.";
-    if (modelPollError) {
+    if (archiveOnlyRuntime) {
+      modelState = "off";
+      modelDetail = "Archive-only mode does not load live models.";
+    } else if (modelPollError) {
       modelState = "error";
       modelDetail = modelPollError;
     } else if (visionModels) {
@@ -3816,7 +3838,9 @@
     const summary =
       !runtimeStateSeen ? "Connecting to the local runtime... waiting for app runtime controls." :
       restartPending ? "Restarting conversation..." :
+      archiveBrowseRef ? `Loaded archive ${archiveBrowseMeta?.title || archiveBrowseRef}. Use the transport to inspect the recording.` :
       statePollingSuspended ? "Dashboard disconnected. Refresh after the local runtime comes back." :
+      archiveOnlyRuntime ? "Archive-only mode is ready. Load an archive to inspect recordings; live conversation is disabled." :
       visionServiceState === "error" ? "Vision needs attention before the runtime is ready." :
       modelPollError ? "Vision models need attention before the runtime is ready." :
       voiceState === "error" ? "Voice needs attention before the runtime is ready." :
@@ -3827,13 +3851,17 @@
 
     const modelReady = modelState === "ready" || modelState === "off";
     const voiceReady = voiceState === "ready" || voiceState === "off";
-    const visionReady = visionServiceState === "ready";
-    const bootReady = runtimeStateSeen && (sessionSavePending || sessionStopped || sessionSeen || restartPending) && visionReady && voiceReady && modelReady && !modelPollError;
+    const visionReady = visionServiceState === "ready" || visionServiceState === "off";
+    const bootReady = archiveOnlyRuntime
+      ? runtimeStateSeen
+      : runtimeStateSeen && (sessionSavePending || sessionStopped || sessionSeen || restartPending) && visionReady && voiceReady && modelReady && !modelPollError;
     document.body.classList.toggle("booting", !bootReady);
 
     summaryEl.textContent = summary;
     overlaySummaryEl.textContent = summary;
-    overlaySubEl.textContent = statePollingSuspended
+    overlaySubEl.textContent = archiveOnlyRuntime
+      ? "This runtime is intentionally skipping voice, vision, and model startup. Use Load Archive to browse recordings; switch back to the regular hot path for live sessions."
+      : statePollingSuspended
       ? "The dashboard lost its connection to the local runtime. Restart the app if needed, then refresh this page."
       : !bootReady
         ? `Current step: ${phase}. Heavy services may already be warm; this page unlocks once the app layer publishes runtime, session, voice, and model state.`
@@ -3881,12 +3909,19 @@
       runtimeToggleButton.style.background = "var(--hold)";
       runtimeToggleButton.disabled = true;
       runtimeToggleButton.style.opacity = "0.75";
+    } else if (archiveOnlyRuntime && !archiveBrowseRef) {
+      runtimeToggleButton.textContent = "Live Disabled";
+      runtimeToggleButton.style.background = "var(--hold)";
+      runtimeToggleButton.disabled = true;
+      runtimeToggleButton.style.opacity = "0.6";
     } else if (archiveBrowseRef) {
       const mediaActive = archivePlaybackMediaAvailable();
-      runtimeToggleButton.textContent = mediaActive ? "Archive Loaded" : "Replay";
+      runtimeToggleButton.textContent = archiveOnlyRuntime
+        ? (mediaActive ? "Archive Loaded" : "Replay Disabled")
+        : (mediaActive ? "Archive Loaded" : "Replay");
       runtimeToggleButton.style.background = "var(--advance)";
-      runtimeToggleButton.disabled = mediaActive;
-      runtimeToggleButton.style.opacity = mediaActive ? "0.6" : "1";
+      runtimeToggleButton.disabled = archiveOnlyRuntime || mediaActive;
+      runtimeToggleButton.style.opacity = (archiveOnlyRuntime || mediaActive) ? "0.6" : "1";
     } else {
       runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Play" : "Pause");
       runtimeToggleButton.style.background = sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)");
@@ -3897,18 +3932,22 @@
     runtimeStopButton.textContent = sessionSavePending
       ? (saveCompleteMode === "discarding" ? "Discarding..." : "Saving...")
       : (pendingPauseState === "stopping" ? "Saving..." : stopButtonLabel());
-    runtimeStopButton.disabled = !!archiveBrowseRef || sessionSavePending || pendingPauseState === "stopping" || restartPending || sessionStopped;
+    runtimeStopButton.disabled = archiveOnlyRuntime || !!archiveBrowseRef || sessionSavePending || pendingPauseState === "stopping" || restartPending || sessionStopped;
     runtimeStopButton.style.opacity = runtimeStopButton.disabled ? "0.6" : "1";
     runtimeStopButton.title = activeArchiveTitle() ? `Finalize archive: ${activeArchiveTitle()}` : "Finalize the current session archive and stop.";
     runtimeRestartButton.textContent = "Restart Session";
-    runtimeRestartButton.disabled = !!archiveBrowseRef;
+    runtimeRestartButton.disabled = archiveOnlyRuntime || !!archiveBrowseRef;
     runtimeRestartButton.style.opacity = runtimeRestartButton.disabled ? "0.6" : "1";
-    bootRestartButton.textContent = "Restart Session";
-    bootRestartButton.disabled = !!archiveBrowseRef;
+    bootRestartButton.textContent = archiveOnlyRuntime ? "Live Disabled" : "Restart Session";
+    bootRestartButton.disabled = archiveOnlyRuntime || !!archiveBrowseRef;
     bootRestartButton.style.opacity = bootRestartButton.disabled ? "0.6" : "1";
   }
 
   async function requestRestart() {
+    if (archiveOnlyRuntime) {
+      archiveLoadStatus.textContent = "Archive-only mode is active. Restart the full hot path for live sessions.";
+      return;
+    }
     runtimeRestartButton.textContent = "Restarting...";
     runtimeRestartButton.disabled = true;
     runtimeRestartButton.style.opacity = "0.6";
@@ -4098,6 +4137,7 @@
     if (archiveBrowseRef && archivePlaybackMediaAvailable()) return "archive media";
     if (historyState.playback?.active && playbackVisionFrame?.sessionId) return "archive playback";
     if (archiveBrowseRef) return "archive frame";
+    if (archiveOnlyRuntime) return "archive-only";
     if (visionService.url && visionService.managed) return "managed by app";
     if (visionService.url && visionService.external) return "external service";
     if (visionService.url) return "live service";
@@ -6318,6 +6358,8 @@
     runtime_controls(data, rawEvent) {
       runtimeControls = {...runtimeControls, ...(data.controls || {})};
       runtimeStateSeen = true;
+      archiveOnlyRuntime = !!data.archive_only;
+      archiveOnlyReason = data.archive_only_reason || "";
       conversationPaused = !!data.conversation_paused;
       sessionStopped = !!data.session_stopped;
       startupPausePending = !!data.startup_pause_pending;
@@ -6354,6 +6396,7 @@
       const status = document.getElementById("runtime-status");
       status.innerHTML = [
         `state: <b>${esc(data.session_state || (data.conversation_paused ? "paused" : "live"))}</b>`,
+        `mode: <b>${archiveOnlyRuntime ? "archive only" : "live"}</b>`,
         `auto-beat: <b>${runtimeControls.auto_beat ? "on" : "off"}</b>`,
         `filler: <b>${runtimeControls.filler ? "on" : "off"}</b>`,
         `guardrails: <b>${runtimeControls.guardrails ? "on" : "off"}</b>`,
@@ -6367,6 +6410,7 @@
         `vision manager: <b>${data.vision_active ? "on" : "off"}</b>`,
         `reconcile thread: <b>${data.reconcile_thread_alive ? "running" : "idle"}</b>`,
       ].join("<br>");
+      renderArchivePicker();
       renderRuntimeControlButtons();
       updateRuntimeButtons();
       updateVisionFeedUrl();
@@ -6647,8 +6691,16 @@
 
   runtimeToggleButton.addEventListener("click", async () => {
     if (pendingPauseState) return;
+    if (archiveOnlyRuntime && !archiveBrowseRef) {
+      archiveLoadStatus.textContent = "Archive-only mode is active. Load an archive to inspect recordings.";
+      return;
+    }
     if (archiveBrowseRef) {
       if (archivePlaybackMediaAvailable()) {
+        return;
+      }
+      if (archiveOnlyRuntime) {
+        archiveLoadStatus.textContent = "Replay is unavailable in archive-only mode. Load the archive media or restart the live runtime.";
         return;
       }
       const target = archiveBrowseRef;
@@ -6678,6 +6730,10 @@
   });
   runtimeStopButton.addEventListener("click", requestStop);
   runtimeRestartButton.addEventListener("click", requestRestart);
+  bootLoadArchiveButton.addEventListener("click", async () => {
+    await refreshHistoryArchives();
+    setArchivePickerOpen(true);
+  });
   bootRestartButton.addEventListener("click", requestRestart);
   reportRefButton.addEventListener("click", saveReportReference);
   archiveRenameButton.addEventListener("click", renameActiveArchive);
@@ -6795,6 +6851,10 @@
     if (replayButton) {
       const target = replayButton.dataset.sessionRef || "";
       if (!target) return;
+      if (archiveOnlyRuntime) {
+        archiveLoadStatus.textContent = "Replay is unavailable in archive-only mode. Load the archive instead.";
+        return;
+      }
       pendingReplayArchiveRef = target;
       pendingReplayEventTime = 0;
       updateVisionFeedUrl();

@@ -11,6 +11,7 @@ from character_eng.history import (
     HistoryService,
     PlaybackRunner,
     VisionVideoRecorder,
+    _video_is_valid,
     load_checkpoint,
     resolve_checkpoint_for_event_time,
     resolve_session_path,
@@ -74,6 +75,8 @@ def _write_test_jpeg(path):
 
 class _MjpegHandler(BaseHTTPRequestHandler):
     frame_bytes = b""
+    stream_seconds = 1.0
+    initial_video_delay_s = 0.0
 
     def do_GET(self):
         if self.path.startswith("/frame.jpg"):
@@ -91,7 +94,9 @@ class _MjpegHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
         self.end_headers()
         try:
-            deadline = time.time() + 1.0
+            if self.initial_video_delay_s > 0:
+                time.sleep(self.initial_video_delay_s)
+            deadline = time.time() + float(self.stream_seconds)
             while time.time() < deadline:
                 payload = (
                     b"--frame\r\n"
@@ -250,6 +255,8 @@ def test_vision_video_recorder_stops_cleanly_from_mjpeg_stream(tmp_path):
     jpeg_path = tmp_path / "recorder.jpg"
     _write_test_jpeg(jpeg_path)
     _MjpegHandler.frame_bytes = jpeg_path.read_bytes()
+    _MjpegHandler.stream_seconds = 1.0
+    _MjpegHandler.initial_video_delay_s = 0.0
     server = ThreadingHTTPServer(("127.0.0.1", 0), _MjpegHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -272,10 +279,70 @@ def test_vision_video_recorder_stops_cleanly_from_mjpeg_stream(tmp_path):
     assert result is None or result == output_path
 
 
+def test_vision_video_recorder_finalizes_valid_mp4_for_longer_capture(tmp_path):
+    jpeg_path = tmp_path / "recorder-long.jpg"
+    _write_test_jpeg(jpeg_path)
+    _MjpegHandler.frame_bytes = jpeg_path.read_bytes()
+    _MjpegHandler.stream_seconds = 4.0
+    _MjpegHandler.initial_video_delay_s = 0.0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _MjpegHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    output_path = tmp_path / "vision_capture_long.mp4"
+    try:
+        recorder = VisionVideoRecorder(
+            f"http://127.0.0.1:{server.server_address[1]}",
+            output_path,
+            fps=30,
+        )
+        recorder.start()
+        time.sleep(2.0)
+        result = recorder.stop()
+    finally:
+        _MjpegHandler.stream_seconds = 1.0
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+    assert output_path.exists()
+    assert output_path.stat().st_size > 0
+    assert result == output_path
+    assert _video_is_valid(output_path)
+
+
+def test_finalize_uses_first_video_frame_time_for_mux_offset(tmp_path):
+    jpeg_path = tmp_path / "offset-frame.jpg"
+    _write_test_jpeg(jpeg_path)
+    _MjpegHandler.frame_bytes = jpeg_path.read_bytes()
+    _MjpegHandler.stream_seconds = 1.2
+    _MjpegHandler.initial_video_delay_s = 0.45
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _MjpegHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    service = HistoryService(root=tmp_path / "history", free_warning_gib=0.0)
+    try:
+        service.start_session(session_id="sess-video-offset", character="greg", model="test")
+        service.start_vision_capture(
+            f"http://127.0.0.1:{server.server_address[1]}",
+            fps=5,
+            playback_video_fps=30,
+        )
+        time.sleep(1.0)
+        manifest = service.finalize_current()
+    finally:
+        _MjpegHandler.stream_seconds = 1.0
+        _MjpegHandler.initial_video_delay_s = 0.0
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+    video_start_s = float(manifest["media"]["video_start_s"] or 0.0)
+    assert video_start_s >= 0.35
+
+
 def test_finalize_current_with_active_vision_capture_stays_reasonably_fast(tmp_path):
     jpeg_path = tmp_path / "finalize-frame.jpg"
     _write_test_jpeg(jpeg_path)
     _MjpegHandler.frame_bytes = jpeg_path.read_bytes()
+    _MjpegHandler.initial_video_delay_s = 0.0
     server = ThreadingHTTPServer(("127.0.0.1", 0), _MjpegHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -306,6 +373,7 @@ def test_discard_current_with_active_vision_capture_returns_quickly(tmp_path):
     jpeg_path = tmp_path / "discard-frame.jpg"
     _write_test_jpeg(jpeg_path)
     _MjpegHandler.frame_bytes = jpeg_path.read_bytes()
+    _MjpegHandler.initial_video_delay_s = 0.0
     server = ThreadingHTTPServer(("127.0.0.1", 0), _MjpegHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

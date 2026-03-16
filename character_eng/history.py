@@ -38,6 +38,7 @@ DEFAULT_FREE_WARNING_GIB = 50.0
 DEFAULT_VISION_CAPTURE_FPS = 2.0
 DEFAULT_PLAYBACK_VIDEO_FPS = 30.0
 DEFAULT_EVENT_PLAYBACK_WINDOW_S = 0.85
+VISION_RECORDER_STOP_TIMEOUT_S = 5.0
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
@@ -769,6 +770,7 @@ class VisionVideoRecorder:
         self._service_url = service_url.rstrip("/")
         self._output_path = output_path
         self._fps = max(float(fps or DEFAULT_PLAYBACK_VIDEO_FPS), 1.0)
+        self._first_frame_at: float | None = None
         self._proc: subprocess.Popen[bytes] | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -779,10 +781,15 @@ class VisionVideoRecorder:
     def output_path(self) -> Path:
         return self._output_path
 
+    @property
+    def first_frame_at(self) -> float | None:
+        return self._first_frame_at
+
     def start(self) -> None:
         if self._proc is not None or self._thread is not None or not _ffmpeg_available():
             return
         self._stop.clear()
+        self._first_frame_at = None
         self._output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             self._output_path.unlink()
@@ -802,16 +809,12 @@ class VisionVideoRecorder:
             "-i",
             "pipe:0",
             "-an",
-            "-vf",
-            f"fps={self._fps:.2f}",
             "-c:v",
             "libx264",
             "-preset",
             "veryfast",
             "-pix_fmt",
             "yuv420p",
-            "-movflags",
-            "+faststart",
             str(self._output_path),
         ]
         try:
@@ -861,6 +864,8 @@ class VisionVideoRecorder:
                     del buffer[:end + 2]
                     if not jpeg:
                         continue
+                    if self._first_frame_at is None:
+                        self._first_frame_at = _now_ts()
                     try:
                         proc.stdin.write(jpeg)
                         proc.stdin.flush()
@@ -906,7 +911,7 @@ class VisionVideoRecorder:
             self._thread.join(timeout=1.0)
             self._thread = None
         try:
-            proc.wait(timeout=1.5)
+            proc.wait(timeout=VISION_RECORDER_STOP_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             proc.terminate()
             try:
@@ -1136,6 +1141,7 @@ class SessionArchive:
         self._user_audio = AudioTrackWriter(self.media_dir / "audio" / "user_input.wav", sample_rate=16000, origin_ts=self._started_at)
         self._assistant_audio = AudioTrackWriter(self.media_dir / "audio" / "assistant_output.wav", sample_rate=24000, origin_ts=self._started_at)
         self._video_started_at: float | None = None
+        self._video_first_frame_at: float | None = None
         self.path.mkdir(parents=True, exist_ok=True)
         self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
         self.video_dir.mkdir(parents=True, exist_ok=True)
@@ -1371,6 +1377,7 @@ class SessionArchive:
             self._vision_poller.start()
         if self._video_recorder is None:
             self._video_started_at = _now_ts()
+            self._video_first_frame_at = None
             self._video_recorder = VisionVideoRecorder(
                 service_url,
                 self.media_dir / "video" / "session_capture.mp4",
@@ -1383,10 +1390,13 @@ class SessionArchive:
             self._vision_poller.stop()
             self._vision_poller = None
         if self._video_recorder is not None:
+            recorder = self._video_recorder
             if force:
-                self._video_recorder.abort()
+                recorder.abort()
             else:
-                self._video_recorder.stop()
+                recorder.stop()
+                if recorder.first_frame_at is not None:
+                    self._video_first_frame_at = recorder.first_frame_at
             self._video_recorder = None
 
     def promote(self, kind: str = "pinned") -> Path:
@@ -1525,7 +1535,8 @@ class SessionArchive:
         frames_jsonl = self.video_dir / "frames.jsonl"
         user_audio_start_s = self._user_audio.start_offset_s()
         assistant_audio_start_s = self._assistant_audio.start_offset_s()
-        video_start_s = max(0.0, (self._video_started_at or self._started_at) - self._started_at) if (
+        video_anchor_ts = self._video_first_frame_at or self._video_started_at
+        video_start_s = max(0.0, (video_anchor_ts or self._started_at) - self._started_at) if (
             self._video_started_at is not None or raw_video_path.exists()
         ) else None
         mixed_audio_path = _mix_conversation_audio(
