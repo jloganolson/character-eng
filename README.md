@@ -1,6 +1,6 @@
 # Character Engine
 
-Interactive NPC chat CLI with selectable LLM backend (Cerebras, Groq, Google Gemini, or local vLLM models). Optional **voice mode** (Deepgram STT + ElevenLabs TTS) lets you speak to characters and hear them respond. Characters have personalities, world state that evolves during conversation, and a script system driven entirely by 8B microservices — post-response calls (eval + director) fire in parallel for ~350ms total instead of ~1050ms sequential. A single-beat 8B planner generates one beat at a time synchronously, eliminating background plan threads entirely. During conversation, beats use LLM-guided delivery: the beat's intent guides the LLM to respond naturally to the user while serving the beat's purpose (no verbatim pasting). The `/beat` command (autonomous time-passing) still uses verbatim delivery for TTS pre-rendering. After each character response, lightweight 8B microservices derive gaze/expression, evaluate script progress, and check scenario exit conditions — all running concurrently for immediate effect.
+Interactive NPC chat CLI with two-tier LLM routing (Cerebras, Groq, Google Gemini, or local vLLM models). **Chat** uses Kimi K2 for streaming dialogue; **microservices** (eval, director, planning, reconciliation, expression) use 8B for fast structured JSON. Optional **voice mode** (Deepgram STT + ElevenLabs TTS) lets you speak to characters and hear them respond. Characters have personalities, world state that evolves during conversation, and a script system driven by parallel microservices — post-response calls (eval + director) fire concurrently for ~350ms total instead of ~1050ms sequential. A single-beat planner generates one beat at a time synchronously, eliminating background plan threads entirely. During conversation, beats use LLM-guided delivery: the beat's intent guides the LLM to respond naturally to the user while serving the beat's purpose (no verbatim pasting). The `/beat` command (autonomous time-passing) still uses verbatim delivery for TTS pre-rendering. After each character response, lightweight microservices derive gaze/expression, evaluate script progress, and check scenario exit conditions — all running concurrently for immediate effect.
 
 **Scenario director**: Characters can have a branching scenario script (TOML) defining stages with goals and exit conditions. A director microservice (8B, synchronous) evaluates exit conditions after each response with immediate effect — no background delay.
 
@@ -36,7 +36,7 @@ DEEPGRAM_API_KEY=your_key_here
 ELEVENLABS_API_KEY=your_key_here
 ```
 
-If multiple keys are set, you'll choose a model at startup. If only one is set, it's auto-selected. All LLM calls (chat, eval, plan, reconcile) use the 8B chat model — no separate big model needed.
+If multiple keys are set, you'll choose a model at startup. If only one is set, it's auto-selected. Chat uses Kimi K2 (`CHAT_MODEL`), microservices use 8B (`MICRO_MODEL`) — both configured in `models.py`.
 
 ### Configuration (optional)
 
@@ -453,6 +453,19 @@ uv run -m character_eng.qa_chat --model groq-llama     # test with Groq Llama
 
 # Voice connectivity test (Deepgram + ElevenLabs, no mic needed)
 uv run -m character_eng.qa_voice
+
+# Per-role LLM evaluation (objective + subjective, JSON + HTML reports)
+uv run -m character_eng.qa_roles --model kimi-k2
+uv run -m character_eng.qa_roles --merge log1.json log2.json  # side-by-side HTML
+
+# Prompt simplification tests (full/medium/minimal variants)
+uv run -m character_eng.qa_scaffold --model kimi-k2
+uv run -m character_eng.qa_scaffold --merge log1.json log2.json
+
+# Scaffold toggle tests (beats/thinker/director on/off × model)
+uv run -m character_eng.qa_toggles --model kimi-k2
+uv run -m character_eng.qa_toggles --models groq-llama-8b,kimi-k2
+uv run -m character_eng.qa_toggles --merge logs/qa_toggles_*.json
 
 # Persona QA (7 parallel personas, HTML report)
 uv run -m character_eng.qa_personas                        # default model + character

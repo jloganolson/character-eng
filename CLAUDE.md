@@ -23,6 +23,9 @@ uv run -m character_eng.qa_world     # World reconciler integration test
 uv run -m character_eng.qa_chat      # Chat QA integration test
 uv run -m character_eng.qa_personas  # 7 parallel persona stress test (HTML report)
 uv run -m character_eng.qa_voice     # Voice connectivity test
+uv run -m character_eng.qa_roles     # Per-role LLM eval (objective + subjective)
+uv run -m character_eng.qa_scaffold  # Prompt simplification tests
+uv run -m character_eng.qa_toggles   # Scaffold toggle × model eval
 uv run -m character_eng.benchmark    # Model speed benchmark
 uv run -m character_eng.serve        # Start local vLLM server
 uv run -m character_eng.devices      # List audio devices
@@ -44,20 +47,21 @@ uv run deploy/runpod.py status       # Pod state + URLs
 uv run deploy/runpod.py ssh          # Print SSH tunnel command
 ```
 
-QA scripts accept `--model cerebras-llama|groq-llama|groq-gpt|gemini-3-flash|gemini-2.5-flash`. Persona QA accepts `--character greg --turns 10 --open`.
+QA scripts accept `--model cerebras-llama|groq-llama|groq-gpt|gemini-3-flash|gemini-2.5-flash|kimi-k2`. Persona QA accepts `--character greg --turns 10 --open --no-thinker`. Role/scaffold/toggle QA accept `--merge log1.json log2.json` to produce side-by-side HTML comparison reports. Toggle QA accepts `--models groq-llama-8b,kimi-k2` for multi-model runs and `--micro-model gemini-2.5-flash` for split-routing tests.
 
 ## Architecture
 
-Interactive NPC character chat CLI with single-tier 8B LLM backend (OpenAI-compatible endpoints):
-- **CHAT_MODEL** (small/fast, default `groq-llama-8b` 8B) — all LLM calls: streaming dialogue, expression, eval, director, planning, reconciliation
+Interactive NPC character chat CLI with two-tier LLM routing (OpenAI-compatible endpoints):
+- **CHAT_MODEL** (default `kimi-k2`) — streaming dialogue only (15/16 qa_roles, 196ms TTFT)
+- **MICRO_MODEL** (default `groq-llama-8b` 8B) — parallel microservices: script_check, thought, director, beat planning, reconciliation, expression, condition check (~300ms structured JSON)
 - **BIG_MODEL** (kept for API compat, no longer required) — `get_big_model_config()` still exists but nothing depends on 70B
 
-Configured in `models.py`. No model selection menu — auto-selects on startup.
+Configured in `models.py`. `get_chat_model_config()` and `get_micro_model_config()` in `__main__.py`. No model selection menu — auto-selects on startup.
 
 ### Core systems
 - **Two-speed world updates**: fast path stores pending changes + character reacts immediately; slow path (background reconciler, 8B) reconciles into structured state with stable fact IDs (`f1`, `f2`, ...)
 - **Parallel post-response microservices**: `script_check_call` + `thought_call` + `director_call` run concurrently via `ThreadPoolExecutor` after each response (~350ms total vs ~1050ms sequential). Expression also parallelized for `/beat` path.
-- **Single-beat planning**: `single_beat_call` (8B) generates one beat at a time synchronously — no background plan thread, no stale discard. Called at boot, after script completion, and on off-book events.
+- **Single-beat planning**: `single_beat_call` (8B) generates one beat at a time synchronously — no background plan thread, no stale discard. Called at boot, after script completion, and on off-book events. Gated by `beats` runtime control toggle — when OFF, all beat/plan/script_check/condition_check calls are skipped and the model improvises from stage goal alone.
 - **Person state**: individual people tracked with scoped fact IDs (`p1f1`, `p1f2`, ...); reconciler handles assignments
 - **Perception**: `/see` for manual events, `/sim` for scripted replay from `.sim.txt` files
 - **Expression post-processing**: After each character response, `expression_call` (8B) derives gaze target + facial expression from the dialogue. Gaze picks from scene targets (static list, or live vision targets when `--vision` is active); expression is one of 12 emotions. Social gaze modifiers handled downstream in robot control, not by the LLM.
@@ -66,7 +70,7 @@ Configured in `models.py`. No model selection menu — auto-selects on startup.
 - **Dashboard** (`--no-dashboard` to disable): Real-time HTML dashboard at `:7862` showing conversation timeline, world state, stage/script, people, expression/eval metadata, and timing. Served via stdlib `ThreadingHTTPServer` as a daemon thread. SSE for live updates, `/state` for reconnect catchup, `POST /send` for browser input. Gruvbox dark/light theme. No new dependencies. `index.html` is editable — refresh browser to see changes.
 - **Browser mode** (`--browser`): Remote audio/video via WebSocket bridge on `:7863`. Browser captures mic (getUserMedia, echoCancellation) → AudioWorklet → int16 PCM → WS. Camera → canvas → JPEG → WS at 5fps. Server sends TTS PCM back via WS → AudioWorklet playback. Uses `BrowserVoiceIO` instead of `VoiceIO` (no sounddevice, no AEC, no KeyListener). Vision frames injected via `/inject_frame` endpoint (vision service started with `--no-camera`). Works via RunPod proxy or SSH tunnel (`ssh -L 7862:localhost:7862 -L 7863:localhost:7863`).
 
-### Modules (27 total)
+### Modules (30 total)
 | Module | Purpose |
 |--------|---------|
 | `__main__.py` | TUI entry point, command dispatch, parallel microservice orchestration |
@@ -87,6 +91,9 @@ Configured in `models.py`. No model selection menu — auto-selects on startup.
 | `serve.py` | vLLM server launcher for local models |
 | `benchmark.py` | Model speed benchmark (TTFT, structured JSON) |
 | `qa_personas.py` | 7-persona parallel stress test with HTML report |
+| `qa_roles.py` | Per-role LLM eval — objective validators + subjective side-by-side comparison |
+| `qa_scaffold.py` | Prompt simplification tests — full/medium/minimal variants per role |
+| `qa_toggles.py` | Scaffold toggle × model eval — beats/thinker/director toggle combos |
 | `open_report.py` | HTTP server for HTML reports with annotation save |
 | `vision/__init__.py` | Vision module package |
 | `vision/context.py` | Visual dataclasses (FaceObservation, PersonObservation, etc.) + VisualContext |
@@ -134,7 +141,7 @@ Three layers, fast to slow:
 
 **Unit tests** (`uv run pytest`) — Mocked, no API calls. Pre-push hook. Test files: `test_smoke`, `test_e2e`, `test_chat`, `test_prompts`, `test_serve`, `test_local_tts`, `test_voice`, `test_pocket_tts`, `test_person`, `test_scenario`, `test_perception`, `test_world`, `test_vision`, `test_dashboard`, `test_bridge`.
 
-**Integration QA** — Hit real LLMs. `qa_world` (4 reconcile scenarios), `qa_chat` (parses `test_plan.md`), `qa_voice` (API connectivity), `qa_personas` (7 parallel personas, HTML report).
+**Integration QA** — Hit real LLMs. `qa_world` (4 reconcile scenarios), `qa_chat` (parses `test_plan.md`), `qa_voice` (API connectivity), `qa_personas` (7 parallel personas, HTML report), `qa_roles` (per-role isolated eval with objective/subjective split), `qa_scaffold` (prompt simplification tests), `qa_toggles` (scaffold toggle × model permutations).
 
 `test_plan.md` commands: `send:`, `world:`, `script:`, `beat`, `expect:` (`non_empty`, `max_length:<n>`, `world_updated`, `valid_thought`, `eval_status:<status>`, `in_character`).
 

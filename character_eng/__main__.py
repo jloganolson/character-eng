@@ -23,7 +23,7 @@ from character_eng.history import (
     catalog_report_annotation,
     restore_runtime_state,
 )
-from character_eng.models import BIG_MODEL, CHAT_MODEL, MODELS
+from character_eng.models import BIG_MODEL, CHAT_MODEL, MICRO_MODEL, MODELS
 from character_eng.utils import start_prefixed_output_thread, ts as _ts
 from character_eng.perception import PerceptionEvent, load_sim_script, process_perception
 from character_eng.person import PeopleState
@@ -225,6 +225,7 @@ _runtime_controls = {
     "director": True,
     "expression": True,
     "beat_guidance": True,
+    "beats": True,
 }
 _conversation_paused = False
 _session_stopped = False
@@ -241,7 +242,6 @@ def _normalize_runtime_control_name(name: str) -> str | None:
         "vision": "vision",
         "auto-beat": "auto_beat",
         "autobeat": "auto_beat",
-        "beat": "auto_beat",
         "filler": "filler",
         "guardrails": "guardrails",
         "guardrail": "guardrails",
@@ -252,6 +252,9 @@ def _normalize_runtime_control_name(name: str) -> str | None:
         "beat-guidance": "beat_guidance",
         "beatguidance": "beat_guidance",
         "guidance": "beat_guidance",
+        "beats": "beats",
+        "planning": "beats",
+        "planner": "beats",
     }
     return aliases.get(key)
 
@@ -504,7 +507,7 @@ def _restore_runtime_checkpoint(session, payload: dict):
 def _render_runtime_controls(voice_io=None, vision_mgr=None, vision_cfg=None) -> str:
     state = _runtime_controls_snapshot(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
     lines = []
-    for key in ("reconcile", "vision", "auto_beat", "filler", "guardrails", "thinker", "director", "expression", "beat_guidance"):
+    for key in ("reconcile", "vision", "auto_beat", "filler", "guardrails", "thinker", "director", "expression", "beat_guidance", "beats"):
         enabled = state["controls"][key]
         label = key.replace("_", " ")
         lines.append(f"{label:<12} : {'on' if enabled else 'off'}")
@@ -769,18 +772,19 @@ def _advance_scenario_from_visual(session, scenario, script, world, people, goal
             "new_stage": new_stage.name,
             "new_goal": new_stage.goal,
         })
-        result = next_beat_call(
-            system_prompt=session.system_prompt,
-            world=world,
-            history=session.get_history(),
-            goals=goals,
-            model_config=model_config,
-            people=people,
-            stage_goal=new_stage.goal,
-            vision_context_text=_current_vision_text(vision_mgr),
-        )
-        if result.beats:
-            apply_plan(script, result)
+        if _runtime_controls.get("beats", True):
+            result = next_beat_call(
+                system_prompt=session.system_prompt,
+                world=world,
+                history=session.get_history(),
+                goals=goals,
+                model_config=model_config,
+                people=people,
+                stage_goal=new_stage.goal,
+                vision_context_text=_current_vision_text(vision_mgr),
+            )
+            if result.beats:
+                apply_plan(script, result)
     return True
 
 
@@ -881,7 +885,7 @@ def run_eval_sync(session, world, script, model_config, log, people=None, stage_
     """
     # Script check: advance/hold/off_book classification
     beat = script.current_beat if script else None
-    if beat is None:
+    if beat is None or not _runtime_controls.get("beats", True):
         return (False, "")
 
     try:
@@ -950,7 +954,7 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
     with ThreadPoolExecutor(max_workers=4) as pool:
         # Fire all LLM calls concurrently
         fut_check = pool.submit(script_check_call, beat=beat, history=session.get_history(),
-                                model_config=model_config, world=world) if beat else None
+                                model_config=model_config, world=world) if beat and _runtime_controls.get("beats", True) else None
         fut_thought = pool.submit(
             thought_call,
             system_prompt=session.system_prompt,
@@ -1068,14 +1072,15 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
                                 "old_stage": stage.name, "new_stage": new_stage.name,
                                 "new_goal": new_stage.goal,
                             })
-                            result = next_beat_call(
-                                system_prompt=session.system_prompt, world=world,
-                                history=session.get_history(), goals=goals, model_config=model_config,
-                                people=people, stage_goal=new_stage.goal,
-                                vision_context_text=_current_vision_text(vision_mgr),
-                            )
-                            if result.beats:
-                                apply_plan(script, result)
+                            if _runtime_controls.get("beats", True):
+                                result = next_beat_call(
+                                    system_prompt=session.system_prompt, world=world,
+                                    history=session.get_history(), goals=goals, model_config=model_config,
+                                    people=people, stage_goal=new_stage.goal,
+                                    vision_context_text=_current_vision_text(vision_mgr),
+                                )
+                                if result.beats:
+                                    apply_plan(script, result)
         else:
             if dir_result.thought:
                 console.print(f"[dim]  {_ts()} director: {dir_result.thought}[/dim]")
@@ -1118,14 +1123,15 @@ def run_director_sync(scenario, world, people, session, model_config, script, go
                 console.print(f"[cyan]  {_ts()} director: {result.thought}[/cyan]")
                 if new_stage:
                     console.print(f"[bold cyan]{_ts()} Stage → {new_stage.name}: {new_stage.goal}[/bold cyan]")
-                    plan_result = next_beat_call(
-                        system_prompt=session.system_prompt, world=world,
-                        history=session.get_history(), goals=goals, model_config=model_config,
-                        people=people, stage_goal=new_stage.goal,
-                        vision_context_text="",
-                    )
-                    if plan_result.beats:
-                        apply_plan(script, plan_result)
+                    if _runtime_controls.get("beats", True):
+                        plan_result = next_beat_call(
+                            system_prompt=session.system_prompt, world=world,
+                            history=session.get_history(), goals=goals, model_config=model_config,
+                            people=people, stage_goal=new_stage.goal,
+                            vision_context_text="",
+                        )
+                        if plan_result.beats:
+                            apply_plan(script, plan_result)
                 return True
     else:
         if result.thought:
@@ -1543,6 +1549,17 @@ def get_big_model_config():
     return cfg
 
 
+def get_micro_model_config() -> dict | None:
+    """Look up the microservice model config, return None if API key not set."""
+    cfg = MODELS.get(MICRO_MODEL)
+    if cfg is None:
+        return None
+    api_key_env = cfg.get("api_key_env", "")
+    if api_key_env and not os.environ.get(api_key_env):
+        return None
+    return cfg
+
+
 def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voice_cfg=None,
               vision_mode: bool = False, vision_cfg=None, auto_sim: str | None = None,
               bridge=None, sim_speed: float = 1.0, start_paused: bool = False):
@@ -1551,8 +1568,9 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
     set_llm_trace_hook(_record_prompt_trace)
     set_chat_trace_hook(_record_prompt_trace)
     label = character.replace("_", " ").title()
-    # All LLM calls now use 8B chat model (parallel microservices, single-beat planning)
+    # Two-tier routing: model_config for chat, micro_config for microservices
     big_model_config = get_big_model_config()  # kept for API compat
+    micro_config = get_micro_model_config() or model_config
     eval_model_config = model_config  # kept for API compat
 
     # --- Vision setup ---
@@ -1743,7 +1761,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     ready_input,
                     vision_mgr=vision_mgr,
                     vision_cfg=vision_cfg,
-                    model_config=model_config,
+                    model_config=micro_config,
                     world=None,
                     people=None,
                     stage_goal="",
@@ -1791,7 +1809,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             vision_mgr = _ensure_vision_manager(
                 vision_mgr,
                 vision_cfg,
-                model_config,
+                micro_config,
                 world,
                 people,
                 stage_goal,
@@ -1806,8 +1824,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 )
         _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
 
-        # Generate initial script at boot (synchronous, 8B single-beat)
-        plan_result = run_plan(session, world, goals, "", model_config, people=people, stage_goal=stage_goal, vision_mgr=vision_mgr)
+        # Generate initial script at boot (synchronous single-beat)
+        plan_result = run_plan(session, world, goals, "", micro_config, people=people, stage_goal=stage_goal, vision_mgr=vision_mgr)
         if plan_result and plan_result.beats:
             apply_plan(script, plan_result)
 
@@ -2217,7 +2235,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
         # Auto-sim: run sim script then exit
         if auto_sim:
             run_sim(auto_sim, character, session, world, goals, script, people, scenario, label,
-                    model_config, big_model_config, eval_model_config, log,
+                    micro_config, big_model_config, eval_model_config, log,
                     vision_mgr=vision_mgr, sim_speed=sim_speed)
             save_chat_log(character, model_config, log, session_id)
             save_chat_html(character, model_config, log, session_id)
@@ -2420,7 +2438,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print("Goodbye!")
                     sys.exit(0)
                 continue
-            if voice_io is not None and _arm_auto_beat and _runtime_controls["auto_beat"]:
+            if voice_io is not None and _arm_auto_beat and _runtime_controls["auto_beat"] and _runtime_controls.get("beats", True):
                 # Centralized auto-beat: start timer here so it fires after all
                 # console output is done and TTS echo has settled (avoids Deepgram
                 # false positives cancelling the timer mid-countdown).
@@ -2429,7 +2447,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 try:
                     user_input = _wait_for_active_turn_input(
                         session_id, voice_io, session, world, people, vision_mgr,
-                        scenario, script, goals, model_config, log, character,
+                        scenario, script, goals, micro_config, log, character,
                     )
                 except (EOFError, KeyboardInterrupt):
                     console.print()
@@ -2472,7 +2490,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     if voice_io is not None or _dashboard_input_queue is not None:
                         user_input = _wait_for_active_turn_input(
                             session_id, voice_io, session, world, people, vision_mgr,
-                            scenario, script, goals, model_config, log, character,
+                            scenario, script, goals, micro_config, log, character,
                         )
                     else:
                         user_input = _get_input(session_id)
@@ -2757,7 +2775,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     user_input,
                     vision_mgr=vision_mgr,
                     vision_cfg=vision_cfg,
-                    model_config=model_config,
+                    model_config=micro_config,
                     world=world,
                     people=people,
                     stage_goal=stage_goal,
@@ -2829,7 +2847,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print("[dim]Vision not active. Use --vision flag.[/dim]")
                 continue
             elif cmd == "/beat":
-                handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario, vision_mgr=vision_mgr)
+                handle_beat(session, world, goals, script, label, micro_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario, vision_mgr=vision_mgr)
                 _capture_history_checkpoint(
                     "beat",
                     character=character,
@@ -2851,7 +2869,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print("[dim]No world state for this character.[/dim]")
                     continue
                 change_text = user_input[7:]  # preserve original case
-                handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario, vision_mgr=vision_mgr)
+                handle_world_change(session, world, goals, script, change_text, label, micro_config, big_model_config, eval_model_config, log, voice_io=voice_io, people=people, scenario=scenario, vision_mgr=vision_mgr)
                 _capture_history_checkpoint(
                     "world",
                     character=character,
@@ -2870,7 +2888,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print("[dim]No world state for this character.[/dim]")
                     continue
                 see_text = user_input[5:]  # preserve original case
-                handle_perception(session, world, goals, script, people, scenario, see_text, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, vision_mgr=vision_mgr)
+                handle_perception(session, world, goals, script, people, scenario, see_text, label, micro_config, big_model_config, eval_model_config, log, voice_io=voice_io, vision_mgr=vision_mgr)
                 _capture_history_checkpoint(
                     "perception",
                     character=character,
@@ -2889,7 +2907,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 if not sim_name:
                     console.print("[red]Usage: /sim <name>[/red]")
                     continue
-                run_sim(sim_name, character, session, world, goals, script, people, scenario, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, vision_mgr=vision_mgr)
+                run_sim(sim_name, character, session, world, goals, script, people, scenario, label, micro_config, big_model_config, eval_model_config, log, voice_io=voice_io, vision_mgr=vision_mgr)
                 _capture_history_checkpoint(
                     "sim",
                     character=character,
@@ -2904,7 +2922,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 _arm_auto_beat = True
                 continue
             elif cmd in ("1", "2", "3", "4"):
-                handle_trigger(int(cmd), scenario, session, world, goals, script, people, label, model_config, big_model_config, eval_model_config, log, voice_io=voice_io, vision_mgr=vision_mgr)
+                handle_trigger(int(cmd), scenario, session, world, goals, script, people, label, micro_config, big_model_config, eval_model_config, log, voice_io=voice_io, vision_mgr=vision_mgr)
                 _capture_history_checkpoint(
                     "trigger",
                     character=character,
@@ -2940,7 +2958,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 response = stream_response(
                     session, label, user_input,
                     voice_io=voice_io,
-                    expr_model_config=model_config,
+                    expr_model_config=micro_config,
                     input_timing=input_timing,
                     world=world,
                     people=people,
@@ -2957,16 +2975,17 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     entry["expression"] = expr.expression
                 log.append(entry)
                 _bump_version()
-                needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
+                needs_plan, plan_request, _ = run_post_response(session, world, script, micro_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
                 # Always replan after first user input
-                result = next_beat_call(
-                    system_prompt=session.system_prompt, world=world,
-                    history=session.get_history(), goals=goals, model_config=model_config,
-                    plan_request=plan_request, people=people, stage_goal=stage_goal,
-                    vision_context_text=_current_vision_text(vision_mgr),
-                )
-                if result.beats:
-                    apply_plan(script, result)
+                if _runtime_controls.get("beats", True):
+                    result = next_beat_call(
+                        system_prompt=session.system_prompt, world=world,
+                        history=session.get_history(), goals=goals, model_config=micro_config,
+                        plan_request=plan_request, people=people, stage_goal=stage_goal,
+                        vision_context_text=_current_vision_text(vision_mgr),
+                    )
+                    if result.beats:
+                        apply_plan(script, result)
                 _capture_history_checkpoint(
                     "send_first_turn",
                     character=character,
@@ -2982,10 +3001,10 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 continue
 
             # Bootstrap: if no script, plan synchronously before responding
-            if script.is_empty():
+            if script.is_empty() and _runtime_controls.get("beats", True):
                 result = next_beat_call(
                     system_prompt=session.system_prompt, world=world,
-                    history=session.get_history(), goals=goals, model_config=model_config,
+                    history=session.get_history(), goals=goals, model_config=micro_config,
                     people=people, stage_goal=stage_goal,
                     vision_context_text=_current_vision_text(vision_mgr),
                 )
@@ -2997,7 +3016,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 response = stream_guided_beat(
                     session, script.current_beat, label, user_input,
                     voice_io=voice_io,
-                    expr_model_config=model_config,
+                    expr_model_config=micro_config,
                     world=world,
                     people=people,
                     scenario=scenario,
@@ -3008,7 +3027,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 response = stream_response(
                     session, label, user_input,
                     voice_io=voice_io,
-                    expr_model_config=model_config,
+                    expr_model_config=micro_config,
                     input_timing=input_timing,
                     world=world,
                     people=people,
@@ -3025,11 +3044,11 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 entry["expression"] = expr.expression
             log.append(entry)
             _bump_version()
-            needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
-            if needs_plan:
+            needs_plan, plan_request, _ = run_post_response(session, world, script, micro_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
+            if needs_plan and _runtime_controls.get("beats", True):
                 result = next_beat_call(
                     system_prompt=session.system_prompt, world=world,
-                    history=session.get_history(), goals=goals, model_config=model_config,
+                    history=session.get_history(), goals=goals, model_config=micro_config,
                     plan_request=plan_request, people=people, stage_goal=stage_goal,
                     vision_context_text=_current_vision_text(vision_mgr),
                 )
@@ -3071,6 +3090,8 @@ def run_eval(session, world, goals, script, model_config):
 
 def run_plan(session, world, goals, plan_request, model_config, people=None, stage_goal="", vision_mgr=None):
     """Run next_beat_call synchronously, return PlanResult or None on error."""
+    if not _runtime_controls.get("beats", True):
+        return None
     if model_config is None:
         console.print("[dim]Planner unavailable, skipping.[/dim]")
         return None
@@ -3315,10 +3336,25 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
 
     # 1. If no current beat, replan (synchronous — user explicitly asked for a beat)
     if script.current_beat is None:
-        plan_result = run_plan(session, world, goals, "", model_config, vision_mgr=vision_mgr)
-        if plan_result and plan_result.beats:
-            apply_plan(script, plan_result)
+        if _runtime_controls.get("beats", True):
+            plan_result = run_plan(session, world, goals, "", model_config, vision_mgr=vision_mgr)
+            if plan_result and plan_result.beats:
+                apply_plan(script, plan_result)
         if script.current_beat is None:
+            if not _runtime_controls.get("beats", True):
+                # Beats disabled — model improvises from stage goal
+                response = stream_response(
+                    session, label, "[Continue the conversation naturally.]",
+                    voice_io=voice_io,
+                    expr_model_config=model_config,
+                    world=world,
+                    people=people,
+                    scenario=scenario,
+                    vision_mgr=vision_mgr,
+                )
+                entry["response"] = response
+                log.append(entry)
+                return
             console.print("[dim]No beats available.[/dim]\n")
             log.append(entry)
             return
@@ -3326,7 +3362,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
     beat = script.current_beat
 
     # 2. If beat has a condition, check it (synchronous — gates delivery)
-    if beat.condition:
+    if beat.condition and _runtime_controls.get("beats", True):
         console.print(f"[dim]{_ts()} Checking condition: {beat.condition}[/dim]")
         try:
             cond_result = condition_check_call(
@@ -3401,7 +3437,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
         entry["expression"] = expr.expression
 
     # 6. Replan if needed (script complete or off_book)
-    if needs_plan or not script.current_beat:
+    if (needs_plan or not script.current_beat) and _runtime_controls.get("beats", True):
         result = next_beat_call(
             system_prompt=session.system_prompt, world=world,
             history=session.get_history(), goals=goals, model_config=model_config,
@@ -3456,7 +3492,7 @@ def handle_world_change(session, world, goals, script, change_text, label, model
     # Parallel eval + director
     _bump_version()
     needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
-    if needs_plan:
+    if needs_plan and _runtime_controls.get("beats", True):
         result = next_beat_call(
             system_prompt=session.system_prompt, world=world,
             history=session.get_history(), goals=goals, model_config=model_config,
@@ -3505,7 +3541,7 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
     _start_reconcile(world, model_config, people=people)
     _bump_version()
     needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
-    if needs_plan:
+    if needs_plan and _runtime_controls.get("beats", True):
         result = next_beat_call(
             system_prompt=session.system_prompt, world=world,
             history=session.get_history(), goals=goals, model_config=model_config,
@@ -3568,7 +3604,7 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
             log.append(entry)
             _bump_version()
             needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
-            if needs_plan:
+            if needs_plan and _runtime_controls.get("beats", True):
                 result = next_beat_call(
                     system_prompt=session.system_prompt, world=world,
                     history=session.get_history(), goals=goals, model_config=model_config,
@@ -3959,6 +3995,7 @@ def run_smoke():
     character = "greg"
     label = character.replace("_", " ").title()
     big_model_config = get_big_model_config()  # kept for API compat
+    micro_config = get_micro_model_config() or model_config
     eval_model_config = model_config  # kept for API compat
     log: list[dict] = []
 
@@ -3979,7 +4016,7 @@ def run_smoke():
         console.print(f"[dim]Scenario: {scenario.name} (stage: {scenario.current_stage})[/dim]")
 
     console.print(f"[dim]{_ts()} Planning...[/dim]")
-    plan_result = run_plan(session, world, goals, "", model_config, people=people, stage_goal=stage_goal)
+    plan_result = run_plan(session, world, goals, "", micro_config, people=people, stage_goal=stage_goal)
     if plan_result and plan_result.beats:
         apply_plan(script, plan_result)
         console.print(f"[dim]Got {len(script.beats)} beats[/dim]")
@@ -4003,11 +4040,11 @@ def run_smoke():
                     return 1
             elif action == "world":
                 handle_world_change(session, world, goals, script, text, label,
-                                    model_config, big_model_config, eval_model_config, log,
+                                    micro_config, big_model_config, eval_model_config, log,
                                     people=people, scenario=scenario)
             elif action == "beat":
                 handle_beat(session, world, goals, script, label,
-                            model_config, big_model_config, eval_model_config, log,
+                            micro_config, big_model_config, eval_model_config, log,
                             people=people, scenario=scenario)
         except Exception as e:
             console.print(f"[red]Smoke test failed: {e}[/red]")

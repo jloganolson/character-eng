@@ -19,6 +19,14 @@ MODELS = {
         "stream_usage": False,
         "hidden": True,
     },
+    "kimi-k2": {
+        "name": "Kimi K2 (Groq)",
+        "model": "moonshotai/kimi-k2-instruct",
+        "base_url": "https://api.groq.com/openai/v1",
+        "api_key_env": "GROQ_API_KEY",
+        "stream_usage": False,
+        "fallback": "groq-llama-8b",
+    },
     "groq-llama": {
         "name": "Llama 3.3 70B (Groq)",
         "model": "llama-3.3-70b-versatile",
@@ -49,6 +57,13 @@ MODELS = {
         "api_key_env": "GEMINI_API_KEY",
         "stream_usage": False,
         "hidden": True,
+    },
+    "gemini-3-flash-lite": {
+        "name": "Gemini 3.1 Flash Lite (Google)",
+        "model": "gemini-3.1-flash-lite-preview",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "api_key_env": "GEMINI_API_KEY",
+        "stream_usage": False,
     },
     "gemini-2.5-flash": {
         "name": "Gemini 2.5 Flash (Google)",
@@ -82,9 +97,11 @@ MODELS = {
 }
 
 # ── Active model selection ──────────────────────────────────────
-# All LLM calls use CHAT_MODEL (8B). BIG_MODEL kept for API compat only.
-CHAT_MODEL = "groq-llama-8b"    # 8B — all calls (chat, eval, plan, reconcile)
-# CHAT_MODEL = "cerebras-llama" # alt: Cerebras 8B
+# Two-tier routing: CHAT_MODEL for streaming dialogue, MICRO_MODEL for
+# parallel microservices (script_check, thought, director, beat, reconcile,
+# expression, condition). Both use Groq for speed.
+CHAT_MODEL = "kimi-k2"          # K2 — streaming chat (15/16 roles, 196ms TTFT)
+MICRO_MODEL = "groq-llama-8b"   # 8B — microservices (14/16 roles, ~300ms structured JSON)
 BIG_MODEL = "groq-llama"        # kept for API compat (no longer required)
 
 # Legacy alias used by QA scripts

@@ -80,9 +80,10 @@ class ConversationDriver:
     """Encapsulates the full background threading loop so multiple personas
     can run in parallel without interference."""
 
-    def __init__(self, character: str, model_config: dict):
+    def __init__(self, character: str, model_config: dict, thinker_enabled: bool = True):
         self.character = character
         self.model_config = model_config
+        self.thinker_enabled = thinker_enabled
         big_cfg = _get_big_model_config()
         self.big_model_config = big_cfg
         self.eval_model_config = big_cfg if big_cfg else model_config
@@ -232,8 +233,11 @@ class ConversationDriver:
         if self._eval_version != self._context_version:
             return (False, "", {"type": "eval_stale"})
 
-        # Inject eval into session
-        self.session.inject_system(f"[Inner thought: {result.thought}]")
+        # Inject eval into session (skip thought if thinker disabled)
+        if not self.thinker_enabled:
+            result.thought = ""
+        if result.thought:
+            self.session.inject_system(f"[Inner thought: {result.thought}]")
 
         entry = {
             "type": "eval",
@@ -801,13 +805,14 @@ def run_persona(
     model_config: dict,
     persona_model_config: dict,
     turn_override: int | None = None,
+    thinker_enabled: bool = True,
 ) -> PersonaResult:
     """Run a single persona's full conversation. Thread-safe."""
     result = PersonaResult(persona=persona)
     num_turns = turn_override if turn_override else persona.turns
 
     try:
-        driver = ConversationDriver(character, model_config)
+        driver = ConversationDriver(character, model_config, thinker_enabled=thinker_enabled)
         driver.boot()
         result.boot_log = [e for e in driver.log]
 
@@ -1300,6 +1305,7 @@ def main():
     parser.add_argument("--character", default=CHARACTER, help=f"Character to test (default: {CHARACTER})")
     parser.add_argument("--turns", type=int, default=None, help="Override turn count for all personas")
     parser.add_argument("--open", action="store_true", help="Open the HTML report in browser after generation")
+    parser.add_argument("--no-thinker", action="store_true", help="Disable inner thought injection (skip thought_call)")
     args = parser.parse_args()
 
     model_config = MODELS.get(args.model)
@@ -1317,9 +1323,13 @@ def main():
     big_cfg = _get_big_model_config()
     persona_model_config = big_cfg or model_config
 
+    thinker_enabled = not args.no_thinker
+
     print(f"Persona QA — model: {model_config['name']} ({args.model}), character: {args.character}")
     print(f"Persona LLM: {persona_model_config['name']}")
     print(f"Big model: {big_cfg['name'] if big_cfg else 'unavailable'}")
+    if not thinker_enabled:
+        print("Thinker: DISABLED")
     print(f"Running {len(PERSONAS)} personas in parallel...\n")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1337,6 +1347,7 @@ def main():
                 model_config,
                 persona_model_config,
                 args.turns,
+                thinker_enabled,
             )
             future_to_idx[future] = i
 
