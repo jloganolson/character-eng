@@ -60,7 +60,7 @@ def bench_chat(model_config: dict) -> dict:
     """Benchmark streaming chat. Returns timing dict."""
     world = load_world_state(CHARACTER)
     goals = load_goals(CHARACTER)
-    system_prompt = load_prompt(CHARACTER, world_state=world, goals=goals)
+    system_prompt = load_prompt(CHARACTER, world_state=world)
 
     client = _make_client(model_config)
     messages = [
@@ -126,7 +126,7 @@ def bench_eval(model_config: dict) -> dict:
     """Benchmark structured JSON eval call. Returns timing dict."""
     world = load_world_state(CHARACTER)
     goals = load_goals(CHARACTER)
-    system_prompt = load_prompt(CHARACTER, world_state=world, goals=goals)
+    system_prompt = load_prompt(CHARACTER, world_state=world)
 
     history = [
         {"role": "system", "content": system_prompt},
@@ -379,20 +379,27 @@ def main():
         save_html(results, timestamp)
         return
 
-    available = get_available_models()
-    if not available:
-        console.print("[red]No models available. Set an API key in .env or start a local vLLM server.[/red]")
-        return
-
     if args.model:
-        matches = [(k, c) for k, c in available if k == args.model]
-        if not matches:
-            all_keys = [k for k, _ in available]
-            console.print(f"[red]Model '{args.model}' not available. Available: {', '.join(all_keys)}[/red]")
+        # Direct lookup — bypass hidden filter so --model gemini-3-flash works
+        cfg = MODELS.get(args.model)
+        if cfg is None:
+            console.print(f"[red]Unknown model: {args.model}. Known: {', '.join(MODELS.keys())}[/red]")
             return
-        models = matches
+        if cfg.get("local"):
+            if not _is_local_server_up(cfg["base_url"]):
+                console.print(f"[red]Local server not running for {args.model}[/red]")
+                return
+        else:
+            env = cfg.get("api_key_env", "")
+            if env and not os.environ.get(env):
+                console.print(f"[red]Missing API key: {env} for {args.model}[/red]")
+                return
+        models = [(args.model, cfg)]
     else:
-        models = available
+        models = get_available_models()
+        if not models:
+            console.print("[red]No models available. Set an API key in .env or start a local vLLM server.[/red]")
+            return
 
     console.print(f"[bold]Benchmarking {len(models)} model(s), {args.runs} runs per scenario[/bold]")
     console.print(f"[dim]Character: {CHARACTER}, Scenarios: chat (streaming), reconcile (JSON), eval (JSON)[/dim]")
