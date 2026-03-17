@@ -18,17 +18,26 @@ from character_eng.vision.focus import VisualFocusResult, visual_focus_call
 class VisionManager:
     """Orchestrates vision polling, synthesis, focus planning, and people resolution.
 
-    One background thread runs a continuous loop: poll /snapshot, run synthesis,
-    push events. Min 750ms between cycles.
+    One background thread runs a continuous loop: poll /snapshot frequently for
+    raw dashboard/trigger visibility, and run synthesis on a slower cadence.
     """
 
-    def __init__(self, service_url: str = "http://localhost:7860", min_interval: float = 0.75):
+    def __init__(
+        self,
+        service_url: str = "http://localhost:7860",
+        min_interval: float = 0.75,
+        raw_poll_interval: float = 0.2,
+    ):
         self._client = VisionClient(service_url)
         self._context = VisualContext()
-        self._min_interval = min_interval
+        self._min_interval = max(0.05, float(min_interval))
+        self._raw_poll_interval = max(0.05, float(raw_poll_interval))
         self._events: collections.deque[PerceptionEvent] = collections.deque(maxlen=50)
+        self._events_lock = threading.Lock()
+        self._snapshot_lock = threading.Lock()
         self._running = False
-        self._thread: threading.Thread | None = None
+        self._raw_thread: threading.Thread | None = None
+        self._synthesis_thread: threading.Thread | None = None
         self._prev_synthesis: SynthesisResult | None = None
         self._model_config: dict | None = None
         self._world = None
@@ -54,6 +63,11 @@ class VisionManager:
         self._trigger_streaks: dict[str, int] = {}
         self._active_trigger_signals: set[str] = set()
         self._system_task_signatures: dict[str, str] = {}
+        self._latest_snapshot: RawVisualSnapshot | None = None
+        self._latest_cycle_event_ids: list[str] = []
+        self._latest_snapshot_seq = 0
+        self._last_synthesis_at = 0.0
+        self._last_synth_snapshot_seq = 0
 
     def start(self, model_config: dict, world=None, people=None, collector=None) -> None:
         if self._running:
@@ -64,24 +78,30 @@ class VisionManager:
         if collector is not None:
             self._collector = collector
         self._running = True
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
+        self._raw_thread = threading.Thread(target=self._raw_loop, daemon=True)
+        self._synthesis_thread = threading.Thread(target=self._synthesis_loop, daemon=True)
+        self._raw_thread.start()
+        self._synthesis_thread.start()
 
     def stop(self) -> None:
         self._running = False
-        if self._thread is not None:
-            self._thread.join(timeout=3)
-            self._thread = None
+        if self._raw_thread is not None:
+            self._raw_thread.join(timeout=3)
+            self._raw_thread = None
+        if self._synthesis_thread is not None:
+            self._synthesis_thread.join(timeout=3)
+            self._synthesis_thread = None
 
     def drain_events(self) -> list[PerceptionEvent]:
         events = []
-        while self._events:
-            try:
-                event = self._events.popleft()
-                events.append(event)
-                self._event_history.append(event.description)
-            except IndexError:
-                break
+        with self._events_lock:
+            while self._events:
+                try:
+                    event = self._events.popleft()
+                    events.append(event)
+                    self._event_history.append(event.description)
+                except IndexError:
+                    break
         return events
 
     def update_context(self, world=None, people=None, beat=None, stage_goal: str | None = None, scenario=None) -> None:
@@ -135,26 +155,55 @@ class VisionManager:
     def context(self) -> VisualContext:
         return self._context
 
-    def _loop(self) -> None:
+    def _raw_loop(self) -> None:
         while self._running:
             t0 = time.perf_counter()
             try:
-                self._tick()
+                snapshot, cycle_event_ids = self._poll_snapshot()
+                if snapshot is not None:
+                    self._store_latest_snapshot(snapshot, cycle_event_ids)
             except Exception as e:
                 print(f"[vision] loop error: {e}", flush=True)
             elapsed = time.perf_counter() - t0
-            wait = max(0, self._min_interval - elapsed)
+            wait = max(0, self._raw_poll_interval - elapsed)
             if wait > 0:
                 time.sleep(wait)
+
+    def _synthesis_loop(self) -> None:
+        idle_wait = max(0.05, min(self._raw_poll_interval, self._min_interval, 0.1))
+        while self._running:
+            try:
+                payload = self._take_synthesis_snapshot()
+                if payload is None:
+                    time.sleep(idle_wait)
+                    continue
+                snapshot, cycle_event_ids = payload
+                self._run_synthesis_cycle(snapshot, cycle_event_ids)
+            except Exception as e:
+                print(f"[vision] synthesis error: {e}", flush=True)
+                time.sleep(idle_wait)
 
     def _tick(self) -> None:
         if self._paused:
             return
+        snapshot, cycle_event_ids = self._poll_snapshot()
+        if snapshot is None:
+            return
+        self._store_latest_snapshot(snapshot, cycle_event_ids)
+        payload = self._take_synthesis_snapshot()
+        if payload is None:
+            return
+        synth_snapshot, synth_event_ids = payload
+        self._run_synthesis_cycle(synth_snapshot, synth_event_ids)
+
+    def _poll_snapshot(self) -> tuple[RawVisualSnapshot | None, list[str]]:
+        if self._paused:
+            return None, []
         # 1. Poll snapshot
         try:
             snapshot = self._client.snapshot()
         except Exception:
-            return
+            return None, []
         self._context.update(snapshot)
         cycle_event_ids = self._emit_raw_dashboard_events(snapshot)
 
@@ -166,12 +215,34 @@ class VisionManager:
 
         # 2c. System vision tasks -> direct world/person updates
         self._emit_system_task_updates(snapshot, cycle_event_ids)
+        return snapshot, cycle_event_ids
 
-        # 3. Vision synthesis
+    def _store_latest_snapshot(self, snapshot: RawVisualSnapshot, cycle_event_ids: list[str]) -> None:
+        with self._snapshot_lock:
+            self._latest_snapshot = snapshot
+            self._latest_cycle_event_ids = list(cycle_event_ids)
+            self._latest_snapshot_seq += 1
+
+    def _take_synthesis_snapshot(self) -> tuple[RawVisualSnapshot, list[str]] | None:
         if self._model_config is None:
-            return
+            return None
+        with self._snapshot_lock:
+            if self._latest_snapshot is None:
+                return None
+            now = time.time()
+            if self._last_synthesis_at > 0.0 and (now - self._last_synthesis_at) < self._min_interval:
+                return None
+            if self._latest_snapshot_seq <= self._last_synth_snapshot_seq:
+                return None
+            self._last_synthesis_at = now
+            self._last_synth_snapshot_seq = self._latest_snapshot_seq
+            return self._latest_snapshot, list(self._latest_cycle_event_ids)
+
+    def _run_synthesis_cycle(self, snapshot: RawVisualSnapshot, cycle_event_ids: list[str]) -> None:
+        # 3. Vision synthesis
         # Build previous synthesis with full event history for better dedup
-        prev = SynthesisResult(events=list(self._event_history))
+        with self._events_lock:
+            prev = SynthesisResult(events=list(self._event_history))
         result = vision_synthesis_call(
             visual_context=self._context,
             world=self._world,
@@ -237,7 +308,7 @@ class VisionManager:
                     },
                 )
                 self._recent_events[key] = now
-                self._events.append(PerceptionEvent(
+                self._queue_event(PerceptionEvent(
                     description=event_text,
                     source="visual",
                     trace=trace,
@@ -254,6 +325,10 @@ class VisionManager:
     def _normalize_event(text: str) -> str:
         """Normalize event text for dedup. Strips articles, lowercases, collapses whitespace."""
         return " ".join(text.lower().strip().split())
+
+    def _queue_event(self, event: PerceptionEvent) -> None:
+        with self._events_lock:
+            self._events.append(event)
 
     @staticmethod
     def _has_human_presence(snapshot: RawVisualSnapshot) -> bool:
@@ -306,7 +381,7 @@ class VisionManager:
             cycle_id = snapshot.cycle_id or "vision-cycle"
             identity = current_ids[0] if current_ids else ""
             person_id = self._visual_to_person.get(identity) if identity else None
-            self._events.append(PerceptionEvent(
+            self._queue_event(PerceptionEvent(
                 description="A person appeared in view",
                 source="visual",
                 trace=self._trace_payload(
@@ -330,7 +405,7 @@ class VisionManager:
             ))
         elif not visible_now and self._presence_visible:
             cycle_id = snapshot.cycle_id or "vision-cycle"
-            self._events.append(PerceptionEvent(
+            self._queue_event(PerceptionEvent(
                 description="A person is no longer visible",
                 source="visual",
                 trace=self._trace_payload(
@@ -646,7 +721,7 @@ class VisionManager:
                 "thought": result.thought,
             },
         )
-        self._events.append(PerceptionEvent(
+        self._queue_event(PerceptionEvent(
             description=summary or "Vision state updated",
             source="visual",
             trace=trace,
@@ -749,7 +824,7 @@ class VisionManager:
                     "inference": "rule evaluation over raw vision outputs",
                 },
             )
-            self._events.append(PerceptionEvent(
+            self._queue_event(PerceptionEvent(
                 description=description,
                 source="visual",
                 trace=trace,

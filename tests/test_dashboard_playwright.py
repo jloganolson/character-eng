@@ -1153,6 +1153,107 @@ def test_vision_panel_stays_visible_without_source(
     expect(page.locator("#boot-summary")).to_contain_text("Vision needs attention before the runtime is ready.")
 
 
+def test_vision_raw_lane_is_explicit_and_shows_placeholder_or_events(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    expect(page.locator("button[data-lane-toggle='vision_raw']")).to_have_text("vision raw")
+
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-vision-raw",
+            "stage": "watching",
+        },
+    )
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push(
+        "vision_snapshot",
+        {
+            "faces": 0,
+            "persons": 1,
+            "objects": 1,
+            "vlm_answers": [{"question": "Is there a clock visible?", "answer": "Yes."}],
+            "object_labels": ["clock"],
+        },
+    )
+
+    expect(page.locator("[data-stream-lane='vision_raw']")).to_be_visible()
+    expect(page.locator("[data-stream-lane='vision_raw']")).to_contain_text("No raw vision loop events captured yet")
+
+    collector.push(
+        "sam3_detection",
+        {
+            "persons": [{"identity": "visitor-1", "bbox": [10, 20, 120, 200]}],
+            "objects": [{"label": "clock", "bbox": [220, 40, 60, 60]}],
+        },
+    )
+    collector.push(
+        "vision_state_update",
+        {
+            "summary": "A clock is visible above the table.",
+            "task_answers": [
+                {
+                    "task_id": "world_state",
+                    "label": "World State",
+                    "question": "What changed in the room?",
+                    "answer": "A clock is visible above the table.",
+                    "interpret_as": "world_state",
+                    "target": "scene",
+                }
+            ],
+            "remove_facts": [],
+            "add_facts": ["A clock is visible above the table."],
+            "events": [],
+            "person_updates": [],
+        },
+    )
+
+    expect(page.locator("[data-stream-lane='vision_raw']")).to_contain_text("sam3")
+    expect(page.locator("[data-stream-lane='vision_raw']")).to_contain_text("vision llm")
+
+
 def test_sidebar_registry_layout_and_panel_collapse(
     browser_page: Page,
     dashboard_server,

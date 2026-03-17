@@ -33,6 +33,7 @@ from character_eng.scenario import DirectorResult, director_call, load_scenario_
 from character_eng.world import (
     ContinueListeningResult,
     EvalResult,
+    ExpressionResult,
     Goals,
     PlanResult,
     Script,
@@ -1607,6 +1608,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
         from character_eng.vision.manager import VisionManager
         vision_mgr = VisionManager(
             service_url=vision_cfg.service_url,
+            raw_poll_interval=vision_cfg.raw_poll_interval,
             min_interval=vision_cfg.synthesis_min_interval,
         )
 
@@ -4255,6 +4257,7 @@ def _ensure_vision_manager(
         from character_eng.vision.manager import VisionManager
         vision_mgr = VisionManager(
             service_url=vision_cfg.service_url,
+            raw_poll_interval=vision_cfg.raw_poll_interval,
             min_interval=vision_cfg.synthesis_min_interval,
         )
     vision_mgr.start(model_config, world=world, people=people, collector=_collector)

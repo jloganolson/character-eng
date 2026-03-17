@@ -266,6 +266,7 @@ def test_config_vision():
     assert vc.enabled is False
     assert vc.service_url == "http://localhost:7860"
     assert vc.auto_launch is True
+    assert vc.raw_poll_interval == 0.2
     assert vc.synthesis_min_interval == 0.75
 
     cfg = AppConfig()
@@ -670,6 +671,43 @@ def test_vision_manager_emits_raw_dashboard_stage_events(monkeypatch):
         "vision-cycle-42:reid:7",
         "vlm-3",
     ]
+
+
+def test_vision_manager_raw_poll_is_faster_than_synthesis(monkeypatch):
+    from character_eng.dashboard.events import DashboardEventCollector
+    from character_eng.vision.manager import VisionManager
+
+    collector = DashboardEventCollector()
+    mgr = VisionManager(min_interval=0.75, raw_poll_interval=0.2)
+    mgr._collector = collector
+    mgr._model_config = {"name": "test"}
+    snapshots = iter([
+        RawVisualSnapshot(
+            persons=[PersonObservation(identity="Visitor", bbox=(0, 0, 100, 200), confidence=0.8)],
+            cycle_id="vision-cycle-fast-1",
+        ),
+        RawVisualSnapshot(
+            persons=[PersonObservation(identity="Visitor", bbox=(0, 0, 100, 200), confidence=0.8)],
+            cycle_id="vision-cycle-fast-2",
+        ),
+    ])
+    synth_calls: list[str] = []
+
+    monkeypatch.setattr(mgr._client, "snapshot", lambda: next(snapshots))
+    monkeypatch.setattr(
+        "character_eng.vision.manager.vision_synthesis_call",
+        lambda **kwargs: synth_calls.append(kwargs["visual_context"].snapshot.cycle_id) or type("Synth", (), {"events": [], "signals": []})(),
+    )
+
+    mgr._tick()
+    mgr._tick()
+
+    events = collector.get_all()
+    snapshot_reads = [event for event in events if event["type"] == "vision_snapshot_read"]
+    sam3_events = [event for event in events if event["type"] == "sam3_detection"]
+    assert [event["data"]["vision_cycle_id"] for event in snapshot_reads] == ["vision-cycle-fast-1", "vision-cycle-fast-2"]
+    assert [event["data"]["vision_cycle_id"] for event in sam3_events] == ["vision-cycle-fast-1", "vision-cycle-fast-2"]
+    assert synth_calls == ["vision-cycle-fast-1"]
 
 
 def test_vision_manager_emits_stage_trigger_events(monkeypatch):

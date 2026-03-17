@@ -63,6 +63,9 @@
 # Auto-launch vision service if not running (same pattern as vLLM auto-launch).
 # auto_launch = true
 
+# Min seconds between raw vision polls for dashboard / trigger visibility.
+# raw_poll_interval = 0.2
+
 # Min seconds between vision synthesis cycles (poll + LLM distillation).
 # synthesis_min_interval = 0.75
 

@@ -30,6 +30,7 @@ class VisionConfig:
     service_url: str = "http://localhost:7860"
     service_port: int = 7860
     auto_launch: bool = True
+    raw_poll_interval: float = 0.2
     synthesis_min_interval: float = 0.75
 
 
@@ -90,6 +91,7 @@ def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
         f"service_url = {_toml_string(config.vision.service_url)}",
         f"service_port = {int(config.vision.service_port)}",
         f"auto_launch = {'true' if config.vision.auto_launch else 'false'}",
+        f"raw_poll_interval = {config.vision.raw_poll_interval}",
         f"synthesis_min_interval = {config.vision.synthesis_min_interval}",
         "",
         "[dashboard]",
@@ -152,6 +154,7 @@ def load_config() -> AppConfig:
         service_url=vision_data.get("service_url", "http://localhost:7860"),
         service_port=vision_data.get("service_port", 7860),
         auto_launch=vision_data.get("auto_launch", True),
+        raw_poll_interval=vision_data.get("raw_poll_interval", 0.2),
         synthesis_min_interval=vision_data.get("synthesis_min_interval", 0.75),
     )
 

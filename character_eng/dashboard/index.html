@@ -6149,10 +6149,16 @@
     `;
   }
 
+  function laneDisplayName(lane) {
+    const key = String(lane || "").trim().toLowerCase();
+    if (key === "vision_raw") return "vision raw";
+    return key.replace(/_/g, " ");
+  }
+
   function renderLaneToggles() {
     laneToggleGrid.innerHTML = laneOrder.map((lane) => {
       const inactive = hiddenLanes.has(lane) ? " inactive" : "";
-      return `<button class="lane-toggle${inactive}" type="button" data-lane-toggle="${esc(lane)}">${esc(lane)}</button>`;
+      return `<button class="lane-toggle${inactive}" type="button" data-lane-toggle="${esc(lane)}">${esc(laneDisplayName(lane))}</button>`;
     }).join("");
     laneToggleGrid.querySelectorAll(".lane-toggle").forEach((button) => {
       button.addEventListener("click", () => {
@@ -6213,7 +6219,10 @@
     const laneHtml = [];
     laneOrder.forEach((lane) => {
       const laneEvents = lanes[lane];
-      if (!laneEvents.length) return;
+      const shouldShowEmptyVisionRaw = lane === "vision_raw"
+        && !laneEvents.length
+        && (lanes.vision?.length || 0) > 0;
+      if (!laneEvents.length && !shouldShowEmptyVisionRaw) return;
       const hidden = hiddenLanes.has(lane);
       const trackEnds = [];
       const cards = [];
@@ -6244,9 +6253,19 @@
         );
       });
 
+      if (shouldShowEmptyVisionRaw) {
+        trackHeight = Math.max(trackHeight, compactMode ? 44 : 72);
+        cards.push(
+          `<article class="stream-card compact" data-event-key="" data-event-type="vision_raw_placeholder" style="left:20px;top:${compactMode ? 8 : 12}px;width:${Math.min(baseWidth - 40, compactMode ? 280 : 360)}px;height:${compactMode ? 24 : 46}px;pointer-events:none;opacity:0.72;">
+            <div class="stream-card-label">No raw vision loop events captured yet</div>
+            ${compactMode ? "" : '<div class="stream-card-detail">Expected: SAM3 / VLM / trigger / state-update events alongside vision passes.</div>'}
+          </article>`
+        );
+      }
+
       laneHtml.push(
         `<section class="stream-lane lane-${esc(lane)}${hidden ? " hidden" : ""}" data-stream-lane="${esc(lane)}">
-          <div class="stream-lane-label">${esc(lane)}</div>
+          <div class="stream-lane-label">${esc(laneDisplayName(lane))}</div>
           <div class="lane-track">
             <div class="lane-track-inner" style="width:${baseWidth}px;height:${trackHeight}px;">${cards.join("")}</div>
           </div>
