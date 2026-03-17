@@ -9,6 +9,7 @@ from character_eng.scenario import (
     ScenarioScript,
     Stage,
     StageExit,
+    VisionTrigger,
     match_visual_exit,
     director_call,
     load_scenario_script,
@@ -221,6 +222,44 @@ constant_sam_targets = ["phone"]
     assert merged.constant_sam_targets == ["clock", "phone"]
 
 
+def test_load_scenario_script_stage_vision_triggers(tmp_path, monkeypatch):
+    char_dir = tmp_path / "characters" / "test_char"
+    char_dir.mkdir(parents=True)
+    (char_dir / "scenario_script.toml").write_text("""
+[scenario]
+name = "Test Scenario"
+start = "intro"
+
+[[vision_trigger]]
+signal = "global_clock_visible"
+source = "sam3"
+label = "clock"
+frames = 2
+
+[[stage]]
+name = "intro"
+goal = "Watch the room"
+
+[[stage.vision_trigger]]
+signal = "person_visible_stable"
+source = "presence"
+frames = 3
+description = "A person has stayed visible"
+""")
+
+    monkeypatch.setattr(scenario_mod, "CHARACTERS_DIR", tmp_path / "characters")
+
+    script = load_scenario_script("test_char")
+    assert script is not None
+    assert script.vision_triggers == [
+        VisionTrigger(signal="global_clock_visible", source="sam3", label="clock", frames=2)
+    ]
+    active = script.active_vision_triggers()
+    assert active[0].signal == "global_clock_visible"
+    assert active[1].signal == "person_visible_stable"
+    assert active[1].frames == 3
+
+
 def test_load_scenario_script_not_found(tmp_path, monkeypatch):
     char_dir = tmp_path / "characters" / "test_char"
     char_dir.mkdir(parents=True)
@@ -334,6 +373,31 @@ def test_director_call_advance(mock_make_client, tmp_path, monkeypatch):
     (tmp_path / "director_system.txt").write_text("You are director.")
 
     data = {"thought": "Someone has arrived.", "status": "advance", "exit_index": 0}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    scenario = ScenarioScript(
+        name="test",
+        stages={
+            "a": Stage("a", "Goal A", exits=[StageExit("someone arrives", "b")]),
+            "b": Stage("b", "Goal B"),
+        },
+        start="a",
+        current_stage="a",
+    )
+
+    result = director_call(scenario, world=None, people=None, history=[], model_config=TEST_CONFIG)
+    assert result.status == "advance"
+    assert result.exit_index == 0
+
+
+@patch("character_eng.world._make_client")
+def test_director_call_coerces_string_exit_index(mock_make_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "director_system.txt").write_text("You are director.")
+
+    data = {"thought": "Someone has arrived.", "status": "advance", "exit_index": "0"}
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _mock_openai_response(data)
     mock_make_client.return_value = mock_client

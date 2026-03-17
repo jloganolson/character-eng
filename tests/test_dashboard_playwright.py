@@ -996,6 +996,110 @@ def test_archive_only_runtime_disables_live_controls(
     expect(page.locator(".archive-replay-action").first).to_be_disabled()
 
 
+def test_vision_state_event_defaults_snippet_mode_in_browser(
+    browser_page: Page,
+    dashboard_server,
+    vision_service: VisionServiceController,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-vision-snippet",
+            "stage": "watching",
+        },
+    )
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "running",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": vision_service.url,
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
+    collector.push(
+        "vision_state_update",
+        {
+            "summary": "Visitor now has a backpack and a wall clock is visible.",
+            "task_answers": [
+                {
+                    "task_id": "world_state",
+                    "label": "World State",
+                    "question": "What changed in the room?",
+                    "answer": "A wall clock is visible above the table.",
+                    "interpret_as": "world_state",
+                    "target": "scene",
+                },
+                {
+                    "task_id": "person_description_static",
+                    "label": "Person Description Static",
+                    "question": "Describe the highlighted person.",
+                    "answer": "The highlighted visitor is wearing a black backpack.",
+                    "interpret_as": "person_description_static",
+                    "target": "person",
+                    "target_person_id": "p1",
+                },
+            ],
+            "remove_facts": [],
+            "add_facts": ["A wall clock is visible above the table."],
+            "events": [],
+            "person_updates": [
+                {
+                    "person_id": "p1",
+                    "remove_facts": [],
+                    "add_facts": ["The visitor is wearing a black backpack."],
+                    "set_name": None,
+                    "set_presence": None,
+                }
+            ],
+        },
+    )
+
+    card = page.locator(".stream-card[data-event-type='vision_state_update']").first
+    expect(card).to_be_visible()
+    card.click()
+    page.locator("#snippet-toggle").click()
+    expect(page.locator("#snippet-form")).to_be_visible()
+    expect(page.locator("#snippet-mode")).to_have_value("vision_state_turn")
+    expect(page.locator("#snippet-tags")).to_have_value("vision-state")
+    page.locator("#snippet-save").click()
+    expect(page.locator("#annotation-status")).to_contain_text("Captured snippet:")
+
+
 def test_vision_panel_stays_visible_without_source(
     browser_page: Page,
     dashboard_server,

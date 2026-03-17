@@ -1,0 +1,53 @@
+{
+  "bundle": {
+    "capture_mode": "vision_state_turn",
+    "vision_state": {
+      "expected_update": {
+        "add_facts": [
+          "A wall clock is visible above the table."
+        ],
+        "events": [],
+        "person_updates": [
+          {
+            "add_facts": [
+              "The visitor is wearing a black backpack."
+            ],
+            "person_id": "p1"
+          }
+        ],
+        "remove_facts": []
+      },
+      "source_event_key": "evt-vision-state-1",
+      "source_event_type": "vision_state_update",
+      "summary": "Visitor now has a backpack and a wall clock is visible.",
+      "task_answers": [
+        {
+          "answer": "A wall clock is visible above the table.",
+          "interpret_as": "world_state",
+          "label": "World State",
+          "question": "What changed in the room?",
+          "target": "scene",
+          "task_id": "world_state"
+        },
+        {
+          "answer": "The highlighted visitor is wearing a black backpack.",
+          "interpret_as": "person_description_static",
+          "label": "Person Description Static",
+          "question": "Describe the highlighted person.",
+          "target": "person",
+          "target_person_id": "p1",
+          "task_id": "person_description_static"
+        }
+      ]
+    }
+  },
+  "capture_mode": "vision_state_turn",
+  "session_id": "fixture-vision-state",
+  "tags": [
+    "vision-state",
+    "fixture"
+  ],
+  "title": "visitor backpack state update",
+  "type": "snippet",
+  "version": 1
+}

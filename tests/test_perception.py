@@ -64,6 +64,38 @@ def test_process_perception_applies_structured_person_presence():
     assert world.events[-1] == "Person 1 appeared in view"
 
 
+def test_process_perception_applies_vision_state_update_directly():
+    world = WorldState()
+    existing_id = world.add_fact("The room is quiet")
+    people = PeopleState()
+    person = people.add_person(name="Visitor", presence="present")
+    event = PerceptionEvent(
+        description="Visitor is wearing a blue jacket",
+        source="visual",
+        kind="vision_state_update",
+        payload={
+            "remove_facts": [existing_id],
+            "add_facts": ["A wall clock is visible"],
+            "events": ["The visitor is checking a phone"],
+            "person_updates": [
+                {
+                    "person_id": person.person_id,
+                    "add_facts": ["Wearing a blue jacket"],
+                    "set_presence": "present",
+                }
+            ],
+        },
+    )
+
+    _, narrator = process_perception(event, people, world)
+
+    assert narrator == "[Visitor is wearing a blue jacket]"
+    assert existing_id not in world.dynamic
+    assert "A wall clock is visible" in world.dynamic.values()
+    assert world.events[-1] == "The visitor is checking a phone"
+    assert "Wearing a blue jacket" in person.facts.values()
+
+
 # --- SimScript loading ---
 
 

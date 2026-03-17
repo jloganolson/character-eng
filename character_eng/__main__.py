@@ -822,7 +822,7 @@ def _consume_vision_updates(session, world, people, vision_mgr, scenario, script
     stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
     vision_events = vision_mgr.drain_events()
     if not vision_events:
-        vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal)
+        vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal, scenario=scenario)
         return False
 
     trigger_visual_turn = False
@@ -855,7 +855,7 @@ def _consume_vision_updates(session, world, people, vision_mgr, scenario, script
                 _should_trigger_visual_turn(signals, people, force=True)
         elif _should_trigger_visual_turn(signals, people):
             trigger_visual_turn = True
-    vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal)
+    vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal, scenario=scenario)
     _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
     return trigger_visual_turn
 
@@ -1496,7 +1496,7 @@ def handle_trigger(trigger_num, scenario, session, world, goals, script, people,
 
     # Update visual focus for new stage
     if vision_mgr is not None:
-        vision_mgr.update_context(beat=script.current_beat, stage_goal=stage_goal)
+        vision_mgr.update_context(beat=script.current_beat, stage_goal=stage_goal, scenario=scenario)
         vision_mgr.update_focus(
             beat=script.current_beat, stage_goal=stage_goal, thought="",
             world=world, people=people, model_config=model_config, scenario=scenario,
@@ -1841,6 +1841,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 world,
                 people,
                 stage_goal,
+                scenario=scenario,
             )
         if vision_mgr is not None:
             console.print("[green]Vision active[/green]")
@@ -2578,6 +2579,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     people=people,
                     beat=script.current_beat if script.current_beat is not None else None,
                     stage_goal=stage_goal,
+                    scenario=scenario,
                 )
                 vision_mgr.update_focus(
                     script.current_beat if script.current_beat is not None else None,
@@ -4243,6 +4245,7 @@ def _ensure_vision_manager(
     world,
     people,
     stage_goal: str,
+    scenario=None,
 ):
     if vision_cfg is None:
         return None
@@ -4255,7 +4258,7 @@ def _ensure_vision_manager(
             min_interval=vision_cfg.synthesis_min_interval,
         )
     vision_mgr.start(model_config, world=world, people=people, collector=_collector)
-    vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal)
+    vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal, scenario=scenario)
     try:
         vision_mgr.update_focus(
             beat=None,
@@ -4309,6 +4312,7 @@ def handle_vision_service_command(
                 world,
                 people,
                 stage_goal,
+                scenario=scenario,
             )
         console.print(f"[{'green' if ok else 'red'}]{message}[/{'green' if ok else 'red'}]")
         _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)

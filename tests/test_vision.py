@@ -52,9 +52,12 @@ def test_raw_visual_snapshot_from_json():
                 "elapsed": 0.5,
                 "slot_type": "constant",
                 "timestamp": 1234567890.0,
+                "answer_id": "vlm-1",
             }
         ],
+        "cycle_id": "vision-cycle-1",
         "timestamp": 1234567890.0,
+        "trace": {"cycle_id": "vision-cycle-1"},
     }
 
     snap = RawVisualSnapshot.from_json(data)
@@ -68,6 +71,9 @@ def test_raw_visual_snapshot_from_json():
     assert snap.objects[0].label == "cup"
     assert len(snap.vlm_answers) == 1
     assert snap.vlm_answers[0].answer == "One person"
+    assert snap.vlm_answers[0].answer_id == "vlm-1"
+    assert snap.cycle_id == "vision-cycle-1"
+    assert snap.trace["cycle_id"] == "vision-cycle-1"
 
 
 def test_raw_visual_snapshot_from_empty_json():
@@ -218,12 +224,9 @@ def test_vision_client_set_questions_appends_suffix():
         server.server_close()
         thread.join(timeout=5)
 
-    assert received["body"]["constant"] == [
-        "What stands out about the nearest person's appearance? (1-2 sentences max)"
-    ]
-    assert received["body"]["ephemeral"] == [
-        "What notable object are they clearly using? (1-2 sentences max)"
-    ]
+    assert received["body"]["constant"][0]["question"] == "What stands out about the nearest person's appearance? (1-2 sentences max)"
+    assert received["body"]["constant"][0]["task_id"] == "what_stands_out_about_the_nearest_person_s_appearance"
+    assert received["body"]["ephemeral"][0]["question"] == "What notable object are they clearly using? (1-2 sentences max)"
 
 
 def test_mock_vision_server_contract():
@@ -271,6 +274,7 @@ def test_config_vision():
 
 def test_person_get_or_create():
     from character_eng.person import PeopleState
+    from character_eng.world import PersonUpdate
 
     ps = PeopleState()
     pid1 = ps.get_or_create("Person 1")
@@ -407,7 +411,7 @@ def test_vision_manager_update_focus_pushes_dashboard_event(monkeypatch):
 
 
 def test_visual_focus_call_keeps_person_constants(monkeypatch):
-    from character_eng.vision.focus import CORE_CONSTANT_QUESTIONS, CORE_CONSTANT_SAM_TARGETS, visual_focus_call
+    from character_eng.vision.focus import CORE_CONSTANT_QUESTIONS, CORE_CONSTANT_SAM_TARGETS, CORE_CONSTANT_VLM_SPECS, visual_focus_call
 
     class Message:
         content = json.dumps({
@@ -436,6 +440,8 @@ def test_visual_focus_call_keeps_person_constants(monkeypatch):
     assert result.constant_sam_targets == CORE_CONSTANT_SAM_TARGETS
     assert result.ephemeral_questions == ["Is the person gesturing toward anything?"]
     assert result.ephemeral_sam_targets == ["phone"]
+    assert [spec.task_id for spec in result.constant_vlm_specs] == [spec.task_id for spec in CORE_CONSTANT_VLM_SPECS]
+    assert result.ephemeral_vlm_specs[0].task_id.startswith("ephemeral_")
 
 
 def test_visual_focus_call_includes_scenario_authored_constants(monkeypatch):
@@ -521,7 +527,7 @@ def test_visual_focus_call_merges_stage_specific_constants(monkeypatch):
 
 
 def test_vision_manager_dashboard_snapshot_includes_objects_and_focus(monkeypatch):
-    from character_eng.vision.focus import VisualFocusResult
+    from character_eng.vision.focus import CORE_CONSTANT_VLM_SPECS, VisualFocusResult
     from character_eng.vision.manager import VisionManager
     from character_eng.dashboard.events import DashboardEventCollector
 
@@ -535,6 +541,7 @@ def test_vision_manager_dashboard_snapshot_includes_objects_and_focus(monkeypatc
         ephemeral_questions=["Are they holding a bottle?"],
         constant_sam_targets=["person", "rude gesture"],
         ephemeral_sam_targets=["bottle"],
+        constant_vlm_specs=CORE_CONSTANT_VLM_SPECS,
     )
 
     snapshot = RawVisualSnapshot(
@@ -557,6 +564,7 @@ def test_vision_manager_dashboard_snapshot_includes_objects_and_focus(monkeypatc
     assert event["data"]["object_labels"] == ["bottle", "chair"]
     assert event["data"]["vlm_answers"][0]["question"] == "Who is here?"
     assert event["data"]["focus"]["ephemeral_questions"] == ["Are they holding a bottle?"]
+    assert event["data"]["focus"]["constant_vlm_specs"][0]["task_id"] == "world_state"
 
 
 def test_vision_manager_carries_structured_synthesis_signals(monkeypatch):
@@ -571,8 +579,10 @@ def test_vision_manager_carries_structured_synthesis_signals(monkeypatch):
                 question="Is anyone holding a water bottle?",
                 answer="No, there does not appear to be anyone holding a water bottle.",
                 slot_type="ephemeral",
+                answer_id="vlm-2",
             ),
         ],
+        cycle_id="vision-cycle-9",
     )
 
     monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)
@@ -591,6 +601,184 @@ def test_vision_manager_carries_structured_synthesis_signals(monkeypatch):
     assert synthesis_event.trace["provenance"]["primary"] == "vision_synthesis_llm"
     assert "person_tracker" in synthesis_event.trace["provenance"]["components"]
     assert "vlm_answers" in synthesis_event.trace["provenance"]["components"]
+    assert synthesis_event.payload["input_event_ids"] == ["vision-cycle-9:snapshot", "vision-cycle-9:sam3", "vlm-2"]
+
+
+def test_vision_manager_emits_raw_dashboard_stage_events(monkeypatch):
+    from character_eng.vision.manager import VisionManager
+    from character_eng.dashboard.events import DashboardEventCollector
+
+    collector = DashboardEventCollector()
+    mgr = VisionManager()
+    mgr._collector = collector
+    mgr._model_config = {"name": "test"}
+    snapshot = RawVisualSnapshot(
+        faces=[FaceObservation(identity="Visitor", bbox=(1, 2, 30, 40), confidence=0.91, gaze_direction="left")],
+        persons=[PersonObservation(identity="Visitor", bbox=(0, 0, 100, 200), confidence=0.8)],
+        objects=[ObjectDetection(label="bottle", bbox=(50, 60, 30, 40), confidence=0.7)],
+        vlm_answers=[
+            VLMAnswer(
+                question="Is the visitor holding a bottle?",
+                answer="Yes.",
+                elapsed=0.42,
+                slot_type="ephemeral",
+                timestamp=123.0,
+                answer_id="vlm-3",
+            ),
+        ],
+        cycle_id="vision-cycle-42",
+        trace={
+            "face_tracking": {
+                "timing": {"total": 0.11, "fps": 9.1},
+                "faces": [{"identity": "Visitor", "bbox": [1, 2, 30, 40], "confidence": 0.91, "gaze_direction": "left", "track_id": 7}],
+            },
+            "sam3_detection": {
+                "timing": {"sam3": 0.28, "total": 0.36, "prompts": "person, bottle"},
+                "persons": [{"identity": "Visitor", "bbox": [0, 0, 100, 200], "confidence": 0.8, "track_id": 7}],
+                "objects": [{"label": "bottle", "bbox": [50, 60, 30, 40], "confidence": 0.7}],
+            },
+            "reid_tracking": {
+                "timing": {"reid": 0.05, "total": 0.36},
+                "persons": [{"identity": "Visitor", "bbox": [0, 0, 100, 200], "confidence": 0.8, "track_id": 7, "identity_source": "reid"}],
+            },
+        },
+    )
+
+    monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)
+    monkeypatch.setattr(
+        "character_eng.vision.manager.vision_synthesis_call",
+        lambda **kwargs: type("Synth", (), {"events": ["Visitor is holding a bottle"], "signals": ["bottle_visible"]})(),
+    )
+
+    mgr._tick()
+
+    events = collector.get_all()
+    event_types = [event["type"] for event in events]
+    assert "vision_snapshot_read" in event_types
+    assert "face_tracking" in event_types
+    assert "sam3_detection" in event_types
+    assert "reid_track" in event_types
+    assert "vlm_answer" in event_types
+    reid_event = next(event for event in events if event["type"] == "reid_track")
+    assert reid_event["data"]["input_event_ids"] == ["vision-cycle-42:snapshot", "vision-cycle-42:sam3"]
+    drained = mgr.drain_events()
+    claim = next(event for event in drained if event.kind == "visual_claim")
+    assert claim.payload["input_event_ids"] == [
+        "vision-cycle-42:snapshot",
+        "vision-cycle-42:face",
+        "vision-cycle-42:sam3",
+        "vision-cycle-42:reid:7",
+        "vlm-3",
+    ]
+
+
+def test_vision_manager_emits_stage_trigger_events(monkeypatch):
+    from character_eng.dashboard.events import DashboardEventCollector
+    from character_eng.scenario import ScenarioScript, Stage, VisionTrigger
+    from character_eng.vision.manager import VisionManager
+
+    collector = DashboardEventCollector()
+    mgr = VisionManager()
+    mgr._collector = collector
+    mgr._model_config = {"name": "test"}
+    mgr.update_context(
+        scenario=ScenarioScript(
+            name="test",
+            start="watching",
+            current_stage="watching",
+            stages={
+                "watching": Stage(
+                    "watching",
+                    "Look for a clock",
+                    vision_triggers=[
+                        VisionTrigger(signal="clock_visible", source="sam3", label="clock", frames=2),
+                    ],
+                ),
+            },
+        )
+    )
+    snapshot = RawVisualSnapshot(
+        objects=[ObjectDetection(label="clock", bbox=(10, 20, 30, 40), confidence=0.9)],
+        cycle_id="vision-cycle-77",
+    )
+
+    monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)
+    monkeypatch.setattr(
+        "character_eng.vision.manager.vision_synthesis_call",
+        lambda **kwargs: type("Synth", (), {"events": [], "signals": []})(),
+    )
+
+    mgr._tick()
+    assert not any(event.kind == "vision_trigger" for event in mgr.drain_events())
+
+    mgr._tick()
+    drained = mgr.drain_events()
+    trigger = next(event for event in drained if event.kind == "vision_trigger")
+    assert trigger.payload["signals"] == ["clock_visible"]
+    assert trigger.trace["trigger"]["source"] == "sam3"
+    raw_event = next(event for event in collector.get_all() if event["type"] == "vision_trigger")
+    assert raw_event["data"]["signal"] == "clock_visible"
+
+
+def test_vision_manager_emits_direct_state_updates_from_system_tasks(monkeypatch):
+    from character_eng.dashboard.events import DashboardEventCollector
+    from character_eng.person import PeopleState
+    from character_eng.vision.interpret import VisionStateUpdateResult
+    from character_eng.vision.manager import VisionManager
+    from character_eng.world import PersonUpdate, WorldUpdate
+
+    collector = DashboardEventCollector()
+    mgr = VisionManager()
+    mgr._collector = collector
+    mgr._model_config = {"name": "test"}
+    mgr._people = PeopleState()
+    person = mgr._people.add_person(name="Visitor", presence="present")
+    mgr._visual_to_person["Visitor"] = person.person_id
+    snapshot = RawVisualSnapshot(
+        persons=[PersonObservation(identity="Visitor", bbox=(0, 0, 100, 200))],
+        vlm_answers=[
+            VLMAnswer(
+                task_id="person_description_static",
+                label="Person Description Static",
+                question="Describe the nearest visible person's appearance.",
+                answer="The visitor is wearing a blue jacket.",
+                interpret_as="person_description_static",
+                target="nearest_person",
+                target_identity="Visitor",
+                answer_id="vlm-77",
+            ),
+        ],
+        cycle_id="vision-cycle-88",
+    )
+
+    monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)
+    monkeypatch.setattr(
+        "character_eng.vision.manager.vision_synthesis_call",
+        lambda **kwargs: type("Synth", (), {"events": [], "signals": []})(),
+    )
+    monkeypatch.setattr(
+        "character_eng.vision.manager.vision_state_update_call",
+        lambda **kwargs: VisionStateUpdateResult(
+            update=WorldUpdate(
+                person_updates=[
+                    PersonUpdate(
+                        person_id=person.person_id,
+                        add_facts=["Wearing a blue jacket"],
+                    )
+                ],
+            ),
+            summary="Visitor is wearing a blue jacket",
+        ),
+    )
+
+    mgr._tick()
+
+    drained = mgr.drain_events()
+    update_event = next(event for event in drained if event.kind == "vision_state_update")
+    assert update_event.payload["person_updates"][0]["person_id"] == person.person_id
+    assert update_event.payload["task_answers"][0]["target_person_id"] == person.person_id
+    raw_event = next(event for event in collector.get_all() if event["type"] == "vision_state_update")
+    assert raw_event["data"]["summary"] == "Visitor is wearing a blue jacket"
 
 
 def test_vision_manager_only_adds_synthesis_history_on_drain(monkeypatch):

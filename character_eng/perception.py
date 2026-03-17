@@ -4,7 +4,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from character_eng.world import format_pending_narrator
+from character_eng.person import PersonUpdate
+from character_eng.world import WorldUpdate, format_narrator_message, format_pending_narrator
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 CHARACTERS_DIR = PROMPTS_DIR / "characters"
@@ -58,10 +59,39 @@ def _apply_person_presence(event: PerceptionEvent, people, world) -> None:
     _append_world_event(world, event.description)
 
 
+def _payload_world_update(event: PerceptionEvent) -> WorldUpdate:
+    payload = event.payload or {}
+    person_updates = []
+    for raw in payload.get("person_updates", []) or []:
+        if not isinstance(raw, dict):
+            continue
+        person_updates.append(PersonUpdate(
+            person_id=str(raw.get("person_id", "")).strip(),
+            remove_facts=list(raw.get("remove_facts", []) or []),
+            add_facts=list(raw.get("add_facts", []) or []),
+            set_name=str(raw.get("set_name", "")).strip() or None,
+            set_presence=str(raw.get("set_presence", "")).strip() or None,
+        ))
+    return WorldUpdate(
+        remove_facts=list(payload.get("remove_facts", []) or []),
+        add_facts=list(payload.get("add_facts", []) or []),
+        events=list(payload.get("events", []) or []),
+        person_updates=person_updates,
+    )
+
+
 def process_perception(event: PerceptionEvent, people, world) -> tuple[None, str]:
     """Apply direct perception updates when possible, else queue for reconcile."""
     if event.kind == "person_presence":
         _apply_person_presence(event, people, world)
+    elif event.kind == "vision_state_update":
+        update = _payload_world_update(event)
+        if world is not None:
+            world.apply_update(update)
+        if people is not None and update.person_updates:
+            people.apply_updates(update.person_updates)
+        narrator_msg = format_pending_narrator(event.description or format_narrator_message(update))
+        return (None, narrator_msg)
     else:
         world.add_pending(event.description)
     narrator_msg = format_pending_narrator(event.description)

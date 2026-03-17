@@ -454,8 +454,6 @@ class FaceTracker:
         parts = []
         for f in faces:
             desc = f'{f["identity"]}, age ~{f["age"]} {f["gender"]}'
-            gaze = f.get("gaze_direction", "unknown")
-            desc += f", looking {gaze}"
             parts.append(desc)
         summary = "; ".join(parts)
         return f"[Face context: {len(faces)} face{'s' if len(faces) != 1 else ''}. {summary}.]"

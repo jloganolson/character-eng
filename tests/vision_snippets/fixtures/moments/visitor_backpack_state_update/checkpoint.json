@@ -1,0 +1,28 @@
+{
+  "people": {
+    "next_id": 2,
+    "people": [
+      {
+        "facts": {
+          "p1f1": "The visitor is wearing a green jacket."
+        },
+        "history": [],
+        "name": "Visitor",
+        "next_fact_id": 2,
+        "person_id": "p1",
+        "presence": "present"
+      }
+    ]
+  },
+  "world": {
+    "dynamic": {
+      "f1": "A wooden table is in front of Greg."
+    },
+    "events": [],
+    "next_id": 2,
+    "pending": [],
+    "static": [
+      "Greg is working at the stand."
+    ]
+  }
+}

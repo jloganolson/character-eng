@@ -26,6 +26,17 @@ class StageExit:
 
 
 @dataclass
+class VisionTrigger:
+    signal: str
+    source: str
+    label: str = ""
+    task_id: str = ""
+    answer_contains: str = ""
+    frames: int = 1
+    description: str = ""
+
+
+@dataclass
 class ScenarioGuardrails:
     always: list[str] = field(default_factory=list)
     on_first_visible_person: list[str] = field(default_factory=list)
@@ -44,6 +55,7 @@ class Stage:
     goal: str
     exits: list[StageExit] = field(default_factory=list)
     visual_requirements: VisualRequirements = field(default_factory=VisualRequirements)
+    vision_triggers: list[VisionTrigger] = field(default_factory=list)
 
 
 @dataclass
@@ -55,6 +67,7 @@ class ScenarioScript:
     gaze_targets: list[str] = field(default_factory=list)
     guardrails: ScenarioGuardrails = field(default_factory=ScenarioGuardrails)
     visual_requirements: VisualRequirements = field(default_factory=VisualRequirements)
+    vision_triggers: list[VisionTrigger] = field(default_factory=list)
 
     @property
     def active_stage(self) -> Stage | None:
@@ -94,6 +107,17 @@ class ScenarioScript:
             constant_questions=merged_questions,
             constant_sam_targets=merged_targets,
         )
+
+    def active_vision_triggers(self) -> list[VisionTrigger]:
+        merged: list[VisionTrigger] = []
+        seen: set[str] = set()
+        for trigger in list(self.vision_triggers) + list(self.active_stage.vision_triggers if self.active_stage else []):
+            key = trigger.signal.strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(trigger)
+        return merged
 
 
 @dataclass
@@ -147,6 +171,25 @@ def load_scenario_script(character: str, filename: str | None = None) -> Scenari
     guardrail_data = data.get("guardrails", {})
     visual_requirements_data = data.get("visual_requirements", data.get("visual_focus", {}))
 
+    def _load_trigger(entry: dict) -> VisionTrigger | None:
+        signal = str(entry.get("signal", "")).strip()
+        source = str(entry.get("source", "")).strip().lower()
+        if not signal or not source:
+            return None
+        try:
+            frames = int(entry.get("frames", 1) or 1)
+        except (TypeError, ValueError):
+            frames = 1
+        return VisionTrigger(
+            signal=signal,
+            source=source,
+            label=str(entry.get("label", "")).strip(),
+            task_id=str(entry.get("task_id", "")).strip(),
+            answer_contains=str(entry.get("answer_contains", "")).strip(),
+            frames=max(1, frames),
+            description=str(entry.get("description", "")).strip(),
+        )
+
     stages: dict[str, Stage] = {}
     for stage_data in data.get("stage", []):
         sname = stage_data.get("name", "")
@@ -176,6 +219,11 @@ def load_scenario_script(character: str, filename: str | None = None) -> Scenari
                     if str(item).strip()
                 ],
             ),
+            vision_triggers=[
+                trigger
+                for trigger in (_load_trigger(item) for item in stage_data.get("vision_trigger", []))
+                if trigger is not None
+            ],
         )
 
     return ScenarioScript(
@@ -209,6 +257,11 @@ def load_scenario_script(character: str, filename: str | None = None) -> Scenari
                 if str(item).strip()
             ],
         ),
+        vision_triggers=[
+            trigger
+            for trigger in (_load_trigger(item) for item in data.get("vision_trigger", []))
+            if trigger is not None
+        ],
     )
 
 
@@ -271,8 +324,13 @@ def director_call(
 
     data = json.loads(response.choices[0].message.content)
 
+    try:
+        exit_index = int(data.get("exit_index", -1))
+    except (TypeError, ValueError):
+        exit_index = -1
+
     return DirectorResult(
-        thought=data.get("thought", ""),
-        status=data.get("status", "hold"),
-        exit_index=data.get("exit_index", -1),
+        thought=str(data.get("thought", "")),
+        status=str(data.get("status", "hold")),
+        exit_index=exit_index,
     )

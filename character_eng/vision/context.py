@@ -36,9 +36,17 @@ class ObjectDetection:
 class VLMAnswer:
     question: str
     answer: str
+    task_id: str = ""
+    label: str = ""
     elapsed: float = 0.0
     slot_type: str = "constant"  # "constant" or "ephemeral"
     timestamp: float = 0.0
+    answer_id: str = ""
+    target: str = "scene"
+    cadence_s: float = 0.0
+    interpret_as: str = "general"
+    target_bbox: tuple[int, int, int, int] | None = None
+    target_identity: str = ""
 
 
 @dataclass
@@ -48,6 +56,8 @@ class RawVisualSnapshot:
     objects: list[ObjectDetection] = field(default_factory=list)
     vlm_answers: list[VLMAnswer] = field(default_factory=list)
     timestamp: float = 0.0
+    cycle_id: str = ""
+    trace: dict = field(default_factory=dict)
 
     @classmethod
     def from_json(cls, data: dict) -> RawVisualSnapshot:
@@ -81,11 +91,19 @@ class RawVisualSnapshot:
         ]
         vlm_answers = [
             VLMAnswer(
+                task_id=v.get("task_id", ""),
+                label=v.get("label", ""),
                 question=v.get("question", ""),
                 answer=v.get("answer", ""),
                 elapsed=v.get("elapsed", 0.0),
                 slot_type=v.get("slot_type", "constant"),
                 timestamp=v.get("timestamp", 0.0),
+                answer_id=v.get("answer_id", ""),
+                target=v.get("target", "scene"),
+                cadence_s=v.get("cadence_s", 0.0),
+                interpret_as=v.get("interpret_as", "general"),
+                target_bbox=tuple(v["target_bbox"]) if v.get("target_bbox") else None,
+                target_identity=v.get("target_identity", ""),
             )
             for v in data.get("vlm_answers", [])
         ]
@@ -95,6 +113,8 @@ class RawVisualSnapshot:
             objects=objects,
             vlm_answers=vlm_answers,
             timestamp=data.get("timestamp", 0.0),
+            cycle_id=str(data.get("cycle_id", "") or ""),
+            trace=dict(data.get("trace", {}) or {}),
         )
 
 
@@ -129,7 +149,6 @@ class VisualContext:
                 desc = f.identity
                 if f.age:
                     desc += f", ~{f.age}{f.gender or ''}"
-                desc += f", looking {f.gaze_direction}"
                 face_descs.append(desc)
             parts.append(f"Faces: {'; '.join(face_descs)}")
 
@@ -143,7 +162,9 @@ class VisualContext:
 
         if snap.vlm_answers:
             for v in snap.vlm_answers:
-                parts.append(f"Q: {v.question} → {v.answer}")
+                label = v.label or v.task_id or v.question
+                target = f" [{v.target}]" if v.target and v.target != "scene" else ""
+                parts.append(f"VLM {label}{target}: {v.answer}")
 
         return "\n".join(parts) if parts else ""
 

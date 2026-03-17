@@ -7,16 +7,46 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from character_eng.creative import load_prompt_asset
+from character_eng.vision.vlm import VLMTaskSpec, generic_task_specs
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 DEFAULT_CONSTANT_QUESTIONS = [
-    "What stands out most about the nearest person's appearance, clothing, or accessories?",
-    "What is the nearest person doing with their body, hands, or gaze?",
-    "What facial expression, mood, or energy does the nearest person seem to have?",
+    "Describe the visible room, objects, and any state changes that matter right now.",
+    "Describe the nearest visible person's appearance, clothing, and accessories.",
+    "Describe what the nearest visible person is doing right now with their body, hands, and nearby objects.",
 ]
 DEFAULT_CONSTANT_SAM_TARGETS = ["person", "rude gesture"]
 CORE_CONSTANT_QUESTIONS = DEFAULT_CONSTANT_QUESTIONS
 CORE_CONSTANT_SAM_TARGETS = DEFAULT_CONSTANT_SAM_TARGETS
+CORE_CONSTANT_VLM_SPECS = [
+    VLMTaskSpec(
+        task_id="world_state",
+        label="World State",
+        question=DEFAULT_CONSTANT_QUESTIONS[0],
+        target="scene",
+        cadence_s=3.0,
+        interpret_as="world_state",
+        system_role="system",
+    ),
+    VLMTaskSpec(
+        task_id="person_description_static",
+        label="Person Description Static",
+        question=DEFAULT_CONSTANT_QUESTIONS[1],
+        target="nearest_person",
+        cadence_s=6.0,
+        interpret_as="person_description_static",
+        system_role="system",
+    ),
+    VLMTaskSpec(
+        task_id="person_description_dynamic",
+        label="Person Description Dynamic",
+        question=DEFAULT_CONSTANT_QUESTIONS[2],
+        target="nearest_person",
+        cadence_s=2.0,
+        interpret_as="person_description_dynamic",
+        system_role="system",
+    ),
+]
 
 
 @dataclass
@@ -25,6 +55,8 @@ class VisualFocusResult:
     ephemeral_questions: list[str] = field(default_factory=list)
     constant_sam_targets: list[str] = field(default_factory=list)
     ephemeral_sam_targets: list[str] = field(default_factory=list)
+    constant_vlm_specs: list[VLMTaskSpec] = field(default_factory=list)
+    ephemeral_vlm_specs: list[VLMTaskSpec] = field(default_factory=list)
 
 
 def _load_prompt() -> str:
@@ -93,10 +125,22 @@ def visual_focus_call(
             if target not in authored_constant_sam_targets:
                 authored_constant_sam_targets.append(target)
 
+    authored_constant_specs = [VLMTaskSpec.from_payload(spec.to_payload()) for spec in CORE_CONSTANT_VLM_SPECS]
+    authored_constant_specs.extend(generic_task_specs(
+        [
+            item
+            for item in authored_constant_questions
+            if item not in CORE_CONSTANT_QUESTIONS
+        ],
+        prefix="constant",
+        cadence_s=3.0,
+    ))
+
     if not user_parts:
         return VisualFocusResult(
             constant_questions=authored_constant_questions,
             constant_sam_targets=authored_constant_sam_targets,
+            constant_vlm_specs=authored_constant_specs,
         )
 
     user_msg = "\n\n".join(user_parts)
@@ -118,11 +162,17 @@ def visual_focus_call(
         return VisualFocusResult(
             constant_questions=authored_constant_questions,
             constant_sam_targets=authored_constant_sam_targets,
+            constant_vlm_specs=authored_constant_specs,
         )
+
+    ephemeral_questions = data.get("ephemeral_questions", [])[:2]
+    ephemeral_specs = generic_task_specs(ephemeral_questions, prefix="ephemeral", cadence_s=2.0)
 
     return VisualFocusResult(
         constant_questions=authored_constant_questions,
-        ephemeral_questions=data.get("ephemeral_questions", [])[:2],
+        ephemeral_questions=ephemeral_questions,
         constant_sam_targets=authored_constant_sam_targets,
         ephemeral_sam_targets=data.get("ephemeral_sam_targets", [])[:2],
+        constant_vlm_specs=authored_constant_specs,
+        ephemeral_vlm_specs=ephemeral_specs,
     )

@@ -38,11 +38,24 @@ start = "watching"
 name = "watching"
 goal = "Greg is indoors in a room, looking around and hoping to learn what time it is."
 
+[[stage.vision_trigger]]
+signal = "person_visible_stable"
+source = "presence"
+frames = 2
+description = "A person has stayed visible for more than a moment"
+
+[[stage.vision_trigger]]
+signal = "clock_visible"
+source = "sam3"
+label = "clock"
+frames = 2
+description = "A clock is visible in the room"
+
 [[stage.exit]]
 condition = "Someone becomes visible nearby or appears to notice Greg"
 goto = "spotted"
 label = "notices"
-visual_signals = ["person_visible", "person_looking_at_greg"]
+visual_signals = ["person_visible", "person_visible_stable"]
 
 [[stage.exit]]
 condition = "Someone walks past without stopping"
@@ -57,7 +70,7 @@ goal = "Greg has noticed someone nearby. He makes one short grounded opener and 
 condition = "The person comes closer or engages with Greg"
 goto = "approaching"
 label = "comes over"
-visual_signals = ["person_visible", "person_looking_at_greg"]
+visual_signals = ["person_visible", "person_visible_stable"]
 
 [[stage.exit]]
 condition = "The person ignores Greg or walks away"

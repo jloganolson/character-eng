@@ -8,6 +8,7 @@ import urllib.request
 import urllib.error
 
 from character_eng.vision.context import RawVisualSnapshot
+from character_eng.vision.vlm import VLMTaskSpec
 
 
 class VisionClient:
@@ -52,10 +53,24 @@ class VisionClient:
             return stripped
         return f"{stripped} {suffix}"
 
-    def set_questions(self, constant: list[str], ephemeral: list[str]) -> None:
+    def _question_payload(self, item, *, default_id: str) -> dict:
+        spec = VLMTaskSpec.from_payload(item, default_id=default_id)
+        payload = spec.to_payload()
+        payload["question"] = self._question_suffix(payload["question"])
+        return payload
+
+    def set_questions(self, constant: list, ephemeral: list) -> None:
         body = json.dumps({
-            "constant": [self._question_suffix(item) for item in constant if str(item).strip()],
-            "ephemeral": [self._question_suffix(item) for item in ephemeral if str(item).strip()],
+            "constant": [
+                self._question_payload(item, default_id=f"constant_{index}")
+                for index, item in enumerate(constant, start=1)
+                if str(item).strip()
+            ],
+            "ephemeral": [
+                self._question_payload(item, default_id=f"ephemeral_{index}")
+                for index, item in enumerate(ephemeral, start=1)
+                if str(item).strip()
+            ],
         }).encode()
         req = urllib.request.Request(
             f"{self.base_url}/set_questions",

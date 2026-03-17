@@ -31,6 +31,7 @@
     --stream-planner: #60a5fa;
     --stream-world: #d3869b;
     --stream-vision: #34d399;
+    --stream-vision-raw: #10b981;
     --stream-other: #cbd5e1;
     --sidebar-width: 110px;
     --inspector-width: 320px;
@@ -63,6 +64,7 @@
     --stream-planner: #1d4ed8;
     --stream-world: #8f3f71;
     --stream-vision: #047857;
+    --stream-vision-raw: #059669;
     --stream-other: #475569;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -799,6 +801,7 @@
   .lane-planner .stream-card { border-left: 3px solid var(--stream-planner); }
   .lane-world .stream-card { border-left: 3px solid var(--stream-world); }
   .lane-vision .stream-card { border-left: 3px solid var(--stream-vision); }
+  .lane-vision_raw .stream-card { border-left: 3px solid var(--stream-vision-raw); }
   .lane-other .stream-card { border-left: 3px solid var(--stream-other); }
   #stream-inspector {
     display: grid;
@@ -1487,7 +1490,7 @@
           </div>
 
           <div class="detail-section" id="inspector-related-panel" data-panel-region="inspector" data-panel-id="related_in_turn" data-panel-scope="event">
-            <label id="inspector-related-label">Related In Turn</label>
+            <label id="inspector-related-label">Related Events</label>
             <div id="detail-related"><div style="color:var(--text-dim);">No event selected.</div></div>
           </div>
 
@@ -1513,6 +1516,7 @@
               <select id="snippet-mode" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
                 <option value="turn_context">Turn Context</option>
                 <option value="barge_in_turn">Barge-In Turn</option>
+                <option value="vision_state_turn">Vision State Turn</option>
                 <option value="vision_full_stack">Vision Full Stack</option>
                 <option value="vision_synthesis_inputs">Vision Synthesis Inputs</option>
               </select>
@@ -1638,7 +1642,7 @@
 <script>
 (function() {
   const DEFAULT_STREAM_SCHEMA = {
-    lane_order: ["vision", "stt", "chat", "expression", "eval", "director", "planner", "world", "session", "script", "other"],
+    lane_order: ["vision", "vision_raw", "stt", "chat", "expression", "eval", "director", "planner", "world", "session", "script", "other"],
     event_lane_map: {
       session_start: "session",
       session_end: "session",
@@ -1651,8 +1655,16 @@
       history_promoted: "session",
       history_playback: "session",
       prompt_reload: "session",
+      vision_focus: "vision",
+      vision_snapshot_read: "vision_raw",
       vision_snapshot: "vision",
       vision_pass: "vision",
+      face_tracking: "vision_raw",
+      sam3_detection: "vision_raw",
+      reid_track: "vision_raw",
+      vision_trigger: "vision_raw",
+      vlm_answer: "vision_raw",
+      vision_state_update: "vision_raw",
       world_update: "world",
       user_speech_started: "stt",
       user_transcript_final: "stt",
@@ -1676,6 +1688,7 @@
   let activePostResponseKey = null;
   let activeWorldUpdateKey = null;
   let streamKey = 0;
+  const streamEventIdToKey = new Map();
   let selectedStreamKey = null;
   let compactMode = false;
   let timelineWindowSeconds = 30;
@@ -2454,12 +2467,14 @@
     if (!liveTimelineSnapshot) return false;
     streamEvents.length = 0;
     streamEventByKey.clear();
+    streamEventIdToKey.clear();
     promptTraceEvents.length = 0;
     annotationsByEventKey.clear();
     hiddenLanes.clear();
     cloneSnapshotPayload(liveTimelineSnapshot.streamEvents || []).forEach((event) => {
       streamEvents.push(event);
       if (event?.key) streamEventByKey.set(event.key, event);
+      eventIdsFor(event).forEach((eventId) => streamEventIdToKey.set(eventId, event.key));
     });
     cloneSnapshotPayload(liveTimelineSnapshot.promptTraceEvents || []).forEach((event) => promptTraceEvents.push(event));
     (liveTimelineSnapshot.annotations || []).forEach(([eventKey, entries]) => {
@@ -3560,6 +3575,119 @@
         value: answer.answer || "",
       }))));
       sections.push(structureSection("Evidence", evidenceItems));
+    } else if (event.type === "vision_snapshot_read") {
+      sections.push(structureSection("Snapshot", [
+        {kind: "meta", key: "cycle", value: event.data?.vision_cycle_id || ""},
+        {kind: "meta", key: "faces", value: String(event.data?.faces ?? 0)},
+        {kind: "meta", key: "people", value: String(event.data?.persons ?? 0)},
+        {kind: "meta", key: "objects", value: String(event.data?.objects ?? 0)},
+      ]));
+      sections.push(structureSection("Object Labels", (event.data?.object_labels || []).map((item) => ({
+        kind: "input",
+        key: "object",
+        value: item,
+      }))));
+    } else if (event.type === "face_tracking") {
+      sections.push(structureSection("Faces", (event.data?.faces || []).map((face) => ({
+        kind: "input",
+        key: face.identity || `track ${face.track_id ?? "?"}`,
+        value: [
+          face.looking_at_camera ? "looking at camera" : "",
+          face.confidence != null ? `${Math.round(Number(face.confidence) * 100)}%` : "",
+          formatBbox(face.bbox),
+        ].filter(Boolean).join(" · "),
+      }))));
+      sections.push(structureSection("Timing", Object.entries(event.data?.timing || {}).map(([key, value]) => ({
+        kind: "meta",
+        key,
+        value: typeof value === "number" ? `${Math.round(Number(value) * 1000)}ms` : String(value),
+      }))));
+    } else if (event.type === "sam3_detection") {
+      sections.push(structureSection("Detections", [
+        ...(event.data?.persons || []).map((person) => ({
+          kind: "input",
+          key: "person",
+          value: `${person.identity || `track ${person.track_id ?? "?"}`} · ${Math.round(Number(person.confidence || 0) * 100)}%${formatBbox(person.bbox) ? ` · ${formatBbox(person.bbox)}` : ""}`,
+        })),
+        ...(event.data?.objects || []).map((obj) => ({
+          kind: "input",
+          key: obj.label || "object",
+          value: `${Math.round(Number(obj.confidence || 0) * 100)}%${formatBbox(obj.bbox) ? ` · ${formatBbox(obj.bbox)}` : ""}`,
+        })),
+      ]));
+      sections.push(structureSection("Timing", Object.entries(event.data?.timing || {}).map(([key, value]) => ({
+        kind: "meta",
+        key,
+        value: typeof value === "number" ? `${Math.round(Number(value) * 1000)}ms` : String(value),
+      }))));
+    } else if (event.type === "reid_track") {
+      sections.push(structureSection("Identity", [
+        {kind: "claim", key: "identity", value: event.data?.identity || ""},
+        {kind: "meta", key: "source", value: event.data?.identity_source || ""},
+        event.data?.track_id != null ? {kind: "meta", key: "track", value: String(event.data.track_id)} : null,
+      ].filter(Boolean)));
+      sections.push(structureSection("Timing", Object.entries(event.data?.timing || {}).map(([key, value]) => ({
+        kind: "meta",
+        key,
+        value: typeof value === "number" ? `${Math.round(Number(value) * 1000)}ms` : String(value),
+      }))));
+    } else if (event.type === "vision_trigger") {
+      sections.push(structureSection("Trigger", [
+        {kind: "claim", key: event.data?.signal || "signal", value: event.data?.description || event.label || ""},
+        event.data?.rule?.source ? {kind: "meta", key: "source", value: event.data.rule.source} : null,
+        event.data?.rule?.label ? {kind: "meta", key: "label", value: event.data.rule.label} : null,
+        event.data?.rule?.task_id ? {kind: "meta", key: "task", value: event.data.rule.task_id} : null,
+        event.data?.streak != null ? {kind: "meta", key: "streak", value: `${event.data.streak}/${event.data.rule?.frames || 1}`} : null,
+      ].filter(Boolean)));
+      sections.push(structureSection("Evidence", Object.entries(event.data?.evidence || {}).map(([key, value]) => ({
+        kind: "input",
+        key,
+        value: Array.isArray(value) ? value.join(", ") : String(value),
+      }))));
+    } else if (event.type === "vision_state_update") {
+      sections.push(structureSection("Summary", [{
+        kind: "claim",
+        key: "update",
+        value: event.data?.summary || event.label || "",
+      }]));
+      sections.push(structureSection("Inputs", (event.data?.task_answers || []).map((item) => ({
+        kind: "answer",
+        key: item.label || item.task_id || "vision",
+        value: item.answer || "",
+      }))));
+      sections.push(structureSection("Effects", [
+        ...(event.data?.add_facts || []).map((item) => ({kind: "effect", key: "world +", value: item})),
+        ...(event.data?.remove_facts || []).map((item) => ({kind: "effect", key: "world -", value: item})),
+        ...(event.data?.events || []).map((item) => ({kind: "effect", key: "event", value: item})),
+        ...((event.data?.person_updates || []).flatMap((item) => [
+          ...(item.add_facts || []).map((fact) => ({kind: "effect", key: `${item.person_id} +`, value: fact})),
+          ...(item.remove_facts || []).map((fid) => ({kind: "effect", key: `${item.person_id} -`, value: fid})),
+          item.set_presence ? {kind: "effect", key: `${item.person_id} presence`, value: item.set_presence} : null,
+          item.set_name ? {kind: "effect", key: `${item.person_id} name`, value: item.set_name} : null,
+        ].filter(Boolean))),
+      ]));
+    } else if (event.type === "vlm_answer") {
+      sections.push(structureSection("Question", [{
+        kind: "input",
+        key: event.data?.label || event.data?.task_id || event.data?.slot_type || "vision",
+        value: event.data?.question || "",
+      }]));
+      sections.push(structureSection("Answer", [{
+        kind: "answer",
+        key: "reply",
+        value: event.data?.answer || "",
+      }]));
+      sections.push(structureSection("Target", [
+        event.data?.target ? {kind: "meta", key: "target", value: event.data.target} : null,
+        event.data?.target_identity ? {kind: "meta", key: "identity", value: event.data.target_identity} : null,
+        event.data?.target_bbox ? {kind: "meta", key: "bbox", value: formatBbox(event.data.target_bbox)} : null,
+        event.data?.interpret_as ? {kind: "meta", key: "interpret", value: event.data.interpret_as} : null,
+      ].filter(Boolean)));
+      sections.push(structureSection("Timing", [
+        event.data?.elapsed != null ? {kind: "meta", key: "elapsed", value: `${Math.round(Number(event.data.elapsed) * 1000)}ms`} : null,
+        event.data?.cadence_s != null ? {kind: "meta", key: "cadence", value: `${Number(event.data.cadence_s).toFixed(1)}s`} : null,
+        event.data?.vision_cycle_id ? {kind: "meta", key: "cycle", value: event.data.vision_cycle_id} : null,
+      ].filter(Boolean)));
     } else if (event.type === "assistant_reply") {
       const inputItems = [];
       if (event.data?.stt_text) inputItems.push({kind: "input", key: "heard", value: event.data.stt_text});
@@ -3637,7 +3765,7 @@
       if (provenance?.label) chipList.push(`prov ${provenance.label}`);
       if (provenance?.primary) chipList.push(`via ${provenance.primary}`);
       if (trace?.vlm_answers?.length) {
-        chipList.push(...trace.vlm_answers.slice(0, 3).map((item) => `${item.question || "vision"}: ${item.answer || ""}`));
+        chipList.push(...trace.vlm_answers.slice(0, 3).map((item) => `${item.label || item.task_id || item.question || "vision"}: ${item.answer || ""}`));
       }
       if (trace?.supporting_answers?.length) {
         chipList.push(...trace.supporting_answers.slice(0, 2).map((item) => `supports ${item.question || "vision"}`));
@@ -3658,7 +3786,7 @@
         const answers = passSnapshot.vlm_answers || [];
         const labels = passSnapshot.object_labels || [];
         chipList.push(...labels.slice(0, 4).map((item) => `object ${item}`));
-        chipList.push(...answers.slice(0, 3).map((item) => typeof item === "string" ? item : `${item.question || "vision"}: ${item.answer || ""}`));
+        chipList.push(...answers.slice(0, 3).map((item) => typeof item === "string" ? item : `${item.label || item.task_id || item.question || "vision"}: ${item.answer || ""}`));
       } else if ((!trace || event.type === "vision_pass") && visualContext.snapshot) {
         lines.push(`nearest vision snapshot: +${relativeTime(visualContext.snapshot.timestamp).toFixed(2)}s`);
         const answers = visualContext.snapshot.data?.vlm_answers || [];
@@ -3666,7 +3794,7 @@
         chipList.push(...labels.slice(0, 4).map((item) => `object ${item}`));
         chipList.push(...answers.slice(0, 3).map((item) => {
           if (typeof item === "string") return item;
-          return `${item.question || "vision"}: ${item.answer || ""}`;
+          return `${item.label || item.task_id || item.question || "vision"}: ${item.answer || ""}`;
         }));
       }
       if (passFocus && !trace?.focus) {
@@ -3683,7 +3811,31 @@
       if (focus?.ephemeral_questions?.length) chipList.push(...focus.ephemeral_questions.slice(0, 3).map((item) => `q ${item}`));
       if (focus?.ephemeral_sam_targets?.length) chipList.push(...focus.ephemeral_sam_targets.slice(0, 3).map((item) => `sam ${item}`));
       const answers = event.data?.vlm_answers || [];
-      chipList.push(...answers.slice(0, 3).map((item) => typeof item === "string" ? item : `${item.question || "vision"}: ${item.answer || ""}`));
+      chipList.push(...answers.slice(0, 3).map((item) => typeof item === "string" ? item : `${item.label || item.task_id || item.question || "vision"}: ${item.answer || ""}`));
+    } else if (event.type === "vision_snapshot_read" || event.type === "face_tracking" || event.type === "sam3_detection" || event.type === "reid_track" || event.type === "vision_trigger" || event.type === "vision_state_update" || event.type === "vlm_answer") {
+      if (event.data?.vision_cycle_id) lines.push(`cycle: ${event.data.vision_cycle_id}`);
+      const upstream = inputEventIdsFor(event);
+      if (upstream.length) lines.push(`inputs: ${upstream.join(", ")}`);
+      if (event.type === "face_tracking") {
+        chipList.push(...(event.data?.faces || []).slice(0, 4).map((item) => `${item.identity || "unknown"}${formatBbox(item.bbox) ? ` · ${formatBbox(item.bbox)}` : ""}`));
+      } else if (event.type === "sam3_detection") {
+        chipList.push(...(event.data?.objects || []).slice(0, 4).map((item) => `object ${item.label || "unknown"}`));
+        chipList.push(...(event.data?.persons || []).slice(0, 3).map((item) => `person ${item.identity || item.track_id || "?"}`));
+      } else if (event.type === "vision_trigger") {
+        if (event.data?.signal) chipList.push(`signal ${event.data.signal}`);
+        if (event.data?.rule?.source) chipList.push(`via ${event.data.rule.source}`);
+      } else if (event.type === "vision_state_update") {
+        if (event.data?.summary) chipList.push(event.data.summary);
+        chipList.push(...(event.data?.task_answers || []).slice(0, 2).map((item) => `task ${item.label || item.task_id || "vision"}`));
+      } else if (event.type === "reid_track") {
+        if (event.data?.identity) chipList.push(`identity ${event.data.identity}`);
+        if (event.data?.identity_source) chipList.push(`via ${event.data.identity_source}`);
+      } else if (event.type === "vlm_answer") {
+        if (event.data?.label || event.data?.task_id) chipList.push(`task ${event.data.label || event.data.task_id}`);
+        if (event.data?.answer) chipList.push(event.data.answer);
+      } else if (event.type === "vision_snapshot_read") {
+        chipList.push(...(event.data?.object_labels || []).slice(0, 4).map((item) => `object ${item}`));
+      }
     }
 
     if (!lines.length && !chipList.length) return;
@@ -3973,6 +4125,7 @@
   function clearConversationState(message = "Waiting for conversation...") {
     streamEvents.length = 0;
     streamEventByKey.clear();
+    streamEventIdToKey.clear();
     promptTraceEvents.length = 0;
     hiddenLanes.clear();
     sessionStart = null;
@@ -4035,6 +4188,7 @@
     restartPending = false;
     streamEvents.length = 0;
     streamEventByKey.clear();
+    streamEventIdToKey.clear();
     promptTraceEvents.length = 0;
     hiddenLanes.clear();
     sessionStart = null;
@@ -4356,6 +4510,27 @@
         if (data.ephemeral_sam_targets && data.ephemeral_sam_targets.length) bits.push(`${data.ephemeral_sam_targets.length} ephemeral sam`);
         return bits.length ? bits.join(" · ") : "Vision focus";
       }
+      case "vision_snapshot_read":
+        return `faces ${data.faces || 0} · people ${data.persons || 0} · objects ${data.objects || 0}`;
+      case "face_tracking":
+        if (data.faces && data.faces.length) {
+          const first = data.faces[0];
+          return `${data.faces.length} face${data.faces.length === 1 ? "" : "s"} · ${first.identity || "unknown"}`;
+        }
+        return "Face tracking";
+      case "sam3_detection":
+        return [
+          data.persons?.length ? `${data.persons.length} person det` : "",
+          data.objects?.length ? `${data.objects.length} object det` : "",
+        ].filter(Boolean).join(" · ") || "SAM3 detection";
+      case "reid_track":
+        return `${data.identity || `track ${data.track_id ?? "?"}`} · ${data.identity_source || "track"}`;
+      case "vision_trigger":
+        return data.description || data.signal || "Vision trigger";
+      case "vision_state_update":
+        return data.summary || `${(data.task_answers || []).length} interpreted vision task${(data.task_answers || []).length === 1 ? "" : "s"}`;
+      case "vlm_answer":
+        return data.answer || data.label || data.question || "VLM answer";
       case "vision_pass": {
         if (data.latest_perception) return data.latest_perception;
         if (data.latest_answer) return data.latest_answer;
@@ -4448,6 +4623,46 @@
           data.ephemeral_questions && data.ephemeral_questions.length ? `ask: ${data.ephemeral_questions.join(", ")}` : "",
           data.ephemeral_sam_targets && data.ephemeral_sam_targets.length ? `track: ${data.ephemeral_sam_targets.join(", ")}` : ""
         ].filter(Boolean).join(" · ");
+      case "vision_snapshot_read":
+        return [
+          data.vlm_answer_count ? `${data.vlm_answer_count} answer${data.vlm_answer_count === 1 ? "" : "s"}` : "",
+          data.object_labels?.length ? `objects ${data.object_labels.join(", ")}` : "",
+        ].filter(Boolean).join(" · ");
+      case "face_tracking":
+        return [
+          data.timing?.total != null ? `total ${Math.round(Number(data.timing.total) * 1000)}ms` : "",
+          data.faces?.length ? data.faces.map((face) => face.identity || "unknown").join(", ") : "",
+        ].filter(Boolean).join(" · ");
+      case "sam3_detection":
+        return [
+          data.timing?.sam3 != null ? `sam3 ${Math.round(Number(data.timing.sam3) * 1000)}ms` : "",
+          data.timing?.prompts ? `prompts ${data.timing.prompts}` : "",
+        ].filter(Boolean).join(" · ");
+      case "reid_track":
+        return [
+          data.track_id != null ? `track ${data.track_id}` : "",
+          data.timing?.reid != null ? `reid ${Math.round(Number(data.timing.reid) * 1000)}ms` : "",
+        ].filter(Boolean).join(" · ");
+      case "vision_trigger":
+        return [
+          data.rule?.source ? `source ${data.rule.source}` : "",
+          data.rule?.label ? `label ${data.rule.label}` : "",
+          data.streak != null ? `streak ${data.streak}/${data.rule?.frames || 1}` : "",
+        ].filter(Boolean).join(" · ");
+      case "vision_state_update":
+        return [
+          (data.task_answers || []).length ? `${data.task_answers.length} task${data.task_answers.length === 1 ? "" : "s"}` : "",
+          data.add_facts?.length ? `+${data.add_facts.length} world` : "",
+          data.events?.length ? `~${data.events.length} event` : "",
+          data.person_updates?.length ? `${data.person_updates.length} people` : "",
+        ].filter(Boolean).join(" · ");
+      case "vlm_answer":
+        return [
+          data.label || data.task_id || data.question || "",
+          data.slot_type ? `slot ${data.slot_type}` : "",
+          data.target ? `target ${data.target}` : "",
+          data.elapsed != null ? `${Math.round(Number(data.elapsed) * 1000)}ms` : "",
+        ].filter(Boolean).join(" · ");
       case "vision_pass":
         return [
           data.perception_count ? `${data.perception_count} claim${data.perception_count === 1 ? "" : "s"}` : "",
@@ -4510,12 +4725,72 @@
     return String(type || "event").toLowerCase().replace(/[^a-z0-9]+/g, "-");
   }
 
+  function eventIdsFor(event) {
+    if (!event) return [];
+    const ids = [];
+    const eventId = String(event.data?.event_id || "").trim();
+    if (eventId) ids.push(eventId);
+    const traceEventId = String(event.data?.source_trace?.event_id || "").trim();
+    if (traceEventId && !ids.includes(traceEventId)) ids.push(traceEventId);
+    const payloadEventId = String(event.data?.payload?.event_id || "").trim();
+    if (payloadEventId && !ids.includes(payloadEventId)) ids.push(payloadEventId);
+    return ids;
+  }
+
+  function inputEventIdsFor(event) {
+    if (!event) return [];
+    const rawIds = event.data?.input_event_ids
+      || event.data?.payload?.input_event_ids
+      || event.data?.source_trace?.input_event_ids
+      || [];
+    return Array.isArray(rawIds) ? rawIds.map((item) => String(item || "").trim()).filter(Boolean) : [];
+  }
+
+  function explicitRelatedKeysFor(event) {
+    if (!event) return [];
+    const related = [];
+    const seen = new Set([event.key]);
+    inputEventIdsFor(event).forEach((eventId) => {
+      const key = streamEventIdToKey.get(eventId);
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        related.push(key);
+      }
+    });
+    const ownIds = eventIdsFor(event);
+    if (!ownIds.length) return related;
+    streamEvents.forEach((candidate) => {
+      if (!candidate || candidate.key === event.key) return;
+      const candidateInputs = inputEventIdsFor(candidate);
+      if (!candidateInputs.length) return;
+      if (!ownIds.some((eventId) => candidateInputs.includes(eventId))) return;
+      if (seen.has(candidate.key)) return;
+      seen.add(candidate.key);
+      related.push(candidate.key);
+    });
+    return related;
+  }
+
+  function syncEventIdIndex(event) {
+    if (!event?.key) return;
+    eventIdsFor(event).forEach((eventId) => streamEventIdToKey.set(eventId, event.key));
+  }
+
   function causalEventsForBundle(event) {
-    if (!event || !event.turnId) return {upstream: [], downstream: []};
+    if (!event) return {upstream: [], downstream: []};
     const upstream = [];
     const downstream = [];
-    streamEvents.forEach((candidate) => {
-      if (!candidate || candidate.key === event.key || candidate.turnId !== event.turnId) return;
+    const explicitKeys = explicitRelatedKeysFor(event);
+    const candidateKeys = new Set(explicitKeys);
+    if (event.turnId) {
+      streamEvents.forEach((candidate) => {
+        if (!candidate || candidate.key === event.key || candidate.turnId !== event.turnId) return;
+        candidateKeys.add(candidate.key);
+      });
+    }
+    candidateKeys.forEach((candidateKey) => {
+      const candidate = streamEventByKey.get(candidateKey);
+      if (!candidate || candidate.key === event.key) return;
       const payload = {
         key: candidate.key,
         type: candidate.type,
@@ -4560,15 +4835,81 @@
   }
 
   function isVisionEvent(event) {
-    return !!event && ["vision_pass", "vision_snapshot", "vision_focus", "perception"].includes(event.type);
+    return !!event && [
+      "vision_pass",
+      "vision_snapshot",
+      "vision_focus",
+      "vision_snapshot_read",
+      "face_tracking",
+      "sam3_detection",
+      "reid_track",
+      "vision_trigger",
+      "vision_state_update",
+      "vlm_answer",
+      "perception",
+    ].includes(event.type);
   }
 
   function defaultSnippetModeForEvent(event) {
     if (!event) return "turn_context";
     if (event.type === "response_interrupted" || (event.type === "assistant_reply" && event.data?.interrupted)) return "barge_in_turn";
+    if (event.type === "vision_state_update") return "vision_state_turn";
+    if (event.type === "vlm_answer" && ["world_state", "person_description_static", "person_description_dynamic"].includes(String(event.data?.interpret_as || ""))) {
+      return "vision_state_turn";
+    }
     if (event.type === "vision_pass" || event.type === "perception") return "vision_synthesis_inputs";
-    if (event.type === "vision_snapshot" || event.type === "vision_focus") return "vision_full_stack";
+    if (["vision_snapshot", "vision_focus", "vision_snapshot_read", "face_tracking", "sam3_detection", "reid_track", "vision_trigger", "vision_state_update", "vlm_answer"].includes(event.type)) return "vision_full_stack";
     return "turn_context";
+  }
+
+  function defaultSnippetTags(mode) {
+    if (mode === "barge_in_turn") return "barge-in";
+    if (mode === "vision_state_turn") return "vision-state";
+    return "";
+  }
+
+  function visionStateInputsForEvent(event, bundle) {
+    if (!event) return {};
+    const upstream = Array.isArray(bundle?.upstream_events) ? bundle.upstream_events : [];
+    const downstream = Array.isArray(bundle?.downstream_events) ? bundle.downstream_events : [];
+    const current = bundle?.event || {};
+    const currentInterpret = String(current?.data?.interpret_as || "");
+    const currentTask = current?.data?.task_id || "";
+    const directStateUpdate = event.type === "vision_state_update"
+      ? current
+      : downstream.find((item) => item.type === "vision_state_update")
+        || upstream.find((item) => item.type === "vision_state_update")
+        || null;
+    let taskAnswers = [];
+    if (event.type === "vision_state_update") {
+      taskAnswers = Array.isArray(current?.data?.task_answers) ? current.data.task_answers : [];
+    } else if (event.type === "vlm_answer" && ["world_state", "person_description_static", "person_description_dynamic"].includes(currentInterpret)) {
+      taskAnswers = [{
+        task_id: currentTask,
+        label: current?.data?.label || currentTask,
+        question: current?.data?.question || "",
+        answer: current?.data?.answer || "",
+        interpret_as: currentInterpret,
+        target: current?.data?.target || "scene",
+        target_person_id: current?.data?.target_person_id || "",
+        target_identity: current?.data?.target_identity || "",
+      }];
+    } else if (directStateUpdate?.data?.task_answers) {
+      taskAnswers = directStateUpdate.data.task_answers;
+    }
+    if (!taskAnswers.length || !directStateUpdate?.data) return {};
+    return {
+      source_event_type: event.type,
+      task_answers: taskAnswers,
+      expected_update: {
+        remove_facts: directStateUpdate.data.remove_facts || [],
+        add_facts: directStateUpdate.data.add_facts || [],
+        events: directStateUpdate.data.events || [],
+        person_updates: directStateUpdate.data.person_updates || [],
+      },
+      summary: directStateUpdate.data.summary || directStateUpdate.label || "",
+      source_event_key: event.key,
+    };
   }
 
   function bargeInInputsForEvent(event, bundle) {
@@ -4934,6 +5275,11 @@
       bundle.capture_mode = snippetModeSelect.value || defaultSnippetModeForEvent(event);
       if (bundle.capture_mode === "barge_in_turn") {
         bundle.barge_in = bargeInInputsForEvent(event, bundle);
+      } else if (bundle.capture_mode === "vision_state_turn") {
+        bundle.vision_state = visionStateInputsForEvent(event, bundle);
+        if (!bundle.vision_state || !bundle.vision_state.task_answers || !bundle.vision_state.task_answers.length) {
+          throw new Error("This event does not have enough vision-state context to capture a vision-state snippet.");
+        }
       }
       const snippetTags = snippetTagsInput.value
         .split(",")
@@ -5235,14 +5581,27 @@
   }
 
   function relatedKeysFor(event) {
-    if (!event.turnId) return [];
-    return streamEvents
+    const related = [];
+    const seen = new Set([event?.key]);
+    explicitRelatedKeysFor(event).forEach((key) => {
+      if (!seen.has(key)) {
+        seen.add(key);
+        related.push(key);
+      }
+    });
+    if (!event?.turnId) return related;
+    streamEvents
       .filter((candidate) => {
         if (candidate.turnId !== event.turnId || candidate.key === event.key) return false;
         if (event.type === "assistant_reply") return candidate.timestamp <= event.timestamp;
         return true;
       })
-      .map((candidate) => candidate.key);
+      .forEach((candidate) => {
+        if (seen.has(candidate.key)) return;
+        seen.add(candidate.key);
+        related.push(candidate.key);
+      });
+    return related;
   }
 
   function eventForTurnType(event, type) {
@@ -5382,6 +5741,7 @@
     };
     streamEvents.push(event);
     streamEventByKey.set(key, event);
+    syncEventIdIndex(event);
     return event;
   }
 
@@ -5568,6 +5928,9 @@
     if (event.type === "vision_pass") {
       return Math.max(240, Math.min(420, 210 + event.label.length * 2.4));
     }
+    if (["vision_snapshot_read", "face_tracking", "sam3_detection", "reid_track", "vision_trigger", "vision_state_update", "vlm_answer"].includes(event.type)) {
+      return Math.max(180, Math.min(300, 150 + event.label.length * 2));
+    }
     if (event.type === "post_response" || event.type === "world_update") {
       return Math.max(220, Math.min(360, 180 + event.label.length * 2.4));
     }
@@ -5579,6 +5942,7 @@
     if (event.type === "assistant_reply") return 92;
     if (event.type === "response_interrupted") return 84;
     if (event.type === "vision_pass") return 132;
+    if (["vision_snapshot_read", "face_tracking", "sam3_detection", "reid_track", "vision_trigger", "vision_state_update", "vlm_answer"].includes(event.type)) return 84;
     if (event.type === "post_response" || event.type === "world_update") return 84;
     if (event.detail) return 72;
     return 58;
@@ -5606,9 +5970,14 @@
     return `<div class="reply-markers">${answers.slice(0, 3).map((answer) => {
       const label = typeof answer === "string"
         ? answer
-        : `${answer.question || "vision"}: ${answer.answer || ""}`;
+        : `${answer.label || answer.task_id || answer.question || "vision"}: ${answer.answer || ""}`;
       return `<span class="reply-marker">${esc(label)}</span>`;
     }).join("")}</div>`;
+  }
+
+  function formatBbox(bbox) {
+    if (!Array.isArray(bbox) || bbox.length !== 4) return "";
+    return `x ${bbox[0]} y ${bbox[1]} w ${bbox[2]} h ${bbox[3]}`;
   }
 
   function renderCardBody(event) {
@@ -5676,6 +6045,71 @@
         ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
       `;
     }
+    if (event.type === "vision_snapshot_read") {
+      const chips = [
+        ...(event.data.object_labels || []).slice(0, 3).map((item) => `object ${item}`),
+        event.data.vlm_answer_count ? `${event.data.vlm_answer_count} answer${event.data.vlm_answer_count === 1 ? "" : "s"}` : "",
+      ].filter(Boolean);
+      return `
+        <div class="stream-card-kicker">snapshot</div>
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+      `;
+    }
+    if (event.type === "face_tracking") {
+      const chips = (event.data.faces || []).slice(0, 3).map((item) => `${item.identity || "unknown"}${formatBbox(item.bbox) ? ` · ${formatBbox(item.bbox)}` : ""}`);
+      return `
+        <div class="stream-card-kicker">insight</div>
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+      `;
+    }
+    if (event.type === "sam3_detection") {
+      const chips = [
+        ...(event.data.objects || []).slice(0, 3).map((item) => `object ${item.label || "unknown"}`),
+        ...(event.data.persons || []).slice(0, 2).map((item) => `person ${item.identity || item.track_id || "?"}`),
+      ];
+      return `
+        <div class="stream-card-kicker">sam3</div>
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+      `;
+    }
+    if (event.type === "reid_track") {
+      return `
+        <div class="stream-card-kicker">reid</div>
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${event.data.identity ? `<div class="stream-card-subdetail">${esc(event.data.identity)}</div>` : ""}
+      `;
+    }
+    if (event.type === "vision_trigger") {
+      return `
+        <div class="stream-card-kicker">trigger</div>
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${event.data.signal ? `<div class="stream-card-subdetail">${esc(event.data.signal)}</div>` : ""}
+      `;
+    }
+    if (event.type === "vision_state_update") {
+      return `
+        <div class="stream-card-kicker">vision llm</div>
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${event.data.summary ? `<div class="stream-card-subdetail">${esc(event.data.summary)}</div>` : ""}
+      `;
+    }
+    if (event.type === "vlm_answer") {
+      return `
+        <div class="stream-card-kicker">vlm</div>
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${(event.data.label || event.data.task_id) ? `<div class="stream-card-subdetail">${esc(event.data.label || event.data.task_id)}</div>` : ""}
+      `;
+    }
     if (event.type === "vision_pass") {
       const metricChips = [
         event.data.perception_count ? `${event.data.perception_count} claim${event.data.perception_count === 1 ? "" : "s"}` : "",
@@ -5701,7 +6135,7 @@
       const chips = [
         event.data.source ? `source ${event.data.source}` : "",
         ...(event.data.source_trace?.object_labels || []).slice(0, 3).map((item) => `object ${item}`),
-        ...((event.data.source_trace?.vlm_answers || []).slice(0, 2).map((item) => `${item.question || "vision"}: ${item.answer || ""}`)),
+        ...((event.data.source_trace?.vlm_answers || []).slice(0, 2).map((item) => `${item.label || item.task_id || item.question || "vision"}: ${item.answer || ""}`)),
       ].filter(Boolean);
       return `
         <div class="stream-card-label">${esc(event.label)}</div>
@@ -5840,6 +6274,21 @@
     const event = addStreamEvent(type, data, rawEvent);
     renderStream();
     return event;
+  }
+
+  function mergeUniqueEventIds(...groups) {
+    const seen = new Set();
+    const merged = [];
+    groups.forEach((group) => {
+      if (!Array.isArray(group)) return;
+      group.forEach((item) => {
+        const value = String(item || "").trim();
+        if (!value || seen.has(value)) return;
+        seen.add(value);
+        merged.push(value);
+      });
+    });
+    return merged;
   }
 
   const handlers = {
@@ -6165,6 +6614,12 @@
       rawEvent.turnId = currentTurnId || null;
       if (data.source === "visual") {
         const event = ensureVisionPassEvent(rawEvent);
+        event.data.input_event_ids = mergeUniqueEventIds(
+          event.data.input_event_ids,
+          data.input_event_ids,
+          data.payload?.input_event_ids,
+          data.source_trace?.input_event_ids,
+        );
         const nextPerceptions = Array.isArray(event.data.perceptions) ? event.data.perceptions.slice() : [];
         nextPerceptions.push(data.description || "visual perception");
         event.data.perceptions = nextPerceptions.slice(-8);
@@ -6187,7 +6642,7 @@
           if (Array.isArray(data.source_trace.vlm_answers) && data.source_trace.vlm_answers.length) {
             const latestAnswer = data.source_trace.vlm_answers[data.source_trace.vlm_answers.length - 1];
             event.data.vlm_answer_count = data.source_trace.vlm_answers.length;
-            event.data.latest_answer = `${latestAnswer.question || "vision"}: ${latestAnswer.answer || ""}`;
+            event.data.latest_answer = `${latestAnswer.label || latestAnswer.task_id || latestAnswer.question || "vision"}: ${latestAnswer.answer || ""}`;
           }
           if (data.source_trace.focus) {
             event.data.constant_questions = data.source_trace.focus.constant_questions || event.data.constant_questions || [];
@@ -6198,6 +6653,10 @@
         }
         event.label = previewText("vision_pass", event.data);
         event.detail = detailText("vision_pass", event.data);
+        const perceptionEvent = recordEvent("perception", data, rawEvent);
+        if (event.data.input_event_ids?.length) perceptionEvent.data.input_event_ids = [...event.data.input_event_ids];
+        if (data.payload?.event_id && !perceptionEvent.data.event_id) perceptionEvent.data.event_id = data.payload.event_id;
+        syncEventIdIndex(perceptionEvent);
         renderStream();
         return;
       }
@@ -6213,18 +6672,20 @@
       if (data.vlm_answers && data.vlm_answers.length) {
         html += "<br>" + data.vlm_answers.map((answer) => {
           if (typeof answer === "string") return esc(answer);
-          return `<b>${esc(answer.question || "vision")}</b>: ${esc(answer.answer || "")}`;
+          return `<b>${esc(answer.label || answer.task_id || answer.question || "vision")}</b>: ${esc(answer.answer || "")}`;
         }).join("<br>");
       }
       renderSidebarPanelContent("vision", html, {status: "ready", visible: true});
       rawEvent.turnId = currentTurnId || null;
+      recordEvent("vision_snapshot", data, rawEvent);
       const event = ensureVisionPassEvent(rawEvent);
       event.data.object_labels = data.object_labels || event.data.object_labels || [];
       event.data.object_count = (data.object_labels || []).length;
       event.data.vlm_answer_count = (data.vlm_answers || []).length;
+      event.data.input_event_ids = mergeUniqueEventIds(event.data.input_event_ids, data.input_event_ids);
       if (data.vlm_answers && data.vlm_answers.length) {
         const latest = data.vlm_answers[data.vlm_answers.length - 1];
-        event.data.latest_answer = typeof latest === "string" ? latest : `${latest.question || "vision"}: ${latest.answer || ""}`;
+        event.data.latest_answer = typeof latest === "string" ? latest : `${latest.label || latest.task_id || latest.question || "vision"}: ${latest.answer || ""}`;
       }
       if (data.focus) {
         event.data.constant_questions = data.focus.constant_questions || [];
@@ -6240,16 +6701,53 @@
 
     vision_focus(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
+      recordEvent("vision_focus", data, rawEvent);
       const event = ensureVisionPassEvent(rawEvent);
       event.data.constant_questions = data.constant_questions || [];
       event.data.ephemeral_questions = data.ephemeral_questions || [];
       event.data.constant_sam_targets = data.constant_sam_targets || [];
       event.data.ephemeral_sam_targets = data.ephemeral_sam_targets || [];
+      event.data.input_event_ids = mergeUniqueEventIds(event.data.input_event_ids, data.input_event_ids);
       event.data.stage_goal = data.stage_goal || event.data.stage_goal || "";
       event.data.focus = data;
       event.label = previewText("vision_pass", event.data);
       event.detail = detailText("vision_pass", event.data);
       renderStream();
+    },
+
+    vision_snapshot_read(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      recordEvent("vision_snapshot_read", data, rawEvent);
+    },
+
+    face_tracking(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      recordEvent("face_tracking", data, rawEvent);
+    },
+
+    sam3_detection(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      recordEvent("sam3_detection", data, rawEvent);
+    },
+
+    reid_track(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      recordEvent("reid_track", data, rawEvent);
+    },
+
+    vision_trigger(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      recordEvent("vision_trigger", data, rawEvent);
+    },
+
+    vision_state_update(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      recordEvent("vision_state_update", data, rawEvent);
+    },
+
+    vlm_answer(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      recordEvent("vlm_answer", data, rawEvent);
     },
 
     async session_end(data, rawEvent) {
@@ -6758,7 +7256,7 @@
     }
     snippetModeSelect.value = defaultSnippetModeForEvent(event);
     snippetTitleInput.value = event.label || event.type || "snippet";
-    snippetTagsInput.value = snippetModeSelect.value === "barge_in_turn" ? "barge-in" : "";
+    snippetTagsInput.value = defaultSnippetTags(snippetModeSelect.value);
     setSnippetFormOpen(!snippetFormOpen);
   });
   snippetSaveButton.addEventListener("click", captureSelectedMoment);

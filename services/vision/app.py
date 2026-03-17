@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 try:
     import cv2
@@ -27,6 +28,12 @@ except ImportError:
 
 from flask import Flask, Response, request
 from PIL import Image
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from character_eng.vision.vlm import VLMTaskSpec
 
 # ---------------------------------------------------------------------------
 # Config (overridden by CLI args in __main__)
@@ -167,10 +174,11 @@ _slot_lock = threading.Lock()
 _next_slot_id = 0
 
 # --- Constant/ephemeral VLM questions (set via /set_questions API) ---
-_constant_questions: list[str] = []
-_ephemeral_questions: list[str] = []
+_constant_questions: list[dict] = []
+_ephemeral_questions: list[dict] = []
 _questions_lock = threading.Lock()
-_question_answers: dict[str, dict] = {}  # question -> {answer, elapsed, slot_type, timestamp}
+_question_answers: dict[str, dict] = {}  # task_id -> {answer, elapsed, slot_type, timestamp}
+_question_answer_seq = 0
 
 # --- Constant/ephemeral SAM3 targets (set via /set_sam_targets API) ---
 _constant_sam_targets: list[str] = ["person"]
@@ -180,6 +188,7 @@ _sam_targets_lock = threading.Lock()
 # --- Managed question worker (round-robin over constant + ephemeral) ---
 _managed_worker_running = False
 _managed_worker_thread: threading.Thread | None = None
+_snapshot_seq = 0
 
 def run_vlm_vllm(frame_rgb: np.ndarray, question: str, max_tokens: int) -> tuple[str, float]:
     """Run VLM inference via vLLM OpenAI-compatible API. Returns (answer, elapsed)."""
@@ -782,6 +791,58 @@ def person_data():
     })
 
 
+def _normalize_question_spec(raw, *, slot_type: str, index: int) -> dict:
+    spec = VLMTaskSpec.from_payload(raw, default_id=f"{slot_type}_{index}")
+    payload = spec.to_payload()
+    payload["slot_type"] = slot_type
+    return payload
+
+
+def _current_person_targets() -> list[dict]:
+    if pt is not None and pt.enabled:
+        try:
+            return list(pt.get_faces())
+        except Exception:
+            return []
+    return []
+
+
+def _crop_frame_to_bbox(frame_rgb: np.ndarray, bbox: tuple[int, int, int, int], margin_ratio: float = 0.15) -> np.ndarray:
+    x, y, w, h = bbox
+    height, width = frame_rgb.shape[:2]
+    margin_x = int(w * margin_ratio)
+    margin_y = int(h * margin_ratio)
+    x1 = max(0, x - margin_x)
+    y1 = max(0, y - margin_y)
+    x2 = min(width, x + w + margin_x)
+    y2 = min(height, y + h + margin_y)
+    cropped = frame_rgb[y1:y2, x1:x2]
+    return cropped if cropped.size else frame_rgb
+
+
+def _prepare_vlm_frame(frame_rgb: np.ndarray, spec: dict) -> tuple[np.ndarray | None, dict]:
+    target = str(spec.get("target", "scene") or "scene").strip().lower()
+    if target != "nearest_person":
+        return frame_rgb, {"target": "scene", "target_bbox": None, "target_identity": ""}
+
+    people = _current_person_targets()
+    if not people:
+        return None, {"target": "nearest_person", "target_bbox": None, "target_identity": ""}
+
+    person = people[0]
+    bbox = person.get("bbox")
+    bbox_tuple = tuple(bbox) if bbox else None
+    if bbox_tuple and len(bbox_tuple) == 4:
+        crop = _crop_frame_to_bbox(frame_rgb, bbox_tuple)
+    else:
+        crop = frame_rgb
+    return crop, {
+        "target": "nearest_person",
+        "target_bbox": list(bbox_tuple) if bbox_tuple else None,
+        "target_identity": str(person.get("identity", "")).strip(),
+    }
+
+
 def _build_question(raw_question: str, inject_context: bool) -> str:
     """Optionally prepend tracker context to question."""
     if not inject_context:
@@ -908,40 +969,90 @@ def remove_slot(slot_id):
 # ---------------------------------------------------------------------------
 def _managed_question_worker():
     """Background thread: cycles through constant + ephemeral questions."""
-    global _managed_worker_running
+    global _managed_worker_running, _question_answer_seq
     while _managed_worker_running:
         with _questions_lock:
             questions = (
-                [(q, "constant") for q in _constant_questions]
-                + [(q, "ephemeral") for q in _ephemeral_questions]
+                [dict(q) for q in _constant_questions]
+                + [dict(q) for q in _ephemeral_questions]
             )
         if not questions or _vllm_client is None:
             time.sleep(0.5)
             continue
-        for question, slot_type in questions:
+        for spec in questions:
             if not _managed_worker_running:
                 break
             frame_rgb = cam.get_frame_rgb()
             if frame_rgb is None:
                 time.sleep(0.1)
                 continue
+            task_id = str(spec.get("task_id", "")).strip() or f"vlm_task_{len(questions)}"
+            cadence_s = float(spec.get("cadence_s", 0.0) or 0.0)
+            with _questions_lock:
+                last_answer = dict(_question_answers.get(task_id, {}) or {})
+            last_timestamp = float(last_answer.get("timestamp", 0.0) or 0.0)
+            if cadence_s > 0.0 and (time.time() - last_timestamp) < cadence_s:
+                continue
+            prepared_frame, target_meta = _prepare_vlm_frame(frame_rgb, spec)
+            if prepared_frame is None:
+                with _questions_lock:
+                    _question_answer_seq += 1
+                    _question_answers[task_id] = {
+                        "task_id": task_id,
+                        "label": spec.get("label") or task_id,
+                        "question": spec.get("question", ""),
+                        "answer": "(no target person in view)",
+                        "elapsed": 0.0,
+                        "slot_type": spec.get("slot_type", "constant"),
+                        "timestamp": time.time(),
+                        "answer_id": f"vlm-{_question_answer_seq}",
+                        "target": spec.get("target", "scene"),
+                        "cadence_s": cadence_s,
+                        "interpret_as": spec.get("interpret_as", "general"),
+                        "target_bbox": target_meta.get("target_bbox"),
+                        "target_identity": target_meta.get("target_identity", ""),
+                    }
+                continue
+            question = str(spec.get("question", "")).strip()
+            if target_meta.get("target") == "nearest_person":
+                question = "Answer about the visible person in this crop only. " + question
             full_q = _build_question(question, inject_context=True)
             try:
-                answer, elapsed = run_vlm_vllm(frame_rgb, full_q, 128)
+                answer, elapsed = run_vlm_vllm(prepared_frame, full_q, 128)
                 with _questions_lock:
-                    _question_answers[question] = {
+                    _question_answer_seq += 1
+                    _question_answers[task_id] = {
+                        "task_id": task_id,
+                        "label": spec.get("label") or task_id,
+                        "question": spec.get("question", ""),
                         "answer": answer,
                         "elapsed": round(elapsed, 3),
-                        "slot_type": slot_type,
+                        "slot_type": spec.get("slot_type", "constant"),
                         "timestamp": time.time(),
+                        "answer_id": f"vlm-{_question_answer_seq}",
+                        "target": spec.get("target", "scene"),
+                        "cadence_s": cadence_s,
+                        "interpret_as": spec.get("interpret_as", "general"),
+                        "target_bbox": target_meta.get("target_bbox"),
+                        "target_identity": target_meta.get("target_identity", ""),
                     }
             except Exception as e:
                 with _questions_lock:
-                    _question_answers[question] = {
+                    _question_answer_seq += 1
+                    _question_answers[task_id] = {
+                        "task_id": task_id,
+                        "label": spec.get("label") or task_id,
+                        "question": spec.get("question", ""),
                         "answer": f"(error: {e})",
                         "elapsed": 0,
-                        "slot_type": slot_type,
+                        "slot_type": spec.get("slot_type", "constant"),
                         "timestamp": time.time(),
+                        "answer_id": f"vlm-{_question_answer_seq}",
+                        "target": spec.get("target", "scene"),
+                        "cadence_s": cadence_s,
+                        "interpret_as": spec.get("interpret_as", "general"),
+                        "target_bbox": target_meta.get("target_bbox"),
+                        "target_identity": target_meta.get("target_identity", ""),
                     }
 
 
@@ -1026,13 +1137,20 @@ def frame_jpeg():
 @app.route("/snapshot")
 def snapshot():
     """Return current visual state as structured JSON."""
+    global _snapshot_seq
     faces = []
+    face_timing = {}
     if ft is not None and ft.enabled:
-        faces = ft.get_faces()
+        with ft._lock:
+            faces = list(ft._faces)
+            face_timing = dict(ft._timing)
 
     persons = []
+    person_timing = {}
     if pt is not None and pt.enabled:
-        persons = pt.get_faces()
+        with pt._lock:
+            persons = list(pt._faces)
+            person_timing = dict(pt._timing)
 
     # Extra SAM3 detections (non-person)
     objects = []
@@ -1047,21 +1165,60 @@ def snapshot():
 
     vlm_answers = []
     with _questions_lock:
-        for question, data in _question_answers.items():
+        for data in _question_answers.values():
             vlm_answers.append({
-                "question": question,
+                "task_id": data.get("task_id", ""),
+                "label": data.get("label", ""),
+                "question": data.get("question", ""),
                 "answer": data["answer"],
                 "elapsed": data["elapsed"],
                 "slot_type": data["slot_type"],
                 "timestamp": data["timestamp"],
+                "answer_id": data.get("answer_id", ""),
+                "target": data.get("target", "scene"),
+                "cadence_s": data.get("cadence_s", 0.0),
+                "interpret_as": data.get("interpret_as", "general"),
+                "target_bbox": data.get("target_bbox"),
+                "target_identity": data.get("target_identity", ""),
             })
 
+    _snapshot_seq += 1
+    cycle_id = f"vision-cycle-{_snapshot_seq}"
     return json.dumps({
         "faces": faces,
         "persons": persons,
         "objects": objects,
         "vlm_answers": vlm_answers,
+        "cycle_id": cycle_id,
         "timestamp": time.time(),
+        "trace": {
+            "cycle_id": cycle_id,
+            "face_tracking": {
+                "timing": face_timing,
+                "faces": faces,
+            },
+            "sam3_detection": {
+                "timing": {
+                    "sam3": person_timing.get("sam3", 0),
+                    "total": person_timing.get("total", 0),
+                    "fps": person_timing.get("fps", 0),
+                    "prompts": person_timing.get("prompts", ""),
+                    "tracking": person_timing.get("tracking", ""),
+                },
+                "persons": persons,
+                "objects": objects,
+            },
+            "reid_tracking": {
+                "timing": {
+                    "reid": person_timing.get("reid", 0),
+                    "total": person_timing.get("total", 0),
+                    "fps": person_timing.get("fps", 0),
+                    "tracking": person_timing.get("tracking", ""),
+                },
+                "persons": persons,
+            },
+            "vlm_answers": vlm_answers,
+        },
     })
 
 
@@ -1071,10 +1228,20 @@ def set_questions():
     data = request.get_json()
     with _questions_lock:
         global _constant_questions, _ephemeral_questions
-        _constant_questions = data.get("constant", [])
-        _ephemeral_questions = data.get("ephemeral", [])
+        _constant_questions = [
+            _normalize_question_spec(item, slot_type="constant", index=index)
+            for index, item in enumerate(data.get("constant", []), start=1)
+        ]
+        _ephemeral_questions = [
+            _normalize_question_spec(item, slot_type="ephemeral", index=index)
+            for index, item in enumerate(data.get("ephemeral", []), start=1)
+        ]
         # Clear stale answers for removed questions
-        active = set(_constant_questions + _ephemeral_questions)
+        active = {
+            str(item.get("task_id", "")).strip()
+            for item in (_constant_questions + _ephemeral_questions)
+            if str(item.get("task_id", "")).strip()
+        }
         stale = [k for k in _question_answers if k not in active]
         for k in stale:
             del _question_answers[k]
