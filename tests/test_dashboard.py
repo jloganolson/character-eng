@@ -172,6 +172,34 @@ class TestDashboardServer:
         assert 'data-panel-id="vision"' in body
         assert 'data-panel-id="plan"' in body
 
+    def test_root_accepts_archive_query(self, server):
+        _, _, port, _, _ = server
+        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/?archive=sess-test")
+        body = resp.read().decode()
+        assert "Character Dashboard" in body
+        assert resp.status == 200
+
+    def test_root_redirects_to_default_archive(self):
+        collector = DashboardEventCollector()
+        input_queue = queue.Queue()
+        thread, port = start_dashboard(
+            collector,
+            input_queue,
+            port=0,
+            default_archive="sess-test",
+        )
+        for _ in range(20):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/state")
+                break
+            except Exception:
+                time.sleep(0.05)
+
+        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/")
+        assert resp.geturl().endswith("/?archive=sess-test")
+        assert resp.status == 200
+        collector.shutdown()
+
     def test_state_returns_json(self, server):
         c, _, port, _, _ = server
         c.push("test_event", {"key": "value"})

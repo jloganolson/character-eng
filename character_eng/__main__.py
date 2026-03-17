@@ -4411,6 +4411,7 @@ def main():
     global _collector, _dashboard_input_queue
     dashboard_enabled = cfg.dashboard.enabled and not args.no_dashboard and not args.smoke
     dashboard_default_character = args.character or "greg"
+    dashboard_default_archive = os.environ.get("DASHBOARD_DEFAULT_ARCHIVE", "").strip()
     if dashboard_enabled:
         import queue as _queue
         from character_eng.dashboard.events import DashboardEventCollector
@@ -4432,6 +4433,7 @@ def main():
                 history_api=_history_service,
                 history_status_provider=_history_status_payload,
                 default_character=dashboard_default_character,
+                default_archive=dashboard_default_archive,
                 prompt_asset_open_target=cfg.dashboard.prompt_asset_open_target,
                 prompt_asset_vscode_cmd=cfg.dashboard.prompt_asset_vscode_cmd,
             )

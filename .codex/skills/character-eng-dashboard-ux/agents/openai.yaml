@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dashboard UX"
+  short_description: "Offline Character Engine dashboard UX loop"
+  default_prompt: "Use $character-eng-dashboard-ux to iterate on the Character Engine dashboard against the offline archive fixture."

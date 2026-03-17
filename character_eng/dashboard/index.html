@@ -2002,6 +2002,8 @@
   let saveCompleteAutoHideDeadline = 0;
   let pendingFinalizeAction = "";
   let pendingStopReviewPause = false;
+  const bootArchiveRef = new URLSearchParams(window.location.search).get("archive") || "";
+  let bootArchiveLoadAttempted = false;
   let archiveBrowseRef = "";
   let archiveBrowseMeta = null;
   let archiveBrowseSeqFloor = 0;
@@ -2717,6 +2719,18 @@
       renderHistoryArchives(await response.json());
     } catch (err) {
       renderHistoryArchives([]);
+    }
+  }
+
+  async function maybeLoadBootArchive() {
+    if (!bootArchiveRef || bootArchiveLoadAttempted || archiveBrowseRef) return;
+    bootArchiveLoadAttempted = true;
+    try {
+      await loadArchiveTimeline(bootArchiveRef);
+      annotationStatus.textContent = `Loaded offline archive: ${bootArchiveRef}`;
+    } catch (error) {
+      bootArchiveLoadAttempted = false;
+      archiveLoadStatus.textContent = `Offline archive load failed: ${error.message || error}`;
     }
   }
 
@@ -4092,7 +4106,9 @@
     const modelReady = modelState === "ready" || modelState === "off";
     const voiceReady = voiceState === "ready" || voiceState === "off";
     const visionReady = visionServiceState === "ready" || visionServiceState === "off";
-    const bootReady = archiveOnlyRuntime
+    const bootReady = archiveBrowseRef
+      ? true
+      : archiveOnlyRuntime
       ? runtimeStateSeen
       : runtimeStateSeen && (sessionSavePending || sessionStopped || sessionSeen || restartPending) && visionReady && voiceReady && modelReady && !modelPollError;
     document.body.classList.toggle("booting", !bootReady);
@@ -4435,18 +4451,23 @@
     const linkEl = document.getElementById("vision-service-link");
     const source = currentVisionSourceKind();
     const missingVisionSource = !source;
-    const health = missingVisionSource ? "missing source" : (modelPollError ? "unreachable" : (visionService.health ? "ok" : "unknown"));
-    const effectiveState = missingVisionSource ? "error" : (modelPollError ? "error" : (visionService.state || "stopped"));
+    const archiveVisionMode = !!(archiveBrowseRef || archiveOnlyRuntime || (historyState.playback?.active && playbackVisionFrame?.sessionId));
+    const health = missingVisionSource
+      ? "missing source"
+      : (archiveVisionMode ? "archive" : (modelPollError ? "unreachable" : (visionService.health ? "ok" : "unknown")));
+    const effectiveState = missingVisionSource
+      ? "error"
+      : (archiveVisionMode ? "ready" : (modelPollError ? "error" : (visionService.state || "stopped")));
     setSidebarPanelVisibility("vision", true, effectiveState);
     statusEl.innerHTML = [
       `service: <b style="color:${statusColor(effectiveState)}">${esc(effectiveState)}</b>`,
-      `health: <b style="color:${statusColor(missingVisionSource || modelPollError ? "error" : (visionService.health ? "ready" : "waiting"))}">${esc(health)}</b>`,
+      `health: <b style="color:${statusColor(missingVisionSource ? "error" : (archiveVisionMode ? "ready" : (modelPollError ? "error" : (visionService.health ? "ready" : "waiting"))))}">${esc(health)}</b>`,
       `source: <b>${esc(source || "missing")}</b>`,
       archiveBrowseRef ? `archive: <b>${esc(archiveBrowseMeta?.title || archiveBrowseRef)}</b>` : "",
       visionService.url && !archiveBrowseRef ? `url: <b>${esc(visionService.url)}</b>` : "",
       visionService.mockReplay ? `mock: <b>${esc(visionService.mockReplay)}</b>` : "",
       missingVisionSource ? `error: <b style="color:var(--error)">No live vision feed or archive source is available.</b>` : "",
-      modelPollError ? `error: <b style="color:var(--error)">${esc(modelPollError)}</b>` : "",
+      modelPollError && !archiveVisionMode ? `error: <b style="color:var(--error)">${esc(modelPollError)}</b>` : "",
     ].filter(Boolean).join("<br>");
     if (visionService.url && !archiveBrowseRef) {
       linkEl.href = visionService.url;
@@ -4463,6 +4484,11 @@
 
   function renderVisionModelStatus() {
     const el = document.getElementById("vision-model-status");
+    if (archiveOnlyRuntime || archiveBrowseRef) {
+      el.innerHTML = '<div style="color:var(--text-dim);font-size:0.85em;">Archive browsing does not poll live vision models.</div>';
+      renderVisionServiceStatus();
+      return;
+    }
     if (!visionService.url) {
       el.innerHTML = '<div style="color:var(--text-dim);font-size:0.85em;">No vision service configured.</div>';
       renderVisionServiceStatus();
@@ -4495,7 +4521,7 @@
   }
 
   async function pollVisionModelStatus() {
-    if (!visionService.url) {
+    if (archiveOnlyRuntime || archiveBrowseRef || !visionService.url) {
       visionModels = null;
       visionMemory = null;
       modelPollError = "";
@@ -6932,7 +6958,12 @@
       renderBootStatus();
     },
 
-    runtime_controls(data, rawEvent) {
+    runtime_controls(data, rawEvent, options = {}) {
+      if (options.archive) {
+        recordEvent("runtime_controls", data, rawEvent);
+        renderBootStatus();
+        return;
+      }
       runtimeControls = {...runtimeControls, ...(data.controls || {})};
       runtimeStateSeen = true;
       archiveOnlyRuntime = !!data.archive_only;
@@ -7095,7 +7126,7 @@
       return;
     }
     const handler = handlers[event.type];
-    if (handler) handler(event.data, event);
+    if (handler) handler(event.data, event, options);
   }
 
   function refreshState() {
@@ -7554,7 +7585,7 @@
   renderArchiveBrowseState();
   refreshState();
   refreshHistoryState();
-  refreshHistoryArchives();
+  refreshHistoryArchives().then(() => maybeLoadBootArchive());
   refreshPromptAssets();
   pollVisionModelStatus();
   renderRuntimeControlButtons();

@@ -164,6 +164,50 @@ def dashboard_server():
         "session_id": "sess-archive-playback",
         "stage": "engaged",
     }, timestamp=archived_start + 0.0)
+    archived.record_event(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": True,
+                "filler": True,
+                "guardrails": False,
+                "thinker": True,
+                "director": True,
+                "expression": True,
+                "beat_guidance": True,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": True,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "http://127.0.0.1:7860",
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+            "archive_only": False,
+            "archive_only_reason": "",
+        },
+        timestamp=archived_start + 0.1,
+    )
     archived.record_event("user_transcript_final", {"text": "oh hey man"}, timestamp=archived_start + 0.4)
     archived.record_event("turn_start", {"input_text": "oh hey man", "input_type": "send"}, timestamp=archived_start + 0.45)
     archived.record_event("response_done", {"full_text": "Hey, what time is it to you?"}, timestamp=archived_start + 1.1)
@@ -1595,6 +1639,62 @@ def test_archive_load_shows_timeline_and_scrubbable_media_player(
     page.wait_for_timeout(200)
     selected_time = page.locator("#archive-media-player").evaluate("(node) => node.currentTime")
     assert selected_time >= 0.9
+
+
+def test_archive_query_autoload_hides_boot_overlay(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+            "archive_only": True,
+            "archive_only_reason": "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.",
+        },
+    )
+    page = browser_page
+    page.goto(f"{dashboard_url}?archive=sess-archive-playback")
+
+    expect(page.locator("#archive-load-button")).to_have_text("Return To Live")
+    expect(page.locator("#archive-load-status")).to_contain_text("Browsing archive:")
+    expect(page.locator(".stream-card").filter(has_text="Hey, what time is it to you?")).to_have_count(1)
+    expect(page.locator("#runtime-status")).to_contain_text("mode: archive only")
+    expect(page.locator("#runtime-status")).to_contain_text("voice: off")
+    expect(page.locator("#vision-model-status")).to_contain_text("Archive browsing does not poll live vision models.")
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
+    expect(page.locator("#boot-overlay")).not_to_be_visible()
 
 
 def test_rewind_keeps_new_active_path_visible_and_greys_out_superseded_events(

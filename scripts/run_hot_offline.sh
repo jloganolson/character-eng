@@ -8,6 +8,7 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT/.uv-cache}"
 
 CHARACTER="${CHARACTER:-greg}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-7862}"
+DEFAULT_ARCHIVE="${DASHBOARD_DEFAULT_ARCHIVE:-c206a6db}"
 
 log() {
   printf '==> %s\n' "$*"
@@ -57,5 +58,9 @@ kill_matching 'uv run -m character_eng' 'character-eng app'
 kill_matching 'python[^ ]* -m character_eng' 'character-eng app'
 kill_port "$DASHBOARD_PORT" 'dashboard/bridge'
 
-log "Starting archive-only dashboard for ${CHARACTER}"
-exec uv run -m character_eng --character "$CHARACTER" --archive-only "$@"
+if [[ -n "$DEFAULT_ARCHIVE" ]]; then
+  log "Starting archive-only dashboard for ${CHARACTER} with offline archive ${DEFAULT_ARCHIVE}"
+else
+  log "Starting archive-only dashboard for ${CHARACTER}"
+fi
+exec env DASHBOARD_DEFAULT_ARCHIVE="$DEFAULT_ARCHIVE" uv run -m character_eng --character "$CHARACTER" --archive-only "$@"
