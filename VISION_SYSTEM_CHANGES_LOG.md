@@ -218,3 +218,22 @@ Validation:
   - passed
 - `uv run pytest tests/test_dashboard_playwright.py -k 'vision_raw_lane_is_explicit_and_shows_placeholder_or_events or vision_state_event_defaults_snippet_mode or runtime_panel_interactions_in_browser'`
   - passed
+
+### Vision raw dot view
+
+- Reworked the `vision raw` lane to use a dense dot plot instead of stacked cards.
+- Raw event types now render in fixed bands:
+  - `snapshot`
+  - `insight`
+  - `sam3`
+  - `reid`
+  - `vlm`
+- Dots are color-coded by event type and still support:
+  - click to open the full inspector
+  - hover preview card with event type / label / detail
+- This keeps the lane readable at ~5 Hz raw update rates without losing inspectability.
+
+Validation:
+
+- `uv run pytest tests/test_dashboard_playwright.py -k 'vision_raw_lane_is_explicit_and_shows_placeholder_or_events or vision_state_event_defaults_snippet_mode or runtime_panel_interactions_in_browser'`
+  - passed

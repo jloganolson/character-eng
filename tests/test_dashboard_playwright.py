@@ -1242,7 +1242,11 @@ def test_vision_raw_lane_is_explicit_and_shows_placeholder_or_events(
         },
     )
 
-    expect(page.locator("[data-stream-lane='vision_raw']")).to_contain_text("sam3")
+    raw_sam3_dot = page.locator("[data-stream-lane='vision_raw'] .stream-dot[data-event-type='sam3_detection']").first
+    expect(raw_sam3_dot).to_be_visible()
+    raw_sam3_dot.dispatch_event("mouseenter", {"clientX": 320, "clientY": 220})
+    expect(page.locator("#stream-hover-card")).to_have_class(re.compile(r"\bactive\b"))
+    expect(page.locator("#stream-hover-card")).to_contain_text("sam3_detection")
     expect(page.locator("[data-stream-lane='vision']")).to_contain_text("vision llm")
 
 

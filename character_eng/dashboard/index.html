@@ -803,6 +803,97 @@
   .lane-vision .stream-card { border-left: 3px solid var(--stream-vision); }
   .lane-vision_raw .stream-card { border-left: 3px solid var(--stream-vision-raw); }
   .lane-other .stream-card { border-left: 3px solid var(--stream-other); }
+  .vision-raw-track {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+  .vision-raw-row-label {
+    position: absolute;
+    left: 8px;
+    font-size: 0.58em;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    opacity: 0.72;
+    pointer-events: none;
+  }
+  .stream-dot {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+    background: var(--stream-vision-raw);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg) 65%, transparent);
+    padding: 0;
+    cursor: pointer;
+    transform: translate(-50%, -50%);
+    transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+  }
+  .stream-dot:hover {
+    transform: translate(-50%, -50%) scale(1.25);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--bg) 35%, transparent);
+  }
+  .stream-dot.selected {
+    box-shadow: 0 0 0 2px var(--text), 0 0 0 4px color-mix(in srgb, var(--stream-vision-raw) 55%, transparent);
+  }
+  .stream-dot.context {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--stream-vision) 72%, transparent);
+  }
+  .stream-dot.superseded {
+    opacity: 0.45;
+  }
+  .stream-dot.type-vision-snapshot-read {
+    background: color-mix(in srgb, var(--stream-vision-raw) 88%, white 12%);
+  }
+  .stream-dot.type-face-tracking {
+    background: #7dd3fc;
+  }
+  .stream-dot.type-sam3-detection {
+    background: #34d399;
+  }
+  .stream-dot.type-reid-track {
+    background: #f59e0b;
+  }
+  .stream-dot.type-vlm-answer {
+    background: #60a5fa;
+  }
+  .stream-dot-preview {
+    position: fixed;
+    z-index: 60;
+    max-width: 280px;
+    padding: 0.55em 0.65em;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-alt) 92%, var(--bg) 8%);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity 100ms ease, transform 100ms ease;
+  }
+  .stream-dot-preview.active {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .stream-dot-preview-type {
+    font-size: 0.66em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 0.28em;
+  }
+  .stream-dot-preview-label {
+    font-size: 0.86em;
+    line-height: 1.35;
+  }
+  .stream-dot-preview-detail {
+    margin-top: 0.24em;
+    font-size: 0.74em;
+    color: var(--text-dim);
+    line-height: 1.35;
+  }
   #stream-inspector {
     display: grid;
     grid-template-rows: auto auto 1fr;
@@ -1452,6 +1543,7 @@
           <div id="stream-playhead" aria-hidden="true"></div>
           <div id="stream-empty" class="stream-empty">Waiting for debug timeline events. The dashboard will populate as the session starts.</div>
           <div id="stream-lanes"></div>
+          <div id="stream-hover-card" class="stream-dot-preview" aria-hidden="true"></div>
         </div>
         <div class="pane-resizer" id="inspector-resizer" role="separator" aria-label="Resize inspector"></div>
 
@@ -1812,6 +1904,7 @@
   const streamLanes = document.getElementById("stream-lanes");
   const streamEmpty = document.getElementById("stream-empty");
   const laneToggleGrid = document.getElementById("lane-toggle-grid");
+  const streamHoverCard = document.getElementById("stream-hover-card");
   const runtimeToggleButton = document.getElementById("runtime-toggle");
   const runtimeStopButton = document.getElementById("runtime-stop");
   const runtimeRestartButton = document.getElementById("runtime-restart");
@@ -5865,12 +5958,12 @@
       });
     }
 
-    document.querySelectorAll(".stream-card").forEach((card) => {
+    document.querySelectorAll(".stream-card, .stream-dot").forEach((card) => {
       card.classList.toggle("selected", card.dataset.eventKey === key);
       card.classList.remove("context");
     });
     related.forEach((relatedKey) => {
-      const card = document.querySelector(`.stream-card[data-event-key="${relatedKey}"]`);
+      const card = document.querySelector(`.stream-card[data-event-key="${relatedKey}"], .stream-dot[data-event-key="${relatedKey}"]`);
       if (card) card.classList.add("context");
     });
     if (archiveBrowseRef && archivePlaybackMediaAvailable() && options.seekMedia !== false) {
@@ -5910,6 +6003,62 @@
     if (event.type === "post_response" || event.type === "world_update") return 84;
     if (event.detail) return 72;
     return 58;
+  }
+
+  const VISION_RAW_ROW_ORDER = [
+    ["vision_snapshot_read", "snapshot"],
+    ["face_tracking", "insight"],
+    ["sam3_detection", "sam3"],
+    ["reid_track", "reid"],
+    ["vlm_answer", "vlm"],
+  ];
+
+  function visionRawRowIndex(type) {
+    const idx = VISION_RAW_ROW_ORDER.findIndex(([eventType]) => eventType === type);
+    return idx >= 0 ? idx : VISION_RAW_ROW_ORDER.length;
+  }
+
+  function renderVisionRawDot(event, left) {
+    const rowIndex = visionRawRowIndex(event.type);
+    const top = 14 + rowIndex * 14;
+    const title = [event.type, event.label, event.detail].filter(Boolean).join(" · ");
+    return `<button class="stream-dot type-${esc(typeClass(event.type))}${event.superseded ? " superseded" : ""}" type="button" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" title="${esc(title)}" style="left:${left}px;top:${top}px;"></button>`;
+  }
+
+  function renderVisionRawLegend(baseWidth) {
+    return VISION_RAW_ROW_ORDER.map(([, label], index) => {
+      const top = 8 + index * 14;
+      return `<div class="vision-raw-row-label" style="top:${top}px;">${esc(label)}</div>`;
+    }).join("");
+  }
+
+  function showStreamHoverCard(event, pointerEvent) {
+    if (!streamHoverCard || !event || !pointerEvent) return;
+    streamHoverCard.innerHTML = `
+      <div class="stream-dot-preview-type">${esc(event.type)}</div>
+      <div class="stream-dot-preview-label">${esc(event.label || event.type)}</div>
+      ${event.detail ? `<div class="stream-dot-preview-detail">${esc(event.detail)}</div>` : ""}
+    `;
+    const margin = 14;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    streamHoverCard.style.left = "0px";
+    streamHoverCard.style.top = "0px";
+    streamHoverCard.classList.add("active");
+    streamHoverCard.setAttribute("aria-hidden", "false");
+    const bounds = streamHoverCard.getBoundingClientRect();
+    let left = pointerEvent.clientX + margin;
+    let top = pointerEvent.clientY + margin;
+    if (left + bounds.width > viewportWidth - margin) left = pointerEvent.clientX - bounds.width - margin;
+    if (top + bounds.height > viewportHeight - margin) top = pointerEvent.clientY - bounds.height - margin;
+    streamHoverCard.style.left = `${Math.max(margin, left)}px`;
+    streamHoverCard.style.top = `${Math.max(margin, top)}px`;
+  }
+
+  function hideStreamHoverCard() {
+    if (!streamHoverCard) return;
+    streamHoverCard.classList.remove("active");
+    streamHoverCard.setAttribute("aria-hidden", "true");
   }
 
   function renderReplyMarkers(event) {
@@ -6160,6 +6309,7 @@
   }
 
   function renderStream() {
+    hideStreamHoverCard();
     renderLaneToggles();
 
     if (!streamEvents.length) {
@@ -6194,6 +6344,11 @@
       let trackHeight = compactMode ? 34 : 96;
       laneEvents.forEach((event) => {
         const left = 20 + relativeTime(event.timestamp) * scale;
+        if (lane === "vision_raw") {
+          trackHeight = Math.max(trackHeight, 84);
+          cards.push(renderVisionRawDot(event, left));
+          return;
+        }
         const width = cardWidth(event);
         const height = cardHeight(event);
         let row = 0;
@@ -6222,24 +6377,35 @@
         cards.push(
           `<article class="stream-card compact" data-event-key="" data-event-type="vision_raw_placeholder" style="left:20px;top:${compactMode ? 8 : 12}px;width:${Math.min(baseWidth - 40, compactMode ? 280 : 360)}px;height:${compactMode ? 24 : 46}px;pointer-events:none;opacity:0.72;">
             <div class="stream-card-label">No raw vision loop events captured yet</div>
-            ${compactMode ? "" : '<div class="stream-card-detail">Expected: SAM3 / VLM / trigger / state-update events alongside vision passes.</div>'}
+            ${compactMode ? "" : '<div class="stream-card-detail">Expected: SAM3 / insight / reid / VLM loop events alongside promoted vision conclusions.</div>'}
           </article>`
         );
       }
+
+      const innerHtml = lane === "vision_raw" && laneEvents.length
+        ? `<div class="vision-raw-track" style="width:${baseWidth}px;height:${trackHeight}px;">${renderVisionRawLegend(baseWidth)}${cards.join("")}</div>`
+        : cards.join("");
 
       laneHtml.push(
         `<section class="stream-lane lane-${esc(lane)}${hidden ? " hidden" : ""}" data-stream-lane="${esc(lane)}">
           <div class="stream-lane-label">${esc(laneDisplayName(lane))}</div>
           <div class="lane-track">
-            <div class="lane-track-inner" style="width:${baseWidth}px;height:${trackHeight}px;">${cards.join("")}</div>
+            <div class="lane-track-inner" style="width:${baseWidth}px;height:${trackHeight}px;">${innerHtml}</div>
           </div>
         </section>`
       );
     });
 
     streamLanes.innerHTML = laneHtml.join("");
-    streamLanes.querySelectorAll(".stream-card").forEach((card) => {
+    streamLanes.querySelectorAll(".stream-card, .stream-dot").forEach((card) => {
       card.addEventListener("click", () => selectEvent(card.dataset.eventKey));
+    });
+    streamLanes.querySelectorAll(".stream-dot").forEach((dot) => {
+      const event = streamEventByKey.get(dot.dataset.eventKey);
+      if (!event) return;
+      dot.addEventListener("mouseenter", (pointerEvent) => showStreamHoverCard(event, pointerEvent));
+      dot.addEventListener("mousemove", (pointerEvent) => showStreamHoverCard(event, pointerEvent));
+      dot.addEventListener("mouseleave", hideStreamHoverCard);
     });
     if (selectedStreamKey && streamEventByKey.has(selectedStreamKey)) {
       selectEvent(selectedStreamKey, {seekMedia: false});
@@ -6981,7 +7147,7 @@
   });
   streamViewport.addEventListener("mousedown", (event) => {
     if (event.button !== 0) return;
-    if (event.target.closest(".stream-card")) return;
+    if (event.target.closest(".stream-card") || event.target.closest(".stream-dot")) return;
     disableFollowLive();
     isTimelineDragging = true;
     dragStartX = event.clientX;
@@ -7066,7 +7232,7 @@
   });
   streamViewport.addEventListener("pointerdown", (event) => {
     if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
-    if (event.target.closest(".stream-card")) return;
+    if (event.target.closest(".stream-card") || event.target.closest(".stream-dot")) return;
     archiveMediaScrubbing = true;
     seekArchiveMediaFromPointer(event.clientX);
     event.preventDefault();
