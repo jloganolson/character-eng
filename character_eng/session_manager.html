@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Character Session Manager</title>
+<style>
+  :root {
+    --bg: #16181d;
+    --panel: #23262d;
+    --panel-alt: #1d2026;
+    --border: #343844;
+    --text: #edf1f7;
+    --dim: #a8b0bf;
+    --accent: #86b7ff;
+    --good: #72d89b;
+    --bad: #ff8b8b;
+    --warn: #f3c86b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    background:
+      radial-gradient(circle at top left, rgba(134,183,255,0.16), transparent 30%),
+      linear-gradient(180deg, #111318, var(--bg));
+    color: var(--text);
+    min-height: 100vh;
+  }
+  main {
+    width: min(1100px, calc(100vw - 32px));
+    margin: 32px auto;
+    display: grid;
+    gap: 18px;
+  }
+  .hero, .panel {
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: rgba(35, 38, 45, 0.92);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.28);
+  }
+  .hero {
+    padding: 24px;
+    display: grid;
+    gap: 8px;
+  }
+  .hero h1 {
+    margin: 0;
+    font-size: clamp(1.5rem, 2.5vw, 2.3rem);
+  }
+  .hero p {
+    margin: 0;
+    color: var(--dim);
+    line-height: 1.5;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: minmax(280px, 360px) 1fr;
+    gap: 18px;
+  }
+  .panel {
+    padding: 18px;
+  }
+  .panel h2 {
+    margin: 0 0 12px;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--dim);
+  }
+  form {
+    display: grid;
+    gap: 12px;
+  }
+  label {
+    display: grid;
+    gap: 6px;
+    font-size: 0.82rem;
+    color: var(--dim);
+  }
+  input, select, button {
+    font: inherit;
+  }
+  input[type="text"], select {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel-alt);
+    color: var(--text);
+    padding: 10px 12px;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text);
+  }
+  .actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  button {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 10px 14px;
+    cursor: pointer;
+    background: var(--panel-alt);
+    color: var(--text);
+  }
+  button.primary {
+    background: linear-gradient(135deg, var(--accent), #6fe3c1);
+    color: #0e1320;
+    border-color: transparent;
+    font-weight: 700;
+  }
+  button.danger {
+    color: var(--bad);
+  }
+  .status {
+    min-height: 1.2em;
+    color: var(--dim);
+    font-size: 0.82rem;
+  }
+  .list {
+    display: grid;
+    gap: 12px;
+  }
+  .session-card {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: rgba(29, 32, 38, 0.92);
+    padding: 14px;
+    display: grid;
+    gap: 10px;
+  }
+  .session-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .session-id {
+    font-size: 1rem;
+    font-weight: 700;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--dim);
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .badge.ready { color: var(--good); }
+  .badge.failed, .badge.timeout, .badge.exited { color: var(--bad); }
+  .session-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px 14px;
+    font-size: 0.8rem;
+    color: var(--dim);
+  }
+  .session-meta strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .session-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .empty {
+    border: 1px dashed var(--border);
+    border-radius: 14px;
+    padding: 18px;
+    color: var(--dim);
+    text-align: center;
+  }
+  @media (max-width: 900px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+</head>
+<body>
+<main>
+  <section class="hero">
+    <h1>Character Session Manager</h1>
+    <p>Create one isolated browser runtime per user. Each session gets its own bridge port, tokenized URL, and process lifecycle.</p>
+  </section>
+
+  <section class="grid">
+    <section class="panel">
+      <h2>New Session</h2>
+      <form id="create-form">
+        <label>
+          Admin Token
+          <input id="admin-token-input" type="text" value="" autocomplete="off" placeholder="optional bearer token">
+        </label>
+        <label>
+          Character
+          <input id="character-input" type="text" value="greg" autocomplete="off">
+        </label>
+        <label class="check">
+          <input id="vision-input" type="checkbox" checked>
+          Start with vision enabled
+        </label>
+        <div class="actions">
+          <button class="primary" id="create-button" type="submit">Create Session</button>
+          <button id="refresh-button" type="button">Refresh</button>
+        </div>
+      </form>
+      <div class="status" id="status-line">Manager idle.</div>
+    </section>
+
+    <section class="panel">
+      <h2>Active Sessions</h2>
+      <div class="list" id="session-list"></div>
+    </section>
+  </section>
+</main>
+
+<script>
+(() => {
+  const statusLine = document.getElementById("status-line");
+  const sessionList = document.getElementById("session-list");
+  const createForm = document.getElementById("create-form");
+  const adminTokenInput = document.getElementById("admin-token-input");
+  const characterInput = document.getElementById("character-input");
+  const visionInput = document.getElementById("vision-input");
+  const refreshButton = document.getElementById("refresh-button");
+  const params = new URLSearchParams(window.location.search);
+  const storageKey = "character-eng-manager-admin-token";
+
+  function readAdminToken() {
+    return adminTokenInput.value.trim();
+  }
+
+  function rememberAdminToken() {
+    const token = readAdminToken();
+    if (token) {
+      localStorage.setItem(storageKey, token);
+    } else {
+      localStorage.removeItem(storageKey);
+    }
+  }
+
+  function syncAdminToken() {
+    const queryToken = params.get("token") || params.get("admin_token") || "";
+    const storedToken = localStorage.getItem(storageKey) || "";
+    adminTokenInput.value = queryToken || storedToken;
+    rememberAdminToken();
+  }
+
+  async function jsonFetch(url, options = {}) {
+    const headers = new Headers(options.headers || {});
+    const adminToken = readAdminToken();
+    if (adminToken) {
+      headers.set("Authorization", `Bearer ${adminToken}`);
+    }
+    const response = await fetch(url, {
+      ...options,
+      headers,
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.error || `request failed (${response.status})`);
+    }
+    return payload;
+  }
+
+  function fmtAge(ts) {
+    if (!ts) return "--";
+    const seconds = Math.max(0, Math.round(Date.now() / 1000 - Number(ts)));
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const rem = seconds % 60;
+    return `${minutes}m ${rem}s`;
+  }
+
+  function renderSessions(items) {
+    sessionList.innerHTML = "";
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "No live sessions yet.";
+      sessionList.appendChild(empty);
+      return;
+    }
+    items.forEach((item) => {
+      const card = document.createElement("article");
+      card.className = "session-card";
+      const visionLabel = item.vision_enabled ? "on" : "off";
+      const age = fmtAge(item.created_at);
+      const active = fmtAge(item.last_activity_at || item.created_at);
+      card.innerHTML = `
+        <div class="session-head">
+          <div>
+            <div class="session-id">${item.session_id}</div>
+            <div style="color:var(--dim);font-size:0.82rem;">${item.character}</div>
+          </div>
+          <span class="badge ${item.status}">${item.status}</span>
+        </div>
+        <div class="session-meta">
+          <div><strong>Bridge:</strong> ${item.bridge_port}</div>
+          <div><strong>Vision:</strong> ${visionLabel}${item.vision_port ? ` (${item.vision_port})` : ""}</div>
+          <div><strong>Created:</strong> ${age} ago</div>
+          <div><strong>Activity:</strong> ${active} ago</div>
+        </div>
+        <div style="font-size:0.78rem;color:var(--dim);word-break:break-all;"><strong>URL:</strong> <span>${item.url}</span></div>
+        <div class="session-actions">
+          <button data-open="${item.url}">Open</button>
+          <button data-copy="${item.url}">Copy URL</button>
+          <button class="danger" data-stop="${item.session_id}">Stop</button>
+        </div>
+      `;
+      sessionList.appendChild(card);
+    });
+  }
+
+  async function refreshSessions(message = "") {
+    try {
+      rememberAdminToken();
+      const payload = await jsonFetch("/sessions");
+      renderSessions(payload.sessions || []);
+      statusLine.textContent = message || `Loaded ${payload.sessions.length} session(s).`;
+    } catch (error) {
+      statusLine.textContent = `Refresh failed: ${error.message || error}`;
+    }
+  }
+
+  createForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    statusLine.textContent = "Creating session...";
+    try {
+      const payload = await jsonFetch("/sessions", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          character: characterInput.value.trim() || "greg",
+          vision: visionInput.checked,
+        }),
+      });
+      statusLine.textContent = `Created session ${payload.session.session_id}.`;
+      await refreshSessions();
+    } catch (error) {
+      statusLine.textContent = `Create failed: ${error.message || error}`;
+    }
+  });
+
+  adminTokenInput.addEventListener("change", () => refreshSessions());
+  refreshButton.addEventListener("click", () => refreshSessions());
+
+  sessionList.addEventListener("click", async (event) => {
+    const openButton = event.target.closest("[data-open]");
+    if (openButton) {
+      window.open(openButton.dataset.open, "_blank", "noopener");
+      return;
+    }
+    const copyButton = event.target.closest("[data-copy]");
+    if (copyButton) {
+      try {
+        await navigator.clipboard.writeText(copyButton.dataset.copy || "");
+        statusLine.textContent = "Copied session URL.";
+      } catch (error) {
+        statusLine.textContent = `Copy failed: ${error.message || error}`;
+      }
+      return;
+    }
+    const stopButton = event.target.closest("[data-stop]");
+    if (stopButton) {
+      statusLine.textContent = `Stopping ${stopButton.dataset.stop}...`;
+      try {
+        await jsonFetch(`/sessions/${stopButton.dataset.stop}/stop`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: "{}",
+        });
+        await refreshSessions(`Stopped ${stopButton.dataset.stop}.`);
+      } catch (error) {
+        statusLine.textContent = `Stop failed: ${error.message || error}`;
+      }
+    }
+  });
+
+  syncAdminToken();
+  refreshSessions();
+  setInterval(() => refreshSessions(), 5000);
+})();
+</script>
+</body>
+</html>

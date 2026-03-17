@@ -100,9 +100,9 @@ MODELS = {
 # Two-tier routing: CHAT_MODEL for streaming dialogue, MICRO_MODEL for
 # parallel microservices (script_check, thought, director, beat, reconcile,
 # expression, condition). Both use Groq for speed.
-CHAT_MODEL = "kimi-k2"          # K2 — streaming chat (15/16 roles, 196ms TTFT)
-MICRO_MODEL = "groq-llama-8b"   # 8B — microservices (14/16 roles, ~300ms structured JSON)
-BIG_MODEL = "groq-llama"        # kept for API compat (no longer required)
+CHAT_MODEL = os.environ.get("CHARACTER_ENG_CHAT_MODEL", "kimi-k2")          # K2 — streaming chat (15/16 roles, 196ms TTFT)
+MICRO_MODEL = os.environ.get("CHARACTER_ENG_MICRO_MODEL", "groq-llama-8b")   # 8B — microservices (14/16 roles, ~300ms structured JSON)
+BIG_MODEL = os.environ.get("CHARACTER_ENG_BIG_MODEL", "groq-llama")        # kept for API compat (no longer required)
 
 # Legacy alias used by QA scripts
 DEFAULT_MODEL = CHAT_MODEL

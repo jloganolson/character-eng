@@ -1,0 +1,75 @@
+# Deployment Notes
+
+This repo now has two remote-facing layers:
+
+- `character_eng.session_manager`: spawns one browser-mode runtime per user session
+- `character_eng.bridge`: serves the dashboard plus browser mic/camera/audio endpoints for a single runtime
+
+## Container modes
+
+The Docker image uses `deploy/container_entrypoint.sh` and supports:
+
+- `MODE=session-manager`
+  - Starts the session manager API on `MANAGER_PORT` (default `7870`)
+  - Intended control-plane entrypoint for shared remote use
+- `MODE=app`
+  - Starts a single browser-mode runtime directly
+- `MODE=heavy`
+  - Starts the heavy local GPU services (`run_heavy.sh`)
+- `MODE=full`
+  - Starts heavy services, then the session manager
+
+## Useful env vars
+
+- `PUBLIC_HOST`
+  - Host placed into returned session URLs on the single public manager port
+- `MANAGER_PORT`
+  - Port for the session manager API
+- `CHARACTER_ENG_MANAGER_TOKEN`
+  - Optional bearer token for the manager API
+- `CHARACTER`
+  - Default character when `MODE=app`
+- `VISION=1`
+  - Enable vision when `MODE=app`
+- `START_PAUSED=1`
+  - Start runtime paused when `MODE=app`
+
+## Runtime overrides used by the session manager
+
+Each spawned user session gets its own env override set:
+
+- `CHARACTER_ENG_BRIDGE_ENABLED=true`
+- `CHARACTER_ENG_BRIDGE_PORT=<unique port>`
+- `CHARACTER_ENG_BRIDGE_TOKEN=<unique token>`
+- `CHARACTER_ENG_DASHBOARD_ENABLED=true`
+- `CHARACTER_ENG_DASHBOARD_PORT=<same bridge port>`
+- `CHARACTER_ENG_VISION_ENABLED=true|false`
+- `CHARACTER_ENG_VISION_PORT=<unique port>`
+- `CHARACTER_ENG_VISION_URL=http://127.0.0.1:<unique port>`
+
+The spawned bridge and vision ports stay internal to the pod/container. Remote users only hit the manager port, and the session manager proxies tokenized browser traffic to the right runtime.
+
+## Local smoke examples
+
+Single shared control plane:
+
+```bash
+docker build -t character-eng .
+docker run --gpus all -p 7870:7870 -e MODE=session-manager -e PUBLIC_HOST=127.0.0.1 character-eng
+```
+
+Single direct runtime:
+
+```bash
+docker run --gpus all -p 7862:7862 -e MODE=app -e CHARACTER=greg character-eng
+```
+
+Session manager API:
+
+```bash
+curl -X POST http://127.0.0.1:7870/sessions \
+  -H 'Content-Type: application/json' \
+  -d '{"character":"greg","vision":false}'
+```
+
+The response includes a tokenized browser URL on the same manager port, for example `http://127.0.0.1:7870/?token=...`.

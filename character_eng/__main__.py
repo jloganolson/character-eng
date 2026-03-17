@@ -1373,7 +1373,7 @@ def _voice_dev_kw(voice_cfg):
     return kw
 
 
-def _create_voice_io(voice_cfg, VoiceIO_cls):
+def _create_voice_io(voice_cfg, VoiceIO_cls, **extra_kw):
     """Create a VoiceIO instance from voice config."""
     kw = _voice_dev_kw(voice_cfg)
     if voice_cfg is not None:
@@ -1406,6 +1406,7 @@ def _create_voice_io(voice_cfg, VoiceIO_cls):
     kw["trace_hook"] = _voice_trace
     kw["input_audio_hook"] = _input_audio_hook
     kw["output_audio_hook"] = _output_audio_hook
+    kw.update(extra_kw)
     return VoiceIO_cls(**kw)
 
 
@@ -1634,14 +1635,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
         available, reason = check_voice_available(tts_backend=voice_cfg.tts_backend if voice_cfg else "elevenlabs")
         if available:
-            bridge.start(on_audio=lambda b: None, on_video_frame=on_video_frame)
-            voice_io = BrowserVoiceIO(
-                bridge=bridge,
-                tts_backend=voice_cfg.tts_backend if voice_cfg else "elevenlabs",
-                tts_server_url=voice_cfg.tts_server_url if voice_cfg else "",
-                ref_audio=voice_cfg.ref_audio if voice_cfg else "",
-                pocket_voice=voice_cfg.pocket_voice if voice_cfg else "",
-            )
+            voice_io = _create_voice_io(voice_cfg, BrowserVoiceIO, bridge=bridge)
+            bridge.start(on_audio=voice_io.inject_input_audio, on_video_frame=on_video_frame)
             try:
                 voice_io.start()
                 _backend = voice_cfg.tts_backend if voice_cfg else "elevenlabs"
@@ -4405,7 +4400,7 @@ def main():
     bridge = None
     if browser_mode:
         from character_eng.bridge import BridgeServer
-        bridge = BridgeServer(port=cfg.bridge.port)
+        bridge = BridgeServer(port=cfg.bridge.port, access_token=cfg.bridge.token)
 
     # --- Dashboard setup ---
     global _collector, _dashboard_input_queue
@@ -4419,7 +4414,15 @@ def main():
 
         if bridge is not None:
             # Bridge serves HTTP dashboard + WS on a single port
-            bridge.set_dashboard(_collector, _dashboard_input_queue)
+            bridge.set_dashboard(
+                _collector,
+                _dashboard_input_queue,
+                history_api=_history_service,
+                history_status_provider=_history_status_payload,
+                default_character=dashboard_default_character,
+                prompt_asset_open_target=cfg.dashboard.prompt_asset_open_target,
+                prompt_asset_vscode_cmd=cfg.dashboard.prompt_asset_vscode_cmd,
+            )
             dash_url = f"http://0.0.0.0:{cfg.bridge.port}/"
             console.print(f"[bold green]Dashboard (bridge):[/bold green] {dash_url}")
         else:

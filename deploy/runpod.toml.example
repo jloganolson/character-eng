@@ -1,0 +1,27 @@
+[runpod]
+name = "character-eng-session-manager"
+gpu_type_ids = ["NVIDIA GeForce RTX 4090"]
+gpu_count = 1
+cloud_type = "SECURE"
+compute_type = "GPU"
+interruptible = false
+container_disk_in_gb = 50
+volume_in_gb = 0
+volume_mount_path = "/workspace"
+support_public_ip = true
+
+[image]
+name = "ghcr.io/your-org/character-eng:latest"
+
+[network]
+ports = ["7870/http", "22/tcp"]
+manager_port = 7870
+session_bridge_port = 7862
+
+[env]
+MODE = "full"
+PUBLIC_HOST = ""
+MANAGER_PORT = "7870"
+
+[files]
+state_path = "deploy/.runpod-state.json"

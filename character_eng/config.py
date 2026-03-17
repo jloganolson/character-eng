@@ -1,10 +1,19 @@
 """Load and persist user settings from config.toml (project root)."""
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.toml"
+
+def _config_path() -> Path:
+    env_path = os.environ.get("CHARACTER_ENG_CONFIG_PATH", "").strip()
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+    return Path(__file__).resolve().parent.parent / "config.toml"
+
+
+CONFIG_PATH = _config_path()
 
 
 @dataclass
@@ -46,6 +55,7 @@ class DashboardConfig:
 class BridgeConfig:
     enabled: bool = False
     port: int = 7862  # shares dashboard port (HTTP + WS on single port)
+    token: str = ""
 
 
 @dataclass
@@ -103,6 +113,7 @@ def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
         "[bridge]",
         f"enabled = {'true' if config.bridge.enabled else 'false'}",
         f"port = {int(config.bridge.port)}",
+        f"token = {_toml_string(config.bridge.token)}",
         "",
         "[history]",
         f"enabled = {'true' if config.history.enabled else 'false'}",
@@ -125,10 +136,11 @@ def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
 
 def load_config() -> AppConfig:
     """Read config.toml and return AppConfig. Returns defaults if file missing."""
-    if not CONFIG_PATH.exists():
+    config_path = _config_path()
+    if not config_path.exists():
         return AppConfig()
 
-    with open(CONFIG_PATH, "rb") as f:
+    with open(config_path, "rb") as f:
         data = tomllib.load(f)
 
     voice_data = data.get("voice", {})
@@ -170,6 +182,7 @@ def load_config() -> AppConfig:
     bridge = BridgeConfig(
         enabled=bridge_data.get("enabled", False),
         port=bridge_data.get("port", 7862),
+        token=str(bridge_data.get("token", "")),
     )
 
     history_data = data.get("history", {})
@@ -180,4 +193,25 @@ def load_config() -> AppConfig:
         playback_video_fps=history_data.get("playback_video_fps", 30.0),
     )
 
-    return AppConfig(voice=voice, vision=vision, dashboard=dashboard, bridge=bridge, history=history)
+    config = AppConfig(voice=voice, vision=vision, dashboard=dashboard, bridge=bridge, history=history)
+
+    if (value := os.environ.get("CHARACTER_ENG_VOICE_ENABLED")) is not None:
+        config.voice.enabled = value.strip().lower() in {"1", "true", "yes", "on"}
+    if (value := os.environ.get("CHARACTER_ENG_VISION_ENABLED")) is not None:
+        config.vision.enabled = value.strip().lower() in {"1", "true", "yes", "on"}
+    if (value := os.environ.get("CHARACTER_ENG_VISION_URL")):
+        config.vision.service_url = value.strip()
+    if (value := os.environ.get("CHARACTER_ENG_VISION_PORT")):
+        config.vision.service_port = int(value)
+    if (value := os.environ.get("CHARACTER_ENG_DASHBOARD_ENABLED")) is not None:
+        config.dashboard.enabled = value.strip().lower() in {"1", "true", "yes", "on"}
+    if (value := os.environ.get("CHARACTER_ENG_DASHBOARD_PORT")):
+        config.dashboard.port = int(value)
+    if (value := os.environ.get("CHARACTER_ENG_BRIDGE_ENABLED")) is not None:
+        config.bridge.enabled = value.strip().lower() in {"1", "true", "yes", "on"}
+    if (value := os.environ.get("CHARACTER_ENG_BRIDGE_PORT")):
+        config.bridge.port = int(value)
+    if (value := os.environ.get("CHARACTER_ENG_BRIDGE_TOKEN")):
+        config.bridge.token = value.strip()
+
+    return config

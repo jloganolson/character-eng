@@ -912,6 +912,119 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("body")).to_have_class(re.compile(r"\bbooting\b"))
 
 
+def test_boot_overlay_ignores_optional_vision_when_runtime_not_active(
+    browser_page: Page,
+    dashboard_server,
+    vision_service: VisionServiceController,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": True,
+                "filler": True,
+            },
+            "conversation_paused": False,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": True,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": True,
+            "vision_service_url": vision_service.url,
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
+    expect(page.locator("#boot-overlay")).not_to_be_visible()
+    expect(page.locator("#boot-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
+    expect(page.locator("#boot-grid")).to_contain_text("Vision runtime is inactive for this session.")
+    expect(page.locator("#boot-grid")).to_contain_text("Vision models are inactive for this session.")
+    expect(page.locator("#runtime-toggle")).to_have_text("Start")
+
+
+def test_bridge_vision_feed_src_keeps_session_token(
+    browser_page: Page,
+    dashboard_server,
+    vision_service: VisionServiceController,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.add_init_script(
+        """
+        window.__bridgeConfig = {
+          enabled: true,
+          accessToken: "bridge-secret",
+          visionFeedPath: "/bridge/video_feed"
+        };
+        """
+    )
+    page.goto(dashboard_url)
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": True,
+                "filler": True,
+            },
+            "conversation_paused": False,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": True,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": vision_service.url,
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+
+    expect(page.locator("#vision-feed")).to_have_attribute("src", re.compile(r"/bridge/video_feed\?token=bridge-secret$"))
+    expect(page.locator("#vision-service-link")).to_have_attribute("href", re.compile(r"/bridge/video_feed\?token=bridge-secret$"))
+
+
 def test_boot_overlay_can_open_archive_picker_before_runtime_ready(
     browser_page: Page,
     dashboard_server,

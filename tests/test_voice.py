@@ -5,6 +5,8 @@ import time
 import threading
 from unittest.mock import MagicMock, patch
 
+from character_eng.bridge import BridgeServer
+from character_eng.browser_voice import BrowserVoiceIO
 from character_eng.voice import (
     AUTO_BEAT_DELAY,
     DeepgramSTT,
@@ -599,6 +601,138 @@ def test_voice_io_inject_input_audio_uses_live_mic_path():
 
     assert seen == [b"\x00\x01" * 4]
     voice._stt.send_audio.assert_called_once_with(b"\x00\x01" * 4)
+
+
+def test_browser_voice_io_stt_stays_idle_until_browser_audio(monkeypatch):
+    started = []
+    sent_audio = []
+
+    class StubTTS:
+        def __init__(self, on_audio, voice_id=""):
+            self.on_audio = on_audio
+
+        def close(self):
+            return
+
+    class StubSTT:
+        def __init__(self, on_transcript, on_turn_start):
+            self._error = ""
+            self._thread_alive = True
+            self._ws_open = True
+
+        def start(self):
+            started.append("start")
+
+        def send_audio(self, data: bytes):
+            sent_audio.append(data)
+
+        def status_snapshot(self):
+            return {
+                "thread_alive": self._thread_alive,
+                "ws_open": self._ws_open,
+                "error": self._error,
+                "speaking": False,
+                "pending_transcript": False,
+            }
+
+        def stop(self):
+            return
+
+    monkeypatch.setattr("character_eng.browser_voice.ElevenLabsTTS", StubTTS)
+    monkeypatch.setattr("character_eng.browser_voice.DeepgramSTT", StubSTT)
+
+    bridge = BridgeServer(port=0)
+    voice = BrowserVoiceIO(bridge=bridge)
+    voice.start()
+    try:
+        idle = voice.status_snapshot()
+        assert started == []
+        assert idle["browser_bridge"] is True
+        assert idle["mic_ready"] is False
+        assert idle["stt"] == {"state": "off", "detail": "Browser mic idle."}
+
+        bridge.set_client_state({"mic": True})
+        voice.inject_input_audio(b"\x00\x01" * 4)
+
+        active = voice.status_snapshot()
+        assert started == ["start"]
+        assert sent_audio == [b"\x00\x01" * 4]
+        assert active["mic_ready"] is True
+        assert active["stt"]["state"] == "ready"
+    finally:
+        voice.stop()
+
+
+def test_browser_voice_io_hides_stt_timeout_when_browser_mic_is_off(monkeypatch):
+    class StubTTS:
+        def __init__(self, on_audio, voice_id=""):
+            self.on_audio = on_audio
+
+        def close(self):
+            return
+
+    class StubSTT:
+        def __init__(self, on_transcript, on_turn_start):
+            return
+
+        def start(self):
+            return
+
+        def send_audio(self, data: bytes):
+            return
+
+        def status_snapshot(self):
+            return {
+                "thread_alive": False,
+                "ws_open": False,
+                "error": "Deepgram timeout",
+                "speaking": False,
+                "pending_transcript": False,
+            }
+
+        def stop(self):
+            return
+
+    monkeypatch.setattr("character_eng.browser_voice.ElevenLabsTTS", StubTTS)
+    monkeypatch.setattr("character_eng.browser_voice.DeepgramSTT", StubSTT)
+
+    bridge = BridgeServer(port=0)
+    voice = BrowserVoiceIO(bridge=bridge)
+    voice.start()
+    try:
+        voice._stt = StubSTT(None, None)
+        bridge.set_client_state({"mic": False})
+        snapshot = voice.status_snapshot()
+        assert snapshot["mic_ready"] is False
+        assert snapshot["stt"] == {"state": "off", "detail": "Browser mic idle."}
+    finally:
+        voice.stop()
+
+
+def test_browser_voice_io_uses_preloaded_pocket_voice(monkeypatch):
+    captured = {}
+
+    class StubPocketTTS:
+        def __init__(self, on_audio, server_url="", voice="", ref_audio=""):
+            captured["server_url"] = server_url
+            captured["voice"] = voice
+            captured["ref_audio"] = ref_audio
+
+        def close(self):
+            return
+
+    bridge = BridgeServer(port=0)
+    voice = BrowserVoiceIO(bridge=bridge, tts_backend="pocket", pocket_voice="voices/greg.safetensors")
+    monkeypatch.setattr(voice, "_ensure_pocket_server", lambda server_url: None)
+    monkeypatch.setattr("character_eng.browser_voice.PocketTTS", StubPocketTTS, raising=False)
+    with patch.dict("sys.modules", {"character_eng.pocket_tts": MagicMock(PocketTTS=StubPocketTTS)}):
+        voice.start()
+    try:
+        assert captured["server_url"] == "http://localhost:8003"
+        assert captured["voice"] == ""
+        assert captured["ref_audio"] == ""
+    finally:
+        voice.stop()
 
 
 def test_voice_io_turn_start_cancels_auto_beat_when_not_speaking():

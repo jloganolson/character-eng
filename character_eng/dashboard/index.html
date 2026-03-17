@@ -4009,11 +4009,17 @@
 
     let visionServiceState = "waiting";
     let visionServiceDetail = "Waiting for runtime vision service info.";
+    const visionExpected = archiveBrowseRef || (historyState.playback?.active && playbackVisionFrame?.sessionId)
+      ? true
+      : !!visionManagerActive;
     if (runtimeStateSeen) {
       const visionSource = currentVisionSourceKind();
       if (archiveOnlyRuntime && !archiveBrowseRef && !(historyState.playback?.active && playbackVisionFrame?.sessionId)) {
         visionServiceState = "off";
         visionServiceDetail = "Archive-only mode does not use live vision.";
+      } else if (!visionExpected) {
+        visionServiceState = "off";
+        visionServiceDetail = "Vision runtime is inactive for this session.";
       } else if (!visionSource) {
         visionServiceState = "error";
         visionServiceDetail = "No live vision feed or archive source is available.";
@@ -4040,6 +4046,9 @@
     if (archiveOnlyRuntime) {
       modelState = "off";
       modelDetail = "Archive-only mode does not load live models.";
+    } else if (!visionExpected) {
+      modelState = "off";
+      modelDetail = "Vision models are inactive for this session.";
     } else if (modelPollError) {
       modelState = "error";
       modelDetail = modelPollError;
@@ -4075,6 +4084,13 @@
     heartbeatEl.textContent = heartbeatText;
     overlayHeartbeatEl.textContent = heartbeatText;
 
+    const modelReady = modelState === "ready" || modelState === "off";
+    const voiceReady = voiceState === "ready" || voiceState === "off";
+    const visionReady = visionServiceState === "ready" || visionServiceState === "off";
+    const bootReady = archiveOnlyRuntime
+      ? runtimeStateSeen
+      : runtimeStateSeen && (sessionSavePending || sessionStopped || sessionSeen || restartPending) && visionReady && voiceReady && modelReady && !modelPollError;
+
     const summary =
       !runtimeStateSeen ? "Connecting to the local runtime... waiting for app runtime controls." :
       restartPending ? "Restarting conversation..." :
@@ -4085,16 +4101,10 @@
       modelPollError ? "Vision models need attention before the runtime is ready." :
       voiceState === "error" ? "Voice needs attention before the runtime is ready." :
       sessionSavePending ? "Saving the finished session. A completion modal will appear when the archive is ready." :
+      !bootReady ? `Waiting on ${phase} before the runtime can unlock.` :
       sessionStopped ? "Everything is warm. Start when you want to begin a fresh session." :
       conversationPaused ? (startupPausePending ? "Fresh session is ready. Press Play when you want to begin." : "Conversation is paused. Press Play when you want to continue.") :
       "Runtime is live. You can speak or type now.";
-
-    const modelReady = modelState === "ready" || modelState === "off";
-    const voiceReady = voiceState === "ready" || voiceState === "off";
-    const visionReady = visionServiceState === "ready" || visionServiceState === "off";
-    const bootReady = archiveOnlyRuntime
-      ? runtimeStateSeen
-      : runtimeStateSeen && (sessionSavePending || sessionStopped || sessionSeen || restartPending) && visionReady && voiceReady && modelReady && !modelPollError;
     document.body.classList.toggle("booting", !bootReady);
 
     summaryEl.textContent = summary;
@@ -4415,6 +4425,8 @@
       nextSrc = `/history/frame?session_id=${encodeURIComponent(pendingReplayArchiveRef)}&event_time_s=${encodeURIComponent(String(Number(pendingReplayEventTime)))}&raw=1&_=${Date.now()}`;
     } else if (historyState.playback?.active && playbackVisionFrame?.sessionId && playbackVisionFrame?.frameTimestamp != null) {
       nextSrc = `/history/frame?session_id=${encodeURIComponent(playbackVisionFrame.sessionId)}&frame_timestamp=${encodeURIComponent(String(playbackVisionFrame.frameTimestamp))}&raw=1&_=${encodeURIComponent(String(playbackVisionFrame.token || playbackVisionFrame.frameTimestamp))}`;
+    } else if (bridgeEnabled() && bridgePath("visionFeedPath", "")) {
+      nextSrc = withSessionToken(bridgePath("visionFeedPath", "/bridge/video_feed"));
     } else if (visionService.url) {
       nextSrc = `${visionService.url.replace(/\/$/, "")}/video_feed`;
     }
@@ -4448,7 +4460,11 @@
       missingVisionSource ? `error: <b style="color:var(--error)">No live vision feed or archive source is available.</b>` : "",
       modelPollError ? `error: <b style="color:var(--error)">${esc(modelPollError)}</b>` : "",
     ].filter(Boolean).join("<br>");
-    if (visionService.url && !archiveBrowseRef) {
+    if (!archiveBrowseRef && bridgeEnabled() && bridgePath("visionFeedPath", "")) {
+      linkEl.href = withSessionToken(bridgePath("visionFeedPath", "/bridge/video_feed"));
+      linkEl.style.pointerEvents = "auto";
+      linkEl.style.opacity = "1";
+    } else if (visionService.url && !archiveBrowseRef) {
       linkEl.href = visionService.url;
       linkEl.style.pointerEvents = "auto";
       linkEl.style.opacity = "1";
@@ -4503,14 +4519,30 @@
       return;
     }
     try {
-      const base = visionService.url.replace(/\/$/, "");
-      const [statusResp, memoryResp] = await Promise.all([
-        fetch(`${base}/model_status`),
-        fetch(`${base}/memory_status`).catch(() => null),
-      ]);
-      if (!statusResp.ok) throw new Error(`model_status failed (${statusResp.status})`);
-      visionModels = await statusResp.json();
-      visionMemory = memoryResp && memoryResp.ok ? await memoryResp.json() : null;
+      if (bridgeEnabled() && bridgePath("visionStatusPath", "")) {
+        const resp = await fetch(`${bridgePath("visionStatusPath", "/bridge/vision-status")}?_=${Date.now()}`, {cache: "no-store"});
+        if (!resp.ok) throw new Error(`vision status failed (${resp.status})`);
+        const payload = await resp.json();
+        if (!payload.enabled) {
+          visionModels = null;
+          visionMemory = null;
+          modelPollError = "";
+          renderVisionModelStatus();
+          return;
+        }
+        if (payload.error) throw new Error(payload.error);
+        visionModels = payload.status || null;
+        visionMemory = payload.memory || null;
+      } else {
+        const base = visionService.url.replace(/\/$/, "");
+        const [statusResp, memoryResp] = await Promise.all([
+          fetch(`${base}/model_status`),
+          fetch(`${base}/memory_status`).catch(() => null),
+        ]);
+        if (!statusResp.ok) throw new Error(`model_status failed (${statusResp.status})`);
+        visionModels = await statusResp.json();
+        visionMemory = memoryResp && memoryResp.ok ? await memoryResp.json() : null;
+      }
       modelPollError = "";
     } catch (err) {
       visionModels = {error: `Vision status unavailable: ${err.message}`};
@@ -7300,6 +7332,9 @@
     const command = sessionStopped ? "/start" : (conversationPaused ? "/play" : "/pause");
     notePendingRuntimeAction(nextState);
     try {
+      if (bridgeEnabled() && (sessionStopped || conversationPaused)) {
+        await armBridgeAudio();
+      }
       await sendInput(command);
     } catch (error) {
       clearPendingRuntimeAction(`Runtime action failed: ${error.message || error}`);
@@ -7564,8 +7599,451 @@
   setInterval(checkPendingRuntimeActionHealth, 1000);
   setInterval(renderBootStatus, 1000);
 
+  const bridgeConfig = window.__bridgeConfig || null;
+  let bridgeControls = null;
+  let bridgePlaybackCtx = null;
+  let bridgePlaybackHead = 0;
+  let bridgeMicStream = null;
+  let bridgeMicContext = null;
+  let bridgeMicProcessor = null;
+  let bridgeMicSource = null;
+  let bridgeMicSink = null;
+  let bridgeMicQueue = [];
+  let bridgeMicSending = false;
+  let bridgeCamStream = null;
+  let bridgeCamVideo = null;
+  let bridgeCamCanvas = null;
+  let bridgeCamInterval = null;
+  let bridgeAudioPollActive = false;
+  const bridgeMetrics = window.__bridgeMetrics = {
+    audioChunksPolled: 0,
+    audioChunksPlayed: 0,
+    audioBytesPlayed: 0,
+    lastAudioChunkAt: 0,
+    lastAudioError: "",
+    playbackContextState: "idle",
+    micUploads: 0,
+    micBytesUploaded: 0,
+    lastMicUploadAt: 0,
+    lastMicError: "",
+    cameraUploads: 0,
+    lastCameraUploadAt: 0,
+    lastCameraError: "",
+    visionFeedLoads: 0,
+    visionFeedErrors: 0,
+    lastVisionFeedLoadAt: 0,
+    lastVisionFeedError: 0,
+    visionNaturalWidth: 0,
+    visionNaturalHeight: 0,
+    visionFeedSrc: "",
+  };
+
+  function bridgeEnabled() {
+    return !!(bridgeConfig && bridgeConfig.enabled);
+  }
+
+  function sessionToken() {
+    return (bridgeConfig && bridgeConfig.accessToken) || "";
+  }
+
+  function withSessionToken(url) {
+    const token = sessionToken();
+    if (!token) return url;
+    const resolved = new URL(url, window.location.origin);
+    if (resolved.origin !== window.location.origin) return url;
+    if (!resolved.searchParams.has("token")) resolved.searchParams.set("token", token);
+    if (resolved.origin === window.location.origin && resolved.pathname === window.location.pathname && !resolved.searchParams.has("token")) {
+      resolved.searchParams.set("token", token);
+    }
+    return resolved.toString();
+  }
+
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = function(input, init) {
+    const token = sessionToken();
+    let nextInput = input;
+    if (typeof input === "string") {
+      nextInput = withSessionToken(input);
+    } else if (input instanceof URL) {
+      nextInput = withSessionToken(input.toString());
+    } else if (input instanceof Request) {
+      nextInput = new Request(withSessionToken(input.url), input);
+    }
+    const nextInit = init ? {...init} : {};
+    if (token) {
+      nextInit.headers = new Headers(nextInit.headers || (input instanceof Request ? input.headers : undefined));
+      if (!nextInit.headers.has("X-Session-Token")) nextInit.headers.set("X-Session-Token", token);
+    }
+    return nativeFetch(nextInput, nextInit);
+  };
+
+  function bridgePath(key, fallback) {
+    return (bridgeConfig && bridgeConfig[key]) || fallback;
+  }
+
+  async function bridgePostControl(patch) {
+    if (!bridgeEnabled()) return;
+    try {
+      await fetch(bridgePath("controlPath", "/bridge/control"), {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(patch || {}),
+      });
+    } catch (error) {
+      updateBridgeStatus(`bridge control failed: ${error.message || error}`);
+    }
+  }
+
+  function updateBridgeButtons() {
+    if (!bridgeControls) return;
+    bridgeControls.armButton.textContent = bridgePlaybackCtx && bridgePlaybackCtx.state === "running" ? "Audio Armed" : "Arm Audio";
+    bridgeControls.micButton.textContent = bridgeMicStream ? "Mic Off" : "Mic On";
+    bridgeControls.camButton.textContent = bridgeCamStream ? "Cam Off" : "Cam On";
+  }
+
+  function updateBridgeStatus(text) {
+    if (!bridgeControls) return;
+    bridgeControls.status.textContent = text;
+    updateBridgeButtons();
+  }
+
+  function updateBridgeMetricsSummary() {
+    if (!bridgeControls) return;
+    const bits = [];
+    bits.push(bridgePlaybackCtx && bridgePlaybackCtx.state === "running" ? "audio armed" : "audio idle");
+    bits.push(bridgeMicStream ? "mic on" : "mic off");
+    bits.push(bridgeCamStream ? "cam on" : "cam off");
+    if (bridgeMetrics.audioChunksPlayed) bits.push(`tts ${bridgeMetrics.audioChunksPlayed}`);
+    if (bridgeMetrics.micUploads) bits.push(`mic upl ${bridgeMetrics.micUploads}`);
+    if (bridgeMetrics.cameraUploads) bits.push(`cam upl ${bridgeMetrics.cameraUploads}`);
+    if (bridgeMetrics.visionNaturalWidth && bridgeMetrics.visionNaturalHeight) {
+      bits.push(`feed ${bridgeMetrics.visionNaturalWidth}x${bridgeMetrics.visionNaturalHeight}`);
+    }
+    bridgeControls.status.textContent = bits.join(" · ");
+    bridgeControls.status.title = JSON.stringify(bridgeMetrics);
+    updateBridgeButtons();
+  }
+
+  function ensureBridgePlaybackContext() {
+    if (!bridgeEnabled()) return null;
+    if (!bridgePlaybackCtx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) {
+        updateBridgeStatus("Web Audio unavailable");
+        return null;
+      }
+      bridgePlaybackCtx = new Ctx();
+      bridgePlaybackHead = bridgePlaybackCtx.currentTime;
+      bridgeMetrics.playbackContextState = bridgePlaybackCtx.state || "running";
+    }
+    return bridgePlaybackCtx;
+  }
+
+  async function armBridgeAudio() {
+    const ctx = ensureBridgePlaybackContext();
+    if (!ctx) return;
+    try {
+      await ctx.resume();
+      bridgeMetrics.playbackContextState = ctx.state || "running";
+      await bridgePostControl({audio_armed: true});
+      updateBridgeMetricsSummary();
+    } catch (error) {
+      bridgeMetrics.lastAudioError = String(error.message || error || "");
+      updateBridgeStatus(`audio arm failed: ${error.message || error}`);
+    }
+  }
+
+  function decodeBase64ToBytes(dataB64) {
+    const raw = atob(dataB64 || "");
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  function playBridgePcmChunk(dataB64, sampleRate) {
+    const ctx = ensureBridgePlaybackContext();
+    if (!ctx) return;
+    const bytes = decodeBase64ToBytes(dataB64);
+    const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 2));
+    if (!pcm.length) return;
+    bridgeMetrics.audioChunksPlayed += 1;
+    bridgeMetrics.audioBytesPlayed += bytes.byteLength;
+    bridgeMetrics.lastAudioChunkAt = Date.now() / 1000;
+    bridgeMetrics.playbackContextState = ctx.state || "running";
+    const audioBuffer = ctx.createBuffer(1, pcm.length, sampleRate || 24000);
+    const channel = audioBuffer.getChannelData(0);
+    for (let i = 0; i < pcm.length; i += 1) {
+      channel[i] = Math.max(-1, Math.min(1, pcm[i] / 32768));
+    }
+    const source = ctx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(ctx.destination);
+    bridgePlaybackHead = Math.max(bridgePlaybackHead, ctx.currentTime + 0.02);
+    source.start(bridgePlaybackHead);
+    bridgePlaybackHead += audioBuffer.duration;
+  }
+
+  async function pollBridgeAudio() {
+    if (!bridgeEnabled() || bridgeAudioPollActive) return;
+    bridgeAudioPollActive = true;
+    try {
+      const resp = await fetch(`${bridgePath("audioPath", "/bridge/audio")}?_=${Date.now()}`, {cache: "no-store"});
+      if (!resp.ok) return;
+      const payload = await resp.json();
+      const chunks = Array.isArray(payload.chunks) ? payload.chunks : [];
+      if (chunks.length) {
+        bridgeMetrics.audioChunksPolled += chunks.length;
+        ensureBridgePlaybackContext();
+        chunks.forEach((chunk) => playBridgePcmChunk(chunk.data_b64, Number(chunk.sample_rate || 24000)));
+        updateBridgeMetricsSummary();
+      }
+    } catch (error) {
+      bridgeMetrics.lastAudioError = String(error.message || error || "");
+      updateBridgeStatus(`bridge audio poll failed: ${error.message || error}`);
+    } finally {
+      bridgeAudioPollActive = false;
+    }
+  }
+
+  function convertFloatToPcm16(input, sourceRate, targetRate) {
+    if (!input || !input.length) return new Int16Array();
+    const ratio = sourceRate / targetRate;
+    const outLength = Math.max(1, Math.round(input.length / ratio));
+    const result = new Int16Array(outLength);
+    let offsetResult = 0;
+    let offsetBuffer = 0;
+    while (offsetResult < outLength) {
+      const nextOffsetBuffer = Math.min(input.length, Math.round((offsetResult + 1) * ratio));
+      let accum = 0;
+      let count = 0;
+      for (let i = offsetBuffer; i < nextOffsetBuffer; i += 1) {
+        accum += input[i];
+        count += 1;
+      }
+      const sample = count ? accum / count : input[Math.min(offsetBuffer, input.length - 1)];
+      const clamped = Math.max(-1, Math.min(1, sample));
+      result[offsetResult] = clamped < 0 ? clamped * 32768 : clamped * 32767;
+      offsetResult += 1;
+      offsetBuffer = nextOffsetBuffer;
+    }
+    return result;
+  }
+
+  async function flushBridgeMicQueue() {
+    if (bridgeMicSending || !bridgeMicQueue.length) return;
+    bridgeMicSending = true;
+    try {
+      while (bridgeMicQueue.length) {
+        const chunk = bridgeMicQueue.shift();
+        bridgeMetrics.micUploads += 1;
+        bridgeMetrics.micBytesUploaded += chunk.byteLength || 0;
+        bridgeMetrics.lastMicUploadAt = Date.now() / 1000;
+        await fetch(bridgePath("audioPath", "/bridge/audio"), {
+          method: "POST",
+          headers: {"Content-Type": "application/octet-stream"},
+          body: chunk,
+        });
+      }
+      updateBridgeMetricsSummary();
+    } catch (error) {
+      bridgeMetrics.lastMicError = String(error.message || error || "");
+      updateBridgeStatus(`mic upload failed: ${error.message || error}`);
+    } finally {
+      bridgeMicSending = false;
+    }
+  }
+
+  async function toggleBridgeMic() {
+    if (!bridgeEnabled()) return;
+    if (bridgeMicStream) {
+      bridgeMicStream.getTracks().forEach((track) => track.stop());
+      if (bridgeMicProcessor) bridgeMicProcessor.disconnect();
+      if (bridgeMicSource) bridgeMicSource.disconnect();
+      if (bridgeMicSink) bridgeMicSink.disconnect();
+      if (bridgeMicContext) await bridgeMicContext.close();
+      bridgeMicStream = null;
+      bridgeMicContext = null;
+      bridgeMicProcessor = null;
+      bridgeMicSource = null;
+      bridgeMicSink = null;
+      await bridgePostControl({mic: false});
+      updateBridgeMetricsSummary();
+      return;
+    }
+    try {
+      await armBridgeAudio();
+      bridgeMicStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        },
+      });
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      bridgeMicContext = new Ctx();
+      await bridgeMicContext.resume();
+      bridgeMicSource = bridgeMicContext.createMediaStreamSource(bridgeMicStream);
+      bridgeMicProcessor = bridgeMicContext.createScriptProcessor(4096, 1, 1);
+      bridgeMicSink = bridgeMicContext.createGain();
+      bridgeMicSink.gain.value = 0;
+      bridgeMicSource.connect(bridgeMicProcessor);
+      bridgeMicProcessor.connect(bridgeMicSink);
+      bridgeMicSink.connect(bridgeMicContext.destination);
+      bridgeMicProcessor.onaudioprocess = (event) => {
+        const input = event.inputBuffer.getChannelData(0);
+        const pcm16 = convertFloatToPcm16(input, event.inputBuffer.sampleRate, 16000);
+        if (!pcm16.length) return;
+        bridgeMicQueue.push(new Uint8Array(pcm16.buffer.slice(0)).buffer);
+        flushBridgeMicQueue();
+      };
+      await bridgePostControl({mic: true});
+      updateBridgeMetricsSummary();
+    } catch (error) {
+      bridgeMetrics.lastMicError = String(error.message || error || "");
+      updateBridgeStatus(`mic start failed: ${error.message || error}`);
+    }
+  }
+
+  async function uploadBridgeFrame() {
+    if (!bridgeCamStream || !bridgeCamVideo || !bridgeCamCanvas) return;
+    const width = bridgeCamVideo.videoWidth || 640;
+    const height = bridgeCamVideo.videoHeight || 360;
+    if (!width || !height) return;
+    bridgeCamCanvas.width = width;
+    bridgeCamCanvas.height = height;
+    const ctx = bridgeCamCanvas.getContext("2d");
+    ctx.drawImage(bridgeCamVideo, 0, 0, width, height);
+    const blob = await new Promise((resolve) => bridgeCamCanvas.toBlob(resolve, "image/jpeg", 0.72));
+    if (!blob) return;
+    try {
+      await fetch(bridgePath("framePath", "/bridge/frame"), {
+        method: "POST",
+        headers: {"Content-Type": "application/octet-stream"},
+        body: blob,
+      });
+      bridgeMetrics.cameraUploads += 1;
+      bridgeMetrics.lastCameraUploadAt = Date.now() / 1000;
+      updateBridgeMetricsSummary();
+    } catch (error) {
+      bridgeMetrics.lastCameraError = String(error.message || error || "");
+      updateBridgeStatus(`camera upload failed: ${error.message || error}`);
+    }
+  }
+
+  async function toggleBridgeCamera() {
+    if (!bridgeEnabled()) return;
+    if (bridgeCamStream) {
+      bridgeCamStream.getTracks().forEach((track) => track.stop());
+      bridgeCamStream = null;
+      if (bridgeCamInterval) clearInterval(bridgeCamInterval);
+      bridgeCamInterval = null;
+      await bridgePostControl({camera: false});
+      updateBridgeMetricsSummary();
+      return;
+    }
+    try {
+      bridgeCamStream = await navigator.mediaDevices.getUserMedia({video: true});
+      bridgeCamVideo = document.createElement("video");
+      bridgeCamVideo.autoplay = true;
+      bridgeCamVideo.muted = true;
+      bridgeCamVideo.playsInline = true;
+      bridgeCamVideo.srcObject = bridgeCamStream;
+      bridgeCamCanvas = document.createElement("canvas");
+      await bridgeCamVideo.play();
+      await uploadBridgeFrame();
+      bridgeCamInterval = setInterval(uploadBridgeFrame, 450);
+      await bridgePostControl({camera: true});
+      updateBridgeMetricsSummary();
+    } catch (error) {
+      bridgeMetrics.lastCameraError = String(error.message || error || "");
+      updateBridgeStatus(`camera start failed: ${error.message || error}`);
+    }
+  }
+
+  async function refreshBridgeStatus() {
+    if (!bridgeEnabled()) return;
+    try {
+      const resp = await fetch(`${bridgePath("statusPath", "/bridge/status")}?_=${Date.now()}`, {cache: "no-store"});
+      if (!resp.ok) return;
+      const payload = await resp.json();
+      if (!bridgeControls) return;
+      const bits = [];
+      bits.push(payload.client?.audio_armed ? "audio armed" : "audio idle");
+      bits.push(payload.client?.mic ? "mic on" : "mic off");
+      bits.push(payload.client?.camera ? "cam on" : "cam off");
+      if (payload.pending_audio_chunks) bits.push(`${payload.pending_audio_chunks} audio`);
+      bridgeControls.status.textContent = bits.join(" · ");
+      bridgeControls.status.title = JSON.stringify({...payload, metrics: bridgeMetrics});
+      updateBridgeButtons();
+    } catch (error) {
+      updateBridgeStatus(`bridge offline: ${error.message || error}`);
+    }
+  }
+
+  function initBridgePanel() {
+    if (!bridgeEnabled()) return;
+    const header = document.getElementById("header");
+    if (!header) return;
+    const wrap = document.createElement("span");
+    wrap.style.display = "inline-flex";
+    wrap.style.alignItems = "center";
+    wrap.style.gap = "0.4rem";
+    wrap.style.flexWrap = "wrap";
+
+    const armButton = document.createElement("button");
+    armButton.id = "bridge-arm";
+    armButton.type = "button";
+    armButton.textContent = "Arm Audio";
+    armButton.addEventListener("click", armBridgeAudio);
+
+    const micButton = document.createElement("button");
+    micButton.id = "bridge-mic-toggle";
+    micButton.type = "button";
+    micButton.textContent = "Mic On";
+    micButton.addEventListener("click", toggleBridgeMic);
+
+    const camButton = document.createElement("button");
+    camButton.id = "bridge-cam-toggle";
+    camButton.type = "button";
+    camButton.textContent = "Cam On";
+    camButton.addEventListener("click", toggleBridgeCamera);
+
+    const status = document.createElement("span");
+    status.style.color = "var(--text-dim)";
+    status.style.fontSize = "0.82em";
+    status.textContent = "browser bridge booting";
+
+    wrap.appendChild(armButton);
+    wrap.appendChild(micButton);
+    wrap.appendChild(camButton);
+    wrap.appendChild(status);
+    header.insertBefore(wrap, document.getElementById("theme-toggle"));
+    bridgeControls = {wrap, armButton, micButton, camButton, status};
+    updateBridgeButtons();
+    refreshBridgeStatus();
+    setInterval(refreshBridgeStatus, 3000);
+    setInterval(pollBridgeAudio, 120);
+  }
+
+  initBridgePanel();
+
   const visionFeed = document.getElementById("vision-feed");
-  visionFeed.onerror = () => { visionFeed.style.display = "none"; };
+  visionFeed.onload = () => {
+    bridgeMetrics.visionFeedLoads += 1;
+    bridgeMetrics.lastVisionFeedLoadAt = Date.now() / 1000;
+    bridgeMetrics.visionNaturalWidth = visionFeed.naturalWidth || 0;
+    bridgeMetrics.visionNaturalHeight = visionFeed.naturalHeight || 0;
+    bridgeMetrics.visionFeedSrc = visionFeed.currentSrc || visionFeed.src || "";
+    updateBridgeMetricsSummary();
+  };
+  visionFeed.onerror = () => {
+    bridgeMetrics.visionFeedErrors += 1;
+    bridgeMetrics.lastVisionFeedError = Date.now() / 1000;
+    bridgeMetrics.visionFeedSrc = visionFeed.currentSrc || visionFeed.src || "";
+    visionFeed.style.display = "none";
+    updateBridgeMetricsSummary();
+  };
 })();
 </script>
 </body>

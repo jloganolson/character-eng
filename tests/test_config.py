@@ -20,12 +20,13 @@ def test_save_config_round_trip(tmp_path, monkeypatch):
     cfg.dashboard.prompt_asset_open_target = "folder"
     cfg.dashboard.prompt_asset_vscode_cmd = "cursor"
     cfg.bridge.enabled = True
+    cfg.bridge.token = "secret-token"
     cfg.history.enabled = True
     cfg.history.free_warning_gib = 12.5
     cfg.history.vision_capture_fps = 4.0
 
     save_config(cfg, path=path)
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", path)
+    monkeypatch.setenv("CHARACTER_ENG_CONFIG_PATH", str(path))
 
     loaded = load_config()
 
@@ -42,6 +43,28 @@ def test_save_config_round_trip(tmp_path, monkeypatch):
     assert loaded.dashboard.prompt_asset_open_target == "folder"
     assert loaded.dashboard.prompt_asset_vscode_cmd == "cursor"
     assert loaded.bridge.enabled is True
+    assert loaded.bridge.token == "secret-token"
     assert loaded.history.enabled is True
     assert loaded.history.free_warning_gib == 12.5
     assert loaded.history.vision_capture_fps == 4.0
+
+
+def test_load_config_env_overrides(tmp_path, monkeypatch):
+    path = tmp_path / "config.toml"
+    save_config(AppConfig(), path=path)
+    monkeypatch.setenv("CHARACTER_ENG_CONFIG_PATH", str(path))
+    monkeypatch.setenv("CHARACTER_ENG_VISION_URL", "http://127.0.0.1:9001")
+    monkeypatch.setenv("CHARACTER_ENG_VISION_PORT", "9001")
+    monkeypatch.setenv("CHARACTER_ENG_DASHBOARD_PORT", "9010")
+    monkeypatch.setenv("CHARACTER_ENG_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("CHARACTER_ENG_BRIDGE_PORT", "9011")
+    monkeypatch.setenv("CHARACTER_ENG_BRIDGE_TOKEN", "bridge-secret")
+
+    loaded = load_config()
+
+    assert loaded.vision.service_url == "http://127.0.0.1:9001"
+    assert loaded.vision.service_port == 9001
+    assert loaded.dashboard.port == 9010
+    assert loaded.bridge.enabled is True
+    assert loaded.bridge.port == 9011
+    assert loaded.bridge.token == "bridge-secret"

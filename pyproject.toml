@@ -46,3 +46,8 @@ dev = [
     "pytest>=9.0.2",
     "pytest-playwright>=0.7.2",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: exercises the real runtime / external-service path when env keys are available",
+]
