@@ -527,8 +527,8 @@ def test_visual_focus_call_merges_stage_specific_constants(monkeypatch):
     assert "phone" in result.constant_sam_targets
 
 
-def test_vision_manager_dashboard_snapshot_includes_objects_and_focus(monkeypatch):
-    from character_eng.vision.focus import CORE_CONSTANT_VLM_SPECS, VisualFocusResult
+def test_vision_manager_no_longer_emits_dashboard_snapshot_rollup(monkeypatch):
+    from character_eng.vision.focus import VisualFocusResult
     from character_eng.vision.manager import VisionManager
     from character_eng.dashboard.events import DashboardEventCollector
 
@@ -536,13 +536,11 @@ def test_vision_manager_dashboard_snapshot_includes_objects_and_focus(monkeypatc
     mgr = VisionManager()
     mgr._collector = collector
     mgr._model_config = {"name": "test"}
-    mgr._last_dashboard_push = 0.0
     mgr._last_focus = VisualFocusResult(
         constant_questions=["Who is here?"],
         ephemeral_questions=["Are they holding a bottle?"],
         constant_sam_targets=["person", "rude gesture"],
         ephemeral_sam_targets=["bottle"],
-        constant_vlm_specs=CORE_CONSTANT_VLM_SPECS,
     )
 
     snapshot = RawVisualSnapshot(
@@ -559,13 +557,10 @@ def test_vision_manager_dashboard_snapshot_includes_objects_and_focus(monkeypatc
 
     mgr._tick()
 
-    event = collector.get_all()[-1]
-    assert event["type"] == "vision_snapshot"
-    assert event["data"]["objects"] == 2
-    assert event["data"]["object_labels"] == ["bottle", "chair"]
-    assert event["data"]["vlm_answers"][0]["question"] == "Who is here?"
-    assert event["data"]["focus"]["ephemeral_questions"] == ["Are they holding a bottle?"]
-    assert event["data"]["focus"]["constant_vlm_specs"][0]["task_id"] == "world_state"
+    event_types = [event["type"] for event in collector.get_all()]
+    assert "vision_snapshot" not in event_types
+    assert "vision_snapshot_read" in event_types
+    assert "sam3_detection" in event_types
 
 
 def test_vision_manager_carries_structured_synthesis_signals(monkeypatch):

@@ -190,3 +190,31 @@ Validation:
     - `sam3_cards = 137`
     - `snapshot_cards = 137`
   - screenshot: `logs/playwright_live_vision_raw_check.png`
+
+### Vision lane simplification
+
+- Removed the live-role of `vision_snapshot` and `vision_pass`.
+- `vision_snapshot` is no longer emitted by `VisionManager` during live runs.
+- `vision_pass` is no longer synthesized in the dashboard frontend from focus/snapshot/perception events.
+- Kept backward-compatible rendering for old archives that still contain those event types.
+
+Promoted to the main `vision` lane:
+
+- `vision_trigger`
+- `vision_state_update`
+- `vision_focus` remains there as the vision-planning/config surface
+
+Kept in `vision raw`:
+
+- `vision_snapshot_read`
+- `face_tracking`
+- `sam3_detection`
+- `reid_track`
+- `vlm_answer`
+
+Validation:
+
+- `uv run pytest tests/test_vision.py -k 'no_longer_emits_dashboard_snapshot_rollup or emits_raw_dashboard_stage_events or raw_poll_is_faster_than_synthesis'`
+  - passed
+- `uv run pytest tests/test_dashboard_playwright.py -k 'vision_raw_lane_is_explicit_and_shows_placeholder_or_events or vision_state_event_defaults_snippet_mode or runtime_panel_interactions_in_browser'`
+  - passed

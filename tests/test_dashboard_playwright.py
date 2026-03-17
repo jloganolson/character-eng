@@ -465,13 +465,6 @@ def test_runtime_panel_interactions_in_browser(
         "constant_sam_targets": ["person"],
         "ephemeral_sam_targets": ["bottle"],
     })
-    collector.push("vision_snapshot", {
-        "faces": 0,
-        "persons": 1,
-        "objects": 1,
-        "vlm_answers": [{"question": "Is there a bottle visible?", "answer": "Yes, a water bottle is on the table."}],
-        "object_labels": ["water bottle"],
-    })
     collector.push("perception", {
         "source": "visual",
         "description": "A person is now holding a flier",
@@ -568,19 +561,18 @@ def test_runtime_panel_interactions_in_browser(
 
     perception_card = page.locator(".stream-card").filter(has_text="A person is now holding a flier").first
     perception_card.click()
-    expect(page.locator("#detail-type")).to_have_text("vision_pass")
+    expect(page.locator("#detail-type")).to_have_text("perception")
     expect(page.locator("#detail-trace")).to_have_class(re.compile(r"\bactive\b"))
     expect(page.locator("#detail-structure")).to_have_class(re.compile(r"\bactive\b"))
     expect(page.locator("#detail-structure")).to_contain_text("Vision Input")
     expect(page.locator("#detail-structure")).to_contain_text("Vision Synthesis Inputs")
-    expect(page.locator("#detail-structure")).to_contain_text("Derived Claims")
-    expect(page.locator("#detail-structure")).to_contain_text("provenance")
+    expect(page.locator("#detail-structure")).to_contain_text("Claim Provenance")
     expect(page.locator("#detail-trace-summary")).to_contain_text("Vision synthesis LLM")
     expect(page.locator("#detail-trace-summary")).to_contain_text("vision_synthesis_llm")
-    expect(page.locator("#detail-structure")).to_contain_text("Effects")
+    expect(page.locator("#detail-structure")).to_contain_text("Evidence")
     expect(page.locator("#detail-structure")).to_contain_text("Is anyone holding a flier?")
     expect(page.locator("#detail-structure")).to_contain_text("A flier.")
-    expect(page.locator("#detail-structure")).to_contain_text("support:")
+    expect(page.locator("#detail-structure")).to_contain_text("supports")
     expect(page.locator("#detail-trace-summary")).to_contain_text("source: visual")
     expect(page.locator("#detail-trace-chips")).to_contain_text("object flier")
     expect(page.locator("#detail-trace-chips")).to_contain_text("sam flier")
@@ -1209,13 +1201,13 @@ def test_vision_raw_lane_is_explicit_and_shows_placeholder_or_events(
         },
     )
     collector.push(
-        "vision_snapshot",
+        "vision_focus",
         {
-            "faces": 0,
-            "persons": 1,
-            "objects": 1,
-            "vlm_answers": [{"question": "Is there a clock visible?", "answer": "Yes."}],
-            "object_labels": ["clock"],
+            "stage_goal": "Check whether a clock is visible.",
+            "constant_questions": ["What changed in the room?"],
+            "ephemeral_questions": ["Is there a clock visible?"],
+            "constant_sam_targets": ["person"],
+            "ephemeral_sam_targets": ["clock"],
         },
     )
 
@@ -1251,7 +1243,7 @@ def test_vision_raw_lane_is_explicit_and_shows_placeholder_or_events(
     )
 
     expect(page.locator("[data-stream-lane='vision_raw']")).to_contain_text("sam3")
-    expect(page.locator("[data-stream-lane='vision_raw']")).to_contain_text("vision llm")
+    expect(page.locator("[data-stream-lane='vision']")).to_contain_text("vision llm")
 
 
 def test_sidebar_registry_layout_and_panel_collapse(

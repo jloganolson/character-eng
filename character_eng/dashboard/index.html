@@ -1657,14 +1657,12 @@
       prompt_reload: "session",
       vision_focus: "vision",
       vision_snapshot_read: "vision_raw",
-      vision_snapshot: "vision",
-      vision_pass: "vision",
       face_tracking: "vision_raw",
       sam3_detection: "vision_raw",
       reid_track: "vision_raw",
-      vision_trigger: "vision_raw",
+      vision_trigger: "vision",
       vlm_answer: "vision_raw",
-      vision_state_update: "vision_raw",
+      vision_state_update: "vision",
       world_update: "world",
       user_speech_started: "stt",
       user_transcript_final: "stt",
@@ -1694,7 +1692,6 @@
   let timelineWindowSeconds = 30;
   let followLive = true;
   let activeDetailTab = "prompts";
-  let visionPassKey = null;
   const promptTraceEvents = [];
   let isTimelineDragging = false;
   let dragStartX = 0;
@@ -2443,7 +2440,6 @@
       activeReplyKey,
       activePostResponseKey,
       activeWorldUpdateKey,
-      visionPassKey,
       selectedStreamKey,
       streamKey,
       lastSeq,
@@ -2489,7 +2485,6 @@
     activeReplyKey = liveTimelineSnapshot.activeReplyKey || null;
     activePostResponseKey = liveTimelineSnapshot.activePostResponseKey || null;
     activeWorldUpdateKey = liveTimelineSnapshot.activeWorldUpdateKey || null;
-    visionPassKey = liveTimelineSnapshot.visionPassKey || null;
     selectedStreamKey = liveTimelineSnapshot.selectedStreamKey || null;
     streamKey = liveTimelineSnapshot.streamKey || 0;
     lastSeq = liveTimelineSnapshot.lastSeq || 0;
@@ -4136,7 +4131,6 @@
     activeReplyKey = null;
     activePostResponseKey = null;
     activeWorldUpdateKey = null;
-    visionPassKey = null;
     selectedStreamKey = null;
     streamKey = 0;
     lastSeq = 0;
@@ -4202,7 +4196,6 @@
     activeReplyKey = null;
     activePostResponseKey = null;
     activeWorldUpdateKey = null;
-    visionPassKey = null;
     selectedStreamKey = null;
     streamKey = 0;
     lastSeq = 0;
@@ -5804,34 +5797,6 @@
     return event;
   }
 
-  function ensureVisionPassEvent(rawEvent, seedData = {}) {
-    let event = visionPassKey ? streamEventByKey.get(visionPassKey) : null;
-    const eventTs = Number(rawEvent.timestamp || Date.now() / 1000);
-    if (!event || Math.abs(Number(event.timestamp || 0) - eventTs) > 1.25) {
-      event = addStreamEvent("vision_pass", {
-        source: "visual",
-        perception_count: 0,
-        vlm_answer_count: 0,
-        object_count: 0,
-        object_labels: [],
-        latest_answer: "",
-        latest_perception: "",
-        perceptions: [],
-        claim_traces: [],
-        constant_questions: [],
-        ephemeral_questions: [],
-        constant_sam_targets: [],
-        ephemeral_sam_targets: [],
-      }, rawEvent);
-      visionPassKey = event.key;
-    }
-    event.turnId = rawEvent.turnId || event.turnId;
-    event.timestamp = eventTs;
-    event.seq = rawEvent.seq || event.seq;
-    Object.assign(event.data, seedData);
-    return event;
-  }
-
   function discardUnfinishedReply() {
     if (!activeReplyKey) return;
     const event = streamEventByKey.get(activeReplyKey);
@@ -5852,7 +5817,6 @@
     activeReplyKey = null;
     activePostResponseKey = null;
     activeWorldUpdateKey = null;
-    visionPassKey = null;
   }
 
   function selectEvent(key, options = {}) {
@@ -6631,55 +6595,13 @@
 
     perception(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
-      if (data.source === "visual") {
-        const event = ensureVisionPassEvent(rawEvent);
-        event.data.input_event_ids = mergeUniqueEventIds(
-          event.data.input_event_ids,
-          data.input_event_ids,
-          data.payload?.input_event_ids,
-          data.source_trace?.input_event_ids,
-        );
-        const nextPerceptions = Array.isArray(event.data.perceptions) ? event.data.perceptions.slice() : [];
-        nextPerceptions.push(data.description || "visual perception");
-        event.data.perceptions = nextPerceptions.slice(-8);
-        const nextClaimTraces = Array.isArray(event.data.claim_traces) ? event.data.claim_traces.slice() : [];
-        nextClaimTraces.push({
-          description: data.description || "visual perception",
-          supporting_answers: data.source_trace?.supporting_answers || [],
-          contradicting_answers: data.source_trace?.contradicting_answers || [],
-          provenance: data.source_trace?.provenance || null,
-        });
-        event.data.claim_traces = nextClaimTraces.slice(-8);
-        event.data.perception_count = nextPerceptions.length;
-        event.data.latest_perception = data.description || event.data.latest_perception;
-        if (data.source_trace) {
-          event.data.source_trace = data.source_trace;
-          if (Array.isArray(data.source_trace.object_labels)) {
-            event.data.object_labels = data.source_trace.object_labels;
-            event.data.object_count = data.source_trace.object_labels.length;
-          }
-          if (Array.isArray(data.source_trace.vlm_answers) && data.source_trace.vlm_answers.length) {
-            const latestAnswer = data.source_trace.vlm_answers[data.source_trace.vlm_answers.length - 1];
-            event.data.vlm_answer_count = data.source_trace.vlm_answers.length;
-            event.data.latest_answer = `${latestAnswer.label || latestAnswer.task_id || latestAnswer.question || "vision"}: ${latestAnswer.answer || ""}`;
-          }
-          if (data.source_trace.focus) {
-            event.data.constant_questions = data.source_trace.focus.constant_questions || event.data.constant_questions || [];
-            event.data.ephemeral_questions = data.source_trace.focus.ephemeral_questions || event.data.ephemeral_questions || [];
-            event.data.constant_sam_targets = data.source_trace.focus.constant_sam_targets || event.data.constant_sam_targets || [];
-            event.data.ephemeral_sam_targets = data.source_trace.focus.ephemeral_sam_targets || event.data.ephemeral_sam_targets || [];
-          }
-        }
-        event.label = previewText("vision_pass", event.data);
-        event.detail = detailText("vision_pass", event.data);
-        const perceptionEvent = recordEvent("perception", data, rawEvent);
-        if (event.data.input_event_ids?.length) perceptionEvent.data.input_event_ids = [...event.data.input_event_ids];
-        if (data.payload?.event_id && !perceptionEvent.data.event_id) perceptionEvent.data.event_id = data.payload.event_id;
-        syncEventIdIndex(perceptionEvent);
-        renderStream();
-        return;
-      }
-      recordEvent("perception", data, rawEvent);
+      const perceptionEvent = recordEvent("perception", data, rawEvent);
+      if (data.input_event_ids?.length) perceptionEvent.data.input_event_ids = [...data.input_event_ids];
+      if (data.payload?.input_event_ids?.length) perceptionEvent.data.input_event_ids = [...data.payload.input_event_ids];
+      if (data.source_trace?.input_event_ids?.length) perceptionEvent.data.input_event_ids = [...data.source_trace.input_event_ids];
+      if (data.payload?.event_id && !perceptionEvent.data.event_id) perceptionEvent.data.event_id = data.payload.event_id;
+      syncEventIdIndex(perceptionEvent);
+      renderStream();
     },
 
     vision_snapshot(data, rawEvent) {
@@ -6697,40 +6619,12 @@
       renderSidebarPanelContent("vision", html, {status: "ready", visible: true});
       rawEvent.turnId = currentTurnId || null;
       recordEvent("vision_snapshot", data, rawEvent);
-      const event = ensureVisionPassEvent(rawEvent);
-      event.data.object_labels = data.object_labels || event.data.object_labels || [];
-      event.data.object_count = (data.object_labels || []).length;
-      event.data.vlm_answer_count = (data.vlm_answers || []).length;
-      event.data.input_event_ids = mergeUniqueEventIds(event.data.input_event_ids, data.input_event_ids);
-      if (data.vlm_answers && data.vlm_answers.length) {
-        const latest = data.vlm_answers[data.vlm_answers.length - 1];
-        event.data.latest_answer = typeof latest === "string" ? latest : `${latest.label || latest.task_id || latest.question || "vision"}: ${latest.answer || ""}`;
-      }
-      if (data.focus) {
-        event.data.constant_questions = data.focus.constant_questions || [];
-        event.data.ephemeral_questions = data.focus.ephemeral_questions || [];
-        event.data.constant_sam_targets = data.focus.constant_sam_targets || [];
-        event.data.ephemeral_sam_targets = data.focus.ephemeral_sam_targets || [];
-      }
-      event.data.snapshot = data;
-      event.label = previewText("vision_pass", event.data);
-      event.detail = detailText("vision_pass", event.data);
       renderStream();
     },
 
     vision_focus(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
       recordEvent("vision_focus", data, rawEvent);
-      const event = ensureVisionPassEvent(rawEvent);
-      event.data.constant_questions = data.constant_questions || [];
-      event.data.ephemeral_questions = data.ephemeral_questions || [];
-      event.data.constant_sam_targets = data.constant_sam_targets || [];
-      event.data.ephemeral_sam_targets = data.ephemeral_sam_targets || [];
-      event.data.input_event_ids = mergeUniqueEventIds(event.data.input_event_ids, data.input_event_ids);
-      event.data.stage_goal = data.stage_goal || event.data.stage_goal || "";
-      event.data.focus = data;
-      event.label = previewText("vision_pass", event.data);
-      event.detail = detailText("vision_pass", event.data);
       renderStream();
     },
 

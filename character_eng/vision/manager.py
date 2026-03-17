@@ -56,7 +56,6 @@ class VisionManager:
         self._event_history: collections.deque[str] = collections.deque(maxlen=10)
         # Dashboard integration
         self._collector = None
-        self._last_dashboard_push = 0.0
         self._last_focus: VisualFocusResult | None = None
         self._paused = False
         self._emitted_vlm_answer_ids: set[str] = set()
@@ -253,39 +252,7 @@ class VisionManager:
             previous_synthesis=prev,
         )
 
-        # 3b. Push vision snapshot to dashboard (every 5s)
         now = time.time()
-        if self._collector and now - self._last_dashboard_push > 5.0:
-            self._last_dashboard_push = now
-            self._collector.push("vision_snapshot", {
-                "faces": len(snapshot.faces),
-                "persons": len(snapshot.persons),
-                "objects": len(snapshot.objects),
-                "object_labels": [obj.label for obj in snapshot.objects],
-                "vlm_answers": [
-                    {
-                        "question": answer.question,
-                        "answer": answer.answer,
-                        "task_id": answer.task_id,
-                        "label": answer.label,
-                        "slot_type": answer.slot_type,
-                        "target": answer.target,
-                        "cadence_s": answer.cadence_s,
-                        "target_bbox": answer.target_bbox,
-                        "target_identity": answer.target_identity,
-                        "interpret_as": answer.interpret_as,
-                    }
-                    for answer in snapshot.vlm_answers
-                ] if snapshot.vlm_answers else [],
-                "focus": {
-                    "constant_questions": list(self._last_focus.constant_questions),
-                    "ephemeral_questions": list(self._last_focus.ephemeral_questions),
-                    "constant_sam_targets": list(self._last_focus.constant_sam_targets),
-                    "ephemeral_sam_targets": list(self._last_focus.ephemeral_sam_targets),
-                    "constant_vlm_specs": [spec.to_payload() for spec in self._last_focus.constant_vlm_specs],
-                    "ephemeral_vlm_specs": [spec.to_payload() for spec in self._last_focus.ephemeral_vlm_specs],
-                } if self._last_focus is not None else None,
-            })
 
         # 4. Push events (with dedup)
         # Expire old entries
