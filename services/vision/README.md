@@ -11,6 +11,8 @@ uv sync
 
 This creates a separate `.venv` with heavy GPU dependencies (torch, SAM3, InsightFace, torchreid) — fully isolated from the main character-eng venv.
 
+`facebook/sam3` is gated on Hugging Face. Export `HF_TOKEN` (or another `huggingface_hub`-compatible auth env var) before first boot if you want SAM3 to load successfully.
+
 ## Run
 
 ### Manual start

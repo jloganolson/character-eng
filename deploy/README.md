@@ -81,6 +81,15 @@ curl -X POST http://127.0.0.1:7870/sessions \
 
 The response includes a tokenized browser URL on the same manager port, for example `http://127.0.0.1:7870/?token=...`.
 
+For faster local heavy-runtime debugging before another RunPod deploy:
+
+```bash
+./scripts/vision_smoke.sh
+TEARDOWN=1 ./scripts/vision_smoke.sh
+```
+
+That command reuses the current heavy-stack startup path, exits once `/model_status` is ready, and prints the raw model-status payload so you can debug `vllm`/vision startup locally before paying for another cold pod boot.
+
 ## Lite RunPod validation
 
 Use `Dockerfile.manager-lite` plus `deploy/runpod-lite.toml` when you want to validate the control plane before paying the startup cost of the full GPU image.

@@ -4,6 +4,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+if [[ -f "$ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+  set +a
+fi
+
 if [[ -x "$ROOT/.venv/bin/python" ]]; then
   PYTHON_BIN="$ROOT/.venv/bin/python"
 else
@@ -39,6 +46,11 @@ POCKET_TIMEOUT="${POCKET_TIMEOUT:-30}"
 VISION_PIDFILE="$HEAVY_LOG_DIR/vision_stack.pid"
 POCKET_PIDFILE="$HEAVY_LOG_DIR/pocket_tts.pid"
 STALE_VLLM_CLEARED=0
+EXIT_AFTER_READY=0
+PRINT_STATUS_JSON=0
+TEARDOWN_AFTER_READY=0
+STARTED_VISION=0
+STARTED_POCKET=0
 if [[ -z "${REQUIRE_POCKET_TTS:-}" ]]; then
   if [[ "$ROOT" == "/app" ]]; then
     REQUIRE_POCKET_TTS=0
@@ -46,6 +58,27 @@ if [[ -z "${REQUIRE_POCKET_TTS:-}" ]]; then
     REQUIRE_POCKET_TTS=1
   fi
 fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --once)
+      EXIT_AFTER_READY=1
+      ;;
+    --json)
+      PRINT_STATUS_JSON=1
+      ;;
+    --teardown)
+      EXIT_AFTER_READY=1
+      TEARDOWN_AFTER_READY=1
+      ;;
+    *)
+      echo "unknown arg: $1" >&2
+      echo "expected optional args: --once, --json, --teardown" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
 
 mkdir -p "$HEAVY_LOG_DIR"
 mkdir -p "$UV_CACHE_DIR" "$HF_HOME" "$TORCH_HOME" "$XDG_CACHE_HOME"
@@ -91,6 +124,32 @@ start_bg() {
   : >"$logfile"
   setsid "$@" >"$logfile" 2>&1 < /dev/null &
   echo "$!" >"$pidfile"
+}
+
+stop_pidfile_process() {
+  local pidfile="$1"
+  [[ -f "$pidfile" ]] || return 0
+  local pid
+  pid="$(cat "$pidfile" 2>/dev/null || true)"
+  [[ -n "$pid" ]] || return 0
+  kill "$pid" >/dev/null 2>&1 || true
+  sleep 1
+  kill -9 "$pid" >/dev/null 2>&1 || true
+  rm -f "$pidfile"
+}
+
+teardown_started_services() {
+  if (( STARTED_POCKET )); then
+    log "Stopping Pocket-TTS started by this smoke run"
+    stop_pidfile_process "$POCKET_PIDFILE"
+    lsof -ti:"$POCKET_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
+  fi
+  if (( STARTED_VISION )); then
+    log "Stopping vision stack started by this smoke run"
+    stop_pidfile_process "$VISION_PIDFILE"
+    lsof -ti:"$VISION_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
+    lsof -ti:"$VLLM_PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
+  fi
 }
 
 pid_alive() {
@@ -148,6 +207,30 @@ print("==> Model status: " + " · ".join(parts))
 PY
 }
 
+model_error_summary() {
+  local status_json
+  status_json="$(curl -sf "http://127.0.0.1:${VISION_PORT}/model_status" || true)"
+  [[ -n "$status_json" ]] || return 1
+  python3 - <<'PY' "$status_json"
+import json, sys
+status = json.loads(sys.argv[1])
+errors = []
+for key in ("vllm", "sam3", "face", "person"):
+    item = status.get(key)
+    if isinstance(item, dict):
+        state = item.get("status", "unknown")
+        detail = str(item.get("error", "")).strip()
+    else:
+        state = item or "unknown"
+        detail = ""
+    if state == "error":
+        errors.append(f"{key}={detail or 'error'}")
+if not errors:
+    raise SystemExit(1)
+print(" · ".join(errors))
+PY
+}
+
 models_fully_ready() {
   local status_json
   status_json="$(curl -sf "http://127.0.0.1:${VISION_PORT}/model_status" || true)"
@@ -173,6 +256,11 @@ wait_for_models_ready() {
   local timeout="$1"
   log "Waiting for model trackers"
   while ! models_fully_ready; do
+    if error_summary="$(model_error_summary)"; then
+      print_model_status
+      log "Model tracker error: ${error_summary}"
+      return 1
+    fi
     sleep "$WAIT_INTERVAL"
     elapsed=$((elapsed + WAIT_INTERVAL))
     print_model_status
@@ -201,6 +289,7 @@ restart_vision_stack() {
   fi
   rm -f "$VISION_PIDFILE"
   start_bg "vision stack" "$HEAVY_LOG_DIR/vision_stack.log" "$VISION_PIDFILE" "$ROOT/services/vision/start.sh"
+  STARTED_VISION=1
 }
 
 if [[ -z "$POCKET_BIN" ]]; then
@@ -243,6 +332,7 @@ else
     log "Pocket-TTS unavailable; continuing without filler/TTS warm service"
   else
     start_bg "Pocket-TTS" "$HEAVY_LOG_DIR/pocket_tts.log" "$POCKET_PIDFILE" "$POCKET_BIN" serve --port "$POCKET_PORT" --voice "$POCKET_VOICE"
+    STARTED_POCKET=1
     if wait_for_http "Pocket-TTS" "http://127.0.0.1:${POCKET_PORT}/" "$POCKET_TIMEOUT" "$POCKET_PIDFILE" "$HEAVY_LOG_DIR/pocket_tts.log"; then
       POCKET_READY=1
     elif [[ "$POCKET_REQUIRED" == "1" ]]; then
@@ -266,4 +356,14 @@ else
   log "Pocket:  unavailable"
 fi
 print_model_status
+if (( PRINT_STATUS_JSON )); then
+  curl -sf "http://127.0.0.1:${VISION_PORT}/model_status"
+  printf '\n'
+fi
 log "Use ./scripts/run_hot.sh for the fast app/UI layer."
+if (( EXIT_AFTER_READY )); then
+  if (( TEARDOWN_AFTER_READY )); then
+    teardown_started_services
+  fi
+  exit 0
+fi

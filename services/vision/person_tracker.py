@@ -472,6 +472,9 @@ class PersonTracker:
             return {}
 
         pil = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
+        if hasattr(sam3_proc, "set_image") and hasattr(sam3_proc, "set_text_prompt"):
+            return self._run_native_sam3_all(sam3_proc, pil, prompts)
+
         img_inputs = sam3_proc(images=pil, return_tensors="pt").to(self._device)
         if self._dtype is not None:
             img_inputs["pixel_values"] = img_inputs["pixel_values"].to(self._dtype)
@@ -530,6 +533,56 @@ class PersonTracker:
                         "mask": mask_np,
                         "confidence": round(score, 3),
                     })
+            results[prompt] = dets
+
+        return results
+
+    def _run_native_sam3_all(
+        self, sam3_proc, pil: Image.Image, prompts: list[str]
+    ) -> dict[str, list[dict]]:
+        state = sam3_proc.set_image(pil, state={})
+        results: dict[str, list[dict]] = {}
+
+        for prompt in prompts:
+            prompt_state = sam3_proc.set_text_prompt(prompt, state)
+            masks = prompt_state.get("masks", [])
+            boxes = prompt_state.get("boxes", [])
+            scores = prompt_state.get("scores", [])
+
+            dets = []
+            for i in range(len(masks)):
+                score = float(scores[i]) if i < len(scores) else 0.0
+                if score < 0.3:
+                    continue
+                mask = masks[i]
+                mask_np = (
+                    mask.detach().cpu().numpy()
+                    if hasattr(mask, "detach")
+                    else np.asarray(mask)
+                )
+                mask_np = np.squeeze(mask_np).astype(bool)
+
+                bbox = None
+                if i < len(boxes):
+                    box = boxes[i]
+                    if hasattr(box, "detach"):
+                        box = box.detach().cpu().numpy()
+                    x1, y1, x2, y2 = [int(v) for v in box[:4]]
+                    bbox = (x1, y1, max(0, x2 - x1), max(0, y2 - y1))
+                else:
+                    ys, xs = np.where(mask_np)
+                    if len(xs) > 0:
+                        x1, x2 = int(xs.min()), int(xs.max())
+                        y1, y2 = int(ys.min()), int(ys.max())
+                        bbox = (x1, y1, x2 - x1, y2 - y1)
+                if bbox is None:
+                    continue
+                dets.append({
+                    "bbox": bbox,
+                    "mask": mask_np,
+                    "confidence": score,
+                    "label": prompt,
+                })
             results[prompt] = dets
 
         return results

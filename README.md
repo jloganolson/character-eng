@@ -74,6 +74,7 @@ The app works without `config.toml` — all settings have defaults. The `--voice
 ```bash
 ./scripts/run_local.sh                  # one-command local stack: voice + vision + paused-ready startup
 ./scripts/run_heavy.sh                  # keep vLLM/vision/Pocket-TTS hot in the background
+./scripts/vision_smoke.sh               # one-shot heavy stack readiness check with model-status output
 ./scripts/run_hot.sh                    # restart only the fast app/UI layer
 ./scripts/stop_local.sh                 # stop the app plus heavy local services
 uv run -m character_eng                  # text mode (dashboard auto-opens at :7862)
@@ -109,6 +110,17 @@ For the simplest persistent-dev loop:
 ```bash
 ./scripts/stop_local.sh
 ```
+
+For faster heavy-runtime debugging, use:
+
+```bash
+./scripts/vision_smoke.sh
+TEARDOWN=1 ./scripts/vision_smoke.sh
+```
+
+`vision_smoke.sh` runs the heavy stack in one-shot mode, prints the raw `/model_status` payload on success, and exits. By default it leaves the heavy services warm for follow-up debugging; set `TEARDOWN=1` to stop only the services started by that smoke run.
+
+If `sam3` is part of the check, make sure the environment has Hugging Face access for the gated `facebook/sam3` repo, for example by exporting `HF_TOKEN` (or another `huggingface_hub`-compatible auth env var) before running the smoke command.
 
 Pick a character from the menu, then chat. After each response, synchronous microservices evaluate script progress and check scenario exits with immediate effect. In-session commands:
 

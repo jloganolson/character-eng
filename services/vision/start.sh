@@ -15,11 +15,21 @@ VLLM_MODEL="${VLLM_MODEL:-LiquidAI/LFM2-VL-3B}"
 VLLM_PORT="${VLLM_PORT:-8000}"
 VLLM_GPU_UTIL="${VLLM_GPU_UTIL:-0.4}"
 VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-4096}"
+VLLM_TIMEOUT="${VLLM_TIMEOUT:-120}"
 VLLM_ARGS="${VLLM_ARGS:-}"
 APP_PORT="${APP_PORT:-7860}"
+APP_TIMEOUT="${APP_TIMEOUT:-30}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VLLM_BIN="${VLLM_BIN:-}"
+
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . "$PROJECT_ROOT/.env"
+    set +a
+fi
+
 BUNDLED_VISION_ENV="${CHARACTER_ENG_BUNDLED_VISION_ENV:-/opt/character-eng/vision-env}"
 DEFAULT_RUNTIME_ROOT=""
 if [ -n "${CHARACTER_ENG_RUNTIME_ROOT:-}" ]; then
@@ -122,6 +132,16 @@ cleanup() {
 }
 trap cleanup SIGINT SIGTERM EXIT
 
+print_log_tail() {
+    local label="$1"
+    local logfile="$2"
+    if [ -f "$logfile" ]; then
+        echo "----- ${label} (last 60 lines) -----"
+        tail -n 60 "$logfile" || true
+        echo "----- end ${label} -----"
+    fi
+}
+
 # --- Apply vLLM patch ---
 echo "=== Applying vLLM patch (if needed) ==="
 "$PYTHON_BIN" "$SCRIPT_DIR/patch_vllm.py"
@@ -168,21 +188,22 @@ else
 
     # Wait for vLLM to be ready
     echo -n "  Waiting for vLLM"
-    MAX_WAIT=120
     elapsed=0
     while ! curl -sf "http://localhost:$VLLM_PORT/v1/models" >/dev/null 2>&1; do
         # Check if vLLM process died
         if ! kill -0 "$VLLM_PID" 2>/dev/null; then
             echo ""
             echo "ERROR: vLLM process died. Check $VLLM_LOG"
+            print_log_tail "vLLM log" "$VLLM_LOG"
             exit 1
         fi
         sleep 2
         elapsed=$((elapsed + 2))
         echo -n "."
-        if [ "$elapsed" -ge "$MAX_WAIT" ]; then
+        if [ "$elapsed" -ge "$VLLM_TIMEOUT" ]; then
             echo ""
-            echo "ERROR: vLLM did not start within ${MAX_WAIT}s"
+            echo "ERROR: vLLM did not start within ${VLLM_TIMEOUT}s"
+            print_log_tail "vLLM log" "$VLLM_LOG"
             exit 1
         fi
     done
@@ -206,14 +227,16 @@ while ! curl -sf "http://localhost:$APP_PORT/" >/dev/null 2>&1; do
     if ! kill -0 "$APP_PID" 2>/dev/null; then
         echo ""
         echo "ERROR: App process died. Check $APP_LOG"
+        print_log_tail "vision app log" "$APP_LOG"
         exit 1
     fi
     sleep 1
     elapsed=$((elapsed + 1))
     echo -n "."
-    if [ "$elapsed" -ge 30 ]; then
+    if [ "$elapsed" -ge "$APP_TIMEOUT" ]; then
         echo ""
-        echo "ERROR: App did not start within 30s. Check $APP_LOG"
+        echo "ERROR: App did not start within ${APP_TIMEOUT}s. Check $APP_LOG"
+        print_log_tail "vision app log" "$APP_LOG"
         exit 1
     fi
 done

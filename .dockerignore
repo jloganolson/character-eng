@@ -3,6 +3,8 @@
 .claude
 .venv
 .uv-cache
+.cache
+.runtime
 __pycache__
 *.pyc
 .pytest_cache
@@ -10,6 +12,7 @@ __pycache__
 .ruff_cache
 logs
 history
+CONTEXT_HANDOFF.md
 deploy/__pycache__
 character_eng/__pycache__
 tests/__pycache__

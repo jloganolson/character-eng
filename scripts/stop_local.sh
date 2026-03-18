@@ -76,7 +76,7 @@ log "Stopping local app and heavy services"
 kill_matching 'uv run -m character_eng' 'character-eng app'
 kill_matching 'python[^ ]* -m character_eng' 'character-eng app'
 kill_matching '/services/vision/start\.sh' 'vision launcher'
-kill_matching '/tools/vllm/bin/vllm serve ' 'vLLM server'
+kill_matching '(/tools/vllm/bin/vllm|/services/vision/.venv/bin/vllm|[[:space:]/]vllm) serve ' 'vLLM server'
 kill_matching 'pocket-tts serve' 'Pocket-TTS'
 kill_vllm_gpu_compute
 

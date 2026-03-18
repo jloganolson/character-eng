@@ -215,3 +215,50 @@ name = "ghcr.io/example/character-eng:latest"
     assert "dataCenterIds" not in payload
     assert "dataCenterPriority" not in payload
     assert "gpuTypePriority" not in payload
+
+
+def test_build_create_payload_resolves_env_placeholders(tmp_path, monkeypatch):
+    config_path = tmp_path / "runpod.toml"
+    config_path.write_text(
+        """
+[runpod]
+name = "char-test"
+
+[image]
+name = "ghcr.io/example/character-eng:latest"
+
+[env]
+HF_TOKEN = "${HF_TOKEN}"
+MODE = "full"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HF_TOKEN", "hf_example")
+    cfg = runpod.load_config(config_path)
+    payload = runpod.build_create_payload(cfg)
+    assert payload["env"]["HF_TOKEN"] == "hf_example"
+
+
+def test_build_create_payload_errors_on_missing_placeholder_env(tmp_path, monkeypatch):
+    config_path = tmp_path / "runpod.toml"
+    config_path.write_text(
+        """
+[runpod]
+name = "char-test"
+
+[image]
+name = "ghcr.io/example/character-eng:latest"
+
+[env]
+HF_TOKEN = "${HF_TOKEN}"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    cfg = runpod.load_config(config_path)
+    try:
+        runpod.build_create_payload(cfg)
+    except RuntimeError as exc:
+        assert "missing env var for deploy env HF_TOKEN" in str(exc)
+    else:
+        raise AssertionError("expected missing placeholder env error")

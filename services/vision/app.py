@@ -151,12 +151,25 @@ def _load_sam3():
     _sam3_status = "loading"
     try:
         print("Loading SAM3 …", flush=True)
-        from transformers import Sam3Processor as S3P, Sam3Model as S3M
-        _sam3_proc = S3P.from_pretrained("facebook/sam3")
-        _sam3_model = S3M.from_pretrained(
-            "facebook/sam3", torch_dtype=DTYPE,
-        ).to(DEVICE)
-        _sam3_model.eval()
+        try:
+            from transformers import Sam3Processor as S3P, Sam3Model as S3M
+
+            _sam3_proc = S3P.from_pretrained("facebook/sam3")
+            _sam3_model = S3M.from_pretrained(
+                "facebook/sam3", torch_dtype=DTYPE,
+            ).to(DEVICE)
+            _sam3_model.eval()
+            print("SAM3 backend: transformers", flush=True)
+        except (ImportError, AttributeError):
+            from sam3 import build_sam3_image_model
+            from sam3.model.sam3_image_processor import Sam3Processor as NativeSam3Processor
+
+            _sam3_model = build_sam3_image_model(device=DEVICE, eval_mode=True)
+            if DTYPE is not None:
+                _sam3_model = _sam3_model.to(dtype=DTYPE)
+            _sam3_model.eval()
+            _sam3_proc = NativeSam3Processor(_sam3_model, device=DEVICE)
+            print("SAM3 backend: native sam3 package", flush=True)
         _sam3_status = "ready"
         print("SAM3 ready.", flush=True)
     except Exception as e:

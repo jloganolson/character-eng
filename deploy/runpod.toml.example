@@ -1,9 +1,9 @@
 [runpod]
 name = "character-eng-session-manager"
-gpu_type_ids = ["NVIDIA GeForce RTX 4090", "NVIDIA GeForce RTX 5090", "NVIDIA L40S"]
+gpu_type_ids = ["NVIDIA GeForce RTX 4090"]
 gpu_count = 1
-gpu_type_priority = "custom"
-data_center_ids = ["US-CA-2", "US-WA-1", "US-TX-4"]
+gpu_type_priority = "availability"
+data_center_ids = ["US-CA-2", "US-WA-1", "US-TX-4", "US-TX-3", "US-IL-1", "US-KS-2", "US-GA-1", "US-GA-2", "US-NC-1"]
 data_center_priority = "custom"
 cloud_type = "SECURE"
 compute_type = "GPU"

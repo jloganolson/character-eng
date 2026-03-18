@@ -11,10 +11,13 @@ from pathlib import Path
 from typing import Any
 
 import tomllib
+from dotenv import load_dotenv
 
 
 RUNPOD_API_BASE = "https://rest.runpod.io/v1"
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("runpod.toml")
+
+load_dotenv()
 
 
 @dataclass
@@ -143,7 +146,7 @@ class RunpodClient:
 def build_create_payload(cfg: RunpodConfig, container_registry_auth_id: str = "") -> dict:
     if not cfg.image_name:
         raise ValueError("image.name is required in deploy/runpod.toml")
-    env = dict(cfg.env)
+    env = resolve_config_env(cfg.env)
     if cfg.support_public_ip and not env.get("PUBLIC_HOST"):
         env["PUBLIC_HOST"] = "__RUNPOD_PUBLIC_IP__"
     payload = {
@@ -177,6 +180,20 @@ def build_create_payload(cfg: RunpodConfig, container_registry_auth_id: str = ""
         payload.pop("volumeInGb", None)
         payload.pop("volumeMountPath", None)
     return payload
+
+
+def resolve_config_env(env: dict[str, str]) -> dict[str, str]:
+    resolved: dict[str, str] = {}
+    for key, value in env.items():
+        if value.startswith("${") and value.endswith("}") and len(value) > 3:
+            env_name = value[2:-1].strip()
+            env_value = os.environ.get(env_name, "").strip()
+            if not env_value:
+                raise RuntimeError(f"missing env var for deploy env {key}: {env_name}")
+            resolved[key] = env_value
+        else:
+            resolved[key] = value
+    return resolved
 
 
 def resolve_container_registry_auth_id(cfg: RunpodConfig, client: RunpodClient) -> str:
