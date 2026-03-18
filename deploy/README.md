@@ -109,3 +109,15 @@ uv run python deploy/runpod.py --config deploy/runpod-lite.toml up
 For the full image, keep a non-zero `volume_in_gb` mounted at `/workspace`. The container now uses
 `/workspace/character-eng-runtime` for the heavy vision runtime environment and model caches, so a
 persistent volume avoids re-installing the full CUDA / vLLM / vision stack on every redeploy.
+
+## GCP VM path
+
+There is now a sibling GCP path under [`deploy/gcp/`](gcp/README.md).
+
+That flow keeps the existing container/runtime architecture and swaps only the infrastructure layer:
+
+- Compute Engine GPU VM instead of a RunPod pod
+- persistent disk for runtime state
+- optional Caddy TLS termination in front of the manager port
+
+This is the better fit when you want a more deterministic long-lived host and are willing to manage a VM directly.

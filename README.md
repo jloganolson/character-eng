@@ -381,6 +381,8 @@ uv run deploy/runpod.py destroy   # Delete pod + volume
 
 Configure RunPod in `deploy/runpod.toml`. Set `RUNPOD_API_KEY` in `.env`.
 
+For the parallel GCP VM path, see [`deploy/gcp/README.md`](deploy/gcp/README.md).
+
 ### CI/CD
 
 Push to `main` triggers GitHub Actions (`.github/workflows/deploy.yml`) which builds and pushes to GHCR, then restarts the RunPod pod. Set `RUNPOD_API_KEY` and `RUNPOD_POD_ID` as GitHub secrets.
