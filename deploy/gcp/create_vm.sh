@@ -75,38 +75,43 @@ HF_TOKEN=${HF_TOKEN:-}
 CHARACTER_ENG_MANAGER_TOKEN=${CHARACTER_ENG_MANAGER_TOKEN:-}
 EOF
 
-metadata_args=(
-  "--metadata=character-eng-container-image=${CONTAINER_IMAGE}"
-  "--metadata=character-eng-container-name=${CONTAINER_NAME}"
-  "--metadata=character-eng-manager-port=${MANAGER_PORT}"
-  "--metadata=character-eng-runtime-disk=${GCP_RUNTIME_DISK_NAME}"
-  "--metadata=character-eng-runtime-mount=${GCP_RUNTIME_MOUNT_PATH}"
-  "--metadata=character-eng-workspace-mount=${WORKSPACE_MOUNT_PATH}"
+metadata_pairs=(
+  "character-eng-container-image=${CONTAINER_IMAGE}"
+  "character-eng-container-name=${CONTAINER_NAME}"
+  "character-eng-manager-port=${MANAGER_PORT}"
+  "character-eng-runtime-disk=${GCP_RUNTIME_DISK_NAME}"
+  "character-eng-runtime-mount=${GCP_RUNTIME_MOUNT_PATH}"
+  "character-eng-workspace-mount=${WORKSPACE_MOUNT_PATH}"
 )
 
 if [[ -n "${PUBLIC_HOST:-}" ]]; then
-  metadata_args+=("--metadata=character-eng-public-host=${PUBLIC_HOST}")
+  metadata_pairs+=("character-eng-public-host=${PUBLIC_HOST}")
 fi
 if [[ -n "${CADDY_DOMAIN:-}" ]]; then
-  metadata_args+=("--metadata=character-eng-caddy-domain=${CADDY_DOMAIN}")
+  metadata_pairs+=("character-eng-caddy-domain=${CADDY_DOMAIN}")
 fi
 if [[ -n "${CADDY_EMAIL:-}" ]]; then
-  metadata_args+=("--metadata=character-eng-caddy-email=${CADDY_EMAIL}")
+  metadata_pairs+=("character-eng-caddy-email=${CADDY_EMAIL}")
 fi
 
-metadata_file_args=("--metadata-from-file=startup-script=${STARTUP_SCRIPT},character-eng-env=${app_env_file}")
+metadata_file_pairs=("startup-script=${STARTUP_SCRIPT}" "character-eng-env=${app_env_file}")
 if [[ -n "${REGISTRY_SERVER:-}" ]]; then
   printf '%s' "$REGISTRY_SERVER" >"$tmp_dir/registry-server"
-  metadata_file_args+=("--metadata-from-file=character-eng-registry-server=$tmp_dir/registry-server")
+  metadata_file_pairs+=("character-eng-registry-server=$tmp_dir/registry-server")
 fi
 if [[ -n "${REGISTRY_USERNAME:-}" ]]; then
   printf '%s' "$REGISTRY_USERNAME" >"$tmp_dir/registry-username"
-  metadata_file_args+=("--metadata-from-file=character-eng-registry-username=$tmp_dir/registry-username")
+  metadata_file_pairs+=("character-eng-registry-username=$tmp_dir/registry-username")
 fi
 if [[ -n "${REGISTRY_PASSWORD:-}" ]]; then
   printf '%s' "$REGISTRY_PASSWORD" >"$tmp_dir/registry-password"
-  metadata_file_args+=("--metadata-from-file=character-eng-registry-password=$tmp_dir/registry-password")
+  metadata_file_pairs+=("character-eng-registry-password=$tmp_dir/registry-password")
 fi
+
+join_by_comma() {
+  local IFS=,
+  printf '%s' "$*"
+}
 
 run() {
   if [[ "${DRY_RUN:-0}" == "1" ]]; then
@@ -167,8 +172,8 @@ if [[ -n "${GCP_ADDRESS_NAME:-}" ]]; then
   instance_args+=(--address "$GCP_ADDRESS_NAME")
 fi
 
-instance_args+=("${metadata_args[@]}")
-instance_args+=("${metadata_file_args[@]}")
+instance_args+=(--metadata "$(join_by_comma "${metadata_pairs[@]}")")
+instance_args+=(--metadata-from-file "$(join_by_comma "${metadata_file_pairs[@]}")")
 
 run "${instance_args[@]}"
 

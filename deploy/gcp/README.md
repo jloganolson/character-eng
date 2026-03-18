@@ -58,6 +58,8 @@ cp deploy/gcp.env.example deploy/gcp.env
 - `CONTAINER_IMAGE`
 - `HF_TOKEN`
 
+The current example defaults to Google's GPU-ready `ml-images/common-cu128-ubuntu-2204-nvidia-570` image family so the VM starts with drivers already in place.
+
 3. If you want real browser access, also set:
 
 - `PUBLIC_HOST`
