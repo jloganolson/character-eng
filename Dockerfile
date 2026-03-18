@@ -47,7 +47,7 @@ RUN UV_PROJECT_ENVIRONMENT=/opt/character-eng/vision-env \
     UV_CACHE_DIR=/tmp/uv-cache/vision \
     uv sync --project services/vision --frozen \
     && rm -rf /tmp/uv-cache/vision
-RUN UV_CACHE_DIR=/tmp/uv-cache/app uv sync --frozen --no-dev \
+RUN UV_CACHE_DIR=/tmp/uv-cache/app uv sync --frozen --no-dev --extra pocket-server \
     && rm -rf /tmp/uv-cache/app
 
 EXPOSE 7862 7870 7860 8000 8003
