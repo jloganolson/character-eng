@@ -18,10 +18,66 @@ VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-4096}"
 VLLM_ARGS="${VLLM_ARGS:-}"
 APP_PORT="${APP_PORT:-7860}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VLLM_BIN="${VLLM_BIN:-}"
+BUNDLED_VISION_ENV="${CHARACTER_ENG_BUNDLED_VISION_ENV:-/opt/character-eng/vision-env}"
+DEFAULT_RUNTIME_ROOT=""
+if [ -n "${CHARACTER_ENG_RUNTIME_ROOT:-}" ]; then
+    DEFAULT_RUNTIME_ROOT="$CHARACTER_ENG_RUNTIME_ROOT"
+elif [ "$PROJECT_ROOT" = "/app" ] && [ -d "/workspace" ]; then
+    DEFAULT_RUNTIME_ROOT="/workspace/character-eng-runtime"
+fi
+VISION_ENV_SOURCE="project"
+if [ -n "${CHARACTER_ENG_VISION_ENV:-}" ]; then
+    VISION_ENV="$CHARACTER_ENG_VISION_ENV"
+    VISION_ENV_SOURCE="env"
+elif [ -x "$BUNDLED_VISION_ENV/bin/python" ]; then
+    VISION_ENV="$BUNDLED_VISION_ENV"
+    VISION_ENV_SOURCE="bundled"
+elif [ -n "$DEFAULT_RUNTIME_ROOT" ] && [ -x "$DEFAULT_RUNTIME_ROOT/vision/.venv/bin/python" ]; then
+    VISION_ENV="$DEFAULT_RUNTIME_ROOT/vision/.venv"
+    VISION_ENV_SOURCE="runtime"
+elif [ -n "$DEFAULT_RUNTIME_ROOT" ]; then
+    VISION_ENV="$DEFAULT_RUNTIME_ROOT/vision/.venv"
+    VISION_ENV_SOURCE="runtime-sync"
+else
+    VISION_ENV="$SCRIPT_DIR/.venv"
+fi
+if [ -n "${CHARACTER_ENG_CACHE_ROOT:-}" ]; then
+    CACHE_ROOT="$CHARACTER_ENG_CACHE_ROOT"
+elif [ -n "$DEFAULT_RUNTIME_ROOT" ]; then
+    CACHE_ROOT="$DEFAULT_RUNTIME_ROOT/.cache"
+else
+    CACHE_ROOT="$PROJECT_ROOT/.cache"
+fi
+
+export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-$VISION_ENV}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$CACHE_ROOT/uv}"
+export HF_HOME="${HF_HOME:-$CACHE_ROOT/huggingface}"
+export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}"
+export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME/transformers}"
+export TORCH_HOME="${TORCH_HOME:-$CACHE_ROOT/torch}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$CACHE_ROOT/xdg}"
+
+mkdir -p "$(dirname "$UV_PROJECT_ENVIRONMENT")" "$UV_CACHE_DIR" "$HF_HOME" "$TORCH_HOME" "$XDG_CACHE_HOME"
+
+PYTHON_BIN="$UV_PROJECT_ENVIRONMENT/bin/python"
+if [ ! -x "$PYTHON_BIN" ]; then
+    echo "=== Syncing vision runtime environment ==="
+    uv sync --project "$SCRIPT_DIR" --frozen
+    PYTHON_BIN="$UV_PROJECT_ENVIRONMENT/bin/python"
+    if [ ! -x "$PYTHON_BIN" ]; then
+        echo "ERROR: vision Python not found at $PYTHON_BIN after sync"
+        exit 1
+    fi
+else
+    echo "=== Reusing vision runtime environment (${VISION_ENV_SOURCE}) ==="
+fi
 
 if [ -z "$VLLM_BIN" ]; then
-    if [ -x "$HOME/.local/share/uv/tools/vllm/bin/vllm" ]; then
+    if [ -x "$UV_PROJECT_ENVIRONMENT/bin/vllm" ]; then
+        VLLM_BIN="$UV_PROJECT_ENVIRONMENT/bin/vllm"
+    elif [ -x "$HOME/.local/share/uv/tools/vllm/bin/vllm" ]; then
         VLLM_BIN="$HOME/.local/share/uv/tools/vllm/bin/vllm"
     elif command -v vllm >/dev/null 2>&1; then
         VLLM_BIN="$(command -v vllm)"
@@ -68,7 +124,12 @@ trap cleanup SIGINT SIGTERM EXIT
 
 # --- Apply vLLM patch ---
 echo "=== Applying vLLM patch (if needed) ==="
-uv run --project "$SCRIPT_DIR" python "$SCRIPT_DIR/patch_vllm.py"
+"$PYTHON_BIN" "$SCRIPT_DIR/patch_vllm.py"
+
+echo "=== Vision runtime environment ==="
+echo "  Source: $VISION_ENV_SOURCE"
+echo "  Env:   $UV_PROJECT_ENVIRONMENT"
+echo "  Cache: $CACHE_ROOT"
 
 # --- Kill existing processes on target ports ---
 echo "=== Checking ports ==="
@@ -130,7 +191,7 @@ fi
 
 # --- Start app ---
 APP_LOG="$SCRIPT_DIR/app.log"
-uv run --project "$SCRIPT_DIR" python "$SCRIPT_DIR/app.py" \
+"$PYTHON_BIN" "$SCRIPT_DIR/app.py" \
     --port "$APP_PORT" \
     --vllm-url "http://localhost:$VLLM_PORT/v1" \
     $AUTO_TRACKERS \

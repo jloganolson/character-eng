@@ -77,8 +77,8 @@
     flex-direction: column;
     overflow: hidden;
   }
-  body.booting #header,
-  body.booting #main {
+  body.boot-blocking #header,
+  body.boot-blocking #main {
     filter: blur(1.5px) saturate(0.7);
     opacity: 0.28;
     pointer-events: none;
@@ -95,11 +95,19 @@
     align-items: center;
     justify-content: center;
     padding: 2rem;
-    background: color-mix(in srgb, var(--bg) 68%, transparent);
-    backdrop-filter: blur(10px);
+    pointer-events: none;
   }
   body.booting #boot-overlay {
     display: flex;
+  }
+  body.boot-blocking #boot-overlay {
+    background: color-mix(in srgb, var(--bg) 68%, transparent);
+    backdrop-filter: blur(10px);
+  }
+  body.booting:not(.boot-blocking) #boot-overlay {
+    align-items: flex-start;
+    justify-content: flex-end;
+    padding: 1rem;
   }
   .boot-overlay-card {
     width: min(920px, 100%);
@@ -110,6 +118,11 @@
       linear-gradient(160deg, color-mix(in srgb, var(--panel) 74%, var(--cyan) 26%), var(--panel)),
       var(--panel);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.32);
+    pointer-events: auto;
+  }
+  body.booting:not(.boot-blocking) .boot-overlay-card {
+    width: min(540px, 100%);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
   }
   .boot-overlay-lede {
     font-size: 1.35rem;
@@ -1427,6 +1440,7 @@
     </div>
     <div id="boot-overlay-grid" class="boot-grid"></div>
     <div class="boot-overlay-actions">
+      <button id="boot-runtime-toggle">Start</button>
       <button id="boot-load-archive">Load Archive...</button>
       <button id="boot-restart">Restart Session</button>
     </div>
@@ -1909,6 +1923,7 @@
   const runtimeStopButton = document.getElementById("runtime-stop");
   const runtimeRestartButton = document.getElementById("runtime-restart");
   const runtimeControlGrid = document.getElementById("runtime-control-grid");
+  const bootRuntimeToggleButton = document.getElementById("boot-runtime-toggle");
   const bootLoadArchiveButton = document.getElementById("boot-load-archive");
   const bootRestartButton = document.getElementById("boot-restart");
   const timeWindowSlider = document.getElementById("time-window");
@@ -4105,7 +4120,16 @@
       sessionStopped ? "Everything is warm. Start when you want to begin a fresh session." :
       conversationPaused ? (startupPausePending ? "Fresh session is ready. Press Play when you want to begin." : "Conversation is paused. Press Play when you want to continue.") :
       "Runtime is live. You can speak or type now.";
+    const controlsInteractive =
+      runtimeStateSeen &&
+      !archiveOnlyRuntime &&
+      !archiveBrowseRef &&
+      !sessionSavePending &&
+      !restartPending &&
+      !pendingPauseState;
+    const bootBlocking = !bootReady && (!controlsInteractive || statePollingSuspended);
     document.body.classList.toggle("booting", !bootReady);
+    document.body.classList.toggle("boot-blocking", bootBlocking);
 
     summaryEl.textContent = summary;
     overlaySummaryEl.textContent = summary;
@@ -4188,9 +4212,57 @@
     runtimeRestartButton.textContent = "Restart Session";
     runtimeRestartButton.disabled = archiveOnlyRuntime || !!archiveBrowseRef;
     runtimeRestartButton.style.opacity = runtimeRestartButton.disabled ? "0.6" : "1";
+    bootRuntimeToggleButton.textContent = runtimeToggleButton.textContent;
+    bootRuntimeToggleButton.disabled = runtimeToggleButton.disabled;
+    bootRuntimeToggleButton.style.opacity = runtimeToggleButton.disabled ? runtimeToggleButton.style.opacity : "1";
+    bootRuntimeToggleButton.style.background = runtimeToggleButton.style.background;
+    bootRuntimeToggleButton.style.color = runtimeToggleButton.style.color || "var(--bg)";
     bootRestartButton.textContent = archiveOnlyRuntime ? "Live Disabled" : "Restart Session";
     bootRestartButton.disabled = archiveOnlyRuntime || !!archiveBrowseRef;
     bootRestartButton.style.opacity = bootRestartButton.disabled ? "0.6" : "1";
+  }
+
+  async function requestRuntimeToggle() {
+    if (pendingPauseState) return;
+    if (archiveOnlyRuntime && !archiveBrowseRef) {
+      archiveLoadStatus.textContent = "Archive-only mode is active. Load an archive to inspect recordings.";
+      return;
+    }
+    if (archiveBrowseRef) {
+      if (archivePlaybackMediaAvailable()) {
+        return;
+      }
+      if (archiveOnlyRuntime) {
+        archiveLoadStatus.textContent = "Replay is unavailable in archive-only mode. Load the archive media or restart the live runtime.";
+        return;
+      }
+      const target = archiveBrowseRef;
+      pendingReplayArchiveRef = target;
+      pendingReplayEventTime = 0;
+      notePendingRuntimeAction("playing");
+      try {
+        updateVisionFeedUrl();
+        await sendInput(`/replay ${target}`);
+        archiveLoadStatus.textContent = `Replaying archive: ${target}`;
+        annotationStatus.textContent = `Requested replay: ${target}`;
+      } catch (error) {
+        pendingReplayArchiveRef = "";
+        pendingReplayEventTime = null;
+        clearPendingRuntimeAction(`Replay failed: ${error.message || error}`);
+      }
+      return;
+    }
+    const nextState = sessionStopped ? "starting" : (conversationPaused ? "playing" : "pausing");
+    const command = sessionStopped ? "/start" : (conversationPaused ? "/play" : "/pause");
+    notePendingRuntimeAction(nextState);
+    try {
+      if (bridgeEnabled() && (sessionStopped || conversationPaused)) {
+        await armBridgeAudio();
+      }
+      await sendInput(command);
+    } catch (error) {
+      clearPendingRuntimeAction(`Runtime action failed: ${error.message || error}`);
+    }
   }
 
   async function requestRestart() {
@@ -7298,48 +7370,8 @@
     seekArchiveMedia(Number(event.target.value || 0), {syncSelection: true});
   });
 
-  runtimeToggleButton.addEventListener("click", async () => {
-    if (pendingPauseState) return;
-    if (archiveOnlyRuntime && !archiveBrowseRef) {
-      archiveLoadStatus.textContent = "Archive-only mode is active. Load an archive to inspect recordings.";
-      return;
-    }
-    if (archiveBrowseRef) {
-      if (archivePlaybackMediaAvailable()) {
-        return;
-      }
-      if (archiveOnlyRuntime) {
-        archiveLoadStatus.textContent = "Replay is unavailable in archive-only mode. Load the archive media or restart the live runtime.";
-        return;
-      }
-      const target = archiveBrowseRef;
-      pendingReplayArchiveRef = target;
-      pendingReplayEventTime = 0;
-      notePendingRuntimeAction("playing");
-      try {
-        updateVisionFeedUrl();
-        await sendInput(`/replay ${target}`);
-        archiveLoadStatus.textContent = `Replaying archive: ${target}`;
-        annotationStatus.textContent = `Requested replay: ${target}`;
-      } catch (error) {
-        pendingReplayArchiveRef = "";
-        pendingReplayEventTime = null;
-        clearPendingRuntimeAction(`Replay failed: ${error.message || error}`);
-      }
-      return;
-    }
-    const nextState = sessionStopped ? "starting" : (conversationPaused ? "playing" : "pausing");
-    const command = sessionStopped ? "/start" : (conversationPaused ? "/play" : "/pause");
-    notePendingRuntimeAction(nextState);
-    try {
-      if (bridgeEnabled() && (sessionStopped || conversationPaused)) {
-        await armBridgeAudio();
-      }
-      await sendInput(command);
-    } catch (error) {
-      clearPendingRuntimeAction(`Runtime action failed: ${error.message || error}`);
-    }
-  });
+  runtimeToggleButton.addEventListener("click", requestRuntimeToggle);
+  bootRuntimeToggleButton.addEventListener("click", requestRuntimeToggle);
   runtimeStopButton.addEventListener("click", requestStop);
   runtimeRestartButton.addEventListener("click", requestRestart);
   bootLoadArchiveButton.addEventListener("click", async () => {

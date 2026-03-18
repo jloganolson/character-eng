@@ -12,12 +12,14 @@ dependencies = [
     "sounddevice>=0.5",
     "numpy>=1.26",
     "websocket-client>=1.7",
-    "pocket-tts>=1.0",
     "livekit>=1.1.2",
     "websockets>=14.0",
 ]
 
 [project.optional-dependencies]
+pocket-server = [
+    "pocket-tts>=1.1.1",
+]
 local-tts = [
     "torch>=2.8,<2.9",
     "torchaudio",

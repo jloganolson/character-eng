@@ -1,7 +1,7 @@
 """Voice I/O layer — Deepgram STT + ElevenLabs TTS + sounddevice mic/speaker.
 
 Wraps around the existing text pipeline as an I/O layer. Text mode continues
-to work unchanged. Install with: uv sync --extra voice
+to work unchanged. Local Qwen TTS still needs: uv sync --extra local-tts
 """
 
 from __future__ import annotations
@@ -118,8 +118,8 @@ def check_voice_available(tts_backend: str = "elevenlabs") -> tuple[bool, str]:
 
     Returns (available, reason) tuple.
     """
-    # Base voice deps (sounddevice, numpy, deepgram, websocket-client, pocket-tts)
-    # are in main dependencies — always installed. Only local-tts (qwen) needs extras.
+    # Base voice deps (sounddevice, numpy, deepgram, websocket-client) are in the
+    # main environment. Only local-tts (qwen) needs extra packages.
     if tts_backend in ("local", "qwen"):
         missing = []
         try:
@@ -1084,11 +1084,11 @@ class VoiceIO:
             pass
 
         # Build command — resolve binary path for venv compatibility
-        import shutil
+        from character_eng.pocket_runtime import ensure_pocket_tts_binary
 
-        pocket_bin = shutil.which("pocket-tts")
+        pocket_bin = ensure_pocket_tts_binary()
         if pocket_bin is None:
-            raise RuntimeError("pocket-tts not found in PATH. Install with: uv sync --extra voice")
+            raise RuntimeError("pocket-tts is unavailable and could not be bootstrapped")
 
         cmd = [pocket_bin, "serve", "--port", str(port)]
         if self._pocket_voice:

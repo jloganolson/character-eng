@@ -72,15 +72,22 @@ def _stub_runtime_script(tmp_path: Path) -> Path:
     return script
 
 
-def _json_get(url: str, token: str = "") -> dict:
+def _json_get(url: str, token: str = "", headers: dict[str, str] | None = None) -> dict:
     req = urllib.request.Request(url)
     if token:
         req.add_header("Authorization", f"Bearer {token}")
+    for key, value in (headers or {}).items():
+        req.add_header(key, value)
     with urllib.request.urlopen(req, timeout=5) as resp:
         return json.loads(resp.read())
 
 
-def _json_post(url: str, payload: dict, token: str = "") -> dict:
+def _json_post(
+    url: str,
+    payload: dict,
+    token: str = "",
+    headers: dict[str, str] | None = None,
+) -> dict:
     req = urllib.request.Request(
         url,
         method="POST",
@@ -89,6 +96,8 @@ def _json_post(url: str, payload: dict, token: str = "") -> dict:
     )
     if token:
         req.add_header("Authorization", f"Bearer {token}")
+    for key, value in (headers or {}).items():
+        req.add_header(key, value)
     with urllib.request.urlopen(req, timeout=10) as resp:
         return json.loads(resp.read())
 
@@ -195,6 +204,123 @@ def test_session_manager_http_api_accepts_query_token(tmp_path):
         with urllib.request.urlopen(req, timeout=10) as resp:
             created = json.loads(resp.read())
         assert created["session"]["status"] == "ready"
+    finally:
+        server.shutdown()
+        server.server_close()
+        manager.close()
+
+
+def test_session_manager_http_api_uses_forwarded_proxy_host_for_session_urls(tmp_path):
+    script = _stub_runtime_script(tmp_path)
+
+    def command_factory(session):
+        return [sys.executable, str(script)]
+
+    manager = RuntimeSessionManager(
+        public_host="127.0.0.1",
+        log_root=tmp_path / "logs",
+        startup_timeout_s=5.0,
+        command_factory=command_factory,
+    )
+    _, port, server = start_session_manager(manager, port=0)
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        created = _json_post(
+            f"{base_url}/sessions",
+            {"character": "greg", "vision": False},
+            headers={
+                "Host": "pod-abc-7870.proxy.runpod.net",
+                "X-Forwarded-Proto": "https",
+            },
+        )
+        assert created["session"]["url"].startswith("https://pod-abc-7870.proxy.runpod.net/?token=")
+    finally:
+        server.shutdown()
+        server.server_close()
+        manager.close()
+
+
+def test_runtime_session_manager_uses_shared_vision_service_env(tmp_path):
+    manager = RuntimeSessionManager(
+        public_host="127.0.0.1",
+        log_root=tmp_path / "logs",
+        startup_timeout_s=5.0,
+        command_factory=lambda session: [sys.executable, "-c", "print('noop')"],
+        base_env={"CHARACTER_ENG_SHARED_VISION_URL": "http://127.0.0.1:7860"},
+    )
+    probe = manager._runtime_env(  # noqa: SLF001
+        type(
+            "SessionProbe",
+            (),
+            {
+                "bridge_port": 12345,
+                "token": "abc",
+                "vision_enabled": True,
+                "vision_port": 54321,
+            },
+        )()
+    )
+    assert probe["CHARACTER_ENG_VISION_URL"] == "http://127.0.0.1:7860"
+    assert probe["CHARACTER_ENG_VISION_PORT"] == "7860"
+
+
+def test_session_manager_config_endpoint_reports_vision_settings(tmp_path):
+    script = _stub_runtime_script(tmp_path)
+
+    def command_factory(session):
+        return [sys.executable, str(script)]
+
+    manager = RuntimeSessionManager(
+        public_host="127.0.0.1",
+        log_root=tmp_path / "logs",
+        startup_timeout_s=5.0,
+        command_factory=command_factory,
+        default_vision_enabled=False,
+        allow_vision=False,
+    )
+    _, port, server = start_session_manager(manager, port=0)
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        payload = _json_get(f"{base_url}/config")
+        assert payload["config"]["default_vision_enabled"] is False
+        assert payload["config"]["allow_vision"] is False
+    finally:
+        server.shutdown()
+        server.server_close()
+        manager.close()
+
+
+def test_session_manager_http_api_rejects_vision_when_disabled(tmp_path):
+    script = _stub_runtime_script(tmp_path)
+
+    def command_factory(session):
+        return [sys.executable, str(script)]
+
+    manager = RuntimeSessionManager(
+        public_host="127.0.0.1",
+        log_root=tmp_path / "logs",
+        startup_timeout_s=5.0,
+        command_factory=command_factory,
+        default_vision_enabled=False,
+        allow_vision=False,
+    )
+    _, port, server = start_session_manager(manager, port=0)
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        req = urllib.request.Request(
+            f"{base_url}/sessions",
+            data=json.dumps({"character": "greg", "vision": True}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            raise AssertionError("expected disabled vision request to fail")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 400
+            payload = json.loads(exc.read())
+            assert payload["ok"] is False
+            assert "disabled" in payload["error"]
     finally:
         server.shutdown()
         server.server_close()

@@ -217,7 +217,6 @@ dependencies = [
     { name = "livekit" },
     { name = "numpy" },
     { name = "openai" },
-    { name = "pocket-tts" },
     { name = "python-dotenv" },
     { name = "rich" },
     { name = "sounddevice" },
@@ -236,6 +235,9 @@ local-tts = [
     { name = "torch" },
     { name = "torchaudio" },
     { name = "transformers" },
+]
+pocket-server = [
+    { name = "pocket-tts" },
 ]
 
 [package.dev-dependencies]
@@ -256,7 +258,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "onnxruntime", marker = "extra == 'local-tts'" },
     { name = "openai", specifier = ">=1.86.0" },
-    { name = "pocket-tts", specifier = ">=1.0" },
+    { name = "pocket-tts", marker = "extra == 'pocket-server'", specifier = ">=1.1.1" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "rich", specifier = ">=14.3.2" },
     { name = "sounddevice", specifier = ">=0.5" },
@@ -267,7 +269,7 @@ requires-dist = [
     { name = "websocket-client", specifier = ">=1.7" },
     { name = "websockets", specifier = ">=14.0" },
 ]
-provides-extras = ["local-tts"]
+provides-extras = ["pocket-server", "local-tts"]
 
 [package.metadata.requires-dev]
 dev = [

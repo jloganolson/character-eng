@@ -22,6 +22,9 @@ class RunpodConfig:
     name: str
     gpu_type_ids: list[str]
     gpu_count: int
+    gpu_type_priority: str
+    data_center_ids: list[str]
+    data_center_priority: str
     cloud_type: str
     compute_type: str
     interruptible: bool
@@ -30,10 +33,14 @@ class RunpodConfig:
     volume_mount_path: str
     support_public_ip: bool
     image_name: str
+    container_registry_auth_id: str
     ports: list[str]
     manager_port: int
     session_bridge_port: int
     env: dict[str, str]
+    registry_auth_name: str
+    registry_auth_username_env: str
+    registry_auth_password_env: str
     state_path: Path
 
 
@@ -43,11 +50,15 @@ def load_config(path: Path) -> RunpodConfig:
     image = payload.get("image", {})
     network = payload.get("network", {})
     env = {str(key): str(value) for key, value in (payload.get("env", {}) or {}).items()}
+    registry_auth = payload.get("registry_auth", {})
     files = payload.get("files", {})
     return RunpodConfig(
         name=str(runpod.get("name") or "character-eng-session-manager"),
         gpu_type_ids=[str(item) for item in runpod.get("gpu_type_ids", ["NVIDIA GeForce RTX 4090"])],
         gpu_count=int(runpod.get("gpu_count", 1)),
+        gpu_type_priority=str(runpod.get("gpu_type_priority") or "availability"),
+        data_center_ids=[str(item) for item in (runpod.get("data_center_ids") or [])],
+        data_center_priority=str(runpod.get("data_center_priority") or "availability"),
         cloud_type=str(runpod.get("cloud_type") or "SECURE"),
         compute_type=str(runpod.get("compute_type") or "GPU"),
         interruptible=bool(runpod.get("interruptible", False)),
@@ -56,10 +67,16 @@ def load_config(path: Path) -> RunpodConfig:
         volume_mount_path=str(runpod.get("volume_mount_path") or "/workspace"),
         support_public_ip=bool(runpod.get("support_public_ip", True)),
         image_name=str(image.get("name") or ""),
+        container_registry_auth_id=str(
+            image.get("container_registry_auth_id") or registry_auth.get("id") or ""
+        ).strip(),
         ports=[str(item) for item in network.get("ports", ["7870/http", "7862/http", "22/tcp"])],
         manager_port=int(network.get("manager_port", 7870)),
         session_bridge_port=int(network.get("session_bridge_port", 7862)),
         env=env,
+        registry_auth_name=str(registry_auth.get("name") or "").strip(),
+        registry_auth_username_env=str(registry_auth.get("username_env") or "").strip(),
+        registry_auth_password_env=str(registry_auth.get("password_env") or "").strip(),
         state_path=(path.parent / str(files.get("state_path") or "deploy/.runpod-state.json")).resolve()
         if not Path(str(files.get("state_path") or "deploy/.runpod-state.json")).is_absolute()
         else Path(str(files.get("state_path"))),
@@ -100,6 +117,16 @@ class RunpodClient:
     def list_pods(self) -> list[dict]:
         return self._request("GET", "/pods")
 
+    def list_container_registry_auths(self) -> list[dict]:
+        return self._request("GET", "/containerregistryauth") or []
+
+    def create_container_registry_auth(self, name: str, username: str, password: str) -> dict:
+        return self._request(
+            "POST",
+            "/containerregistryauth",
+            {"name": name, "username": username, "password": password},
+        )
+
     def get_pod(self, pod_id: str) -> dict:
         return self._request("GET", f"/pods/{pod_id}")
 
@@ -113,7 +140,7 @@ class RunpodClient:
         return self._request("DELETE", f"/pods/{pod_id}")
 
 
-def build_create_payload(cfg: RunpodConfig) -> dict:
+def build_create_payload(cfg: RunpodConfig, container_registry_auth_id: str = "") -> dict:
     if not cfg.image_name:
         raise ValueError("image.name is required in deploy/runpod.toml")
     env = dict(cfg.env)
@@ -124,6 +151,9 @@ def build_create_payload(cfg: RunpodConfig) -> dict:
         "imageName": cfg.image_name,
         "gpuTypeIds": cfg.gpu_type_ids,
         "gpuCount": cfg.gpu_count,
+        "gpuTypePriority": cfg.gpu_type_priority,
+        "dataCenterIds": cfg.data_center_ids,
+        "dataCenterPriority": cfg.data_center_priority,
         "cloudType": cfg.cloud_type,
         "computeType": cfg.compute_type,
         "interruptible": cfg.interruptible,
@@ -134,10 +164,62 @@ def build_create_payload(cfg: RunpodConfig) -> dict:
         "ports": cfg.ports,
         "env": env,
     }
+    auth_id = container_registry_auth_id.strip()
+    if auth_id:
+        payload["containerRegistryAuthId"] = auth_id
+    if len(cfg.gpu_type_ids) <= 1 and cfg.gpu_type_priority == "availability":
+        payload.pop("gpuTypePriority", None)
+    if not cfg.data_center_ids:
+        payload.pop("dataCenterIds", None)
+    if not cfg.data_center_ids and cfg.data_center_priority == "availability":
+        payload.pop("dataCenterPriority", None)
     if cfg.volume_in_gb <= 0:
         payload.pop("volumeInGb", None)
         payload.pop("volumeMountPath", None)
     return payload
+
+
+def resolve_container_registry_auth_id(cfg: RunpodConfig, client: RunpodClient) -> str:
+    if cfg.container_registry_auth_id:
+        return cfg.container_registry_auth_id
+    if not any(
+        [
+            cfg.registry_auth_name,
+            cfg.registry_auth_username_env,
+            cfg.registry_auth_password_env,
+        ]
+    ):
+        return ""
+    missing_config = [
+        field_name
+        for field_name, value in (
+            ("registry_auth.name", cfg.registry_auth_name),
+            ("registry_auth.username_env", cfg.registry_auth_username_env),
+            ("registry_auth.password_env", cfg.registry_auth_password_env),
+        )
+        if not value
+    ]
+    if missing_config:
+        joined = ", ".join(missing_config)
+        raise RuntimeError(f"incomplete registry auth config: missing {joined}")
+    for auth in client.list_container_registry_auths():
+        if str(auth.get("name") or "").strip() == cfg.registry_auth_name:
+            return str(auth.get("id") or "").strip()
+    username = os.environ.get(cfg.registry_auth_username_env, "").strip()
+    password = os.environ.get(cfg.registry_auth_password_env, "").strip()
+    missing_env = [
+        env_name
+        for env_name, value in (
+            (cfg.registry_auth_username_env, username),
+            (cfg.registry_auth_password_env, password),
+        )
+        if not value
+    ]
+    if missing_env:
+        joined = ", ".join(missing_env)
+        raise RuntimeError(f"missing registry auth env vars: {joined}")
+    created = client.create_container_registry_auth(cfg.registry_auth_name, username, password)
+    return str(created.get("id") or "").strip()
 
 
 def read_state(path: Path) -> dict:
@@ -166,7 +248,20 @@ def resolve_pod_id(cfg: RunpodConfig, explicit: str | None) -> str:
     return pod_id
 
 
+def format_http_service_url(pod: dict, port: int) -> str:
+    pod_id = str(pod.get("id") or "").strip()
+    ports = [str(item) for item in (pod.get("ports") or [])]
+    if not pod_id:
+        return ""
+    if any(item == f"{port}/http" for item in ports):
+        return f"https://{pod_id}-{port}.proxy.runpod.net"
+    return ""
+
+
 def format_manager_url(pod: dict, manager_port: int) -> str:
+    proxy_url = format_http_service_url(pod, manager_port)
+    if proxy_url:
+        return proxy_url
     public_ip = str(pod.get("publicIp") or "").strip()
     port_mappings = pod.get("portMappings") or {}
     mapped = port_mappings.get(str(manager_port))
@@ -187,7 +282,7 @@ def format_ssh_command(pod: dict) -> str:
 def cmd_up(args) -> int:
     cfg = load_config(Path(args.config))
     client = RunpodClient(os.environ.get("RUNPOD_API_KEY", ""))
-    payload = build_create_payload(cfg)
+    payload = build_create_payload(cfg, resolve_container_registry_auth_id(cfg, client))
     pod = client.create_pod(payload)
     write_state(cfg.state_path, {"pod_id": pod["id"], "created_at": pod.get("lastStartedAt"), "name": cfg.name})
     print(f"created pod {pod['id']}")

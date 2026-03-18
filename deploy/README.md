@@ -19,6 +19,13 @@ The Docker image uses `deploy/container_entrypoint.sh` and supports:
 - `MODE=full`
   - Starts heavy services, then the session manager
 
+For fast infrastructure validation, there is also a separate lightweight image path:
+
+- `Dockerfile.manager-lite`
+  - Runs `character_eng.session_manager` directly from source
+  - Skips `services/vision`, `vllm`, and the full app dependency install
+  - Uses a stub per-session runtime to validate RunPod placement, public networking, SSH, manager API, tokenized URLs, and proxying
+
 ## Useful env vars
 
 - `PUBLIC_HOST`
@@ -73,3 +80,23 @@ curl -X POST http://127.0.0.1:7870/sessions \
 ```
 
 The response includes a tokenized browser URL on the same manager port, for example `http://127.0.0.1:7870/?token=...`.
+
+## Lite RunPod validation
+
+Use `Dockerfile.manager-lite` plus `deploy/runpod-lite.toml` when you want to validate the control plane before paying the startup cost of the full GPU image.
+
+If your image is private, configure RunPod registry auth in the TOML and provide the referenced env vars before `up`. `deploy/runpod.py` will reuse an existing RunPod registry auth with the same name or create it on demand.
+
+Suggested build:
+
+```bash
+export GHCR_USERNAME=<github-user>
+export GHCR_PASSWORD=$(gh auth token)
+docker build -f Dockerfile.manager-lite -t ghcr.io/<org>/character-eng:runpod-lite .
+docker push ghcr.io/<org>/character-eng:runpod-lite
+uv run python deploy/runpod.py --config deploy/runpod-lite.toml up
+```
+
+For the full image, keep a non-zero `volume_in_gb` mounted at `/workspace`. The container now uses
+`/workspace/character-eng-runtime` for the heavy vision runtime environment and model caches, so a
+persistent volume avoids re-installing the full CUDA / vLLM / vision stack on every redeploy.

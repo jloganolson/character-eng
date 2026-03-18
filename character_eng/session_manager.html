@@ -210,6 +210,7 @@
           <input id="vision-input" type="checkbox" checked>
           Start with vision enabled
         </label>
+        <div class="status" id="vision-mode-line"></div>
         <div class="actions">
           <button class="primary" id="create-button" type="submit">Create Session</button>
           <button id="refresh-button" type="button">Refresh</button>
@@ -233,6 +234,7 @@
   const adminTokenInput = document.getElementById("admin-token-input");
   const characterInput = document.getElementById("character-input");
   const visionInput = document.getElementById("vision-input");
+  const visionModeLine = document.getElementById("vision-mode-line");
   const refreshButton = document.getElementById("refresh-button");
   const params = new URLSearchParams(window.location.search);
   const storageKey = "character-eng-manager-admin-token";
@@ -255,6 +257,22 @@
     const storedToken = localStorage.getItem(storageKey) || "";
     adminTokenInput.value = queryToken || storedToken;
     rememberAdminToken();
+  }
+
+  async function syncManagerConfig() {
+    try {
+      const payload = await jsonFetch("/config");
+      const config = payload.config || {};
+      const allowVision = config.allow_vision !== false;
+      const defaultVision = config.default_vision_enabled === true;
+      visionInput.checked = defaultVision;
+      visionInput.disabled = !allowVision;
+      visionModeLine.textContent = allowVision
+        ? `New sessions default to vision ${defaultVision ? "on" : "off"}.`
+        : "Vision sessions are disabled on this manager.";
+    } catch (error) {
+      visionModeLine.textContent = `Config load failed: ${error.message || error}`;
+    }
   }
 
   async function jsonFetch(url, options = {}) {
@@ -389,7 +407,7 @@
   });
 
   syncAdminToken();
-  refreshSessions();
+  syncManagerConfig().finally(() => refreshSessions());
   setInterval(() => refreshSessions(), 5000);
 })();
 </script>

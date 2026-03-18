@@ -4,7 +4,28 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT/.uv-cache}"
+if [[ -x "$ROOT/.venv/bin/python" ]]; then
+  PYTHON_BIN="$ROOT/.venv/bin/python"
+else
+  PYTHON_BIN="$(command -v python3)"
+fi
+
+if [[ -z "${CHARACTER_ENG_RUNTIME_ROOT:-}" && "$ROOT" == "/app" && -d /workspace ]]; then
+  export CHARACTER_ENG_RUNTIME_ROOT="/workspace/character-eng-runtime"
+fi
+
+if [[ -n "${CHARACTER_ENG_RUNTIME_ROOT:-}" ]]; then
+  CACHE_ROOT_DEFAULT="${CHARACTER_ENG_CACHE_ROOT:-$CHARACTER_ENG_RUNTIME_ROOT/.cache}"
+  export UV_CACHE_DIR="${UV_CACHE_DIR:-$CACHE_ROOT_DEFAULT/uv}"
+else
+  CACHE_ROOT_DEFAULT="${CHARACTER_ENG_CACHE_ROOT:-$ROOT/.cache}"
+  export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT/.uv-cache}"
+fi
+export HF_HOME="${HF_HOME:-$CACHE_ROOT_DEFAULT/huggingface}"
+export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}"
+export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME/transformers}"
+export TORCH_HOME="${TORCH_HOME:-$CACHE_ROOT_DEFAULT/torch}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$CACHE_ROOT_DEFAULT/xdg}"
 
 VISION_PORT="${VISION_PORT:-7860}"
 VLLM_PORT="${VLLM_PORT:-8000}"
@@ -18,8 +39,16 @@ POCKET_TIMEOUT="${POCKET_TIMEOUT:-30}"
 VISION_PIDFILE="$HEAVY_LOG_DIR/vision_stack.pid"
 POCKET_PIDFILE="$HEAVY_LOG_DIR/pocket_tts.pid"
 STALE_VLLM_CLEARED=0
+if [[ -z "${REQUIRE_POCKET_TTS:-}" ]]; then
+  if [[ "$ROOT" == "/app" ]]; then
+    REQUIRE_POCKET_TTS=0
+  else
+    REQUIRE_POCKET_TTS=1
+  fi
+fi
 
 mkdir -p "$HEAVY_LOG_DIR"
+mkdir -p "$UV_CACHE_DIR" "$HF_HOME" "$TORCH_HOME" "$XDG_CACHE_HOME"
 
 log() {
   printf '==> %s\n' "$*"
@@ -178,7 +207,10 @@ if [[ -z "$POCKET_BIN" ]]; then
   if [[ -x "$ROOT/.venv/bin/pocket-tts" ]]; then
     POCKET_BIN="$ROOT/.venv/bin/pocket-tts"
   else
-    POCKET_BIN="$(command -v pocket-tts || true)"
+    POCKET_BIN="$("$PYTHON_BIN" -m character_eng.pocket_runtime --ensure --print-bin || true)"
+    if [[ -z "$POCKET_BIN" ]]; then
+      POCKET_BIN="$(command -v pocket-tts || true)"
+    fi
   fi
 fi
 
@@ -197,17 +229,30 @@ else
   restart_vision_stack
 fi
 
+POCKET_REQUIRED="$REQUIRE_POCKET_TTS"
+POCKET_READY=0
 if curl -sf "http://127.0.0.1:${POCKET_PORT}/" >/dev/null 2>&1; then
   log "Pocket-TTS already running on :${POCKET_PORT}"
+  POCKET_READY=1
 else
   if [[ -z "$POCKET_BIN" ]]; then
-    log "Pocket-TTS binary not found; expected .venv/bin/pocket-tts or PATH entry"
-    exit 1
+    if [[ "$POCKET_REQUIRED" == "1" ]]; then
+      log "Pocket-TTS binary not found and runtime bootstrap failed"
+      exit 1
+    fi
+    log "Pocket-TTS unavailable; continuing without filler/TTS warm service"
+  else
+    start_bg "Pocket-TTS" "$HEAVY_LOG_DIR/pocket_tts.log" "$POCKET_PIDFILE" "$POCKET_BIN" serve --port "$POCKET_PORT" --voice "$POCKET_VOICE"
+    if wait_for_http "Pocket-TTS" "http://127.0.0.1:${POCKET_PORT}/" "$POCKET_TIMEOUT" "$POCKET_PIDFILE" "$HEAVY_LOG_DIR/pocket_tts.log"; then
+      POCKET_READY=1
+    elif [[ "$POCKET_REQUIRED" == "1" ]]; then
+      exit 1
+    else
+      log "Pocket-TTS failed to warm; continuing without filler/TTS warm service"
+    fi
   fi
-  start_bg "Pocket-TTS" "$HEAVY_LOG_DIR/pocket_tts.log" "$POCKET_PIDFILE" "$POCKET_BIN" serve --port "$POCKET_PORT" --voice "$POCKET_VOICE"
 fi
 
-wait_for_http "Pocket-TTS" "http://127.0.0.1:${POCKET_PORT}/" "$POCKET_TIMEOUT" "$POCKET_PIDFILE" "$HEAVY_LOG_DIR/pocket_tts.log"
 wait_for_http "vLLM" "http://127.0.0.1:${VLLM_PORT}/v1/models" "$VISION_TIMEOUT" "$VISION_PIDFILE" "$HEAVY_LOG_DIR/vision_stack.log"
 wait_for_http "vision app" "http://127.0.0.1:${VISION_PORT}/model_status" "$VISION_TIMEOUT" "$VISION_PIDFILE" "$HEAVY_LOG_DIR/vision_stack.log"
 wait_for_models_ready "$VISION_TIMEOUT"
@@ -215,6 +260,10 @@ wait_for_models_ready "$VISION_TIMEOUT"
 log "Heavy services requested."
 log "Vision:  http://127.0.0.1:${VISION_PORT}/"
 log "vLLM:    http://127.0.0.1:${VLLM_PORT}/v1/models"
-log "Pocket:  http://127.0.0.1:${POCKET_PORT}/"
+if (( POCKET_READY )); then
+  log "Pocket:  http://127.0.0.1:${POCKET_PORT}/"
+else
+  log "Pocket:  unavailable"
+fi
 print_model_status
 log "Use ./scripts/run_hot.sh for the fast app/UI layer."

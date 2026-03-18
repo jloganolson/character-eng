@@ -1040,6 +1040,117 @@ def test_boot_overlay_can_open_archive_picker_before_runtime_ready(
     expect(page.locator("#archive-picker-list")).to_contain_text("sess-archive-playback")
 
 
+def test_boot_overlay_runtime_toggle_controls_blocked_states(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, input_queue, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": False,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "starting", "detail": "Mic path warming."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": True,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+
+    expect(page.locator("body")).to_have_class(re.compile(r"\bbooting\b"))
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\bboot-blocking\b"))
+    expect(page.locator("#boot-overlay")).to_be_visible()
+    expect(page.locator("#boot-overlay-summary")).to_contain_text("before the runtime can unlock.")
+    expect(page.locator("#boot-runtime-toggle")).to_have_text("Start")
+    page.locator("#boot-runtime-toggle").click()
+    expect(page.locator("#boot-runtime-toggle")).to_have_text("Starting...")
+    assert input_queue.get(timeout=2) == "/start"
+
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-playwright",
+            "stage": "watching",
+        },
+    )
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": False,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": False,
+            "startup_pause_pending": True,
+            "session_state": "paused",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "starting", "detail": "Mic path warming."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": True,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push("pause", {"startup": True, "fresh_session": True})
+
+    expect(page.locator("body")).to_have_class(re.compile(r"\bbooting\b"))
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\bboot-blocking\b"))
+    expect(page.locator("#boot-overlay")).to_be_visible()
+    expect(page.locator("#boot-overlay-summary")).to_contain_text("before the runtime can unlock.")
+    expect(page.locator("#boot-runtime-toggle")).to_have_text("Play")
+    page.locator("#boot-runtime-toggle").click()
+    expect(page.locator("#boot-runtime-toggle")).to_have_text("Playing...")
+    assert input_queue.get(timeout=2) == "/play"
+
+
 def test_archive_only_runtime_disables_live_controls(
     browser_page: Page,
     dashboard_server,

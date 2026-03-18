@@ -74,9 +74,12 @@ class RuntimeSessionManager:
         status_fetcher: Callable[[ManagedSession], dict] | None = None,
         idle_timeout_s: float = 0.0,
         reap_interval_s: float = 10.0,
+        default_vision_enabled: bool = True,
+        allow_vision: bool = True,
     ):
         self._public_host = public_host
         self._public_port = 0
+        self._public_base_url = ""
         self._log_root = Path(log_root)
         self._startup_timeout_s = float(startup_timeout_s)
         self._command_factory = command_factory or self._default_command
@@ -86,6 +89,8 @@ class RuntimeSessionManager:
         self._status_fetcher = status_fetcher or self._fetch_bridge_status
         self._idle_timeout_s = float(idle_timeout_s)
         self._reap_interval_s = float(reap_interval_s)
+        self._default_vision_enabled = bool(default_vision_enabled)
+        self._allow_vision = bool(allow_vision)
         self._sessions: dict[str, ManagedSession] = {}
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -96,21 +101,38 @@ class RuntimeSessionManager:
             self._reaper_thread.start()
 
     def _default_command(self, session: ManagedSession) -> list[str]:
-        cmd = ["uv", "run", "-m", "character_eng", "--browser", "--character", session.character, "--start-paused"]
+        cmd = [sys.executable, "-m", "character_eng", "--browser", "--character", session.character, "--start-paused"]
         if session.vision_enabled:
             cmd.append("--vision")
         return cmd
 
-    def set_public_endpoint(self, *, host: str | None = None, port: int | None = None) -> None:
+    def set_public_endpoint(
+        self,
+        *,
+        host: str | None = None,
+        port: int | None = None,
+        base_url: str | None = None,
+    ) -> None:
         if host:
             self._public_host = host
         if port is not None:
             self._public_port = int(port)
+        if base_url:
+            self._public_base_url = base_url.rstrip("/")
 
     def _session_url(self, token: str, bridge_port: int) -> str:
+        if self._public_base_url:
+            return f"{self._public_base_url}/?token={token}"
         if self._public_port > 0:
             return f"http://{self._public_host}:{self._public_port}/?token={token}"
         return f"http://{self._public_host}:{bridge_port}/?token={token}"
+
+    def _shared_vision_target(self) -> tuple[str, int | None]:
+        raw = str(self._base_env.get("CHARACTER_ENG_SHARED_VISION_URL") or "").strip()
+        if not raw:
+            return "", None
+        parsed = urlparse(raw)
+        return raw.rstrip("/"), parsed.port
 
     def _runtime_env(self, session: ManagedSession) -> dict[str, str]:
         env = dict(self._base_env)
@@ -122,8 +144,14 @@ class RuntimeSessionManager:
         env["CHARACTER_ENG_DASHBOARD_PORT"] = str(session.bridge_port)
         env["CHARACTER_ENG_VISION_ENABLED"] = "true" if session.vision_enabled else "false"
         if session.vision_enabled and session.vision_port is not None:
-            env["CHARACTER_ENG_VISION_PORT"] = str(session.vision_port)
-            env["CHARACTER_ENG_VISION_URL"] = f"http://127.0.0.1:{session.vision_port}"
+            shared_vision_url, shared_vision_port = self._shared_vision_target()
+            if shared_vision_url:
+                env["CHARACTER_ENG_VISION_URL"] = shared_vision_url
+                if shared_vision_port is not None:
+                    env["CHARACTER_ENG_VISION_PORT"] = str(shared_vision_port)
+            else:
+                env["CHARACTER_ENG_VISION_PORT"] = str(session.vision_port)
+                env["CHARACTER_ENG_VISION_URL"] = f"http://127.0.0.1:{session.vision_port}"
         return env
 
     def _fetch_bridge_status(self, session: ManagedSession) -> dict:
@@ -163,11 +191,26 @@ class RuntimeSessionManager:
         session.status = "timeout"
         raise RuntimeError("session runtime did not become ready before timeout")
 
-    def create_session(self, *, character: str = "greg", vision: bool = True) -> ManagedSession:
+    def config_payload(self) -> dict:
+        return {
+            "default_vision_enabled": self._default_vision_enabled,
+            "allow_vision": self._allow_vision,
+        }
+
+    def create_session(self, *, character: str = "greg", vision: bool | None = None) -> ManagedSession:
+        if vision is None:
+            vision = self._default_vision_enabled
+        else:
+            vision = bool(vision)
+        if vision and not self._allow_vision:
+            raise ValueError("vision sessions are disabled on this manager")
         session_id = uuid.uuid4().hex[:10]
         token = secrets.token_urlsafe(24)
         bridge_port = _find_free_port()
-        vision_port = _find_free_port() if vision else None
+        shared_vision_url, shared_vision_port = self._shared_vision_target()
+        vision_port = None
+        if vision:
+            vision_port = shared_vision_port or _find_free_port()
         url = self._session_url(token, bridge_port)
         log_path = self._log_root / f"{session_id}.log"
         session = ManagedSession(
@@ -330,6 +373,15 @@ class _ManagerHandler(BaseHTTPRequestHandler):
     def _session_for_request(self) -> ManagedSession | None:
         return self._manager().get_session_by_token(self._request_token())
 
+    def _sync_public_endpoint_from_request(self) -> None:
+        host = str(self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").strip()
+        if not host:
+            return
+        scheme = str(self.headers.get("X-Forwarded-Proto") or "").strip().lower()
+        if not scheme:
+            scheme = "https" if host.endswith(".proxy.runpod.net") else "http"
+        self._manager().set_public_endpoint(base_url=f"{scheme}://{host}")
+
     def _authorized(self) -> bool:
         expected = type(self).admin_token.strip()
         if not expected:
@@ -388,6 +440,7 @@ class _ManagerHandler(BaseHTTPRequestHandler):
             conn.close()
 
     def do_GET(self):
+        self._sync_public_endpoint_from_request()
         parsed = urlparse(self.path)
         path = parsed.path
         session = self._session_for_request()
@@ -408,6 +461,8 @@ class _ManagerHandler(BaseHTTPRequestHandler):
             return
         if path == "/health":
             return self._send_json({"ok": True, "status": "ok"})
+        if path == "/config":
+            return self._send_json({"ok": True, "config": self._manager().config_payload()})
         if path == "/sessions":
             return self._send_json({"ok": True, "sessions": self._manager().list_sessions()})
         if path.startswith("/sessions/"):
@@ -419,6 +474,7 @@ class _ManagerHandler(BaseHTTPRequestHandler):
         return self._send_json({"ok": False, "error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
     def do_POST(self):
+        self._sync_public_endpoint_from_request()
         parsed = urlparse(self.path)
         path = parsed.path
         session = self._session_for_request()
@@ -432,7 +488,12 @@ class _ManagerHandler(BaseHTTPRequestHandler):
             try:
                 session = self._manager().create_session(
                     character=str(payload.get("character") or "greg"),
-                    vision=bool(payload.get("vision", True)),
+                    vision=payload["vision"] if "vision" in payload else None,
+                )
+            except ValueError as exc:
+                return self._send_json(
+                    {"ok": False, "error": str(exc)},
+                    status=HTTPStatus.BAD_REQUEST,
                 )
             except Exception as exc:
                 return self._send_json(
@@ -481,13 +542,32 @@ def start_session_manager(
 def main() -> None:
     import argparse
 
+    def _command_factory_from_env() -> Callable[[ManagedSession], list[str]] | None:
+        mode = os.environ.get("CHARACTER_ENG_SESSION_RUNTIME", "").strip().lower()
+        if not mode or mode == "real":
+            return None
+        if mode == "stub":
+            return lambda session: [sys.executable, "-m", "character_eng.session_stub_runtime"]
+        raise ValueError(f"unsupported CHARACTER_ENG_SESSION_RUNTIME: {mode}")
+
+    def _env_bool(name: str, default: bool) -> bool:
+        value = os.environ.get(name)
+        if value is None:
+            return default
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+
     parser = argparse.ArgumentParser(description="Spawn one browser runtime per user session.")
     parser.add_argument("--port", type=int, default=7870, help="HTTP port for the manager API")
     parser.add_argument("--public-host", default="127.0.0.1", help="Host used in returned session URLs")
     parser.add_argument("--admin-token", default=os.environ.get("CHARACTER_ENG_MANAGER_TOKEN", ""), help="Optional bearer token for manager API")
     args = parser.parse_args()
 
-    manager = RuntimeSessionManager(public_host=args.public_host)
+    manager = RuntimeSessionManager(
+        public_host=args.public_host,
+        command_factory=_command_factory_from_env(),
+        default_vision_enabled=_env_bool("CHARACTER_ENG_SESSION_DEFAULT_VISION", True),
+        allow_vision=_env_bool("CHARACTER_ENG_SESSION_ALLOW_VISION", True),
+    )
     _, actual_port, server = start_session_manager(manager, port=args.port, admin_token=args.admin_token)
     print(f"session manager listening on http://0.0.0.0:{actual_port}", flush=True)
     try:

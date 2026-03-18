@@ -8,12 +8,17 @@ wheels/
 
 # Virtual environments
 .venv
+.runtime/
 
 # Environment variables
 .env
 
 # User-local config
 config.toml
+deploy/runpod.toml
+deploy/runpod-lite.toml
+deploy/.runpod-state.json
+deploy/.runpod-lite-state.json
 
 # QA logs
 logs/

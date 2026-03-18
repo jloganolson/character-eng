@@ -15,12 +15,16 @@ import sys
 
 RELATIVE = "vllm/model_executor/models/lfm2_vl.py"
 
-# Search common locations: .venv-vllm, .venv, uv tool installs
+# Search the active interpreter environment first, then known fallbacks.
 search_roots = [
+    os.environ.get("UV_PROJECT_ENVIRONMENT", "").strip(),
+    os.environ.get("CHARACTER_ENG_BUNDLED_VISION_ENV", "").strip(),
+    sys.prefix,
     os.path.join(os.path.dirname(__file__), ".venv-vllm"),
     os.path.join(os.path.dirname(__file__), ".venv"),
     os.path.expanduser("~/.local/share/uv/tools/vllm"),
 ]
+search_roots = [root for root in dict.fromkeys(search_roots) if root]
 
 candidates = []
 for root in search_roots:

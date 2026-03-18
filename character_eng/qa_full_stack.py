@@ -422,9 +422,11 @@ def _ensure_pocket_server(server_url: str, voice_path: str) -> subprocess.Popen 
     except Exception:
         pass
 
-    pocket_bin = shutil.which("pocket-tts")
+    from character_eng.pocket_runtime import ensure_pocket_tts_binary
+
+    pocket_bin = ensure_pocket_tts_binary()
     if pocket_bin is None:
-        raise RuntimeError("pocket-tts not found in PATH")
+        raise RuntimeError("pocket-tts is unavailable and could not be bootstrapped")
 
     cmd = [pocket_bin, "serve", "--port", str(socket.getservbyname("http"))]
     # Replace the auto-derived port with the actual parsed value.

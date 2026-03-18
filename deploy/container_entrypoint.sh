@@ -9,17 +9,22 @@ MANAGER_PORT="${MANAGER_PORT:-7870}"
 CHARACTER="${CHARACTER:-greg}"
 START_PAUSED="${START_PAUSED:-1}"
 VISION="${VISION:-0}"
+PYTHON_BIN="${PYTHON_BIN:-/app/.venv/bin/python}"
+
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="$(command -v python3)"
+fi
 
 case "$MODE" in
   session-manager)
-    args=(uv run python -m character_eng.session_manager --port "$MANAGER_PORT" --public-host "$PUBLIC_HOST")
+    args=("$PYTHON_BIN" -m character_eng.session_manager --port "$MANAGER_PORT" --public-host "$PUBLIC_HOST")
     if [[ -n "${CHARACTER_ENG_MANAGER_TOKEN:-}" ]]; then
       args+=(--admin-token "$CHARACTER_ENG_MANAGER_TOKEN")
     fi
     exec "${args[@]}"
     ;;
   app)
-    args=(uv run -m character_eng --browser --character "$CHARACTER")
+    args=("$PYTHON_BIN" -m character_eng --browser --character "$CHARACTER")
     if [[ "$VISION" == "1" ]]; then
       args+=(--vision)
     fi
@@ -32,8 +37,8 @@ case "$MODE" in
     exec ./scripts/run_heavy.sh
     ;;
   full)
-    ./scripts/run_heavy.sh
-    args=(uv run python -m character_eng.session_manager --port "$MANAGER_PORT" --public-host "$PUBLIC_HOST")
+    ./scripts/run_heavy.sh &
+    args=("$PYTHON_BIN" -m character_eng.session_manager --port "$MANAGER_PORT" --public-host "$PUBLIC_HOST")
     if [[ -n "${CHARACTER_ENG_MANAGER_TOKEN:-}" ]]; then
       args+=(--admin-token "$CHARACTER_ENG_MANAGER_TOKEN")
     fi
