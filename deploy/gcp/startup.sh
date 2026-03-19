@@ -75,8 +75,10 @@ ensure_mount() {
 configure_caddy() {
   local domain="$1"
   local email="$2"
-  apt-get install -y caddy
-  cat >/etc/caddy/Caddyfile <<EOF
+  local caddy_root="${RUNTIME_MOUNT:-/var/lib/character-eng-caddy}/caddy"
+
+  mkdir -p "${caddy_root}/data" "${caddy_root}/config"
+  cat >"${caddy_root}/Caddyfile" <<EOF
 {
   email ${email}
 }
@@ -85,7 +87,16 @@ ${domain} {
   reverse_proxy 127.0.0.1:${MANAGER_PORT}
 }
 EOF
-  systemctl enable --now caddy
+  docker pull caddy:2
+  docker rm -f character-eng-caddy >/dev/null 2>&1 || true
+  docker run -d \
+    --name character-eng-caddy \
+    --restart unless-stopped \
+    --network host \
+    -v "${caddy_root}/Caddyfile:/etc/caddy/Caddyfile" \
+    -v "${caddy_root}/data:/data" \
+    -v "${caddy_root}/config:/config" \
+    caddy:2 >/dev/null
 }
 
 CONTAINER_IMAGE="$(metadata_attr 'character-eng-container-image')"

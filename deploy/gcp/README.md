@@ -31,6 +31,8 @@ That means the real production path on GCP should be:
 - set `CADDY_DOMAIN` and `CADDY_EMAIL`
 - let Caddy terminate TLS and reverse-proxy to `127.0.0.1:7870`
 
+For quick testing, `CADDY_DOMAIN` can also be an `sslip.io` hostname that resolves to the VM IP, for example `136-109-169-132.sslip.io`.
+
 If you omit Caddy and run plain HTTP on the VM IP, CLI checks still work, but browser media capture will not behave like the RunPod proxy path because the page is not a secure context.
 
 ## Current repo files
