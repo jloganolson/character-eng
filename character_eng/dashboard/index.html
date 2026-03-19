@@ -8164,6 +8164,16 @@
     livekitRemoteAudioEls.set(track.sid, el);
   }
 
+  function livekitAppParticipantIdentity() {
+    return String(livekitConfig?.participantIdentity || "").trim();
+  }
+
+  function isLiveKitAppParticipant(participant) {
+    const expected = livekitAppParticipantIdentity();
+    const actual = String(participant?.identity || "").trim();
+    return !!expected && !!actual && expected === actual;
+  }
+
   function updateLiveKitPreviewStatus(text = "", visible = false) {
     const statusEl = document.getElementById("livekit-preview-status");
     if (!statusEl) return;
@@ -8216,8 +8226,11 @@
     const lk = await ensureLiveKitModule();
     const tokenPayload = await requestLiveKitToken();
     const room = new lk.Room({adaptiveStream: true, dynacast: true});
-    room.on(lk.RoomEvent.TrackSubscribed, (track) => {
+    room.on(lk.RoomEvent.TrackSubscribed, (track, publication, participant) => {
       if (track.kind === lk.Track.Kind.Audio) {
+        if (!isLiveKitAppParticipant(participant)) {
+          return;
+        }
         livekitMetrics.audioTracksSubscribed += 1;
         attachRemoteAudioTrack(track);
       } else if (track.kind === lk.Track.Kind.Video) {
