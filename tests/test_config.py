@@ -24,6 +24,11 @@ def test_save_config_round_trip(tmp_path, monkeypatch):
     cfg.history.enabled = True
     cfg.history.free_warning_gib = 12.5
     cfg.history.vision_capture_fps = 4.0
+    cfg.livekit.enabled = True
+    cfg.livekit.url = "ws://127.0.0.1:7880"
+    cfg.livekit.api_key = "devkey"
+    cfg.livekit.api_secret = "secret"
+    cfg.livekit.room_prefix = "ce"
 
     save_config(cfg, path=path)
     monkeypatch.setenv("CHARACTER_ENG_CONFIG_PATH", str(path))
@@ -47,6 +52,11 @@ def test_save_config_round_trip(tmp_path, monkeypatch):
     assert loaded.history.enabled is True
     assert loaded.history.free_warning_gib == 12.5
     assert loaded.history.vision_capture_fps == 4.0
+    assert loaded.livekit.enabled is True
+    assert loaded.livekit.url == "ws://127.0.0.1:7880"
+    assert loaded.livekit.api_key == "devkey"
+    assert loaded.livekit.api_secret == "secret"
+    assert loaded.livekit.room_prefix == "ce"
 
 
 def test_load_config_env_overrides(tmp_path, monkeypatch):
@@ -62,6 +72,11 @@ def test_load_config_env_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv("CHARACTER_ENG_BRIDGE_ENABLED", "true")
     monkeypatch.setenv("CHARACTER_ENG_BRIDGE_PORT", "9011")
     monkeypatch.setenv("CHARACTER_ENG_BRIDGE_TOKEN", "bridge-secret")
+    monkeypatch.setenv("CHARACTER_ENG_LIVEKIT_ENABLED", "true")
+    monkeypatch.setenv("CHARACTER_ENG_LIVEKIT_URL", "ws://127.0.0.1:7880")
+    monkeypatch.setenv("CHARACTER_ENG_LIVEKIT_API_KEY", "envkey")
+    monkeypatch.setenv("CHARACTER_ENG_LIVEKIT_API_SECRET", "envsecret")
+    monkeypatch.setenv("CHARACTER_ENG_LIVEKIT_ROOM_PREFIX", "remote-hot")
 
     loaded = load_config()
 
@@ -74,3 +89,8 @@ def test_load_config_env_overrides(tmp_path, monkeypatch):
     assert loaded.bridge.enabled is True
     assert loaded.bridge.port == 9011
     assert loaded.bridge.token == "bridge-secret"
+    assert loaded.livekit.enabled is True
+    assert loaded.livekit.url == "ws://127.0.0.1:7880"
+    assert loaded.livekit.api_key == "envkey"
+    assert loaded.livekit.api_secret == "envsecret"
+    assert loaded.livekit.room_prefix == "remote-hot"

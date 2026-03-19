@@ -174,3 +174,37 @@ def test_bridge_query_token_allows_dashboard_routes():
         assert any(event["type"] == "session_start" for event in state)
     finally:
         bridge.stop()
+
+
+def test_bridge_exposes_livekit_config_and_token():
+    bridge = BridgeServer(port=0)
+    bridge.set_dashboard(
+        DashboardEventCollector(),
+        queue.Queue(),
+        livekit_status_provider=lambda: {"enabled": True, "configured": True, "serverUrl": "ws://127.0.0.1:7880"},
+        livekit_token_provider=lambda payload: {
+            "ok": True,
+            "serverUrl": "ws://127.0.0.1:7880",
+            "roomName": payload.get("roomName") or "room-1",
+            "identity": payload.get("identity") or "tester",
+            "token": "jwt-token",
+        },
+    )
+    bridge.start()
+    base_url = f"http://127.0.0.1:{bridge.port}"
+    try:
+        config = _json_get(f"{base_url}/livekit/config")
+        assert config["enabled"] is True
+        assert config["serverUrl"] == "ws://127.0.0.1:7880"
+
+        token = _post(
+            f"{base_url}/livekit/token",
+            json.dumps({"roomName": "room-abc", "identity": "tester"}).encode(),
+            "application/json",
+        )
+        assert token["ok"] is True
+        assert token["roomName"] == "room-abc"
+        assert token["identity"] == "tester"
+        assert token["token"] == "jwt-token"
+    finally:
+        bridge.stop()

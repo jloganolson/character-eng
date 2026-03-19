@@ -13,6 +13,7 @@ dependencies = [
     "numpy>=1.26",
     "websocket-client>=1.7",
     "livekit>=1.1.2",
+    "livekit-api>=1.0.0",
     "websockets>=14.0",
 ]
 

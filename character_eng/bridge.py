@@ -212,6 +212,8 @@ class BridgeServer:
         report_dir: Path | None = None,
         history_api=None,
         history_status_provider=None,
+        livekit_status_provider=None,
+        livekit_token_provider=None,
         default_character: str = "",
         prompt_asset_open_target: str = "vscode",
         prompt_asset_vscode_cmd: str = "code",
@@ -229,6 +231,8 @@ class BridgeServer:
         _BridgeHandler.report_dir = self._report_dir
         _BridgeHandler.history_api = history_api
         _BridgeHandler.history_status_provider = history_status_provider
+        _BridgeHandler.livekit_status_provider = livekit_status_provider
+        _BridgeHandler.livekit_token_provider = livekit_token_provider
         _BridgeHandler.default_character = default_character
         _BridgeHandler.prompt_asset_open_target = prompt_asset_open_target
         _BridgeHandler.prompt_asset_vscode_cmd = prompt_asset_vscode_cmd

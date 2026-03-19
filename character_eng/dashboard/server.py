@@ -29,6 +29,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
     report_dir: Path
     history_api = None
     history_status_provider = None
+    livekit_status_provider = None
+    livekit_token_provider = None
     default_character: str = ""
     prompt_asset_open_target: str = "vscode"
     prompt_asset_vscode_cmd: str = "code"
@@ -46,6 +48,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_state()
         elif self.path == "/history/state":
             self._serve_history_state()
+        elif self.path == "/livekit/config":
+            self._serve_livekit_config()
         elif self.path == "/history/list":
             self._serve_history_list()
         elif self.path.startswith("/history/checkpoint"):
@@ -125,6 +129,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._handle_history_prune()
         elif self.path == "/prompt-assets/action":
             self._handle_prompt_asset_action()
+        elif self.path == "/livekit/token":
+            self._handle_livekit_token()
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -224,6 +230,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_livekit_config(self):
+        provider = getattr(type(self), "livekit_status_provider", None)
+        payload = provider() if callable(provider) else {"enabled": False, "configured": False}
+        body = json.dumps(payload).encode()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _serve_history_list(self):
         history_api = getattr(self, "history_api", None)
         payload = history_api.list_archives() if history_api is not None else []
@@ -264,6 +282,33 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
+
+    def _handle_livekit_token(self):
+        provider = getattr(type(self), "livekit_token_provider", None)
+        if not callable(provider):
+            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "LiveKit token provider not configured")
+            return
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length)
+        try:
+            payload = json.loads(body or b"{}")
+            response = provider(payload)
+            encoded = json.dumps(response).encode()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(encoded)
+        except Exception as exc:
+            encoded = json.dumps({"ok": False, "error": str(exc)}).encode()
+            self.send_response(HTTPStatus.BAD_REQUEST)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(encoded)
 
     def _serve_history_checkpoint(self):
         history_api = getattr(self, "history_api", None)
@@ -533,6 +578,8 @@ def _port_available(port: int) -> bool:
 def start_dashboard(collector: DashboardEventCollector, input_queue: queue.Queue,
                     port: int = 7862, report_dir: Path | None = None, history_api=None,
                     history_status_provider=None,
+                    livekit_status_provider=None,
+                    livekit_token_provider=None,
                     default_character: str = "",
                     prompt_asset_open_target: str = "vscode",
                     prompt_asset_vscode_cmd: str = "code") -> tuple[threading.Thread, int]:
@@ -545,6 +592,8 @@ def start_dashboard(collector: DashboardEventCollector, input_queue: queue.Queue
     DashboardHandler.report_dir = report_dir or REPORTS_DIR
     DashboardHandler.history_api = history_api
     DashboardHandler.history_status_provider = history_status_provider
+    DashboardHandler.livekit_status_provider = livekit_status_provider
+    DashboardHandler.livekit_token_provider = livekit_token_provider
     DashboardHandler.default_character = default_character
     DashboardHandler.prompt_asset_open_target = prompt_asset_open_target
     DashboardHandler.prompt_asset_vscode_cmd = prompt_asset_vscode_cmd

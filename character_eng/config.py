@@ -67,12 +67,22 @@ class HistoryConfig:
 
 
 @dataclass
+class LiveKitConfig:
+    enabled: bool = False
+    url: str = ""
+    api_key: str = ""
+    api_secret: str = ""
+    room_prefix: str = "character-eng"
+
+
+@dataclass
 class AppConfig:
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     bridge: BridgeConfig = field(default_factory=BridgeConfig)
     history: HistoryConfig = field(default_factory=HistoryConfig)
+    livekit: LiveKitConfig = field(default_factory=LiveKitConfig)
 
 
 def _toml_string(value: str) -> str:
@@ -120,6 +130,13 @@ def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
         f"free_warning_gib = {config.history.free_warning_gib}",
         f"vision_capture_fps = {config.history.vision_capture_fps}",
         f"playback_video_fps = {config.history.playback_video_fps}",
+        "",
+        "[livekit]",
+        f"enabled = {'true' if config.livekit.enabled else 'false'}",
+        f"url = {_toml_string(config.livekit.url)}",
+        f"api_key = {_toml_string(config.livekit.api_key)}",
+        f"api_secret = {_toml_string(config.livekit.api_secret)}",
+        f"room_prefix = {_toml_string(config.livekit.room_prefix)}",
         "",
     ]
 
@@ -193,7 +210,16 @@ def load_config() -> AppConfig:
         playback_video_fps=history_data.get("playback_video_fps", 30.0),
     )
 
-    config = AppConfig(voice=voice, vision=vision, dashboard=dashboard, bridge=bridge, history=history)
+    livekit_data = data.get("livekit", {})
+    livekit = LiveKitConfig(
+        enabled=livekit_data.get("enabled", False),
+        url=livekit_data.get("url", ""),
+        api_key=livekit_data.get("api_key", ""),
+        api_secret=livekit_data.get("api_secret", ""),
+        room_prefix=livekit_data.get("room_prefix", "character-eng"),
+    )
+
+    config = AppConfig(voice=voice, vision=vision, dashboard=dashboard, bridge=bridge, history=history, livekit=livekit)
 
     if (value := os.environ.get("CHARACTER_ENG_VOICE_ENABLED")) is not None:
         config.voice.enabled = value.strip().lower() in {"1", "true", "yes", "on"}
@@ -219,5 +245,15 @@ def load_config() -> AppConfig:
         config.bridge.port = int(value)
     if (value := os.environ.get("CHARACTER_ENG_BRIDGE_TOKEN")):
         config.bridge.token = value.strip()
+    if (value := os.environ.get("CHARACTER_ENG_LIVEKIT_ENABLED")) is not None:
+        config.livekit.enabled = value.strip().lower() in {"1", "true", "yes", "on"}
+    if (value := os.environ.get("CHARACTER_ENG_LIVEKIT_URL")):
+        config.livekit.url = value.strip()
+    if (value := os.environ.get("CHARACTER_ENG_LIVEKIT_API_KEY")):
+        config.livekit.api_key = value.strip()
+    if (value := os.environ.get("CHARACTER_ENG_LIVEKIT_API_SECRET")):
+        config.livekit.api_secret = value.strip()
+    if (value := os.environ.get("CHARACTER_ENG_LIVEKIT_ROOM_PREFIX")):
+        config.livekit.room_prefix = value.strip()
 
     return config

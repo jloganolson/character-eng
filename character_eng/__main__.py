@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import secrets
 import sys
 import threading
 import time
@@ -25,6 +26,7 @@ from character_eng.history import (
 )
 from character_eng.models import BIG_MODEL, CHAT_MODEL, MICRO_MODEL, MODELS
 from character_eng.utils import start_prefixed_output_thread, ts as _ts
+from character_eng.livekit_auth import build_room_name, issue_participant_token, livekit_status_payload
 from character_eng.perception import PerceptionEvent, load_sim_script, process_perception
 from character_eng.person import PeopleState
 from character_eng.prompts import list_characters, load_prompt, prompt_source_signature
@@ -380,6 +382,7 @@ def _runtime_controls_snapshot(voice_io=None, vision_mgr=None, vision_cfg=None) 
         "mode": os.environ.get("CHARACTER_ENG_TRANSPORT_MODE", "").strip() or "local",
         "audio": read_metrics(os.environ.get("CHARACTER_ENG_TRANSPORT_AUDIO_METRICS_PATH")),
         "video": read_metrics(os.environ.get("CHARACTER_ENG_TRANSPORT_VIDEO_METRICS_PATH")),
+        "webrtc": livekit_status_payload(_app_config.livekit) if _app_config is not None else {"enabled": False, "configured": False},
     }
     if _session_stopped:
         session_state = "ready"
@@ -4396,6 +4399,36 @@ def main():
     ) if getattr(cfg.history, "enabled", True) else None
     browser_mode = args.browser or cfg.bridge.enabled
 
+    def _livekit_status_provider() -> dict:
+        return livekit_status_payload(cfg.livekit)
+
+    def _livekit_token_provider(payload: dict) -> dict:
+        purpose = str(payload.get("purpose") or "remote-hot").strip() or "remote-hot"
+        room_name = str(payload.get("roomName") or "").strip()
+        if not room_name:
+            room_name = build_room_name(
+                cfg.livekit,
+                purpose=purpose,
+                character=str(payload.get("character") or args.character or "greg"),
+            )
+        identity = str(payload.get("identity") or "").strip() or f"{purpose}-{secrets.token_hex(4)}"
+        participant_name = str(payload.get("participantName") or identity).strip() or identity
+        metadata = payload.get("metadata")
+        token = issue_participant_token(
+            cfg.livekit,
+            room_name=room_name,
+            identity=identity,
+            participant_name=participant_name,
+            metadata=metadata if isinstance(metadata, (dict, str)) or metadata is None else str(metadata),
+            can_publish=bool(payload.get("canPublish", True)),
+            can_subscribe=bool(payload.get("canSubscribe", True)),
+            can_publish_data=bool(payload.get("canPublishData", True)),
+        )
+        response = token.asdict()
+        response["ok"] = True
+        response["purpose"] = purpose
+        return response
+
     # --voice flag overrides config; config.voice.enabled is the default
     # --sim forces text mode (voice doesn't make sense for non-interactive runs)
     # --browser implies voice mode (audio comes from browser)
@@ -4426,6 +4459,8 @@ def main():
                 _dashboard_input_queue,
                 history_api=_history_service,
                 history_status_provider=_history_status_payload,
+                livekit_status_provider=_livekit_status_provider,
+                livekit_token_provider=_livekit_token_provider,
                 default_character=dashboard_default_character,
                 prompt_asset_open_target=cfg.dashboard.prompt_asset_open_target,
                 prompt_asset_vscode_cmd=cfg.dashboard.prompt_asset_vscode_cmd,
@@ -4441,6 +4476,8 @@ def main():
                 port=cfg.dashboard.port,
                 history_api=_history_service,
                 history_status_provider=_history_status_payload,
+                livekit_status_provider=_livekit_status_provider,
+                livekit_token_provider=_livekit_token_provider,
                 default_character=dashboard_default_character,
                 prompt_asset_open_target=cfg.dashboard.prompt_asset_open_target,
                 prompt_asset_vscode_cmd=cfg.dashboard.prompt_asset_vscode_cmd,
