@@ -44,6 +44,50 @@ def _write_test_video(path: Path):
     )
 
 
+def _seed_archive_session(
+    history: HistoryService,
+    *,
+    session_id: str,
+    title: str | None = None,
+    response_text: str = "Hey, what time is it to you?",
+):
+    archive = history.start_session(session_id=session_id, character="greg", model="groq-llama-8b")
+    archive_start = archive._started_at
+    archive.record_event("session_start", {
+        "character": "greg",
+        "model": "groq-llama-8b",
+        "session_id": session_id,
+        "stage": "engaged",
+    }, timestamp=archive_start + 0.0)
+    archive.record_event("user_transcript_final", {"text": "oh hey man"}, timestamp=archive_start + 0.4)
+    archive.record_event("turn_start", {"input_text": "oh hey man", "input_type": "send"}, timestamp=archive_start + 0.45)
+    archive.record_event("response_done", {"full_text": response_text}, timestamp=archive_start + 1.1)
+    archive.capture_checkpoint(
+        label="start",
+        character="greg",
+        session_snapshot={"system_prompt": "system", "messages": [], "tagged_system_indices": {}},
+        world=WorldState(),
+        people=PeopleState(),
+        scenario=None,
+        script=Script(),
+        goals=Goals(),
+        log_entries=[],
+        context_version=0,
+        had_user_input=False,
+    )
+    history.finalize_current()
+    _write_test_video(archive.media_dir / "playback.mp4")
+    archive_manifest = json.loads(archive.manifest_path.read_text())
+    archive_media = dict(archive_manifest.get("media", {}))
+    archive_media["playback_path"] = str(archive.media_dir / "playback.mp4")
+    archive_media["video_path"] = str(archive.media_dir / "playback.mp4")
+    updates = {"media": archive_media}
+    if title:
+        updates["title"] = title
+    archive.update_manifest(**updates)
+    return archive
+
+
 class _VisionHandler(BaseHTTPRequestHandler):
     state = {
         "fail": False,
@@ -156,37 +200,13 @@ def dashboard_server():
             elif child.is_dir():
                 child.rmdir()
     history = HistoryService(root=history_root, free_warning_gib=0.0)
-    archived = history.start_session(session_id="sess-archive-playback", character="greg", model="groq-llama-8b")
-    archived_start = archived._started_at
-    archived.record_event("session_start", {
-        "character": "greg",
-        "model": "groq-llama-8b",
-        "session_id": "sess-archive-playback",
-        "stage": "engaged",
-    }, timestamp=archived_start + 0.0)
-    archived.record_event("user_transcript_final", {"text": "oh hey man"}, timestamp=archived_start + 0.4)
-    archived.record_event("turn_start", {"input_text": "oh hey man", "input_type": "send"}, timestamp=archived_start + 0.45)
-    archived.record_event("response_done", {"full_text": "Hey, what time is it to you?"}, timestamp=archived_start + 1.1)
-    archived.capture_checkpoint(
-        label="start",
-        character="greg",
-        session_snapshot={"system_prompt": "system", "messages": [], "tagged_system_indices": {}},
-        world=WorldState(),
-        people=PeopleState(),
-        scenario=None,
-        script=Script(),
-        goals=Goals(),
-        log_entries=[],
-        context_version=0,
-        had_user_input=False,
+    _seed_archive_session(history, session_id="sess-archive-playback")
+    _seed_archive_session(
+        history,
+        session_id="greg-offline-canonical-v1",
+        title="Greg Offline Canonical v1",
+        response_text="Canonical archive is ready for offline UX work.",
     )
-    history.finalize_current()
-    _write_test_video(archived.media_dir / "playback.mp4")
-    archived_manifest = json.loads(archived.manifest_path.read_text())
-    archived_media = dict(archived_manifest.get("media", {}))
-    archived_media["playback_path"] = str(archived.media_dir / "playback.mp4")
-    archived_media["video_path"] = str(archived.media_dir / "playback.mp4")
-    archived.update_manifest(media=archived_media)
     archive = history.start_session(session_id="sess-playwright", character="greg", model="groq-llama-8b")
     archive.record_event("session_start", {
         "character": "greg",
@@ -1280,6 +1300,63 @@ def test_archive_query_autoload_hides_boot_overlay(
     expect(page.locator("#runtime-status")).to_contain_text("mode: archive only")
     expect(page.locator("#runtime-status")).to_contain_text("voice: off")
     expect(page.locator("#vision-model-status")).to_contain_text("Archive browsing does not poll live vision models.")
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
+    expect(page.locator("#boot-overlay")).not_to_be_visible()
+
+
+def test_canonical_archive_query_renders_offline_archive_content(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+            "archive_only": True,
+            "archive_only_reason": "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.",
+        },
+    )
+    page = browser_page
+    page.goto(f"{dashboard_url}?archive=greg-offline-canonical-v1")
+
+    expect(page).to_have_url(re.compile(r"archive=greg-offline-canonical-v1"))
+    expect(page.locator("#archive-load-button")).to_have_text("Return To Live")
+    expect(page.locator("#archive-load-status")).to_contain_text("Browsing archive: Greg Offline Canonical v1")
+    expect(page.locator("#runtime-status")).to_contain_text("mode: archive only")
+    expect(page.locator(".stream-card").filter(has_text="Canonical archive is ready for offline UX work.")).to_have_count(1)
+    expect(page.get_by_role("button", name="vision", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="vision raw", exact=True)).to_be_visible()
     expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
     expect(page.locator("#boot-overlay")).not_to_be_visible()
 
