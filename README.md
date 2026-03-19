@@ -134,12 +134,20 @@ The Vision panel shows a LiveKit preview of the outgoing camera stream, while th
 For the GCP-backed WebRTC hybrid path, use:
 
 ```bash
+./deploy/gcp/doctor.sh
 ./scripts/run_hot_remote_webrtc.sh
 ./scripts/stop_hot_remote_webrtc.sh
 ```
 
 That keeps the app local while using remote vision + Pocket-TTS over an SSH tunnel and a remote LiveKit server on the GCP VM.
 This is the default hosted-heavy workflow.
+
+To allowlist another engineer for that path by Gmail address:
+
+```bash
+./deploy/gcp/onboard_user.sh teammate@gmail.com
+./deploy/gcp/offboard_user.sh teammate@gmail.com
+```
 
 For faster heavy-runtime debugging, use:
 

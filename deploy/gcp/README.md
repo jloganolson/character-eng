@@ -88,6 +88,34 @@ For a dry run of the exact `gcloud` commands:
 DRY_RUN=1 ./deploy/gcp/create_vm.sh
 ```
 
+## User onboarding
+
+To allowlist another engineer by Gmail address without using the Cloud Console:
+
+```bash
+./deploy/gcp/onboard_user.sh teammate@gmail.com
+```
+
+That grants:
+
+- a project custom role for VM start/stop/status
+- `roles/compute.osLogin`
+- `roles/iam.serviceAccountUser` on the VM's attached service account
+
+To remove access later:
+
+```bash
+./deploy/gcp/offboard_user.sh teammate@gmail.com
+```
+
+For the onboarded user, the preflight check is:
+
+```bash
+./deploy/gcp/doctor.sh
+```
+
+That prints the current account, instance status, manager/LiveKit URLs, and attempts an SSH check when the VM is running.
+
 ## Remote hot loop
 
 Legacy fallback path for prompt/frontend work that should keep local direct mic/cam while borrowing remote GPU-heavy services:

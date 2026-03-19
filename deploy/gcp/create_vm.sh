@@ -125,6 +125,7 @@ metadata_pairs=(
   "character-eng-runtime-disk=${GCP_RUNTIME_DISK_NAME}"
   "character-eng-runtime-mount=${GCP_RUNTIME_MOUNT_PATH}"
   "character-eng-workspace-mount=${WORKSPACE_MOUNT_PATH}"
+  "enable-oslogin=TRUE"
 )
 
 if [[ -n "${PUBLIC_HOST:-}" ]]; then
