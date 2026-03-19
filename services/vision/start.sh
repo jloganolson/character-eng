@@ -15,12 +15,17 @@ VLLM_MODEL="${VLLM_MODEL:-LiquidAI/LFM2-VL-3B}"
 VLLM_PORT="${VLLM_PORT:-8000}"
 VLLM_GPU_UTIL="${VLLM_GPU_UTIL:-0.4}"
 VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-4096}"
-VLLM_TIMEOUT="${VLLM_TIMEOUT:-120}"
-VLLM_ARGS="${VLLM_ARGS:-}"
-APP_PORT="${APP_PORT:-7860}"
-APP_TIMEOUT="${APP_TIMEOUT:-30}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+if [ "$PROJECT_ROOT" = "/app" ]; then
+    VLLM_TIMEOUT="${VLLM_TIMEOUT:-240}"
+else
+    VLLM_TIMEOUT="${VLLM_TIMEOUT:-120}"
+fi
+VLLM_ARGS="${VLLM_ARGS:-}"
+VLLM_GENERATION_CONFIG="${VLLM_GENERATION_CONFIG:-}"
+APP_PORT="${APP_PORT:-7860}"
+APP_TIMEOUT="${APP_TIMEOUT:-30}"
 VLLM_BIN="${VLLM_BIN:-}"
 
 if [ -f "$PROJECT_ROOT/.env" ]; then
@@ -28,6 +33,12 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
     # shellcheck disable=SC1091
     . "$PROJECT_ROOT/.env"
     set +a
+fi
+
+if [ -z "$VLLM_GENERATION_CONFIG" ] && [ "$PROJECT_ROOT" = "/app" ]; then
+    # Remote/container boots should not depend on a late HF fetch for
+    # generation_config.json after the model is already loaded and warmed.
+    VLLM_GENERATION_CONFIG="vllm"
 fi
 
 BUNDLED_VISION_ENV="${CHARACTER_ENG_BUNDLED_VISION_ENV:-/opt/character-eng/vision-env}"
@@ -176,13 +187,22 @@ else
     echo "  Max model len: $VLLM_MAX_MODEL_LEN"
 
     VLLM_LOG="$SCRIPT_DIR/vllm.log"
-    "$VLLM_BIN" serve "$VLLM_MODEL" \
-        --port "$VLLM_PORT" \
-        --max-model-len "$VLLM_MAX_MODEL_LEN" \
-        --gpu-memory-utilization "$VLLM_GPU_UTIL" \
-        --trust-remote-code \
-        $VLLM_ARGS \
-        >"$VLLM_LOG" 2>&1 &
+    vllm_cmd=(
+        "$VLLM_BIN" serve "$VLLM_MODEL"
+        --port "$VLLM_PORT"
+        --max-model-len "$VLLM_MAX_MODEL_LEN"
+        --gpu-memory-utilization "$VLLM_GPU_UTIL"
+        --trust-remote-code
+    )
+    if [ -n "$VLLM_GENERATION_CONFIG" ]; then
+        vllm_cmd+=(--generation-config "$VLLM_GENERATION_CONFIG")
+    fi
+    if [ -n "$VLLM_ARGS" ]; then
+        # shellcheck disable=SC2206
+        extra_vllm_args=( $VLLM_ARGS )
+        vllm_cmd+=("${extra_vllm_args[@]}")
+    fi
+    "${vllm_cmd[@]}" >"$VLLM_LOG" 2>&1 &
     VLLM_PID=$!
     echo "  vLLM pid: $VLLM_PID (logs: $VLLM_LOG)"
 

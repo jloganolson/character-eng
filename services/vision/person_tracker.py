@@ -102,7 +102,9 @@ class ReIDExtractor:
         self._model = None
         self._transform = None
         self._device = device
-        self._dtype = dtype
+        # torchreid's pretrained ResNet path is stable in fp32/fp16, but the
+        # bf16 path can fail with mixed input/weight dtypes on some CUDA stacks.
+        self._dtype = None if dtype == torch.bfloat16 else dtype
 
     def load(self):
         import torchreid

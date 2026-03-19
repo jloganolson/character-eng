@@ -24,8 +24,7 @@ READY_TIMEOUT="${READY_TIMEOUT:-240}"
 TUNNEL_DIR="${TUNNEL_DIR:-$ROOT/.cache/gcp-remote-hot-webrtc}"
 TUNNEL_PIDFILE="$TUNNEL_DIR/tunnel.pid"
 TUNNEL_LOGFILE="$TUNNEL_DIR/tunnel.log"
-REMOTE_CONTAINER_NAME="${REMOTE_CONTAINER_NAME:-character-eng}"
-REMOTE_CONTAINER_IP=""
+REMOTE_SERVICE_HOST="${REMOTE_SERVICE_HOST:-127.0.0.1}"
 LIVEKIT_HTTP_PORT="${LIVEKIT_HTTP_PORT:-7880}"
 LIVEKIT_ENABLED="${LIVEKIT_ENABLED:-1}"
 LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-devkey}"
@@ -121,19 +120,6 @@ ensure_vm_running() {
   ./deploy/gcp/vm_ctl.sh "$ENV_FILE" wait-livekit >/dev/null
 }
 
-fetch_remote_container_ip() {
-  REMOTE_CONTAINER_IP="$(
-    gcloud compute ssh "$GCP_INSTANCE_NAME" \
-      --project "$GCP_PROJECT_ID" \
-      --zone "$GCP_ZONE" \
-      --command "sudo docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${REMOTE_CONTAINER_NAME}"
-  )"
-  if [[ -z "$REMOTE_CONTAINER_IP" ]]; then
-    echo "failed to resolve remote container IP for ${REMOTE_CONTAINER_NAME}" >&2
-    exit 1
-  fi
-}
-
 start_tunnel() {
   if tunnel_alive; then
     return 0
@@ -142,16 +128,16 @@ start_tunnel() {
   : >"$TUNNEL_LOGFILE"
   log "Opening SSH tunnel for remote vision and Pocket-TTS"
   (
-    exec gcloud compute ssh "$GCP_INSTANCE_NAME" \
+    exec setsid gcloud compute ssh "$GCP_INSTANCE_NAME" \
       --project "$GCP_PROJECT_ID" \
       --zone "$GCP_ZONE" \
       -- -N \
-      -L "${LOCAL_TUNNEL_HOST}:${LOCAL_VISION_PORT}:${REMOTE_CONTAINER_IP}:7860" \
-      -L "${LOCAL_TUNNEL_HOST}:${LOCAL_POCKET_PORT}:${REMOTE_CONTAINER_IP}:8003" \
+      -L "${LOCAL_TUNNEL_HOST}:${LOCAL_VISION_PORT}:${REMOTE_SERVICE_HOST}:7860" \
+      -L "${LOCAL_TUNNEL_HOST}:${LOCAL_POCKET_PORT}:${REMOTE_SERVICE_HOST}:8003" \
       -o ExitOnForwardFailure=yes \
       -o ServerAliveInterval=30 \
       -o ServerAliveCountMax=3
-  ) >"$TUNNEL_LOGFILE" 2>&1 &
+  ) </dev/null >"$TUNNEL_LOGFILE" 2>&1 &
   echo "$!" >"$TUNNEL_PIDFILE"
   sleep 2
   if ! tunnel_alive; then
@@ -181,11 +167,10 @@ if [[ "$LIVEKIT_ENABLED" != "1" && "$LIVEKIT_ENABLED" != "true" && "$LIVEKIT_ENA
 fi
 
 ensure_vm_running
-fetch_remote_container_ip
 
 log "Waiting for remote vision, Pocket-TTS, and LiveKit"
-wait_for_remote_http "remote vision" "http://${REMOTE_CONTAINER_IP}:7860/model_status"
-wait_for_remote_http "remote Pocket-TTS" "http://${REMOTE_CONTAINER_IP}:8003/"
+wait_for_remote_http "remote vision" "http://${REMOTE_SERVICE_HOST}:7860/model_status"
+wait_for_remote_http "remote Pocket-TTS" "http://${REMOTE_SERVICE_HOST}:8003/"
 wait_for_remote_http "remote LiveKit" "http://127.0.0.1:${LIVEKIT_HTTP_PORT}/"
 start_tunnel
 
