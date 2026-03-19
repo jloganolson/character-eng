@@ -242,6 +242,11 @@ _last_visual_turn_at = 0.0
 _VISUAL_TURN_COOLDOWN_S = 7.0
 
 
+def _vision_requires_external_frames(*, browser_mode: bool, transport_mode: str) -> bool:
+    mode = str(transport_mode or "").strip().lower()
+    return bool(browser_mode) or mode == "remote_hot_webrtc"
+
+
 def _normalize_runtime_control_name(name: str) -> str | None:
     key = name.strip().lower().replace("_", "-")
     aliases = {
@@ -4583,25 +4588,35 @@ def main():
 
     # Auto-launch vision service (real or mock)
     vision_proc = None
+    vision_external_only = _vision_requires_external_frames(
+        browser_mode=browser_mode,
+        transport_mode=transport_mode,
+    )
     _register_vision_runtime(
         cfg.vision,
         proc=None,
         mock_replay=args.vision_mock,
-        no_camera=browser_mode,
+        no_camera=vision_external_only,
     )
     if vision_mode:
         if args.vision_mock:
             vision_proc = _launch_mock_vision(args.vision_mock, cfg.vision)
-        elif browser_mode:
+        elif vision_external_only:
             vision_proc = _launch_vision_service(cfg.vision, no_camera=True)
         else:
             vision_proc = _launch_vision_service(cfg.vision)
         _vision_runtime["proc"] = vision_proc
 
         from character_eng.vision.client import VisionClient
-        if not VisionClient(cfg.vision.service_url).health():
+        vision_client = VisionClient(cfg.vision.service_url)
+        if not vision_client.health():
             console.print(f"[yellow]Vision unavailable at {cfg.vision.service_url} — continuing without vision[/yellow]")
             vision_mode = False
+        elif vision_external_only:
+            try:
+                vision_client.set_input_mode("external")
+            except Exception:
+                console.print("[yellow]Unable to force external-only vision input at startup[/yellow]")
 
     _push_history_status()
     if _archive_only_mode:

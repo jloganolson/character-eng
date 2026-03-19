@@ -20,6 +20,13 @@ def test_normalize_runtime_control_name_handles_aliases():
     assert app._normalize_runtime_control_name("unknown") is None
 
 
+def test_vision_requires_external_frames_only_for_browser_and_webrtc_remote_hot():
+    assert app._vision_requires_external_frames(browser_mode=True, transport_mode="local") is True
+    assert app._vision_requires_external_frames(browser_mode=False, transport_mode="remote_hot_webrtc") is True
+    assert app._vision_requires_external_frames(browser_mode=False, transport_mode="local") is False
+    assert app._vision_requires_external_frames(browser_mode=False, transport_mode="remote_hot") is False
+
+
 def test_set_runtime_control_updates_voice_side_effects():
     previous = dict(app._runtime_controls)
     voice = MagicMock()

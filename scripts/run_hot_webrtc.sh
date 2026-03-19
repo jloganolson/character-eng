@@ -17,6 +17,46 @@ log() {
   printf '==> %s\n' "$*"
 }
 
+kill_matching() {
+  local pattern="$1"
+  local label="$2"
+  local pids
+  pids="$(pgrep -f "$pattern" || true)"
+  if [[ -z "$pids" ]]; then
+    return 0
+  fi
+  log "Stopping ${label}: ${pids//$'\n'/ }"
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    kill "$pid" >/dev/null 2>&1 || true
+  done <<< "$pids"
+  sleep 1
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    kill -9 "$pid" >/dev/null 2>&1 || true
+  done <<< "$(pgrep -f "$pattern" || true)"
+}
+
+kill_port() {
+  local port="$1"
+  local label="$2"
+  local pids
+  pids="$(lsof -ti:"$port" 2>/dev/null || true)"
+  if [[ -z "$pids" ]]; then
+    return 0
+  fi
+  log "Clearing ${label} on :${port}: ${pids//$'\n'/ }"
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    kill "$pid" >/dev/null 2>&1 || true
+  done <<< "$pids"
+  sleep 1
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    kill -9 "$pid" >/dev/null 2>&1 || true
+  done <<< "$(lsof -ti:"$port" 2>/dev/null || true)"
+}
+
 phase() {
   local index="$1"
   local total="$2"
@@ -123,6 +163,12 @@ ensure_livekit_dev() {
   ./deploy/livekit/start_local_dev.sh >/dev/null
 }
 
+force_external_only_vision() {
+  log "Restarting vision service in injected-frame mode for WebRTC validation"
+  kill_matching '/services/vision/start\.sh' 'vision launcher'
+  kill_port "$VISION_PORT" 'vision service'
+}
+
 mkdir -p "$TUNNEL_DIR"
 
 phase 1 4 "Checking local heavy services" "usually 5-15s if already warm"
@@ -141,6 +187,7 @@ fi
 
 phase 4 4 "Starting LiveKit transport + local app" "dashboard should print within ~5-20s"
 ensure_livekit_dev
+force_external_only_vision
 log "Metrics will be written to:"
 printf '    video: %s\n' "$TRANSPORT_VIDEO_METRICS_PATH"
 printf '    audio: %s\n' "$TRANSPORT_AUDIO_METRICS_PATH"
