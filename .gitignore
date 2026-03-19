@@ -25,6 +25,7 @@ deploy/.runpod-lite-state.json
 logs/
 services/vision/*.log
 history/
+.cache/
 
 # Experiment artifacts (generated WAVs and recordings)
 experiments/*/samples/
