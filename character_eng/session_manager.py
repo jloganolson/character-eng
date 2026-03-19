@@ -147,6 +147,7 @@ class RuntimeSessionManager:
             shared_vision_url, shared_vision_port = self._shared_vision_target()
             if shared_vision_url:
                 env["CHARACTER_ENG_VISION_URL"] = shared_vision_url
+                env["CHARACTER_ENG_VISION_AUTO_LAUNCH"] = "false"
                 if shared_vision_port is not None:
                     env["CHARACTER_ENG_VISION_PORT"] = str(shared_vision_port)
             else:

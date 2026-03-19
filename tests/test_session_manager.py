@@ -262,6 +262,7 @@ def test_runtime_session_manager_uses_shared_vision_service_env(tmp_path):
     )
     assert probe["CHARACTER_ENG_VISION_URL"] == "http://127.0.0.1:7860"
     assert probe["CHARACTER_ENG_VISION_PORT"] == "7860"
+    assert probe["CHARACTER_ENG_VISION_AUTO_LAUNCH"] == "false"
 
 
 def test_session_manager_config_endpoint_reports_vision_settings(tmp_path):

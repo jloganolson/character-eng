@@ -55,6 +55,7 @@ def test_load_config_env_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv("CHARACTER_ENG_CONFIG_PATH", str(path))
     monkeypatch.setenv("CHARACTER_ENG_VISION_URL", "http://127.0.0.1:9001")
     monkeypatch.setenv("CHARACTER_ENG_VISION_PORT", "9001")
+    monkeypatch.setenv("CHARACTER_ENG_VISION_AUTO_LAUNCH", "false")
     monkeypatch.setenv("CHARACTER_ENG_DASHBOARD_PORT", "9010")
     monkeypatch.setenv("CHARACTER_ENG_BRIDGE_ENABLED", "true")
     monkeypatch.setenv("CHARACTER_ENG_BRIDGE_PORT", "9011")
@@ -64,6 +65,7 @@ def test_load_config_env_overrides(tmp_path, monkeypatch):
 
     assert loaded.vision.service_url == "http://127.0.0.1:9001"
     assert loaded.vision.service_port == 9001
+    assert loaded.vision.auto_launch is False
     assert loaded.dashboard.port == 9010
     assert loaded.bridge.enabled is True
     assert loaded.bridge.port == 9011

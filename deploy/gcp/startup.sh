@@ -18,6 +18,10 @@ metadata_attr_optional() {
   metadata_attr "$1" 2>/dev/null || true
 }
 
+service_account_token() {
+  metadata 'instance/service-accounts/default/token' | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'
+}
+
 install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
@@ -100,6 +104,7 @@ REGISTRY_SERVER="$(metadata_attr_optional 'character-eng-registry-server')"
 REGISTRY_USERNAME="$(metadata_attr_optional 'character-eng-registry-username')"
 REGISTRY_PASSWORD="$(metadata_attr_optional 'character-eng-registry-password')"
 APP_ENV_FILE="/etc/character-eng.env"
+REGISTRY_HOST="${CONTAINER_IMAGE%%/*}"
 
 metadata_attr_optional 'character-eng-env' >"$APP_ENV_FILE"
 chmod 600 "$APP_ENV_FILE"
@@ -128,6 +133,8 @@ fi
 
 if [[ -n "$REGISTRY_SERVER" && -n "$REGISTRY_USERNAME" && -n "$REGISTRY_PASSWORD" ]]; then
   printf '%s' "$REGISTRY_PASSWORD" | docker login "$REGISTRY_SERVER" --username "$REGISTRY_USERNAME" --password-stdin
+elif [[ "$REGISTRY_HOST" == *".pkg.dev" ]]; then
+  service_account_token | docker login -u oauth2accesstoken --password-stdin "https://${REGISTRY_HOST}"
 fi
 
 docker pull "$CONTAINER_IMAGE"

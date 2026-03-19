@@ -203,6 +203,8 @@ def load_config() -> AppConfig:
         config.vision.service_url = value.strip()
     if (value := os.environ.get("CHARACTER_ENG_VISION_PORT")):
         config.vision.service_port = int(value)
+    if (value := os.environ.get("CHARACTER_ENG_VISION_AUTO_LAUNCH")) is not None:
+        config.vision.auto_launch = value.strip().lower() in {"1", "true", "yes", "on"}
     if (value := os.environ.get("CHARACTER_ENG_DASHBOARD_ENABLED")) is not None:
         config.dashboard.enabled = value.strip().lower() in {"1", "true", "yes", "on"}
     if (value := os.environ.get("CHARACTER_ENG_DASHBOARD_PORT")):

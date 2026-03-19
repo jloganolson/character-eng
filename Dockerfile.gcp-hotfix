@@ -1,0 +1,11 @@
+FROM us-west1-docker.pkg.dev/character-eng/character-eng/character-eng:gcp-v1
+
+WORKDIR /app
+
+COPY . /app
+
+RUN chmod +x /app/deploy/container_entrypoint.sh \
+    /app/scripts/run_heavy.sh \
+    /app/scripts/run_hot.sh \
+    /app/scripts/run_local.sh \
+    /app/services/vision/start.sh

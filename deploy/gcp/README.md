@@ -60,6 +60,10 @@ cp deploy/gcp.env.example deploy/gcp.env
 
 The current example defaults to Google's GPU-ready `ml-images/common-cu128-ubuntu-2204-nvidia-570` image family so the VM starts with drivers already in place.
 
+Keep `CHARACTER_ENG_SHARED_VISION_URL=http://127.0.0.1:7860` for the full-container path so per-session runtimes reuse the shared vision stack instead of trying to boot a second private copy.
+
+For app-only fixes after the heavy base image is already proven, you can layer a fast hotfix image with `Dockerfile.gcp-hotfix` instead of rebuilding the full CUDA environment from scratch.
+
 3. If you want real browser access, also set:
 
 - `PUBLIC_HOST`
