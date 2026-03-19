@@ -24,8 +24,15 @@ READY_TIMEOUT="${READY_TIMEOUT:-240}"
 TUNNEL_DIR="${TUNNEL_DIR:-$ROOT/.cache/gcp-remote-hot}"
 TUNNEL_PIDFILE="$TUNNEL_DIR/tunnel.pid"
 TUNNEL_LOGFILE="$TUNNEL_DIR/tunnel.log"
+CAMERA_PIDFILE="$TUNNEL_DIR/camera.pid"
+CAMERA_LOGFILE="$TUNNEL_DIR/camera.log"
 REMOTE_CONTAINER_NAME="${REMOTE_CONTAINER_NAME:-character-eng}"
 REMOTE_CONTAINER_IP=""
+LOCAL_CAMERA_DEVICE="${LOCAL_CAMERA_DEVICE:-0}"
+LOCAL_CAMERA_FPS="${LOCAL_CAMERA_FPS:-2.2}"
+LOCAL_CAMERA_WIDTH="${LOCAL_CAMERA_WIDTH:-960}"
+LOCAL_CAMERA_HEIGHT="${LOCAL_CAMERA_HEIGHT:-540}"
+CAMERA_REQUIRED="${CAMERA_REQUIRED:-1}"
 
 require_var() {
   local name="$1"
@@ -58,10 +65,31 @@ cleanup_tunnel() {
   fi
 }
 
+cleanup_camera() {
+  if [[ -f "$CAMERA_PIDFILE" ]]; then
+    local pid
+    pid="$(cat "$CAMERA_PIDFILE" 2>/dev/null || true)"
+    if [[ -n "$pid" ]]; then
+      kill "$pid" >/dev/null 2>&1 || true
+      sleep 1
+      kill -9 "$pid" >/dev/null 2>&1 || true
+    fi
+    rm -f "$CAMERA_PIDFILE"
+  fi
+}
+
 tunnel_alive() {
   [[ -f "$TUNNEL_PIDFILE" ]] || return 1
   local pid
   pid="$(cat "$TUNNEL_PIDFILE" 2>/dev/null || true)"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+camera_alive() {
+  [[ -f "$CAMERA_PIDFILE" ]] || return 1
+  local pid
+  pid="$(cat "$CAMERA_PIDFILE" 2>/dev/null || true)"
   [[ -n "$pid" ]] || return 1
   kill -0 "$pid" 2>/dev/null
 }
@@ -154,7 +182,36 @@ start_tunnel() {
   fi
 }
 
-trap cleanup_tunnel EXIT
+start_camera_uplink() {
+  if camera_alive; then
+    return 0
+  fi
+  cleanup_camera
+  : >"$CAMERA_LOGFILE"
+  log "Starting local camera uplink"
+  (
+    exec uv run --project services/vision python scripts/camera_uplink.py \
+      --service-url "http://${LOCAL_TUNNEL_HOST}:${LOCAL_VISION_PORT}" \
+      --device "$LOCAL_CAMERA_DEVICE" \
+      --fps "$LOCAL_CAMERA_FPS" \
+      --width "$LOCAL_CAMERA_WIDTH" \
+      --height "$LOCAL_CAMERA_HEIGHT"
+  ) >"$CAMERA_LOGFILE" 2>&1 &
+  echo "$!" >"$CAMERA_PIDFILE"
+  sleep 2
+  if ! camera_alive; then
+    if [[ "$CAMERA_REQUIRED" == "1" ]]; then
+      echo "failed to start local camera uplink; see $CAMERA_LOGFILE" >&2
+      tail -n 60 "$CAMERA_LOGFILE" >&2 || true
+      exit 1
+    fi
+    log "Local camera uplink unavailable; continuing without camera"
+    tail -n 20 "$CAMERA_LOGFILE" >&2 || true
+    rm -f "$CAMERA_PIDFILE"
+  fi
+}
+
+trap 'cleanup_camera; cleanup_tunnel' EXIT
 
 ensure_vm_running
 fetch_remote_container_ip
@@ -167,6 +224,7 @@ start_tunnel
 log "Waiting for tunneled remote vision and Pocket-TTS"
 wait_for_http "remote vision" "http://${LOCAL_TUNNEL_HOST}:${LOCAL_VISION_PORT}/model_status"
 wait_for_http "remote Pocket-TTS" "http://${LOCAL_TUNNEL_HOST}:${LOCAL_POCKET_PORT}/"
+start_camera_uplink
 
 log "Running local app against remote heavy services"
 env \

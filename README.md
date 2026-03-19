@@ -119,6 +119,7 @@ For prompt/frontend work against hosted GCP heavy services while keeping local d
 ```
 
 That remote-hot path is separate from the local loop above. It starts the GCP VM if needed, tunnels remote vision and Pocket-TTS over SSH, and leaves the normal local `run_hot.sh` behavior unchanged.
+It now also streams the local webcam into the remote vision service, so the dashboard/feed keeps reflecting what your local camera sees.
 
 For faster heavy-runtime debugging, use:
 

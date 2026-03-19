@@ -92,6 +92,7 @@ For prompt/frontend work that should keep local direct mic/cam while borrowing r
 - `./scripts/run_hot_remote.sh`
   - starts the GCP VM if needed
   - opens an SSH tunnel for remote vision and Pocket-TTS
+  - streams the local webcam into the remote vision service
   - runs the normal local app loop against those tunneled endpoints
 - `./scripts/stop_hot_remote.sh`
   - closes the SSH tunnel

@@ -130,3 +130,4 @@ For a local-direct prompt/frontend loop against hosted heavy services, use:
 ```
 
 That path keeps mic/cam local, tunnels the remote vision and Pocket-TTS services over SSH, and leaves the existing local `run_hot.sh` behavior unchanged.
+The remote-hot helper also uplinks local webcam frames into the remote vision service so the live dashboard/video feed continues to work.
