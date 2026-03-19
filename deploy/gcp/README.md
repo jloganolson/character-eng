@@ -63,6 +63,7 @@ cp deploy/gcp.env.example deploy/gcp.env
 The current example defaults to Google's GPU-ready `ml-images/common-cu128-ubuntu-2204-nvidia-570` image family so the VM starts with drivers already in place.
 
 Keep `CHARACTER_ENG_SHARED_VISION_URL=http://127.0.0.1:7860` for the full-container path so per-session runtimes reuse the shared vision stack instead of trying to boot a second private copy.
+Set `POCKET_HOST=0.0.0.0` on GCP so Pocket-TTS is reachable over the SSH-tunneled remote-hot path.
 
 For app-only fixes after the heavy base image is already proven, you can layer a fast hotfix image with `Dockerfile.gcp-hotfix` instead of rebuilding the full CUDA environment from scratch.
 
@@ -83,6 +84,20 @@ For a dry run of the exact `gcloud` commands:
 ```bash
 DRY_RUN=1 ./deploy/gcp/create_vm.sh
 ```
+
+## Remote hot loop
+
+For prompt/frontend work that should keep local direct mic/cam while borrowing remote GPU-heavy services:
+
+- `./scripts/run_hot_remote.sh`
+  - starts the GCP VM if needed
+  - opens an SSH tunnel for remote vision and Pocket-TTS
+  - runs the normal local app loop against those tunneled endpoints
+- `./scripts/stop_hot_remote.sh`
+  - closes the SSH tunnel
+  - stops the GCP VM by default (`STOP_VM=0` keeps the VM running)
+
+That path keeps the existing local `run_hot.sh` / `run_local.sh` behavior intact and avoids routing browser mic/cam through the remote dashboard bridge.
 
 ## Registry choice
 

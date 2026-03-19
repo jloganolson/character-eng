@@ -53,6 +53,8 @@ def test_load_config_env_overrides(tmp_path, monkeypatch):
     path = tmp_path / "config.toml"
     save_config(AppConfig(), path=path)
     monkeypatch.setenv("CHARACTER_ENG_CONFIG_PATH", str(path))
+    monkeypatch.setenv("CHARACTER_ENG_TTS_BACKEND", "pocket")
+    monkeypatch.setenv("CHARACTER_ENG_TTS_SERVER_URL", "http://127.0.0.1:9800")
     monkeypatch.setenv("CHARACTER_ENG_VISION_URL", "http://127.0.0.1:9001")
     monkeypatch.setenv("CHARACTER_ENG_VISION_PORT", "9001")
     monkeypatch.setenv("CHARACTER_ENG_VISION_AUTO_LAUNCH", "false")
@@ -63,6 +65,8 @@ def test_load_config_env_overrides(tmp_path, monkeypatch):
 
     loaded = load_config()
 
+    assert loaded.voice.tts_backend == "pocket"
+    assert loaded.voice.tts_server_url == "http://127.0.0.1:9800"
     assert loaded.vision.service_url == "http://127.0.0.1:9001"
     assert loaded.vision.service_port == 9001
     assert loaded.vision.auto_launch is False

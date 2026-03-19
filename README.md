@@ -111,6 +111,15 @@ For the simplest persistent-dev loop:
 ./scripts/stop_local.sh
 ```
 
+For prompt/frontend work against hosted GCP heavy services while keeping local direct mic/cam, use:
+
+```bash
+./scripts/run_hot_remote.sh
+./scripts/stop_hot_remote.sh
+```
+
+That remote-hot path is separate from the local loop above. It starts the GCP VM if needed, tunnels remote vision and Pocket-TTS over SSH, and leaves the normal local `run_hot.sh` behavior unchanged.
+
 For faster heavy-runtime debugging, use:
 
 ```bash

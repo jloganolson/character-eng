@@ -121,3 +121,12 @@ That flow keeps the existing container/runtime architecture and swaps only the i
 - optional Caddy TLS termination in front of the manager port
 
 This is the better fit when you want a more deterministic long-lived host and are willing to manage a VM directly.
+
+For a local-direct prompt/frontend loop against hosted heavy services, use:
+
+```bash
+./scripts/run_hot_remote.sh
+./scripts/stop_hot_remote.sh
+```
+
+That path keeps mic/cam local, tunnels the remote vision and Pocket-TTS services over SSH, and leaves the existing local `run_hot.sh` behavior unchanged.

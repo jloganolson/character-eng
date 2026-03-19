@@ -37,6 +37,7 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$CACHE_ROOT_DEFAULT/xdg}"
 VISION_PORT="${VISION_PORT:-7860}"
 VLLM_PORT="${VLLM_PORT:-8000}"
 POCKET_PORT="${POCKET_PORT:-8003}"
+POCKET_HOST="${POCKET_HOST:-localhost}"
 POCKET_VOICE="${POCKET_VOICE:-$ROOT/voices/greg.safetensors}"
 HEAVY_LOG_DIR="${HEAVY_LOG_DIR:-$ROOT/logs/heavy}"
 POCKET_BIN="${POCKET_BIN:-}"
@@ -331,7 +332,7 @@ else
     fi
     log "Pocket-TTS unavailable; continuing without filler/TTS warm service"
   else
-    start_bg "Pocket-TTS" "$HEAVY_LOG_DIR/pocket_tts.log" "$POCKET_PIDFILE" "$POCKET_BIN" serve --port "$POCKET_PORT" --voice "$POCKET_VOICE"
+    start_bg "Pocket-TTS" "$HEAVY_LOG_DIR/pocket_tts.log" "$POCKET_PIDFILE" "$POCKET_BIN" serve --host "$POCKET_HOST" --port "$POCKET_PORT" --voice "$POCKET_VOICE"
     STARTED_POCKET=1
     if wait_for_http "Pocket-TTS" "http://127.0.0.1:${POCKET_PORT}/" "$POCKET_TIMEOUT" "$POCKET_PIDFILE" "$HEAVY_LOG_DIR/pocket_tts.log"; then
       POCKET_READY=1

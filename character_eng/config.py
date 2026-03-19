@@ -197,6 +197,10 @@ def load_config() -> AppConfig:
 
     if (value := os.environ.get("CHARACTER_ENG_VOICE_ENABLED")) is not None:
         config.voice.enabled = value.strip().lower() in {"1", "true", "yes", "on"}
+    if (value := os.environ.get("CHARACTER_ENG_TTS_BACKEND")):
+        config.voice.tts_backend = value.strip()
+    if (value := os.environ.get("CHARACTER_ENG_TTS_SERVER_URL")):
+        config.voice.tts_server_url = value.strip()
     if (value := os.environ.get("CHARACTER_ENG_VISION_ENABLED")) is not None:
         config.vision.enabled = value.strip().lower() in {"1", "true", "yes", "on"}
     if (value := os.environ.get("CHARACTER_ENG_VISION_URL")):

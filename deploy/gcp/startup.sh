@@ -141,6 +141,10 @@ if [[ -n "$CADDY_DOMAIN" ]]; then
 else
   publish_args=(-p "${MANAGER_PORT}:${MANAGER_PORT}")
 fi
+publish_args+=(
+  -p "127.0.0.1:7860:7860"
+  -p "127.0.0.1:8003:8003"
+)
 
 if [[ -n "$REGISTRY_SERVER" && -n "$REGISTRY_USERNAME" && -n "$REGISTRY_PASSWORD" ]]; then
   printf '%s' "$REGISTRY_PASSWORD" | docker login "$REGISTRY_SERVER" --username "$REGISTRY_USERNAME" --password-stdin
