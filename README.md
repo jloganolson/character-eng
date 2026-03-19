@@ -120,6 +120,7 @@ For prompt/frontend work against hosted GCP heavy services while keeping local d
 
 That remote-hot path is separate from the local loop above. It starts the GCP VM if needed, tunnels remote vision and Pocket-TTS over SSH, and leaves the normal local `run_hot.sh` behavior unchanged.
 It now also streams the local webcam into the remote vision service, so the dashboard/feed keeps reflecting what your local camera sees.
+Treat this as the fallback path; the WebRTC path below is the preferred hybrid mode.
 
 For a local heavy-stack simulation of the lower-latency WebRTC transport, use:
 
@@ -138,6 +139,7 @@ For the GCP-backed WebRTC hybrid path, use:
 ```
 
 That keeps the app local while using remote vision + Pocket-TTS over an SSH tunnel and a remote LiveKit server on the GCP VM.
+This is the default hosted-heavy workflow.
 
 For faster heavy-runtime debugging, use:
 

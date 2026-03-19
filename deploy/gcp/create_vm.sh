@@ -56,6 +56,23 @@ LIVEKIT_IMAGE="${LIVEKIT_IMAGE:-livekit/livekit-server:latest}"
 LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-devkey}"
 LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-secret}"
 
+validate_livekit_credentials() {
+  local enabled="${LIVEKIT_ENABLED,,}"
+  if [[ "$enabled" != "1" && "$enabled" != "true" && "$enabled" != "yes" ]]; then
+    return 0
+  fi
+  if [[ "$LIVEKIT_API_KEY" == "devkey" || "$LIVEKIT_API_SECRET" == "secret" ]]; then
+    echo "LIVEKIT_API_KEY / LIVEKIT_API_SECRET must be replaced with non-default values in $ENV_FILE" >&2
+    exit 1
+  fi
+  if (( ${#LIVEKIT_API_SECRET} < 32 )); then
+    echo "LIVEKIT_API_SECRET must be at least 32 characters long for LiveKit" >&2
+    exit 1
+  fi
+}
+
+validate_livekit_credentials
+
 if [[ ! -f "$STARTUP_SCRIPT" ]]; then
   echo "missing startup script: $STARTUP_SCRIPT" >&2
   exit 1

@@ -90,7 +90,7 @@ DRY_RUN=1 ./deploy/gcp/create_vm.sh
 
 ## Remote hot loop
 
-For prompt/frontend work that should keep local direct mic/cam while borrowing remote GPU-heavy services:
+Legacy fallback path for prompt/frontend work that should keep local direct mic/cam while borrowing remote GPU-heavy services:
 
 - `./scripts/run_hot_remote.sh`
   - starts the GCP VM if needed
@@ -101,11 +101,11 @@ For prompt/frontend work that should keep local direct mic/cam while borrowing r
   - closes the SSH tunnel
   - stops the GCP VM by default (`STOP_VM=0` keeps the VM running)
 
-That path keeps the existing local `run_hot.sh` / `run_local.sh` behavior intact and avoids routing browser mic/cam through the remote dashboard bridge.
+That path keeps the existing local `run_hot.sh` / `run_local.sh` behavior intact and avoids routing browser mic/cam through the remote dashboard bridge. It remains available as a fallback, but the WebRTC path below is the default hybrid mode.
 
 ## Remote hot WebRTC loop
 
-For the browser-media path with the app local and the heavy services on GCP:
+Primary hybrid path for the browser-media flow with the app local and the heavy services on GCP:
 
 - `./scripts/run_hot_remote_webrtc.sh`
   - starts the GCP VM if needed
@@ -116,7 +116,9 @@ For the browser-media path with the app local and the heavy services on GCP:
   - closes the SSH tunnel
   - stops the VM by default (`STOP_VM=0` keeps the VM running)
 
-This keeps `full local` untouched while replacing the old JPEG uplink path for the hybrid mode.
+This is the preferred hosted-heavy workflow. It keeps `full local` untouched while replacing the old JPEG uplink path for hybrid use.
+
+Set a real `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` pair in `deploy/gcp.env` before creating or updating the VM. The create script now rejects the old `devkey` / `secret` placeholders, and the secret should be at least 32 characters long.
 
 ## Registry choice
 
