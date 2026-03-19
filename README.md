@@ -130,6 +130,15 @@ For a local heavy-stack simulation of the lower-latency WebRTC transport, use:
 That mode keeps the full-local heavy stack on the same machine, starts a disposable LiveKit dev server, and runs the app in `remote_hot_webrtc` mode.
 The Vision panel shows a LiveKit preview of the outgoing camera stream, while the app injects those frames into the vision service.
 
+For the GCP-backed WebRTC hybrid path, use:
+
+```bash
+./scripts/run_hot_remote_webrtc.sh
+./scripts/stop_hot_remote_webrtc.sh
+```
+
+That keeps the app local while using remote vision + Pocket-TTS over an SSH tunnel and a remote LiveKit server on the GCP VM.
+
 For faster heavy-runtime debugging, use:
 
 ```bash

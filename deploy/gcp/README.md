@@ -71,7 +71,10 @@ For app-only fixes after the heavy base image is already proven, you can layer a
 
 - `PUBLIC_HOST`
 - `CADDY_DOMAIN`
+- `CADDY_LIVEKIT_DOMAIN`
 - `CADDY_EMAIL`
+
+For the WebRTC-backed remote-hot path, `CADDY_LIVEKIT_DOMAIN` is the important one. The local dashboard can stay on `localhost`, but the browser still needs a secure `wss://` LiveKit signaling URL and public RTC ports on the VM.
 
 4. Create the VM:
 
@@ -99,6 +102,21 @@ For prompt/frontend work that should keep local direct mic/cam while borrowing r
   - stops the GCP VM by default (`STOP_VM=0` keeps the VM running)
 
 That path keeps the existing local `run_hot.sh` / `run_local.sh` behavior intact and avoids routing browser mic/cam through the remote dashboard bridge.
+
+## Remote hot WebRTC loop
+
+For the browser-media path with the app local and the heavy services on GCP:
+
+- `./scripts/run_hot_remote_webrtc.sh`
+  - starts the GCP VM if needed
+  - waits for remote vision, Pocket-TTS, manager, and LiveKit
+  - opens an SSH tunnel for remote vision + Pocket-TTS
+  - runs the local app in `remote_hot_webrtc` against the remote LiveKit server
+- `./scripts/stop_hot_remote_webrtc.sh`
+  - closes the SSH tunnel
+  - stops the VM by default (`STOP_VM=0` keeps the VM running)
+
+This keeps `full local` untouched while replacing the old JPEG uplink path for the hybrid mode.
 
 ## Registry choice
 

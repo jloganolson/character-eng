@@ -47,16 +47,34 @@ require_var START_PAUSED
 require_var CHARACTER_ENG_SHARED_VISION_URL
 require_var VLLM_GPU_UTIL
 
+LIVEKIT_ENABLED="${LIVEKIT_ENABLED:-0}"
+LIVEKIT_HTTP_PORT="${LIVEKIT_HTTP_PORT:-7880}"
+LIVEKIT_TCP_PORT="${LIVEKIT_TCP_PORT:-7881}"
+LIVEKIT_UDP_START="${LIVEKIT_UDP_START:-50100}"
+LIVEKIT_UDP_END="${LIVEKIT_UDP_END:-50120}"
+LIVEKIT_IMAGE="${LIVEKIT_IMAGE:-livekit/livekit-server:latest}"
+LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-devkey}"
+LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-secret}"
+
 if [[ ! -f "$STARTUP_SCRIPT" ]]; then
   echo "missing startup script: $STARTUP_SCRIPT" >&2
   exit 1
 fi
 
 firewall_ports="tcp:22"
-if [[ -n "${CADDY_DOMAIN:-}" ]]; then
+if [[ -n "${CADDY_DOMAIN:-}" || -n "${CADDY_LIVEKIT_DOMAIN:-}" ]]; then
   firewall_ports="$firewall_ports,tcp:80,tcp:443"
+fi
+if [[ -n "${CADDY_DOMAIN:-}" ]]; then
+  :
 else
   firewall_ports="$firewall_ports,tcp:${MANAGER_PORT}"
+fi
+if [[ "$LIVEKIT_ENABLED" == "1" || "$LIVEKIT_ENABLED" == "true" || "$LIVEKIT_ENABLED" == "yes" ]]; then
+  firewall_ports="$firewall_ports,tcp:${LIVEKIT_TCP_PORT},udp:${LIVEKIT_UDP_START}-${LIVEKIT_UDP_END}"
+  if [[ -z "${CADDY_LIVEKIT_DOMAIN:-}" ]]; then
+    firewall_ports="$firewall_ports,tcp:${LIVEKIT_HTTP_PORT}"
+  fi
 fi
 
 firewall_rule_name="${GCP_INSTANCE_NAME}-allow"
@@ -78,6 +96,9 @@ VLLM_GPU_UTIL=${VLLM_GPU_UTIL}
 POCKET_HOST=${POCKET_HOST:-}
 HF_TOKEN=${HF_TOKEN:-}
 CHARACTER_ENG_MANAGER_TOKEN=${CHARACTER_ENG_MANAGER_TOKEN:-}
+CHARACTER_ENG_LIVEKIT_ENABLED=${LIVEKIT_ENABLED}
+CHARACTER_ENG_LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+CHARACTER_ENG_LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
 EOF
 
 metadata_pairs=(
@@ -95,8 +116,23 @@ fi
 if [[ -n "${CADDY_DOMAIN:-}" ]]; then
   metadata_pairs+=("character-eng-caddy-domain=${CADDY_DOMAIN}")
 fi
+if [[ -n "${CADDY_LIVEKIT_DOMAIN:-}" ]]; then
+  metadata_pairs+=("character-eng-caddy-livekit-domain=${CADDY_LIVEKIT_DOMAIN}")
+fi
 if [[ -n "${CADDY_EMAIL:-}" ]]; then
   metadata_pairs+=("character-eng-caddy-email=${CADDY_EMAIL}")
+fi
+if [[ "$LIVEKIT_ENABLED" == "1" || "$LIVEKIT_ENABLED" == "true" || "$LIVEKIT_ENABLED" == "yes" ]]; then
+  metadata_pairs+=(
+    "character-eng-livekit-enabled=true"
+    "character-eng-livekit-image=${LIVEKIT_IMAGE}"
+    "character-eng-livekit-http-port=${LIVEKIT_HTTP_PORT}"
+    "character-eng-livekit-tcp-port=${LIVEKIT_TCP_PORT}"
+    "character-eng-livekit-udp-start=${LIVEKIT_UDP_START}"
+    "character-eng-livekit-udp-end=${LIVEKIT_UDP_END}"
+    "character-eng-livekit-api-key=${LIVEKIT_API_KEY}"
+    "character-eng-livekit-api-secret=${LIVEKIT_API_SECRET}"
+  )
 fi
 
 metadata_file_pairs=("startup-script=${STARTUP_SCRIPT}" "character-eng-env=${app_env_file}")
@@ -154,6 +190,16 @@ if ! gcloud compute firewall-rules describe "$firewall_rule_name" --project "$GC
     --network "$GCP_NETWORK" \
     --allow "$firewall_ports" \
     --target-tags "$GCP_TAGS"
+else
+  run gcloud compute firewall-rules update "$firewall_rule_name" \
+    --project "$GCP_PROJECT_ID" \
+    --allow "$firewall_ports" \
+    --target-tags "$GCP_TAGS"
+fi
+
+instance_exists=0
+if gcloud compute instances describe "$GCP_INSTANCE_NAME" --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE" >/dev/null 2>&1; then
+  instance_exists=1
 fi
 
 instance_args=(
@@ -180,7 +226,15 @@ fi
 instance_args+=(--metadata "$(join_by_comma "${metadata_pairs[@]}")")
 instance_args+=(--metadata-from-file "$(join_by_comma "${metadata_file_pairs[@]}")")
 
-run "${instance_args[@]}"
+if [[ "$instance_exists" == "0" ]]; then
+  run "${instance_args[@]}"
+else
+  run gcloud compute instances add-metadata "$GCP_INSTANCE_NAME" \
+    --project "$GCP_PROJECT_ID" \
+    --zone "$GCP_ZONE" \
+    --metadata "$(join_by_comma "${metadata_pairs[@]}")" \
+    --metadata-from-file "$(join_by_comma "${metadata_file_pairs[@]}")"
+fi
 
 if [[ "${DRY_RUN:-0}" != "1" ]]; then
   gcloud compute instances describe "$GCP_INSTANCE_NAME" \

@@ -20,6 +20,7 @@ LiveKit gives us:
 - proper realtime audio/video/data transport
 - backend-issued participant tokens
 - a clean self-hosted path for GCP
+- a remote-heavy GCP mode via `./scripts/run_hot_remote_webrtc.sh`
 
 ## Local dev server
 

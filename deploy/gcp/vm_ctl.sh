@@ -24,8 +24,11 @@ GCP_ZONE="${GCP_ZONE:-}"
 GCP_INSTANCE_NAME="${GCP_INSTANCE_NAME:-}"
 MANAGER_PORT="${MANAGER_PORT:-7870}"
 CADDY_DOMAIN="${CADDY_DOMAIN:-}"
+CADDY_LIVEKIT_DOMAIN="${CADDY_LIVEKIT_DOMAIN:-}"
 PUBLIC_HOST="${PUBLIC_HOST:-}"
 CHARACTER_ENG_MANAGER_TOKEN="${CHARACTER_ENG_MANAGER_TOKEN:-}"
+LIVEKIT_ENABLED="${LIVEKIT_ENABLED:-0}"
+LIVEKIT_HTTP_PORT="${LIVEKIT_HTTP_PORT:-7880}"
 WAIT_INTERVAL="${WAIT_INTERVAL:-5}"
 READY_TIMEOUT="${READY_TIMEOUT:-600}"
 
@@ -53,6 +56,8 @@ Commands:
   restart        Restart the VM
   wait           Wait for manager health
   url            Print manager base URL
+  wait-livekit   Wait for LiveKit signaling health
+  livekit-url    Print LiveKit signaling URL
 EOF
 }
 
@@ -60,6 +65,25 @@ gcloud_instance() {
   gcloud compute instances "$@" \
     --project "$GCP_PROJECT_ID" \
     --zone "$GCP_ZONE"
+}
+
+livekit_base_url() {
+  local livekit_domain="$CADDY_LIVEKIT_DOMAIN"
+  if [[ -z "$livekit_domain" ]]; then
+    livekit_domain="$(metadata_value 'character-eng-caddy-livekit-domain')"
+  fi
+  if [[ -n "$livekit_domain" ]]; then
+    printf 'wss://%s' "$livekit_domain"
+    return 0
+  fi
+  local public_host="$PUBLIC_HOST"
+  if [[ -z "$public_host" ]]; then
+    public_host="$(metadata_value 'character-eng-public-host')"
+  fi
+  if [[ -z "$public_host" ]]; then
+    public_host="$(instance_ip)"
+  fi
+  printf 'ws://%s:%s' "$public_host" "$LIVEKIT_HTTP_PORT"
 }
 
 instance_status() {
@@ -129,6 +153,26 @@ wait_for_manager() {
   done
 }
 
+curl_livekit_health() {
+  local url
+  url="$(livekit_base_url)"
+  url="${url/wss:/https:}"
+  url="${url/ws:/http:}"
+  curl -fsS "${url}/"
+}
+
+wait_for_livekit() {
+  local elapsed=0
+  until curl_livekit_health >/dev/null 2>&1; do
+    sleep "$WAIT_INTERVAL"
+    elapsed=$((elapsed + WAIT_INTERVAL))
+    if (( elapsed >= READY_TIMEOUT )); then
+      echo "livekit did not become healthy within ${READY_TIMEOUT}s" >&2
+      return 1
+    fi
+  done
+}
+
 cmd="${1:-}"
 if [[ -z "$cmd" ]]; then
   usage
@@ -160,6 +204,12 @@ case "$cmd" in
     ;;
   url)
     manager_base_url
+    ;;
+  wait-livekit)
+    wait_for_livekit
+    ;;
+  livekit-url)
+    livekit_base_url
     ;;
   *)
     usage

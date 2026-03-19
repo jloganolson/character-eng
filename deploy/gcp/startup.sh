@@ -73,8 +73,9 @@ ensure_mount() {
 }
 
 configure_caddy() {
-  local domain="$1"
-  local email="$2"
+  local manager_domain="$1"
+  local livekit_domain="$2"
+  local email="$3"
   local caddy_root="${RUNTIME_MOUNT:-/var/lib/character-eng-caddy}/caddy"
 
   mkdir -p "${caddy_root}/data" "${caddy_root}/config"
@@ -83,10 +84,21 @@ configure_caddy() {
   email ${email}
 }
 
-${domain} {
+EOF
+  if [[ -n "$manager_domain" ]]; then
+    cat >>"${caddy_root}/Caddyfile" <<EOF
+${manager_domain} {
   reverse_proxy 127.0.0.1:${MANAGER_PORT}
 }
 EOF
+  fi
+  if [[ -n "$livekit_domain" ]]; then
+    cat >>"${caddy_root}/Caddyfile" <<EOF
+${livekit_domain} {
+  reverse_proxy 127.0.0.1:${LIVEKIT_HTTP_PORT}
+}
+EOF
+  fi
   docker pull caddy:2
   docker rm -f character-eng-caddy >/dev/null 2>&1 || true
   docker run -d \
@@ -97,6 +109,35 @@ EOF
     -v "${caddy_root}/data:/data" \
     -v "${caddy_root}/config:/config" \
     caddy:2 >/dev/null
+}
+
+start_livekit() {
+  local livekit_root="${RUNTIME_MOUNT:-/var/lib/character-eng-livekit}/livekit"
+  local public_ip="$1"
+
+  mkdir -p "${livekit_root}/config"
+  cat >"${livekit_root}/config/livekit.yaml" <<EOF
+port: ${LIVEKIT_HTTP_PORT}
+rtc:
+  tcp_port: ${LIVEKIT_TCP_PORT}
+  port_range_start: ${LIVEKIT_UDP_START}
+  port_range_end: ${LIVEKIT_UDP_END}
+  use_external_ip: true
+keys:
+  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+EOF
+
+  docker pull "${LIVEKIT_IMAGE}"
+  docker rm -f character-eng-livekit >/dev/null 2>&1 || true
+  docker run -d \
+    --name character-eng-livekit \
+    --restart unless-stopped \
+    --network host \
+    -v "${livekit_root}/config/livekit.yaml:/etc/livekit.yaml" \
+    "${LIVEKIT_IMAGE}" \
+    --config /etc/livekit.yaml \
+    --bind 0.0.0.0 \
+    --node-ip "${public_ip}" >/dev/null
 }
 
 CONTAINER_IMAGE="$(metadata_attr 'character-eng-container-image')"
@@ -110,15 +151,33 @@ WORKSPACE_MOUNT_PATH="$(metadata_attr_optional 'character-eng-workspace-mount')"
 WORKSPACE_MOUNT_PATH="${WORKSPACE_MOUNT_PATH:-/workspace}"
 PUBLIC_HOST="$(metadata_attr_optional 'character-eng-public-host')"
 CADDY_DOMAIN="$(metadata_attr_optional 'character-eng-caddy-domain')"
+CADDY_LIVEKIT_DOMAIN="$(metadata_attr_optional 'character-eng-caddy-livekit-domain')"
 CADDY_EMAIL="$(metadata_attr_optional 'character-eng-caddy-email')"
 REGISTRY_SERVER="$(metadata_attr_optional 'character-eng-registry-server')"
 REGISTRY_USERNAME="$(metadata_attr_optional 'character-eng-registry-username')"
 REGISTRY_PASSWORD="$(metadata_attr_optional 'character-eng-registry-password')"
+LIVEKIT_ENABLED="$(metadata_attr_optional 'character-eng-livekit-enabled')"
+LIVEKIT_IMAGE="$(metadata_attr_optional 'character-eng-livekit-image')"
+LIVEKIT_HTTP_PORT="$(metadata_attr_optional 'character-eng-livekit-http-port')"
+LIVEKIT_TCP_PORT="$(metadata_attr_optional 'character-eng-livekit-tcp-port')"
+LIVEKIT_UDP_START="$(metadata_attr_optional 'character-eng-livekit-udp-start')"
+LIVEKIT_UDP_END="$(metadata_attr_optional 'character-eng-livekit-udp-end')"
+LIVEKIT_API_KEY="$(metadata_attr_optional 'character-eng-livekit-api-key')"
+LIVEKIT_API_SECRET="$(metadata_attr_optional 'character-eng-livekit-api-secret')"
 APP_ENV_FILE="/etc/character-eng.env"
 REGISTRY_HOST="${CONTAINER_IMAGE%%/*}"
 
 metadata_attr_optional 'character-eng-env' >"$APP_ENV_FILE"
 chmod 600 "$APP_ENV_FILE"
+
+LIVEKIT_ENABLED="${LIVEKIT_ENABLED,,}"
+LIVEKIT_IMAGE="${LIVEKIT_IMAGE:-livekit/livekit-server:latest}"
+LIVEKIT_HTTP_PORT="${LIVEKIT_HTTP_PORT:-7880}"
+LIVEKIT_TCP_PORT="${LIVEKIT_TCP_PORT:-7881}"
+LIVEKIT_UDP_START="${LIVEKIT_UDP_START:-50100}"
+LIVEKIT_UDP_END="${LIVEKIT_UDP_END:-50120}"
+LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-devkey}"
+LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-secret}"
 
 if [[ -n "$RUNTIME_DISK" && -n "$RUNTIME_MOUNT" ]]; then
   ensure_mount "$RUNTIME_DISK" "$RUNTIME_MOUNT"
@@ -132,13 +191,33 @@ if [[ -z "$PUBLIC_HOST" ]]; then
 fi
 echo "PUBLIC_HOST=$PUBLIC_HOST" >>"$APP_ENV_FILE"
 
+if [[ "$LIVEKIT_ENABLED" == "1" || "$LIVEKIT_ENABLED" == "true" || "$LIVEKIT_ENABLED" == "yes" ]]; then
+  livekit_public_url="ws://${PUBLIC_HOST}:${LIVEKIT_HTTP_PORT}"
+  if [[ -n "$CADDY_LIVEKIT_DOMAIN" ]]; then
+    livekit_public_url="wss://${CADDY_LIVEKIT_DOMAIN}"
+  fi
+  cat >>"$APP_ENV_FILE" <<EOF
+CHARACTER_ENG_LIVEKIT_ENABLED=true
+CHARACTER_ENG_LIVEKIT_URL=${livekit_public_url}
+CHARACTER_ENG_LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
+CHARACTER_ENG_LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
+EOF
+fi
+
 install_packages
 configure_nvidia_runtime
 
+if [[ "$LIVEKIT_ENABLED" == "1" || "$LIVEKIT_ENABLED" == "true" || "$LIVEKIT_ENABLED" == "yes" ]]; then
+  start_livekit "$PUBLIC_HOST"
+fi
+
 if [[ -n "$CADDY_DOMAIN" ]]; then
-  configure_caddy "$CADDY_DOMAIN" "$CADDY_EMAIL"
+  configure_caddy "$CADDY_DOMAIN" "$CADDY_LIVEKIT_DOMAIN" "$CADDY_EMAIL"
   publish_args=(-p "127.0.0.1:${MANAGER_PORT}:${MANAGER_PORT}")
 else
+  if [[ -n "$CADDY_LIVEKIT_DOMAIN" ]]; then
+    configure_caddy "$CADDY_DOMAIN" "$CADDY_LIVEKIT_DOMAIN" "$CADDY_EMAIL"
+  fi
   publish_args=(-p "${MANAGER_PORT}:${MANAGER_PORT}")
 fi
 publish_args+=(
@@ -170,4 +249,11 @@ if [[ -n "$CADDY_DOMAIN" ]]; then
 else
   log "manager available on http://${PUBLIC_HOST}:${MANAGER_PORT}"
   log "browser mic/camera will require HTTPS; use Caddy + a real hostname for full remote UX"
+fi
+if [[ "$LIVEKIT_ENABLED" == "1" || "$LIVEKIT_ENABLED" == "true" || "$LIVEKIT_ENABLED" == "yes" ]]; then
+  if [[ -n "$CADDY_LIVEKIT_DOMAIN" ]]; then
+    log "livekit signaling available at wss://${CADDY_LIVEKIT_DOMAIN}"
+  else
+    log "livekit signaling available at ws://${PUBLIC_HOST}:${LIVEKIT_HTTP_PORT}"
+  fi
 fi
