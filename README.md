@@ -77,6 +77,7 @@ The app works without `config.toml` — all settings have defaults. The `--voice
 ./scripts/run_local.sh                  # one-command local stack: voice + vision + paused-ready startup
 ./scripts/run_heavy.sh                  # keep vLLM/vision/Pocket-TTS hot in the background
 ./scripts/vision_smoke.sh               # one-shot heavy stack readiness check with model-status output
+./scripts/run_hot_offline.sh            # archive-only dashboard loop; auto-installs canonical archive fixture; use ?fixture=... or ?archive=...
 ./scripts/run_hot.sh                    # restart only the fast app/UI layer
 ./scripts/stop_local.sh                 # stop the app plus heavy local services
 uv run -m character_eng                  # text mode (dashboard auto-opens at :7862)

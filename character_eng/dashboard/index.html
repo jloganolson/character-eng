@@ -1512,6 +1512,22 @@
   <button id="report-ref-button" type="button">Copy Archive Ref</button>
   <button id="archive-rename-button" type="button">Rename</button>
   <button id="archive-load-button" type="button">Load Archive...</button>
+  <span id="offline-lab" style="display:none;align-items:center;gap:0.35rem;flex-wrap:wrap;">
+    <span class="label">offline:</span>
+    <select id="offline-frame-select" title="Offline frame">
+      <option value="real-archive">Real Archive</option>
+      <option value="loading">Loading</option>
+      <option value="ready">Ready</option>
+      <option value="startup-paused">Startup Paused</option>
+      <option value="paused">Paused</option>
+      <option value="live">Live</option>
+      <option value="archive-only">Archive Only</option>
+    </select>
+    <select id="offline-archive-select" title="Offline archive">
+      <option value="">latest archive</option>
+    </select>
+    <button id="offline-lab-apply" type="button">Go</button>
+  </span>
   <div id="archive-transport" class="archive-transport" aria-label="Archive playback transport">
     <button id="archive-transport-toggle" type="button">Play</button>
     <input id="archive-transport-scrubber" type="range" min="0" max="0" step="0.01" value="0">
@@ -1850,6 +1866,7 @@
   let modelPollError = "";
   let statePollFailures = 0;
   let statePollingSuspended = false;
+  let fixtureMode = false;
   const pageLoadedAt = Date.now();
   const INSPECTOR_PANELS = [
     {
@@ -1947,6 +1964,10 @@
   const archiveRenameButton = document.getElementById("archive-rename-button");
   const reportRefStatus = document.getElementById("report-ref-status");
   const archiveLoadButton = document.getElementById("archive-load-button");
+  const offlineLab = document.getElementById("offline-lab");
+  const offlineFrameSelect = document.getElementById("offline-frame-select");
+  const offlineArchiveSelect = document.getElementById("offline-archive-select");
+  const offlineLabApplyButton = document.getElementById("offline-lab-apply");
   const archiveTransportEl = document.getElementById("archive-transport");
   const archiveTransportToggleButton = document.getElementById("archive-transport-toggle");
   const archiveTransportScrubber = document.getElementById("archive-transport-scrubber");
@@ -2027,9 +2048,14 @@
   let saveCompleteAutoHideDeadline = 0;
   let pendingFinalizeAction = "";
   let pendingStopReviewPause = false;
+  const bootSearchParams = new URLSearchParams(window.location.search);
+  const bootArchiveRef = bootSearchParams.get("archive") || "";
+  const bootFixtureName = bootSearchParams.get("fixture") || "";
   let archiveBrowseRef = "";
   let archiveBrowseMeta = null;
   let archiveBrowseSeqFloor = 0;
+  let bootArchiveLoadAttempted = false;
+  let offlineDefaultArchiveAttempted = false;
   let playbackVisionFrame = null;
   let archiveHydrating = false;
   let pendingReplayArchiveRef = "";
@@ -2047,6 +2073,7 @@
   let archiveMediaSeekLock = false;
   let archiveMediaScrubbing = false;
   let archiveMediaDuration = 0;
+  const PREFERRED_OFFLINE_ARCHIVE_REF = "greg-offline-canonical-v1";
   let timelineRenderScale = 1;
   let timelineRenderBaseWidth = 720;
   const ARCHIVE_BROWSE_LIVE_EVENT_ALLOWLIST = new Set([
@@ -2380,6 +2407,187 @@
     clearPendingRuntimeAction("Runtime action timed out waiting for confirmation. Check the app logs and try again.");
   }
 
+  function fixtureRuntimeControls(overrides = {}) {
+    const nextVoiceStatus = {
+      active: false,
+      output_only: false,
+      filler_enabled: false,
+      tts_backend: "",
+      mic_ready: false,
+      speaker_ready: false,
+      stt: {state: "off", detail: "Voice inactive."},
+      tts: {state: "off", detail: "Voice inactive.", backend: ""},
+      ...(overrides.voice_status || {}),
+      stt: {
+        state: "off",
+        detail: "Voice inactive.",
+        ...((overrides.voice_status || {}).stt || {}),
+      },
+      tts: {
+        state: "off",
+        detail: "Voice inactive.",
+        backend: "",
+        ...((overrides.voice_status || {}).tts || {}),
+      },
+    };
+    return {
+      controls: {
+        reconcile: true,
+        vision: false,
+        auto_beat: false,
+        filler: false,
+        guardrails: false,
+        thinker: true,
+        director: true,
+        expression: true,
+        beat_guidance: true,
+        beats: true,
+        ...(overrides.controls || {}),
+      },
+      conversation_paused: true,
+      session_stopped: true,
+      startup_pause_pending: false,
+      session_state: "ready",
+      voice_active: false,
+      voice_status: nextVoiceStatus,
+      vision_active: false,
+      reconcile_thread_alive: false,
+      vision_service_url: "",
+      vision_service_health: false,
+      vision_service_managed: false,
+      vision_service_external: false,
+      vision_service_state: "stopped",
+      vision_service_autostart: false,
+      vision_service_mode: "camera",
+      vision_mock_replay: "",
+      transport: {mode: "local", audio: {}, video: {}, webrtc: {}},
+      archive_only: false,
+      archive_only_reason: "",
+      ...overrides,
+      voice_status: nextVoiceStatus,
+    };
+  }
+
+  function fixtureEvent(type, data, index = 1) {
+    return {
+      type,
+      data,
+      seq: index,
+      timestamp: (Date.now() / 1000) + (index * 0.05),
+    };
+  }
+
+  function fixtureSessionStart(sessionId = "sess-offline-fixture", stage = "greeting") {
+    return fixtureEvent("session_start", {
+      character: "greg",
+      model: "groq-llama-8b",
+      session_id: sessionId,
+      stage,
+    });
+  }
+
+  function applyBootFixture(name) {
+    const fixture = String(name || "").trim().toLowerCase();
+    if (!fixture) return false;
+    fixtureMode = true;
+    resetDashboardState("Loading offline UX fixture...");
+    sseConnected = true;
+
+    if (fixture === "loading") {
+      renderBootStatus();
+      return true;
+    }
+
+    if (fixture === "ready") {
+      handleEvent(fixtureEvent("runtime_controls", fixtureRuntimeControls({
+        voice_active: true,
+        voice_status: {
+          active: true,
+          tts_backend: "pocket",
+          mic_ready: true,
+          speaker_ready: true,
+          stt: {state: "ready", detail: "Deepgram socket open."},
+          tts: {state: "ready", detail: "Pocket-TTS reachable.", backend: "pocket"},
+        },
+      })));
+      return true;
+    }
+
+    if (fixture === "startup-paused") {
+      handleEvent(fixtureSessionStart("sess-offline-startup", "watching"));
+      handleEvent(fixtureEvent("runtime_controls", fixtureRuntimeControls({
+        conversation_paused: true,
+        session_stopped: false,
+        startup_pause_pending: true,
+        session_state: "paused",
+        voice_active: true,
+        voice_status: {
+          active: true,
+          tts_backend: "pocket",
+          mic_ready: true,
+          speaker_ready: true,
+          stt: {state: "ready", detail: "Deepgram socket open."},
+          tts: {state: "ready", detail: "Pocket-TTS reachable.", backend: "pocket"},
+        },
+      }), 2));
+      handleEvent(fixtureEvent("pause", {startup: true, fresh_session: true}, 3));
+      return true;
+    }
+
+    if (fixture === "paused") {
+      handleEvent(fixtureSessionStart("sess-offline-paused", "engaged"));
+      handleEvent(fixtureEvent("runtime_controls", fixtureRuntimeControls({
+        conversation_paused: true,
+        session_stopped: false,
+        startup_pause_pending: false,
+        session_state: "paused",
+        voice_active: true,
+        voice_status: {
+          active: true,
+          tts_backend: "pocket",
+          mic_ready: true,
+          speaker_ready: true,
+          stt: {state: "ready", detail: "Deepgram socket open."},
+          tts: {state: "ready", detail: "Pocket-TTS reachable.", backend: "pocket"},
+        },
+      }), 2));
+      handleEvent(fixtureEvent("pause", {startup: false, fresh_session: false}, 3));
+      return true;
+    }
+
+    if (fixture === "live") {
+      handleEvent(fixtureSessionStart("sess-offline-live", "engaged"));
+      handleEvent(fixtureEvent("runtime_controls", fixtureRuntimeControls({
+        conversation_paused: false,
+        session_stopped: false,
+        startup_pause_pending: false,
+        session_state: "live",
+        voice_active: true,
+        voice_status: {
+          active: true,
+          tts_backend: "pocket",
+          mic_ready: true,
+          speaker_ready: true,
+          stt: {state: "ready", detail: "Deepgram socket open."},
+          tts: {state: "ready", detail: "Pocket-TTS reachable.", backend: "pocket"},
+        },
+      }), 2));
+      handleEvent(fixtureEvent("resume", {}, 3));
+      return true;
+    }
+
+    if (fixture === "archive-only") {
+      handleEvent(fixtureEvent("runtime_controls", fixtureRuntimeControls({
+        archive_only: true,
+        archive_only_reason: "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.",
+      })));
+      return true;
+    }
+
+    fixtureMode = false;
+    return false;
+  }
+
   function renderHistoryState(state) {
     historyState = state || {enabled: false, current_session: {}};
     const playbackKnown = Object.prototype.hasOwnProperty.call(historyState, "playback");
@@ -2642,6 +2850,7 @@
       archiveLoadButton.textContent = "Load Archive...";
       archiveLoadStatus.textContent = "";
     }
+    renderOfflineLab();
     syncArchiveMediaPlayer();
     updateTimelinePlayhead();
   }
@@ -2686,6 +2895,94 @@
     refreshState();
     refreshHistoryState();
     updateVisionFeedUrl();
+  }
+
+  async function maybeLoadBootArchive(sessionRef = bootArchiveRef) {
+    if (!sessionRef || bootArchiveLoadAttempted || archiveBrowseRef) return;
+    bootArchiveLoadAttempted = true;
+    try {
+      await loadArchiveTimeline(sessionRef);
+      annotationStatus.textContent = `Loaded offline archive: ${sessionRef}`;
+    } catch (error) {
+      bootArchiveLoadAttempted = false;
+      archiveLoadStatus.textContent = `Archive load failed: ${error.message || error}`;
+    }
+  }
+
+  function activeOfflineFrameValue() {
+    if (bootFixtureName) return bootFixtureName;
+    if (archiveBrowseRef || bootArchiveRef) return "real-archive";
+    return archiveOnlyRuntime ? "archive-only" : "real-archive";
+  }
+
+  function preferredOfflineArchiveRef() {
+    const preferredInHistory = historyArchives.some((item) => String(item.ref || item.session_id || item.path || "") === PREFERRED_OFFLINE_ARCHIVE_REF)
+      ? PREFERRED_OFFLINE_ARCHIVE_REF
+      : "";
+    return archiveBrowseRef
+      || bootArchiveRef
+      || preferredInHistory
+      || activeArchiveSessionId()
+      || String(historyArchives[0]?.ref || historyArchives[0]?.session_id || "");
+  }
+
+  function offlineLabUrl(frameValue, archiveRef) {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("fixture");
+    url.searchParams.delete("archive");
+    if (frameValue && frameValue !== "real-archive") {
+      url.searchParams.set("fixture", frameValue);
+    }
+    if (archiveRef && (frameValue === "real-archive" || frameValue === "archive-only")) {
+      url.searchParams.set("archive", archiveRef);
+    }
+    return url.toString();
+  }
+
+  function renderOfflineLab() {
+    const active = fixtureMode || archiveOnlyRuntime || !!bootFixtureName || !!bootArchiveRef || !!archiveBrowseRef;
+    offlineLab.style.display = active ? "inline-flex" : "none";
+    if (!active) return;
+    offlineFrameSelect.value = activeOfflineFrameValue();
+    const selectedArchiveRef = preferredOfflineArchiveRef();
+    const options = ['<option value="">latest archive</option>'];
+    historyArchives.forEach((item) => {
+      const ref = String(item.ref || item.session_id || item.path || "");
+      if (!ref) return;
+      const selected = ref === selectedArchiveRef ? ' selected' : '';
+      options.push(`<option value="${esc(ref)}"${selected}>${esc(archiveDisplayTitle(item))}</option>`);
+    });
+    offlineArchiveSelect.innerHTML = options.join("");
+  }
+
+  async function pickDefaultOfflineArchiveRef() {
+    if (historyArchives.some((item) => String(item.ref || item.session_id || item.path || "") === PREFERRED_OFFLINE_ARCHIVE_REF)) {
+      return PREFERRED_OFFLINE_ARCHIVE_REF;
+    }
+    const candidates = historyArchives.slice(0, 8);
+    let fallback = "";
+    for (const item of candidates) {
+      const ref = String(item.ref || item.session_id || item.path || "");
+      if (!ref) continue;
+      if (!fallback) fallback = ref;
+      try {
+        const response = await fetch(`/history/events?session_id=${encodeURIComponent(ref)}`);
+        const payload = await response.json();
+        if (!response.ok || payload.ok === false) continue;
+        if (payload.media?.playback_available || (payload.events || []).length > 3) return ref;
+      } catch (_) {}
+    }
+    return fallback;
+  }
+
+  async function maybeLoadDefaultOfflineArchive() {
+    if (offlineDefaultArchiveAttempted || bootFixtureName || bootArchiveRef || archiveBrowseRef || !archiveOnlyRuntime) return;
+    offlineDefaultArchiveAttempted = true;
+    const ref = await pickDefaultOfflineArchiveRef();
+    if (!ref) return;
+    window.history.replaceState({}, "", offlineLabUrl("real-archive", ref));
+    renderOfflineLab();
+    await maybeLoadBootArchive(ref);
   }
 
   function renderArchivePicker() {
@@ -2733,6 +3030,8 @@
     historyArchives = Array.isArray(items) ? items : [];
     if (saveCompleteModalOpen) renderSaveCompleteModal();
     renderArchivePicker();
+    renderOfflineLab();
+    maybeLoadDefaultOfflineArchive().catch(() => {});
   }
 
   async function refreshHistoryArchives() {
@@ -4561,6 +4860,11 @@
 
   function renderVisionModelStatus() {
     const el = document.getElementById("vision-model-status");
+    if (archiveOnlyRuntime || archiveBrowseRef) {
+      el.innerHTML = '<div style="color:var(--text-dim);font-size:0.85em;">Archive browsing does not poll live vision models.</div>';
+      renderVisionServiceStatus();
+      return;
+    }
     if (!visionService.url) {
       el.innerHTML = '<div style="color:var(--text-dim);font-size:0.85em;">No vision service configured.</div>';
       renderVisionServiceStatus();
@@ -4593,6 +4897,10 @@
   }
 
   async function pollVisionModelStatus() {
+    if (fixtureMode || archiveOnlyRuntime || archiveBrowseRef) {
+      renderVisionModelStatus();
+      return;
+    }
     if (!visionService.url) {
       visionModels = null;
       visionMemory = null;
@@ -7016,6 +7324,10 @@
     },
 
     pause(data, rawEvent) {
+      if (rawEvent.archive) {
+        recordEvent("pause", data, rawEvent);
+        return;
+      }
       conversationPaused = true;
       if (pendingPauseState === "pausing") {
         pendingPauseState = null;
@@ -7036,6 +7348,10 @@
     },
 
     resume(data, rawEvent) {
+      if (rawEvent.archive) {
+        recordEvent("resume", data, rawEvent);
+        return;
+      }
       conversationPaused = false;
       sessionStopped = false;
       startupPausePending = false;
@@ -7047,6 +7363,10 @@
     },
 
     runtime_controls(data, rawEvent) {
+      if (rawEvent.archive) {
+        recordEvent("runtime_controls", data, rawEvent);
+        return;
+      }
       runtimeControls = {...runtimeControls, ...(data.controls || {})};
       runtimeStateSeen = true;
       archiveOnlyRuntime = !!data.archive_only;
@@ -7128,6 +7448,7 @@
         ...transportBits,
       ].join("<br>");
       renderArchivePicker();
+      renderOfflineLab();
       renderRuntimeControlButtons();
       updateRuntimeButtons();
       updateVisionFeedUrl();
@@ -7222,6 +7543,9 @@
   function handleEvent(event, options = {}) {
     if (archiveBrowseRef && !options.archive && !ARCHIVE_BROWSE_LIVE_EVENT_ALLOWLIST.has(event.type)) return;
     lastEventAt = Date.now();
+    if (options.archive) {
+      event = {...event, archive: true};
+    }
     if (!options.archive && typeof event.seq === "number") {
       if (event.seq <= lastSeq) return;
       lastSeq = event.seq;
@@ -7239,6 +7563,7 @@
   }
 
   function refreshState() {
+    if (fixtureMode) return;
     if (statePollingSuspended) return;
     fetch("/state")
       .then((r) => r.json())
@@ -7443,6 +7768,11 @@
   });
   snippetSaveButton.addEventListener("click", captureSelectedMoment);
   snippetCancelButton.addEventListener("click", () => setSnippetFormOpen(false));
+  offlineLabApplyButton.addEventListener("click", () => {
+    const frameValue = offlineFrameSelect.value || "real-archive";
+    const archiveRef = offlineArchiveSelect.value || preferredOfflineArchiveRef();
+    window.location.assign(offlineLabUrl(frameValue, archiveRef));
+  });
   archiveLoadButton.addEventListener("click", async () => {
     if (archiveBrowseRef) {
       exitArchiveBrowseMode();
@@ -7655,9 +7985,13 @@
   updateRuntimeButtons();
   renderBootStatus();
   renderArchiveBrowseState();
+  if (bootFixtureName) applyBootFixture(bootFixtureName);
+  renderOfflineLab();
   refreshState();
   refreshHistoryState();
-  refreshHistoryArchives();
+  refreshHistoryArchives().finally(() => {
+    maybeLoadBootArchive();
+  });
   refreshPromptAssets();
   pollVisionModelStatus();
   renderRuntimeControlButtons();

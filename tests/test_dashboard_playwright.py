@@ -1151,6 +1151,22 @@ def test_boot_overlay_runtime_toggle_controls_blocked_states(
     assert input_queue.get(timeout=2) == "/play"
 
 
+def test_offline_fixture_ready_renders_start_frame(
+    browser_page: Page,
+    dashboard_server,
+):
+    _, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(f"{dashboard_url}?fixture=ready")
+
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
+    expect(page.locator("#boot-overlay")).not_to_be_visible()
+    expect(page.locator("#boot-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
+    expect(page.locator("#runtime-toggle")).to_have_text("Start")
+    expect(page.locator("#runtime-status")).to_contain_text("state: ready")
+    expect(page.locator("#runtime-status")).to_contain_text("voice: on")
+
+
 def test_archive_only_runtime_disables_live_controls(
     browser_page: Page,
     dashboard_server,
@@ -1210,6 +1226,62 @@ def test_archive_only_runtime_disables_live_controls(
     page.locator("#archive-load-button").click()
     expect(page.locator("#archive-picker")).to_have_attribute("aria-hidden", "false")
     expect(page.locator(".archive-replay-action").first).to_be_disabled()
+
+
+def test_archive_query_autoload_hides_boot_overlay(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+            "archive_only": True,
+            "archive_only_reason": "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.",
+        },
+    )
+    page = browser_page
+    page.goto(f"{dashboard_url}?archive=sess-archive-playback")
+
+    expect(page.locator("#archive-load-button")).to_have_text("Return To Live")
+    expect(page.locator("#archive-load-status")).to_contain_text("Browsing archive:")
+    expect(page.locator(".stream-card").filter(has_text="Hey, what time is it to you?")).to_have_count(1)
+    expect(page.locator("#runtime-status")).to_contain_text("mode: archive only")
+    expect(page.locator("#runtime-status")).to_contain_text("voice: off")
+    expect(page.locator("#vision-model-status")).to_contain_text("Archive browsing does not poll live vision models.")
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
+    expect(page.locator("#boot-overlay")).not_to_be_visible()
 
 
 def test_vision_state_event_defaults_snippet_mode_in_browser(

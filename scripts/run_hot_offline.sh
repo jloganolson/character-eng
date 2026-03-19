@@ -8,6 +8,7 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-$ROOT/.uv-cache}"
 
 CHARACTER="${CHARACTER:-greg}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-7862}"
+CANONICAL_OFFLINE_ARCHIVE_ID="${CANONICAL_OFFLINE_ARCHIVE_ID:-greg-offline-canonical-v1}"
 
 log() {
   printf '==> %s\n' "$*"
@@ -56,6 +57,11 @@ kill_port() {
 kill_matching 'uv run -m character_eng' 'character-eng app'
 kill_matching 'python[^ ]* -m character_eng' 'character-eng app'
 kill_port "$DASHBOARD_PORT" 'dashboard/bridge'
+
+if [[ ! -d "$ROOT/history/sessions/$CANONICAL_OFFLINE_ARCHIVE_ID" ]]; then
+  log "Installing canonical offline archive fixture (${CANONICAL_OFFLINE_ARCHIVE_ID})"
+  python3 "$ROOT/scripts/install_offline_archive_fixture.py"
+fi
 
 log "Starting archive-only dashboard for ${CHARACTER}"
 exec uv run -m character_eng --character "$CHARACTER" --archive-only "$@"
