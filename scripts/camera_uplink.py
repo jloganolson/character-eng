@@ -7,8 +7,16 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections import deque
+from pathlib import Path
 
 import cv2
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from character_eng.transport_metrics import write_metrics
 
 
 def _post_json(url: str, payload: bytes) -> None:
@@ -55,6 +63,7 @@ def main() -> int:
     parser.add_argument("--height", type=int, default=540, help="Capture height")
     parser.add_argument("--jpeg-quality", type=int, default=72, help="JPEG quality 1-100")
     parser.add_argument("--startup-timeout", type=float, default=30.0, help="Seconds to wait for the remote service")
+    parser.add_argument("--metrics-path", default="", help="Optional JSON file for live transport metrics")
     args = parser.parse_args()
 
     base_url = args.service_url.rstrip("/")
@@ -86,6 +95,7 @@ def main() -> int:
 
     quality = max(1, min(100, int(args.jpeg_quality)))
     frame_interval = 1.0 / max(0.2, float(args.fps))
+    recent_upload_ms: deque[float] = deque(maxlen=30)
 
     try:
         _post_json(f"{base_url}/set_input_mode", b'{"mode":"external"}')
@@ -99,6 +109,7 @@ def main() -> int:
 
     last_log = 0.0
     sent_frames = 0
+    failed_uploads = 0
     while running:
         loop_started = time.time()
         ok, frame = cap.read()
@@ -109,17 +120,37 @@ def main() -> int:
         if not ok:
             time.sleep(0.1)
             continue
+        upload_started = time.time()
         try:
             _post_jpeg(f"{base_url}/inject_frame", jpeg.tobytes())
             sent_frames += 1
+            upload_ms = (time.time() - upload_started) * 1000.0
+            recent_upload_ms.append(upload_ms)
+            write_metrics(args.metrics_path, {
+                "mode": "remote_hot",
+                "source": "local_camera_uplink",
+                "target_url": base_url,
+                "target_fps": round(1.0 / frame_interval, 2),
+                "frames_sent": sent_frames,
+                "failures": failed_uploads,
+                "last_upload_ms": round(upload_ms, 1),
+                "avg_upload_ms": round(sum(recent_upload_ms) / len(recent_upload_ms), 1),
+                "last_frame_bytes": int(len(jpeg)),
+                "width": int(frame.shape[1]),
+                "height": int(frame.shape[0]),
+                "jpeg_quality": quality,
+                "updated_at": time.time(),
+            })
             if time.time() - last_log >= 5.0:
                 print(f"camera uplink: sent {sent_frames} frame(s)", flush=True)
                 last_log = time.time()
         except urllib.error.URLError as exc:
+            failed_uploads += 1
             print(f"camera uplink: upload failed: {exc}", file=sys.stderr, flush=True)
             time.sleep(0.5)
             continue
         except Exception as exc:
+            failed_uploads += 1
             print(f"camera uplink: unexpected upload error: {exc}", file=sys.stderr, flush=True)
             time.sleep(0.5)
             continue
@@ -132,6 +163,15 @@ def main() -> int:
         _post_json(f"{base_url}/set_input_mode", b'{"mode":"camera"}')
     except Exception:
         pass
+    write_metrics(args.metrics_path, {
+        "mode": "remote_hot",
+        "source": "local_camera_uplink",
+        "target_url": base_url,
+        "stopped": True,
+        "frames_sent": sent_frames,
+        "failures": failed_uploads,
+        "updated_at": time.time(),
+    })
     cap.release()
     return 0
 

@@ -9,10 +9,14 @@ True autoregressive streaming — TTFA should be flat regardless of text length.
 
 from __future__ import annotations
 
+import os
 import struct
 import sys
 import threading
+import time
 from typing import Callable
+
+from character_eng.transport_metrics import write_metrics
 
 
 class PocketTTS:
@@ -41,6 +45,10 @@ class PocketTTS:
         self._cancelled = threading.Event()
         self._generation_done = threading.Event()
         self._gen_thread: threading.Thread | None = None
+        self._metrics_path = os.environ.get("CHARACTER_ENG_TRANSPORT_AUDIO_METRICS_PATH", "").strip()
+        self._request_count = 0
+        self._recent_request_ms: list[float] = []
+        self._recent_first_chunk_ms: list[float] = []
 
     def send_text(self, text: str):
         """Buffer a text chunk."""
@@ -66,6 +74,7 @@ class PocketTTS:
         import requests
 
         try:
+            started_at = time.perf_counter()
             url = f"{self._server_url}/tts"
             # Pocket-TTS uses multipart/form-data
             data = {"text": text}
@@ -77,6 +86,9 @@ class PocketTTS:
 
             resp = requests.post(url, data=data, files=files, stream=True, timeout=120)
             resp.raise_for_status()
+            request_ms = (time.perf_counter() - started_at) * 1000.0
+            self._request_count += 1
+            self._recent_request_ms = (self._recent_request_ms + [request_ms])[-20:]
 
             if self._cancelled.is_set():
                 return
@@ -84,6 +96,8 @@ class PocketTTS:
             # Stream the response — first bytes are WAV header, rest is PCM
             header_buf = b""
             header_parsed = False
+            first_chunk_ms = None
+            audio_bytes = 0
 
             for chunk in resp.iter_content(chunk_size=4800):  # ~100ms at 24kHz 16-bit
                 if self._cancelled.is_set():
@@ -105,6 +119,9 @@ class PocketTTS:
                                     # Deliver any PCM after the data header
                                     pcm = header_buf[data_start:]
                                     if pcm:
+                                        audio_bytes += len(pcm)
+                                        if first_chunk_ms is None:
+                                            first_chunk_ms = (time.perf_counter() - started_at) * 1000.0
                                         self._on_audio(pcm)
                                     break
                                 pos += 8 + subchunk_size
@@ -114,9 +131,30 @@ class PocketTTS:
                         else:
                             # Not a valid WAV — deliver raw as PCM anyway
                             header_parsed = True
+                            audio_bytes += len(header_buf)
+                            if first_chunk_ms is None:
+                                first_chunk_ms = (time.perf_counter() - started_at) * 1000.0
                             self._on_audio(header_buf)
                 else:
+                    audio_bytes += len(chunk)
+                    if first_chunk_ms is None:
+                        first_chunk_ms = (time.perf_counter() - started_at) * 1000.0
                     self._on_audio(chunk)
+
+            if first_chunk_ms is not None:
+                self._recent_first_chunk_ms = (self._recent_first_chunk_ms + [first_chunk_ms])[-20:]
+            write_metrics(self._metrics_path or None, {
+                "mode": "remote_hot" if self._metrics_path else "local",
+                "source": "pocket_tts",
+                "server_url": self._server_url,
+                "request_count": self._request_count,
+                "last_request_ms": round(request_ms, 1),
+                "avg_request_ms": round(sum(self._recent_request_ms) / len(self._recent_request_ms), 1),
+                "last_first_chunk_ms": round(first_chunk_ms or 0.0, 1),
+                "avg_first_chunk_ms": round(sum(self._recent_first_chunk_ms) / len(self._recent_first_chunk_ms), 1) if self._recent_first_chunk_ms else 0.0,
+                "last_audio_bytes": int(audio_bytes),
+                "updated_at": time.time(),
+            })
 
         except Exception as e:
             sys.stderr.write(f"[PocketTTS] Generation error: {e}\n")

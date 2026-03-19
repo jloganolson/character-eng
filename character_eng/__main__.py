@@ -30,6 +30,7 @@ from character_eng.person import PeopleState
 from character_eng.prompts import list_characters, load_prompt, prompt_source_signature
 from character_eng.qa_personas import _action_badge, _esc, annotation_assets
 from character_eng.scenario import DirectorResult, director_call, load_scenario_script, match_visual_exit
+from character_eng.transport_metrics import read_metrics
 from character_eng.world import (
     ContinueListeningResult,
     EvalResult,
@@ -375,6 +376,11 @@ def _voice_status_snapshot(voice_io=None) -> dict:
 def _runtime_controls_snapshot(voice_io=None, vision_mgr=None, vision_cfg=None) -> dict:
     vision_status = _vision_status_snapshot(vision_cfg=vision_cfg, vision_mgr=vision_mgr)
     voice_status = _voice_status_snapshot(voice_io=voice_io)
+    transport = {
+        "mode": os.environ.get("CHARACTER_ENG_TRANSPORT_MODE", "").strip() or "local",
+        "audio": read_metrics(os.environ.get("CHARACTER_ENG_TRANSPORT_AUDIO_METRICS_PATH")),
+        "video": read_metrics(os.environ.get("CHARACTER_ENG_TRANSPORT_VIDEO_METRICS_PATH")),
+    }
     if _session_stopped:
         session_state = "ready"
     elif _conversation_paused:
@@ -399,6 +405,7 @@ def _runtime_controls_snapshot(voice_io=None, vision_mgr=None, vision_cfg=None) 
         "vision_service_autostart": vision_status["auto_launch"],
         "vision_service_mode": vision_status["mode"],
         "vision_mock_replay": vision_status["mock_replay"],
+        "transport": transport,
         "archive_only": bool(_archive_only_mode),
         "archive_only_reason": str(_archive_only_reason or ""),
     }
