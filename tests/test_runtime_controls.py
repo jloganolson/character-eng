@@ -20,11 +20,10 @@ def test_normalize_runtime_control_name_handles_aliases():
     assert app._normalize_runtime_control_name("unknown") is None
 
 
-def test_vision_requires_external_frames_only_for_browser_and_webrtc_remote_hot():
+def test_vision_requires_external_frames_only_for_browser_and_webrtc():
     assert app._vision_requires_external_frames(browser_mode=True, transport_mode="local") is True
     assert app._vision_requires_external_frames(browser_mode=False, transport_mode="remote_hot_webrtc") is True
     assert app._vision_requires_external_frames(browser_mode=False, transport_mode="local") is False
-    assert app._vision_requires_external_frames(browser_mode=False, transport_mode="remote_hot") is False
 
 
 def test_set_runtime_control_updates_voice_side_effects():
@@ -113,9 +112,9 @@ def test_runtime_snapshot_includes_transport_metrics(tmp_path, monkeypatch):
     cfg = AppConfig()
     video_path = tmp_path / "video.json"
     audio_path = tmp_path / "audio.json"
-    video_path.write_text(json.dumps({"avg_upload_ms": 88.1, "target_fps": 4.0}))
-    audio_path.write_text(json.dumps({"avg_request_ms": 141.0, "avg_first_chunk_ms": 222.0}))
-    monkeypatch.setenv("CHARACTER_ENG_TRANSPORT_MODE", "remote_hot")
+    video_path.write_text(json.dumps({"video_frames_sent": 54, "last_frame_bytes": 20480}))
+    audio_path.write_text(json.dumps({"audio_frames_in": 17, "audio_frames_out": 9}))
+    monkeypatch.setenv("CHARACTER_ENG_TRANSPORT_MODE", "remote_hot_webrtc")
     monkeypatch.setenv("CHARACTER_ENG_TRANSPORT_VIDEO_METRICS_PATH", str(video_path))
     monkeypatch.setenv("CHARACTER_ENG_TRANSPORT_AUDIO_METRICS_PATH", str(audio_path))
     monkeypatch.setattr(app, "_vision_service_health", lambda vision_cfg=None: False)
@@ -123,9 +122,9 @@ def test_runtime_snapshot_includes_transport_metrics(tmp_path, monkeypatch):
 
     state = app._runtime_controls_snapshot(vision_cfg=cfg.vision)
 
-    assert state["transport"]["mode"] == "remote_hot"
-    assert state["transport"]["video"]["avg_upload_ms"] == 88.1
-    assert state["transport"]["audio"]["avg_first_chunk_ms"] == 222.0
+    assert state["transport"]["mode"] == "remote_hot_webrtc"
+    assert state["transport"]["video"]["video_frames_sent"] == 54
+    assert state["transport"]["audio"]["audio_frames_out"] == 9
 
 
 def test_vision_service_autostart_command_updates_config(monkeypatch):

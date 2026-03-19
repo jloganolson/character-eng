@@ -119,8 +119,7 @@ gcloud config set project character-eng
 
 ## Notes
 
-- `hybrid GCP` is the preferred remote path.
-- `./scripts/run_hot_remote.sh` still exists as a fallback legacy path, but it is not the default anymore.
+- `hybrid GCP` is the supported remote path.
 - The VM bills while running. If you are done, stop it.
 
 ## Where To Look Next

@@ -7087,22 +7087,7 @@
       };
       maybeInitLiveKitPanel();
       const transportBits = [];
-      if ((transportStatus.mode || "local") === "remote_hot") {
-        const video = transportStatus.video || {};
-        const audio = transportStatus.audio || {};
-        transportBits.push(`media path: <b>local app + remote heavy</b>`);
-        if (Object.keys(video).length) {
-          const frameKb = video.last_frame_bytes ? `${Math.round(Number(video.last_frame_bytes) / 1024)}KB` : "";
-          transportBits.push(`camera uplink: <b>${esc(String(video.avg_upload_ms ?? video.last_upload_ms ?? "--"))}ms</b> avg · <b>${esc(String(video.target_fps ?? "--"))}fps</b> target${frameKb ? ` · <b>${esc(frameKb)}</b>` : ""}`);
-        } else {
-          transportBits.push(`camera uplink: <b style="color:${statusColor("waiting")}">waiting</b>`);
-        }
-        if (Object.keys(audio).length) {
-          transportBits.push(`tts transport: <b>${esc(String(audio.avg_request_ms ?? audio.last_request_ms ?? "--"))}ms</b> req · <b>${esc(String(audio.avg_first_chunk_ms ?? audio.last_first_chunk_ms ?? "--"))}ms</b> first chunk`);
-        } else {
-          transportBits.push(`tts transport: <b style="color:${statusColor("waiting")}">waiting</b>`);
-        }
-      } else if ((transportStatus.mode || "local") === "remote_hot_webrtc") {
+      if ((transportStatus.mode || "local") === "remote_hot_webrtc") {
         const video = transportStatus.video || {};
         const audio = transportStatus.audio || {};
         const webrtc = transportStatus.webrtc || {};

@@ -380,7 +380,7 @@ class _ManagerHandler(BaseHTTPRequestHandler):
             return
         scheme = str(self.headers.get("X-Forwarded-Proto") or "").strip().lower()
         if not scheme:
-            scheme = "https" if host.endswith(".proxy.runpod.net") else "http"
+            scheme = "http"
         self._manager().set_public_endpoint(base_url=f"{scheme}://{host}")
 
     def _authorized(self) -> bool:

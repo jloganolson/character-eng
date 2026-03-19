@@ -210,7 +210,7 @@ def test_session_manager_http_api_accepts_query_token(tmp_path):
         manager.close()
 
 
-def test_session_manager_http_api_uses_forwarded_proxy_host_for_session_urls(tmp_path):
+def test_session_manager_http_api_uses_forwarded_host_for_session_urls(tmp_path):
     script = _stub_runtime_script(tmp_path)
 
     def command_factory(session):
@@ -229,11 +229,11 @@ def test_session_manager_http_api_uses_forwarded_proxy_host_for_session_urls(tmp
             f"{base_url}/sessions",
             {"character": "greg", "vision": False},
             headers={
-                "Host": "pod-abc-7870.proxy.runpod.net",
+                "Host": "manager.example.test",
                 "X-Forwarded-Proto": "https",
             },
         )
-        assert created["session"]["url"].startswith("https://pod-abc-7870.proxy.runpod.net/?token=")
+        assert created["session"]["url"].startswith("https://manager.example.test/?token=")
     finally:
         server.shutdown()
         server.server_close()

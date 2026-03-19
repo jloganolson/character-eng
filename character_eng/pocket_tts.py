@@ -144,7 +144,7 @@ class PocketTTS:
             if first_chunk_ms is not None:
                 self._recent_first_chunk_ms = (self._recent_first_chunk_ms + [first_chunk_ms])[-20:]
             write_metrics(self._metrics_path or None, {
-                "mode": "remote_hot" if self._metrics_path else "local",
+                "mode": "transport" if self._metrics_path else "local",
                 "source": "pocket_tts",
                 "server_url": self._server_url,
                 "request_count": self._request_count,

@@ -41,10 +41,9 @@ uv run --project services/vision python services/vision/app.py  # Manual start
 
 # Remote deployment
 docker build -t character-eng .      # Build container
-uv run deploy/runpod.py up           # Create/start RunPod GPU pod
-uv run deploy/runpod.py deploy       # Build + push + restart pod
-uv run deploy/runpod.py status       # Pod state + URLs
-uv run deploy/runpod.py ssh          # Print SSH tunnel command
+./deploy/gcp/doctor.sh               # GCP preflight
+./scripts/run_hot_remote_webrtc.sh   # Start local app against GCP heavy + LiveKit
+./scripts/stop_hot_remote_webrtc.sh  # Stop hybrid session and power down VM
 ```
 
 QA scripts accept `--model cerebras-llama|groq-llama|groq-gpt|gemini-3-flash|gemini-2.5-flash|kimi-k2`. Persona QA accepts `--character greg --turns 10 --open --no-thinker`. Role/scaffold/toggle QA accept `--merge log1.json log2.json` to produce side-by-side HTML comparison reports. Toggle QA accepts `--models groq-llama-8b,kimi-k2` for multi-model runs and `--micro-model gemini-2.5-flash` for split-routing tests.
@@ -68,7 +67,7 @@ Configured in `models.py`. `get_chat_model_config()` and `get_micro_model_config
 - **Vision mode** (`--vision`): Live visual intelligence via standalone vision service (`services/vision/`). Camera capture, face tracking (InsightFace), person tracking (SAM3 + torchreid ReID), VLM questioning (LFM2-VL-3B via vLLM). Vision service has its own venv/deps — zero conflict with main app. character-eng polls via HTTP, runs synthesis LLM call (8B) to distill visual data into perception events, and feeds dynamic gaze targets to expression system.
 - **Voice mode**: Deepgram STT + configurable TTS (ElevenLabs, Qwen3-TTS local, Pocket-TTS). WebRTC AEC3 (via LiveKit) keeps mic live during playback for barge-in. All TTS backends share 4-method interface (`send_text`, `flush`, `wait_for_done`, `close`)
 - **Dashboard** (`--no-dashboard` to disable): Real-time HTML dashboard at `:7862` showing conversation timeline, world state, stage/script, people, expression/eval metadata, and timing. Served via stdlib `ThreadingHTTPServer` as a daemon thread. SSE for live updates, `/state` for reconnect catchup, `POST /send` for browser input. Gruvbox dark/light theme. No new dependencies. `index.html` is editable — refresh browser to see changes.
-- **Browser mode** (`--browser`): Remote audio/video via WebSocket bridge on `:7863`. Browser captures mic (getUserMedia, echoCancellation) → AudioWorklet → int16 PCM → WS. Camera → canvas → JPEG → WS at 5fps. Server sends TTS PCM back via WS → AudioWorklet playback. Uses `BrowserVoiceIO` instead of `VoiceIO` (no sounddevice, no AEC, no KeyListener). Vision frames injected via `/inject_frame` endpoint (vision service started with `--no-camera`). Works via RunPod proxy or SSH tunnel (`ssh -L 7862:localhost:7862 -L 7863:localhost:7863`).
+- **Browser mode** (`--browser`): Remote audio/video via WebSocket bridge on `:7863`. Browser captures mic (getUserMedia, echoCancellation) → AudioWorklet → int16 PCM → WS. Camera → canvas → JPEG → WS at 5fps. Server sends TTS PCM back via WS → AudioWorklet playback. Uses `BrowserVoiceIO` instead of `VoiceIO` (no sounddevice, no AEC, no KeyListener). Vision frames injected via `/inject_frame` endpoint (vision service started with `--no-camera`). Works over SSH tunnel or the GCP hybrid flow.
 
 ### Modules (30 total)
 | Module | Purpose |

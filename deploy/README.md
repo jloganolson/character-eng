@@ -19,13 +19,6 @@ The Docker image uses `deploy/container_entrypoint.sh` and supports:
 - `MODE=full`
   - Starts heavy services, then the session manager
 
-For fast infrastructure validation, there is also a separate lightweight image path:
-
-- `Dockerfile.manager-lite`
-  - Runs `character_eng.session_manager` directly from source
-  - Skips `services/vision`, `vllm`, and the full app dependency install
-  - Uses a stub per-session runtime to validate RunPod placement, public networking, SSH, manager API, tokenized URLs, and proxying
-
 ## Useful env vars
 
 - `PUBLIC_HOST`
@@ -81,53 +74,31 @@ curl -X POST http://127.0.0.1:7870/sessions \
 
 The response includes a tokenized browser URL on the same manager port, for example `http://127.0.0.1:7870/?token=...`.
 
-For faster local heavy-runtime debugging before another RunPod deploy:
+For faster local heavy-runtime debugging before another remote deploy:
 
 ```bash
 ./scripts/vision_smoke.sh
 TEARDOWN=1 ./scripts/vision_smoke.sh
 ```
 
-That command reuses the current heavy-stack startup path, exits once `/model_status` is ready, and prints the raw model-status payload so you can debug `vllm`/vision startup locally before paying for another cold pod boot.
-
-## Lite RunPod validation
-
-Use `Dockerfile.manager-lite` plus `deploy/runpod-lite.toml` when you want to validate the control plane before paying the startup cost of the full GPU image.
-
-If your image is private, configure RunPod registry auth in the TOML and provide the referenced env vars before `up`. `deploy/runpod.py` will reuse an existing RunPod registry auth with the same name or create it on demand.
-
-Suggested build:
-
-```bash
-export GHCR_USERNAME=<github-user>
-export GHCR_PASSWORD=$(gh auth token)
-docker build -f Dockerfile.manager-lite -t ghcr.io/<org>/character-eng:runpod-lite .
-docker push ghcr.io/<org>/character-eng:runpod-lite
-uv run python deploy/runpod.py --config deploy/runpod-lite.toml up
-```
-
-For the full image, keep a non-zero `volume_in_gb` mounted at `/workspace`. The container now uses
-`/workspace/character-eng-runtime` for the heavy vision runtime environment and model caches, so a
-persistent volume avoids re-installing the full CUDA / vLLM / vision stack on every redeploy.
+That command reuses the current heavy-stack startup path, exits once `/model_status` is ready, and prints the raw model-status payload so you can debug `vllm`/vision startup locally before paying for another cold remote boot.
 
 ## GCP VM path
 
-There is now a sibling GCP path under [`deploy/gcp/`](gcp/README.md).
+There is now a GCP path under [`deploy/gcp/`](gcp/README.md).
 
-That flow keeps the existing container/runtime architecture and swaps only the infrastructure layer:
+That flow keeps the existing container/runtime architecture and uses:
 
-- Compute Engine GPU VM instead of a RunPod pod
+- Compute Engine GPU VM
 - persistent disk for runtime state
 - optional Caddy TLS termination in front of the manager port
 
 This is the better fit when you want a more deterministic long-lived host and are willing to manage a VM directly.
 
-For a local-direct prompt/frontend loop against hosted heavy services, use:
+For the supported hybrid prompt/frontend loop against hosted heavy services, use:
 
 ```bash
-./scripts/run_hot_remote.sh
-./scripts/stop_hot_remote.sh
+./deploy/gcp/doctor.sh
+./scripts/run_hot_remote_webrtc.sh
+./scripts/stop_hot_remote_webrtc.sh
 ```
-
-That path keeps mic/cam local, tunnels the remote vision and Pocket-TTS services over SSH, and leaves the existing local `run_hot.sh` behavior unchanged.
-The remote-hot helper also uplinks local webcam frames into the remote vision service so the live dashboard/video feed continues to work.

@@ -1,6 +1,6 @@
 # GCP Deployment Notes
 
-This is the GCP sibling path to the existing RunPod deploy flow.
+This is the supported remote deployment path.
 
 The intended first deployment shape is:
 
@@ -9,7 +9,7 @@ The intended first deployment shape is:
 - the existing container running with `MODE=full`
 - optional Caddy on the VM for HTTPS termination in front of port `7870`
 
-## Why this path is smaller than the RunPod path
+## Why this path is smaller than the old remote path
 
 Most of the app is already portable:
 
@@ -19,7 +19,7 @@ Most of the app is already portable:
 - `scripts/run_heavy.sh`
 - the `services/vision` stack
 
-What was RunPod-specific stays isolated in `deploy/runpod.py` and related examples/tests.
+The older remote deployment path has been removed. The active infrastructure path is now GCP.
 
 ## Important browser constraint
 
@@ -33,7 +33,7 @@ That means the real production path on GCP should be:
 
 For quick testing, `CADDY_DOMAIN` can also be an `sslip.io` hostname that resolves to the VM IP, for example `136-109-169-132.sslip.io`.
 
-If you omit Caddy and run plain HTTP on the VM IP, CLI checks still work, but browser media capture will not behave like the RunPod proxy path because the page is not a secure context.
+If you omit Caddy and run plain HTTP on the VM IP, CLI checks still work, but browser media capture will not behave like the HTTPS flow because the page is not a secure context.
 
 ## Current repo files
 
@@ -63,7 +63,7 @@ cp deploy/gcp.env.example deploy/gcp.env
 The current example defaults to Google's GPU-ready `ml-images/common-cu128-ubuntu-2204-nvidia-570` image family so the VM starts with drivers already in place.
 
 Keep `CHARACTER_ENG_SHARED_VISION_URL=http://127.0.0.1:7860` for the full-container path so per-session runtimes reuse the shared vision stack instead of trying to boot a second private copy.
-Set `POCKET_HOST=0.0.0.0` on GCP so Pocket-TTS is reachable over the SSH-tunneled remote-hot path.
+Set `POCKET_HOST=0.0.0.0` on GCP so Pocket-TTS is reachable over the SSH-tunneled hybrid path.
 
 For app-only fixes after the heavy base image is already proven, you can layer a fast hotfix image with `Dockerfile.gcp-hotfix` instead of rebuilding the full CUDA environment from scratch.
 
@@ -118,21 +118,6 @@ That prints the current account, instance status, manager/LiveKit URLs, and atte
 
 ## Remote hot loop
 
-Legacy fallback path for prompt/frontend work that should keep local direct mic/cam while borrowing remote GPU-heavy services:
-
-- `./scripts/run_hot_remote.sh`
-  - starts the GCP VM if needed
-  - opens an SSH tunnel for remote vision and Pocket-TTS
-  - streams the local webcam into the remote vision service
-  - runs the normal local app loop against those tunneled endpoints
-- `./scripts/stop_hot_remote.sh`
-  - closes the SSH tunnel
-  - stops the GCP VM by default (`STOP_VM=0` keeps the VM running)
-
-That path keeps the existing local `run_hot.sh` / `run_local.sh` behavior intact and avoids routing browser mic/cam through the remote dashboard bridge. It remains available as a fallback, but the WebRTC path below is the default hybrid mode.
-
-## Remote hot WebRTC loop
-
 Primary hybrid path for the browser-media flow with the app local and the heavy services on GCP:
 
 - `./scripts/run_hot_remote_webrtc.sh`
@@ -144,20 +129,15 @@ Primary hybrid path for the browser-media flow with the app local and the heavy 
   - closes the SSH tunnel
   - stops the VM by default (`STOP_VM=0` keeps the VM running)
 
-This is the preferred hosted-heavy workflow. It keeps `full local` untouched while replacing the old JPEG uplink path for hybrid use.
+This is the preferred hosted-heavy workflow. It keeps `full local` untouched while using remote heavy services plus remote LiveKit for hybrid use.
 
 Set a real `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` pair in `deploy/gcp.env` before creating or updating the VM. The create script now rejects the old `devkey` / `secret` placeholders, and the secret should be at least 32 characters long.
 
 ## Registry choice
 
-Two workable options:
+Recommended option:
 
-- GHCR
-  - fastest migration from the current RunPod image path
-  - set `CONTAINER_IMAGE=ghcr.io/...`
-  - fill `REGISTRY_SERVER`, `REGISTRY_USERNAME`, and `REGISTRY_PASSWORD` if the image is private
 - Artifact Registry
-  - cleaner long term on GCP
   - set `CONTAINER_IMAGE=<region>-docker.pkg.dev/<project>/<repo>/<image>:<tag>`
   - leave registry credentials blank and let the VM service account pull
 

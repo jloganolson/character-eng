@@ -113,17 +113,6 @@ For the simplest persistent-dev loop:
 ./scripts/stop_local.sh
 ```
 
-For prompt/frontend work against hosted GCP heavy services while keeping local direct mic/cam, use:
-
-```bash
-./scripts/run_hot_remote.sh
-./scripts/stop_hot_remote.sh
-```
-
-That remote-hot path is separate from the local loop above. It starts the GCP VM if needed, tunnels remote vision and Pocket-TTS over SSH, and leaves the normal local `run_hot.sh` behavior unchanged.
-It now also streams the local webcam into the remote vision service, so the dashboard/feed keeps reflecting what your local camera sees.
-Treat this as the fallback path; the WebRTC path below is the preferred hybrid mode.
-
 For a local heavy-stack simulation of the lower-latency WebRTC transport, use:
 
 ```bash
@@ -373,17 +362,16 @@ enabled = true
 port = 7862
 ```
 
-## Remote Deployment (RunPod / SSH tunnel)
+## Remote Deployment (GCP / SSH tunnel)
 
-Browser mode (`--browser`) enables remote access by routing mic and camera through a WebSocket bridge instead of local hardware. The same architecture works for both RunPod GPU pods and SSH tunnel access.
+Browser mode (`--browser`) enables remote access by routing mic and camera through a WebSocket bridge instead of local hardware. The supported remote path is the GCP VM plus SSH/HTTPS access.
 
-### Three modes, one codebase
+### Two modes, one codebase
 
 | Mode | Audio | Camera | Access |
 |------|-------|--------|--------|
 | **Local** (default) | sounddevice mic/speaker | cv2.VideoCapture | Terminal + browser :7862 |
-| **RunPod/Remote** | Browser getUserMedia → WS | Browser camera → WS | Browser :7862 (RunPod proxy) |
-| **SSH tunnel** | Same as RunPod | Same as RunPod | `ssh -L 7862:localhost:7862 -L 7863:localhost:7863` |
+| **SSH / Hosted** | Browser getUserMedia → WS / LiveKit | Browser camera → WS / LiveKit | `ssh -L 7862:localhost:7862 -L 7863:localhost:7863` or GCP hybrid scripts |
 
 ### Quick start
 
@@ -401,7 +389,7 @@ ssh -L 7862:localhost:7862 -L 7863:localhost:7863 user@server
 
 The dashboard auto-detects the bridge — when connected, mic/camera controls appear in the sidebar. Click "Mic On" to start capturing audio, "Cam On" for camera (if `--vision` is active). Audio latency (RTT) is displayed.
 
-### Docker / RunPod
+### Docker / GCP
 
 ```bash
 # Build container
@@ -409,23 +397,13 @@ docker build -t character-eng .
 
 # Run locally with GPU
 docker run --gpus all -p 7862:7862 -p 7863:7863 --env-file .env character-eng
-
-# RunPod CLI
-uv run deploy/runpod.py up        # Create pod
-uv run deploy/runpod.py status    # Pod URLs
-uv run deploy/runpod.py deploy    # Build + push + restart
-uv run deploy/runpod.py ssh       # Print SSH tunnel command
-uv run deploy/runpod.py down      # Stop (preserves volume)
-uv run deploy/runpod.py destroy   # Delete pod + volume
 ```
-
-Configure RunPod in `deploy/runpod.toml`. Set `RUNPOD_API_KEY` in `.env`.
 
 For the parallel GCP VM path, see [`deploy/gcp/README.md`](deploy/gcp/README.md).
 
 ### CI/CD
 
-Push to `main` triggers GitHub Actions (`.github/workflows/deploy.yml`) which builds and pushes to GHCR, then restarts the RunPod pod. Set `RUNPOD_API_KEY` and `RUNPOD_POD_ID` as GitHub secrets.
+Push to `main` should build and publish the container artifact. Deployment now targets the GCP VM path.
 
 ## Editing prompts
 

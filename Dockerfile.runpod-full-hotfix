@@ -1,8 +1,0 @@
-FROM ghcr.io/jloganolson/character-eng:runpod-test
-
-COPY deploy/container_entrypoint.sh /app/deploy/container_entrypoint.sh
-COPY character_eng/dashboard/index.html /app/character_eng/dashboard/index.html
-
-RUN chmod +x /app/deploy/container_entrypoint.sh
-
-ENTRYPOINT ["/app/deploy/container_entrypoint.sh"]
