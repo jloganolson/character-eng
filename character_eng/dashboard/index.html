@@ -8182,20 +8182,7 @@
   }
 
   function attachLiveKitPreviewTrack(track, label = "") {
-    const previewEl = document.getElementById("livekit-preview");
-    if (!previewEl || !track || typeof track.attach !== "function") return;
-    if (livekitPreviewNode && typeof livekitPreviewNode.remove === "function") {
-      livekitPreviewNode.remove();
-    }
-    livekitPreviewNode = track.attach();
-    livekitPreviewNode.autoplay = true;
-    livekitPreviewNode.playsInline = true;
-    livekitPreviewNode.muted = true;
-    previewEl.srcObject = livekitPreviewNode.srcObject || null;
-    previewEl.style.display = "";
-    previewEl.play().catch(() => {});
-    livekitPreviewTrackSid = String(track.sid || label || "");
-    updateLiveKitPreviewStatus(label || "LiveKit preview active", true);
+    clearLiveKitPreview(String(track?.sid || label || ""));
   }
 
   function clearLiveKitPreview(trackSid = "") {
