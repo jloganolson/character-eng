@@ -1521,6 +1521,12 @@
   <span id="archive-load-status"></span>
   <span><span class="label">stage:</span> <span class="value stage" id="h-stage">--</span></span>
   <span><span class="label">uptime:</span> <span class="value" id="h-uptime">0s</span></span>
+  <span id="livekit-controls" style="display:none;align-items:center;gap:0.4rem;flex-wrap:wrap;">
+    <button id="livekit-arm" type="button">Arm Audio</button>
+    <button id="livekit-mic-toggle" type="button">Mic On</button>
+    <button id="livekit-cam-toggle" type="button">Cam On</button>
+    <span id="livekit-status" style="color:var(--text-dim);font-size:0.82em;">livekit booting</span>
+  </span>
   <button id="theme-toggle" title="Toggle light/dark">&#9789;</button>
 </div>
 
@@ -1686,6 +1692,8 @@
     <div class="sidebar-panel" id="vision-panel" data-panel-region="sidebar" data-panel-id="vision" data-panel-scope="session">
       <h3>Vision</h3>
       <div class="content">
+        <video id="livekit-preview" autoplay playsinline muted style="display:none;width:100%;border-radius:10px;background:#0d1117;margin-bottom:0.5em;"></video>
+        <div id="livekit-preview-status" style="display:none;margin-bottom:0.5em;color:var(--text-dim);font-size:0.82em;"></div>
         <img id="vision-feed" alt="Vision feed">
         <video id="archive-media-player" preload="metadata" playsinline></video>
         <audio id="archive-audio-playback" preload="auto" style="width:100%;margin-top:0.45em;display:none;" controls></audio>
@@ -1829,7 +1837,8 @@
     stt: {state: "off", detail: "Voice inactive."},
     tts: {state: "off", detail: "Voice inactive.", backend: ""}
   };
-  let transportStatus = {mode: "local", audio: {}, video: {}};
+  let transportStatus = {mode: "local", audio: {}, video: {}, webrtc: {}};
+  let bridgeConfig = null;
   let visionManagerActive = false;
   let sessionStopped = false;
   let startupPausePending = false;
@@ -7076,6 +7085,7 @@
         mode: data.vision_service_mode || "camera",
         mockReplay: data.vision_mock_replay || ""
       };
+      maybeInitLiveKitPanel();
       const transportBits = [];
       if ((transportStatus.mode || "local") === "remote_hot") {
         const video = transportStatus.video || {};
@@ -7091,6 +7101,25 @@
           transportBits.push(`tts transport: <b>${esc(String(audio.avg_request_ms ?? audio.last_request_ms ?? "--"))}ms</b> req · <b>${esc(String(audio.avg_first_chunk_ms ?? audio.last_first_chunk_ms ?? "--"))}ms</b> first chunk`);
         } else {
           transportBits.push(`tts transport: <b style="color:${statusColor("waiting")}">waiting</b>`);
+        }
+      } else if ((transportStatus.mode || "local") === "remote_hot_webrtc") {
+        const video = transportStatus.video || {};
+        const audio = transportStatus.audio || {};
+        const webrtc = transportStatus.webrtc || {};
+        transportBits.push(`media path: <b>local app + LiveKit media</b>`);
+        if (webrtc.roomName) {
+          transportBits.push(`room: <b>${esc(String(webrtc.roomName))}</b>`);
+        }
+        if (Object.keys(video).length) {
+          const frameKb = video.last_frame_bytes ? `${Math.round(Number(video.last_frame_bytes) / 1024)}KB` : "";
+          transportBits.push(`camera ingress: <b>${esc(String(video.video_frames_sent ?? video.video_frames_in ?? "--"))}</b> frames${frameKb ? ` · <b>${esc(frameKb)}</b>` : ""}`);
+        } else {
+          transportBits.push(`camera ingress: <b style="color:${statusColor("waiting")}">waiting</b>`);
+        }
+        if (Object.keys(audio).length) {
+          transportBits.push(`audio transport: <b>${esc(String(audio.audio_frames_in ?? "--"))}</b> in · <b>${esc(String(audio.audio_frames_out ?? "--"))}</b> out`);
+        } else {
+          transportBits.push(`audio transport: <b style="color:${statusColor("waiting")}">waiting</b>`);
         }
       } else {
         transportBits.push(`media path: <b>full local</b>`);
@@ -7653,7 +7682,7 @@
   setInterval(checkPendingRuntimeActionHealth, 1000);
   setInterval(renderBootStatus, 1000);
 
-  const bridgeConfig = window.__bridgeConfig || null;
+  bridgeConfig = window.__bridgeConfig || null;
   let bridgeControls = null;
   let bridgePlaybackCtx = null;
   let bridgePlaybackHead = 0;
@@ -8035,6 +8064,279 @@
     }
   }
 
+  let livekitConfig = null;
+  let livekitControls = null;
+  let livekitRoom = null;
+  let livekitModulePromise = null;
+  let livekitMicTrack = null;
+  let livekitCameraTrack = null;
+  let livekitPreviewNode = null;
+  let livekitPreviewTrackSid = "";
+  const livekitRemoteAudioEls = new Map();
+  const livekitMetrics = window.__livekitMetrics = {
+    connected: false,
+    connectedAt: 0,
+    lastError: "",
+    audioTracksSubscribed: 0,
+    videoTracksSubscribed: 0,
+    micPublished: false,
+    camPublished: false,
+    roomName: "",
+  };
+
+  async function refreshLiveKitConfig() {
+    try {
+      const resp = await fetch(`/livekit/config?_=${Date.now()}`, {cache: "no-store"});
+      if (!resp.ok) return livekitConfig;
+      livekitConfig = await resp.json();
+    } catch (error) {
+      if (livekitControls) updateLiveKitStatus(`livekit config failed: ${error.message || error}`);
+    }
+    return livekitConfig;
+  }
+
+  function livekitEnabled() {
+    const mode = (transportStatus.mode || livekitConfig?.transportMode || "").trim();
+    return mode === "remote_hot_webrtc" && !!(livekitConfig && livekitConfig.enabled);
+  }
+
+  async function ensureLiveKitModule() {
+    if (!livekitModulePromise) {
+      livekitModulePromise = import("https://esm.sh/livekit-client@2.15.7?bundle");
+    }
+    return livekitModulePromise;
+  }
+
+  function updateLiveKitButtons() {
+    if (!livekitControls) return;
+    livekitControls.armButton.textContent = livekitMetrics.connected ? "Media Connected" : "Arm Audio";
+    livekitControls.micButton.textContent = livekitMicTrack ? "Mic Off" : "Mic On";
+    livekitControls.camButton.textContent = livekitCameraTrack ? "Cam Off" : "Cam On";
+  }
+
+  function updateLiveKitStatus(text) {
+    if (!livekitControls) return;
+    livekitControls.status.textContent = text;
+    updateLiveKitButtons();
+  }
+
+  function updateLiveKitMetricsSummary() {
+    if (!livekitControls) return;
+    const bits = [];
+    bits.push(livekitMetrics.connected ? "rtc connected" : "rtc idle");
+    bits.push(livekitMicTrack ? "mic on" : "mic off");
+    bits.push(livekitCameraTrack ? "cam on" : "cam off");
+    if (livekitMetrics.audioTracksSubscribed) bits.push(`tts ${livekitMetrics.audioTracksSubscribed}`);
+    if (livekitMetrics.roomName) bits.push(livekitMetrics.roomName);
+    livekitControls.status.textContent = bits.join(" · ");
+    livekitControls.status.title = JSON.stringify({...livekitMetrics, config: livekitConfig});
+    updateLiveKitButtons();
+  }
+
+  async function requestLiveKitToken() {
+    const resp = await fetch("/livekit/token", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        purpose: "remote-hot-webrtc",
+        identity: `dashboard-${Math.random().toString(36).slice(2, 10)}`,
+        participantName: "Dashboard",
+      }),
+    });
+    if (!resp.ok) {
+      throw new Error(`token failed (${resp.status})`);
+    }
+    const payload = await resp.json();
+    if (!payload.ok) {
+      throw new Error(payload.error || "token failed");
+    }
+    livekitMetrics.roomName = payload.roomName || "";
+    return payload;
+  }
+
+  function attachRemoteAudioTrack(track) {
+    const el = track.attach();
+    el.autoplay = true;
+    el.playsInline = true;
+    el.style.display = "none";
+    document.body.appendChild(el);
+    el.play().catch(() => {});
+    livekitRemoteAudioEls.set(track.sid, el);
+  }
+
+  function updateLiveKitPreviewStatus(text = "", visible = false) {
+    const statusEl = document.getElementById("livekit-preview-status");
+    if (!statusEl) return;
+    statusEl.style.display = visible ? "" : "none";
+    statusEl.textContent = text;
+  }
+
+  function attachLiveKitPreviewTrack(track, label = "") {
+    const previewEl = document.getElementById("livekit-preview");
+    if (!previewEl || !track || typeof track.attach !== "function") return;
+    if (livekitPreviewNode && typeof livekitPreviewNode.remove === "function") {
+      livekitPreviewNode.remove();
+    }
+    livekitPreviewNode = track.attach();
+    livekitPreviewNode.autoplay = true;
+    livekitPreviewNode.playsInline = true;
+    livekitPreviewNode.muted = true;
+    previewEl.srcObject = livekitPreviewNode.srcObject || null;
+    previewEl.style.display = "";
+    previewEl.play().catch(() => {});
+    livekitPreviewTrackSid = String(track.sid || label || "");
+    updateLiveKitPreviewStatus(label || "LiveKit preview active", true);
+  }
+
+  function clearLiveKitPreview(trackSid = "") {
+    if (trackSid && livekitPreviewTrackSid && trackSid !== livekitPreviewTrackSid) return;
+    const previewEl = document.getElementById("livekit-preview");
+    if (livekitPreviewNode && typeof livekitPreviewNode.remove === "function") {
+      livekitPreviewNode.remove();
+    }
+    livekitPreviewNode = null;
+    livekitPreviewTrackSid = "";
+    if (previewEl) {
+      previewEl.pause?.();
+      previewEl.removeAttribute("src");
+      previewEl.srcObject = null;
+      previewEl.style.display = "none";
+    }
+    updateLiveKitPreviewStatus("", false);
+  }
+
+  async function ensureLiveKitRoom() {
+    await refreshLiveKitConfig();
+    if (!livekitEnabled()) {
+      throw new Error("livekit not enabled");
+    }
+    if (livekitRoom && livekitMetrics.connected) {
+      return livekitRoom;
+    }
+    const lk = await ensureLiveKitModule();
+    const tokenPayload = await requestLiveKitToken();
+    const room = new lk.Room({adaptiveStream: true, dynacast: true});
+    room.on(lk.RoomEvent.TrackSubscribed, (track) => {
+      if (track.kind === lk.Track.Kind.Audio) {
+        livekitMetrics.audioTracksSubscribed += 1;
+        attachRemoteAudioTrack(track);
+      } else if (track.kind === lk.Track.Kind.Video) {
+        livekitMetrics.videoTracksSubscribed += 1;
+        attachLiveKitPreviewTrack(track, "LiveKit video preview · subscribed");
+      }
+      updateLiveKitMetricsSummary();
+    });
+    room.on(lk.RoomEvent.TrackUnsubscribed, (track) => {
+      const el = livekitRemoteAudioEls.get(track.sid);
+      if (el) {
+        el.remove();
+        livekitRemoteAudioEls.delete(track.sid);
+      }
+      if (track.kind === lk.Track.Kind.Video) {
+        clearLiveKitPreview(String(track.sid || ""));
+      }
+      updateLiveKitMetricsSummary();
+    });
+    room.on(lk.RoomEvent.Disconnected, () => {
+      livekitMetrics.connected = false;
+      clearLiveKitPreview();
+      updateLiveKitMetricsSummary();
+    });
+    await room.connect(tokenPayload.serverUrl, tokenPayload.token);
+    livekitMetrics.connected = true;
+    livekitMetrics.connectedAt = Date.now() / 1000;
+    livekitRoom = room;
+    updateLiveKitMetricsSummary();
+    return room;
+  }
+
+  async function armLiveKitAudio() {
+    try {
+      await ensureLiveKitRoom();
+      updateLiveKitMetricsSummary();
+    } catch (error) {
+      livekitMetrics.lastError = String(error.message || error || "");
+      updateLiveKitStatus(`livekit connect failed: ${error.message || error}`);
+    }
+  }
+
+  async function toggleLiveKitMic() {
+    try {
+      const room = await ensureLiveKitRoom();
+      const lk = await ensureLiveKitModule();
+      if (livekitMicTrack) {
+        await room.localParticipant.unpublishTrack(livekitMicTrack);
+        livekitMicTrack.stop?.();
+        livekitMicTrack = null;
+        livekitMetrics.micPublished = false;
+        updateLiveKitMetricsSummary();
+        return;
+      }
+      livekitMicTrack = await lk.createLocalAudioTrack({
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+      });
+      await room.localParticipant.publishTrack(livekitMicTrack, {source: lk.Track.Source.Microphone});
+      livekitMetrics.micPublished = true;
+      updateLiveKitMetricsSummary();
+    } catch (error) {
+      livekitMetrics.lastError = String(error.message || error || "");
+      updateLiveKitStatus(`mic start failed: ${error.message || error}`);
+    }
+  }
+
+  async function toggleLiveKitCamera() {
+    try {
+      const room = await ensureLiveKitRoom();
+      const lk = await ensureLiveKitModule();
+      if (livekitCameraTrack) {
+        await room.localParticipant.unpublishTrack(livekitCameraTrack);
+        livekitCameraTrack.stop?.();
+        clearLiveKitPreview(String(livekitCameraTrack.sid || ""));
+        livekitCameraTrack = null;
+        livekitMetrics.camPublished = false;
+        updateLiveKitMetricsSummary();
+        return;
+      }
+      livekitCameraTrack = await lk.createLocalVideoTrack({
+        resolution: {width: 640, height: 360},
+        frameRate: 15,
+      });
+      await room.localParticipant.publishTrack(livekitCameraTrack, {source: lk.Track.Source.Camera});
+      livekitMetrics.camPublished = true;
+      attachLiveKitPreviewTrack(livekitCameraTrack, "LiveKit video preview · local camera");
+      updateLiveKitMetricsSummary();
+    } catch (error) {
+      livekitMetrics.lastError = String(error.message || error || "");
+      updateLiveKitStatus(`camera start failed: ${error.message || error}`);
+    }
+  }
+
+  async function maybeInitLiveKitPanel() {
+    await refreshLiveKitConfig();
+    const wrap = document.getElementById("livekit-controls");
+    const armButton = document.getElementById("livekit-arm");
+    const micButton = document.getElementById("livekit-mic-toggle");
+    const camButton = document.getElementById("livekit-cam-toggle");
+    const status = document.getElementById("livekit-status");
+    if (!wrap || !armButton || !micButton || !camButton || !status) return;
+    if (!livekitEnabled()) {
+      wrap.style.display = "none";
+      return;
+    }
+    if (!livekitControls) {
+      armButton.addEventListener("click", armLiveKitAudio);
+      micButton.addEventListener("click", toggleLiveKitMic);
+      camButton.addEventListener("click", toggleLiveKitCamera);
+      livekitControls = {wrap, armButton, micButton, camButton, status};
+    }
+    wrap.style.display = "inline-flex";
+    updateLiveKitButtons();
+    updateLiveKitMetricsSummary();
+  }
+
   function initBridgePanel() {
     if (!bridgeEnabled()) return;
     const header = document.getElementById("header");
@@ -8081,6 +8383,12 @@
   }
 
   initBridgePanel();
+  refreshLiveKitConfig().then(() => {
+    maybeInitLiveKitPanel();
+  });
+  setInterval(() => {
+    maybeInitLiveKitPanel();
+  }, 2000);
 
   const visionFeed = document.getElementById("vision-feed");
   visionFeed.onload = () => {

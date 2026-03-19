@@ -121,6 +121,15 @@ For prompt/frontend work against hosted GCP heavy services while keeping local d
 That remote-hot path is separate from the local loop above. It starts the GCP VM if needed, tunnels remote vision and Pocket-TTS over SSH, and leaves the normal local `run_hot.sh` behavior unchanged.
 It now also streams the local webcam into the remote vision service, so the dashboard/feed keeps reflecting what your local camera sees.
 
+For a local heavy-stack simulation of the lower-latency WebRTC transport, use:
+
+```bash
+./scripts/run_hot_webrtc.sh
+```
+
+That mode keeps the full-local heavy stack on the same machine, starts a disposable LiveKit dev server, and runs the app in `remote_hot_webrtc` mode.
+The Vision panel shows a LiveKit preview of the outgoing camera stream, while the app injects those frames into the vision service.
+
 For faster heavy-runtime debugging, use:
 
 ```bash

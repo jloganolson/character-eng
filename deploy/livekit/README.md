@@ -1,6 +1,6 @@
-# LiveKit Remote-Hot Scaffolding
+# LiveKit Remote-Hot Transport
 
-This path is for the future `remote-hot-webrtc` mode only.
+This path now powers the local `remote-hot-webrtc` mode.
 
 It does not replace or modify:
 - `./scripts/run_heavy.sh`
@@ -45,13 +45,13 @@ Stop it with:
 ./deploy/livekit/stop_local_dev.sh
 ```
 
-## Backend token endpoint
+## Backend endpoints
 
 The local app now exposes:
 - `GET /livekit/config`
 - `POST /livekit/token`
 
-These are served by the same dashboard/bridge HTTP server and are intended to support a future browser/media client without changing the existing full-local path.
+These are served by the same dashboard/bridge HTTP server and are used by the `remote_hot_webrtc` dashboard controls.
 
 Example:
 
@@ -62,6 +62,22 @@ curl -s http://127.0.0.1:7862/livekit/token \
   -d '{"purpose":"remote-hot","character":"greg","identity":"logan-dev"}' | jq
 ```
 
-## Next build step
+## Local transport mode
 
-The next implementation step is to add a separate `remote-hot-webrtc` launcher and frontend/client integration that consumes these endpoints. Until that path is proven, the existing SSH/JPEG `remote-hot` mode remains the fallback.
+Run:
+
+```bash
+./scripts/run_hot_webrtc.sh
+```
+
+This does three things:
+- verifies the local heavy stack is ready
+- starts the LiveKit dev server if needed
+- launches the app in `remote_hot_webrtc`
+
+In that mode:
+- the header exposes `Arm Audio`, `Mic On`, and `Cam On`
+- the Vision panel shows a LiveKit preview of the outgoing camera stream
+- the app injects incoming WebRTC video frames into the vision service
+
+The older SSH/JPEG `remote-hot` path remains available as a fallback for GCP-backed remote heavy services.

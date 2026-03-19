@@ -36,41 +36,45 @@ class DashboardHandler(BaseHTTPRequestHandler):
     prompt_asset_vscode_cmd: str = "code"
 
     def do_GET(self):
-        if self.path == "/" or self.path == "/index.html":
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path == "/" or path == "/index.html":
             self._serve_html()
-        elif self.path == "/system-map.html":
+        elif path == "/system-map.html":
             self._serve_system_map()
-        elif self.path == "/stream-schema.json":
+        elif path == "/stream-schema.json":
             self._serve_stream_schema()
-        elif self.path == "/events":
+        elif path == "/events":
             self._serve_sse()
-        elif self.path == "/state":
+        elif path == "/state":
             self._serve_state()
-        elif self.path == "/history/state":
+        elif path == "/history/state":
             self._serve_history_state()
-        elif self.path == "/livekit/config":
+        elif path == "/livekit/config":
             self._serve_livekit_config()
-        elif self.path == "/history/list":
+        elif path == "/history/list":
             self._serve_history_list()
-        elif self.path.startswith("/history/checkpoint"):
+        elif path.startswith("/history/checkpoint"):
             self._serve_history_checkpoint()
-        elif self.path.startswith("/history/events"):
+        elif path.startswith("/history/events"):
             self._serve_history_events()
-        elif self.path.startswith("/history/frame"):
+        elif path.startswith("/history/frame"):
             self._serve_history_frame()
-        elif self.path.startswith("/history/audio"):
+        elif path.startswith("/history/audio"):
             self._serve_history_audio()
-        elif self.path.startswith("/history/media"):
+        elif path.startswith("/history/media"):
             self._serve_history_media()
-        elif self.path.startswith("/history/annotations"):
+        elif path.startswith("/history/annotations"):
             self._serve_history_annotations()
-        elif self.path.startswith("/prompt-assets"):
+        elif path.startswith("/prompt-assets"):
             self._serve_prompt_assets()
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self):
-        if self.path == "/send":
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path == "/send":
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length)
             try:
@@ -91,7 +95,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(resp)))
                 self.end_headers()
                 self.wfile.write(resp)
-        elif self.path == "/report-snapshot":
+        elif path == "/report-snapshot":
             length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(length)
             try:
@@ -117,19 +121,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(resp)))
                 self.end_headers()
                 self.wfile.write(resp)
-        elif self.path == "/history/annotation":
+        elif path == "/history/annotation":
             self._handle_history_annotation()
-        elif self.path == "/history/moment" or self.path == "/history/snippet":
+        elif path == "/history/moment" or path == "/history/snippet":
             self._handle_history_snippet()
-        elif self.path == "/history/promote":
+        elif path == "/history/promote":
             self._handle_history_promote()
-        elif self.path == "/history/rename":
+        elif path == "/history/rename":
             self._handle_history_rename()
-        elif self.path == "/history/prune":
+        elif path == "/history/prune":
             self._handle_history_prune()
-        elif self.path == "/prompt-assets/action":
+        elif path == "/prompt-assets/action":
             self._handle_prompt_asset_action()
-        elif self.path == "/livekit/token":
+        elif path == "/livekit/token":
             self._handle_livekit_token()
         else:
             self.send_error(HTTPStatus.NOT_FOUND)

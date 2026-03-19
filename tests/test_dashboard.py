@@ -181,6 +181,19 @@ class TestDashboardServer:
         assert len(data) == 1
         assert data[0]["type"] == "test_event"
 
+    def test_livekit_config_accepts_query_params(self, server):
+        _, _, port, _, _ = server
+        original = DashboardHandler.livekit_status_provider
+        DashboardHandler.livekit_status_provider = lambda: {"enabled": True, "configured": True}
+        try:
+            resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/livekit/config?_={int(time.time())}")
+            data = json.loads(resp.read())
+        finally:
+            DashboardHandler.livekit_status_provider = original
+        assert resp.status == 200
+        assert data["enabled"] is True
+        assert data["configured"] is True
+
     def test_system_map_returns_html(self, server):
         _, _, port, _, _ = server
         resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/system-map.html")

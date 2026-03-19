@@ -25,8 +25,9 @@ from character_eng.history import (
     restore_runtime_state,
 )
 from character_eng.models import BIG_MODEL, CHAT_MODEL, MICRO_MODEL, MODELS
-from character_eng.utils import start_prefixed_output_thread, ts as _ts
 from character_eng.livekit_auth import build_room_name, issue_participant_token, livekit_status_payload
+from character_eng.livekit_transport import LiveKitSession
+from character_eng.utils import start_prefixed_output_thread, ts as _ts
 from character_eng.perception import PerceptionEvent, load_sim_script, process_perception
 from character_eng.person import PeopleState
 from character_eng.prompts import list_characters, load_prompt, prompt_source_signature
@@ -382,7 +383,11 @@ def _runtime_controls_snapshot(voice_io=None, vision_mgr=None, vision_cfg=None) 
         "mode": os.environ.get("CHARACTER_ENG_TRANSPORT_MODE", "").strip() or "local",
         "audio": read_metrics(os.environ.get("CHARACTER_ENG_TRANSPORT_AUDIO_METRICS_PATH")),
         "video": read_metrics(os.environ.get("CHARACTER_ENG_TRANSPORT_VIDEO_METRICS_PATH")),
-        "webrtc": livekit_status_payload(_app_config.livekit) if _app_config is not None else {"enabled": False, "configured": False},
+        "webrtc": {
+            **(livekit_status_payload(_app_config.livekit) if _app_config is not None else {"enabled": False, "configured": False}),
+            "roomName": os.environ.get("CHARACTER_ENG_LIVEKIT_ACTIVE_ROOM_NAME", "").strip(),
+            "participantIdentity": os.environ.get("CHARACTER_ENG_LIVEKIT_APP_IDENTITY", "").strip(),
+        },
     }
     if _session_stopped:
         session_state = "ready"
@@ -1602,7 +1607,8 @@ def get_micro_model_config() -> dict | None:
 
 def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voice_cfg=None,
               vision_mode: bool = False, vision_cfg=None, auto_sim: str | None = None,
-              bridge=None, sim_speed: float = 1.0, start_paused: bool = False):
+              bridge=None, livekit_session: LiveKitSession | None = None,
+              sim_speed: float = 1.0, start_paused: bool = False):
     """Run the chat loop for a character. Returns None normally, 'restart' to re-enter."""
     global _conversation_paused, _session_stopped, _startup_pause_pending, _had_visible_people
     set_llm_trace_hook(_record_prompt_trace)
@@ -1625,7 +1631,47 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
     # --- Voice setup ---
     voice_io = None
-    if bridge is not None:
+    media_bridge = None
+    if livekit_session is not None:
+        from character_eng.livekit_transport import LiveKitMediaBridge
+        from character_eng.livekit_voice import LiveKitVoiceIO
+        from character_eng.voice import check_voice_available, VOICE_OFF, EXIT, VOICE_ERROR
+
+        media_bridge = LiveKitMediaBridge(livekit_session)
+        on_video_frame = None
+        if vision_mode and vision_cfg:
+            from character_eng.vision.client import VisionClient
+            _vision_client = VisionClient(vision_cfg.service_url)
+
+            def on_video_frame(jpeg_bytes: bytes):
+                if _history_service is not None and not _session_stopped and not _conversation_paused:
+                    _history_service.record_video_frame(jpeg_bytes, source="livekit")
+                try:
+                    _vision_client.inject_frame(jpeg_bytes)
+                except Exception:
+                    pass
+
+        available, reason = check_voice_available(tts_backend=voice_cfg.tts_backend if voice_cfg else "elevenlabs")
+        if available:
+            voice_io = _create_voice_io(voice_cfg, LiveKitVoiceIO, transport=media_bridge)
+            media_bridge.start(on_audio=voice_io.inject_input_audio, on_video_frame=on_video_frame)
+            try:
+                voice_io.start()
+                _backend = voice_cfg.tts_backend if voice_cfg else "elevenlabs"
+                _tts_labels = {"local": "Local Qwen3-TTS", "qwen": "Local Qwen3-TTS", "pocket": "Pocket-TTS", "elevenlabs": "ElevenLabs"}
+                _tts_label = _tts_labels.get(_backend, _backend)
+                console.print("[green]LiveKit media active[/green] — mic/camera via WebRTC room")
+                console.print(f"[dim]Room: {livekit_session.room_name}[/dim]")
+                console.print(f"[dim]TTS: {_tts_label}[/dim]")
+            except Exception as e:
+                console.print(f"[red]LiveKit voice init failed: {e}[/red]")
+                console.print("[dim]Falling back to text mode[/dim]")
+                voice_io = None
+                media_bridge.stop()
+        else:
+            console.print(f"[red]Voice unavailable: {reason}[/red]")
+            console.print("[dim]Falling back to text mode[/dim]")
+    elif bridge is not None:
         # Browser mode: use BrowserVoiceIO + bridge WebSocket
         from character_eng.browser_voice import BrowserVoiceIO
         from character_eng.voice import check_voice_available, VOICE_OFF, EXIT, VOICE_ERROR
@@ -4398,15 +4444,55 @@ def main():
         free_warning_gib=float(getattr(cfg.history, "free_warning_gib", 50.0)),
     ) if getattr(cfg.history, "enabled", True) else None
     browser_mode = args.browser or cfg.bridge.enabled
+    transport_mode = os.environ.get("CHARACTER_ENG_TRANSPORT_MODE", "").strip() or "local"
+    livekit_room_name = ""
+    livekit_app_identity = ""
+    livekit_session = None
+    if transport_mode == "remote_hot_webrtc":
+        livekit_room_name = os.environ.get("CHARACTER_ENG_LIVEKIT_ROOM_NAME", "").strip()
+        if not livekit_room_name:
+            livekit_room_name = build_room_name(
+                cfg.livekit,
+                purpose="remote-hot-webrtc",
+                character=str(args.character or "greg"),
+            )
+        livekit_app_identity = os.environ.get("CHARACTER_ENG_LIVEKIT_APP_IDENTITY", "").strip() or "character-eng-app"
+        os.environ["CHARACTER_ENG_LIVEKIT_ACTIVE_ROOM_NAME"] = livekit_room_name
+        os.environ["CHARACTER_ENG_LIVEKIT_APP_IDENTITY"] = livekit_app_identity
+        if livekit_status_payload(cfg.livekit)["configured"]:
+            token = issue_participant_token(
+                cfg.livekit,
+                room_name=livekit_room_name,
+                identity=livekit_app_identity,
+                participant_name="Character Eng App",
+                metadata={"role": "app", "transport": transport_mode},
+            )
+            livekit_session = LiveKitSession(
+                server_url=cfg.livekit.url,
+                room_name=livekit_room_name,
+                token=token.token,
+                participant_identity=livekit_app_identity,
+                participant_name="Character Eng App",
+                audio_metrics_path=os.environ.get("CHARACTER_ENG_TRANSPORT_AUDIO_METRICS_PATH", "").strip(),
+                video_metrics_path=os.environ.get("CHARACTER_ENG_TRANSPORT_VIDEO_METRICS_PATH", "").strip(),
+            )
+        else:
+            console.print("[yellow]LiveKit transport requested, but LiveKit is not configured.[/yellow]")
 
     def _livekit_status_provider() -> dict:
-        return livekit_status_payload(cfg.livekit)
+        payload = livekit_status_payload(cfg.livekit)
+        if livekit_room_name:
+            payload["roomName"] = livekit_room_name
+        if livekit_app_identity:
+            payload["participantIdentity"] = livekit_app_identity
+        payload["transportMode"] = transport_mode
+        return payload
 
     def _livekit_token_provider(payload: dict) -> dict:
         purpose = str(payload.get("purpose") or "remote-hot").strip() or "remote-hot"
         room_name = str(payload.get("roomName") or "").strip()
         if not room_name:
-            room_name = build_room_name(
+            room_name = livekit_room_name or build_room_name(
                 cfg.livekit,
                 purpose=purpose,
                 character=str(payload.get("character") or args.character or "greg"),
@@ -4533,7 +4619,8 @@ def main():
                 break
             result = chat_loop(character, model_config, voice_mode=voice_mode, voice_cfg=cfg.voice,
                        vision_mode=vision_mode, vision_cfg=cfg.vision,
-                       auto_sim=args.sim, bridge=bridge, sim_speed=args.sim_speed,
+                       auto_sim=args.sim, bridge=bridge, livekit_session=livekit_session,
+                       sim_speed=args.sim_speed,
                        start_paused=args.start_paused)
             if result == "restart":
                 continue  # re-enter chat_loop with same character
