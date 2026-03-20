@@ -509,15 +509,38 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 2px;
-    background: color-mix(in srgb, var(--accent) 80%, white 20%);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+    width: 0;
     pointer-events: none;
     z-index: 6;
     display: none;
   }
   #stream-playhead.visible {
     display: block;
+  }
+  #stream-playhead::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -1px;
+    width: 2px;
+    background: color-mix(in srgb, var(--accent) 80%, white 20%);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  #stream-playhead::after {
+    content: attr(data-time);
+    position: absolute;
+    top: 6px;
+    left: 8px;
+    padding: 0.16em 0.46em;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border) 45%);
+    background: color-mix(in srgb, var(--panel) 82%, var(--accent) 18%);
+    color: var(--text);
+    font-size: 0.7em;
+    line-height: 1.2;
+    white-space: nowrap;
+    box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
   }
   #stream-viewport::-webkit-scrollbar,
   #sidebar::-webkit-scrollbar,
@@ -538,6 +561,9 @@
     min-height: 34px;
     margin-bottom: 0.6em;
     overflow: hidden;
+  }
+  #stream-ruler.scrubbable {
+    cursor: ew-resize;
   }
   #stream-ruler-inner {
     position: relative;
@@ -3576,6 +3602,7 @@
   function renderArchiveTransport() {
     const active = !!(archiveBrowseRef && archivePlaybackMediaAvailable());
     archiveTransportEl.classList.toggle("visible", active);
+    streamRuler.classList.toggle("scrubbable", active);
     if (!active) {
       archiveTransportToggleButton.textContent = "Play";
       archiveTransportToggleButton.disabled = true;
@@ -3628,6 +3655,7 @@
     const playerTime = archiveMediaCurrentTime();
     if (playerTime == null || !streamEvents.length) {
       streamPlayheadEl.classList.remove("visible");
+      streamPlayheadEl.dataset.time = "";
       renderArchiveTransport();
       return;
     }
@@ -3641,6 +3669,7 @@
     }
     const left = contentLeft - streamViewport.scrollLeft;
     streamPlayheadEl.style.left = `${left}px`;
+    streamPlayheadEl.dataset.time = formatTimelineClock(playerTime);
     streamPlayheadEl.classList.add("visible");
     renderArchiveTransport();
   }
@@ -4020,6 +4049,18 @@
     const minutes = Math.floor(seconds / 60);
     const rem = Math.round(seconds % 60);
     return rem ? `${minutes}m ${rem}s` : `${minutes}m`;
+  }
+
+  function formatTimelineClock(value) {
+    const total = Math.max(0, Number(value || 0));
+    const wholeSeconds = Math.floor(total);
+    const hours = Math.floor(wholeSeconds / 3600);
+    const minutes = Math.floor((wholeSeconds % 3600) / 60);
+    const seconds = wholeSeconds % 60;
+    if (hours > 0) {
+      return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   }
 
   function sliderToWindow(value) {
@@ -7536,7 +7577,7 @@
     const ticks = [];
     for (let i = 0; i <= tickCount; i += 1) {
       const time = i * step;
-      ticks.push(`<div class="ruler-tick" style="left:${20 + time * scale}px;"><span>+${esc(formatWindow(time))}</span></div>`);
+      ticks.push(`<div class="ruler-tick" style="left:${20 + time * scale}px;"><span>${esc(formatTimelineClock(time))}</span></div>`);
     }
     streamRulerInner.innerHTML = ticks.join("");
     return {baseWidth, scale};
