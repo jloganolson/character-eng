@@ -509,7 +509,13 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 0;
+    width: 4px;
+    margin-left: -2px;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 92%, white 8%), color-mix(in srgb, var(--accent) 68%, transparent 32%));
+    border-radius: 999px;
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
+      0 0 14px color-mix(in srgb, var(--accent) 22%, transparent);
     pointer-events: none;
     z-index: 6;
     display: none;
@@ -520,24 +526,28 @@
   #stream-playhead::before {
     content: "";
     position: absolute;
-    top: 0;
-    bottom: 0;
-    left: -1px;
-    width: 2px;
-    background: color-mix(in srgb, var(--accent) 80%, white 20%);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+    top: 10px;
+    left: 50%;
+    width: 10px;
+    height: 10px;
+    transform: translate(-50%, -50%);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 88%, white 12%);
+    border: 2px solid color-mix(in srgb, white 75%, var(--accent) 25%);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
   }
   #stream-playhead::after {
     content: attr(data-time);
     position: absolute;
-    top: 6px;
-    left: 8px;
-    padding: 0.16em 0.46em;
+    top: 8px;
+    left: 12px;
+    padding: 0.2em 0.5em;
     border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border) 45%);
-    background: color-mix(in srgb, var(--panel) 82%, var(--accent) 18%);
+    border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--border) 30%);
+    background: color-mix(in srgb, var(--bg) 70%, var(--accent) 30%);
     color: var(--text);
-    font-size: 0.7em;
+    font-size: 0.72em;
+    font-weight: 700;
     line-height: 1.2;
     white-space: nowrap;
     box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
