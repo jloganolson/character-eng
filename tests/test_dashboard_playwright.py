@@ -2566,6 +2566,7 @@ def test_archive_load_shows_timeline_and_scrubbable_media_player(
     expect(page.locator("#archive-media-player")).to_have_class(re.compile(r"\bvisible\b"))
     expect(page.locator("#stream-ruler")).to_have_class(re.compile(r"\bscrubbable\b"))
     expect(page.locator("#stream-ruler")).to_contain_text("00:00")
+    expect(page.locator("#current-playhead-value")).to_have_text("00:00.0")
     expect(page.locator(".stream-card[data-event-type='session_start']")).to_have_count(1)
     expect(page.locator(".stream-card[data-event-type='user_transcript_final']")).to_have_count(1)
     expect(page.locator(".stream-card").filter(has_text="Hey, what time is it to you?")).to_have_count(1)
@@ -2580,6 +2581,7 @@ def test_archive_load_shows_timeline_and_scrubbable_media_player(
     expect(page.locator("#archive-transport-toggle")).to_have_text("Pause")
     expect(page.locator("#stream-playhead")).to_have_class(re.compile(r"\bvisible\b"))
     expect(page.locator("#stream-playhead")).to_have_attribute("data-time", re.compile(r"\d{2}:\d{2}(?:\.\d)?"))
+    expect(page.locator("#current-playhead-value")).to_have_text(re.compile(r"\d{2}:\d{2}\.\d"))
 
     page.locator("#archive-media-player").evaluate("(node) => { node.pause(); node.currentTime = 0; }")
     page.wait_for_timeout(100)
