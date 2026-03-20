@@ -583,6 +583,42 @@
   #stream-ruler.scrubbable {
     cursor: ew-resize;
   }
+  #stream-scrub-cursor {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    pointer-events: none;
+    z-index: 7;
+    display: none;
+  }
+  #stream-scrub-cursor.visible {
+    display: block;
+  }
+  #stream-scrub-cursor::before {
+    content: "";
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    width: 0;
+    height: 0;
+    transform: translateX(-50%);
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-top: 10px solid #ff5f57;
+    filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.35));
+  }
+  #stream-scrub-cursor::after {
+    content: "";
+    position: absolute;
+    top: 18px;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    transform: translateX(-50%);
+    background: linear-gradient(180deg, color-mix(in srgb, #ff5f57 85%, white 15%), color-mix(in srgb, #ff5f57 45%, transparent 55%));
+    opacity: 0.9;
+  }
   #stream-ruler-inner {
     position: relative;
     height: 34px;
@@ -1838,6 +1874,7 @@
       <div id="stream-main">
         <div id="stream-viewport">
           <div id="stream-ruler"><div id="stream-ruler-inner"></div></div>
+          <div id="stream-scrub-cursor" aria-hidden="true"></div>
           <div id="stream-playhead" aria-hidden="true"></div>
           <div id="stream-empty" class="stream-empty">Waiting for debug timeline events. The dashboard will populate as the session starts.</div>
           <div id="stream-lanes"></div>
@@ -2315,6 +2352,7 @@
   const detailFrameEmpty = document.getElementById("detail-frame-empty");
   const detailFrameMeta = document.getElementById("detail-frame-meta");
   const detailFrameOpen = document.getElementById("detail-frame-open");
+  const streamScrubCursorEl = document.getElementById("stream-scrub-cursor");
   const streamPlayheadEl = document.getElementById("stream-playhead");
   const INSPECTOR_WIDTH_STORAGE_KEY = "dashboard.inspector_width";
   const SIDEBAR_WIDTH_STORAGE_KEY = "dashboard.sidebar_width";
@@ -2372,6 +2410,7 @@
   let archiveMediaSeekLock = false;
   let archiveMediaScrubbing = false;
   let archiveMediaDuration = 0;
+  let archiveTimelineCursorTime = null;
   const PREFERRED_OFFLINE_ARCHIVE_REF = "greg-offline-canonical-v1";
   let timelineRenderScale = 1;
   let timelineRenderBaseWidth = 720;
@@ -3623,12 +3662,28 @@
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
   }
 
+  function hideStreamScrubCursor() {
+    streamScrubCursorEl.classList.remove("visible");
+  }
+
+  function updateStreamScrubCursor(clientX) {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) {
+      hideStreamScrubCursor();
+      return;
+    }
+    const bounds = streamViewport.getBoundingClientRect();
+    const visibleX = Math.max(0, Math.min(bounds.width, clientX - bounds.left));
+    streamScrubCursorEl.style.left = `${streamViewport.scrollLeft + visibleX}px`;
+    streamScrubCursorEl.classList.add("visible");
+  }
+
   function renderArchiveTransport() {
     const active = !!(archiveBrowseRef && archivePlaybackMediaAvailable());
     archiveTransportEl.classList.toggle("visible", active);
     streamRuler.classList.toggle("scrubbable", active);
     currentPlayheadReadout.classList.toggle("inactive", !active);
     if (!active) {
+      hideStreamScrubCursor();
       archiveTransportToggleButton.textContent = "Play";
       archiveTransportToggleButton.disabled = true;
       archiveTransportScrubber.max = "0";
@@ -3638,7 +3693,7 @@
       currentPlayheadValue.textContent = "--";
       return;
     }
-    const current = Math.max(0, Number(archiveMediaPlayer.currentTime || 0));
+    const current = Math.max(0, Number(currentArchiveTimelineTime() ?? archiveMediaPlayer.currentTime ?? 0));
     const duration = Math.max(0, Number(archiveMediaDuration || archiveMediaPlayer.duration || 0));
     archiveTransportToggleButton.textContent = archiveMediaPlayer.paused ? "Play" : "Pause";
     archiveTransportToggleButton.disabled = duration <= 0 && archiveMediaPlayer.readyState < 1;
@@ -3678,15 +3733,29 @@
     return Math.max(0, Number(archiveMediaPlayer.currentTime || 0));
   }
 
+  function currentArchiveTimelineTime() {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return null;
+    if (Number.isFinite(archiveTimelineCursorTime)) return Math.max(0, Number(archiveTimelineCursorTime || 0));
+    return archiveMediaCurrentTime();
+  }
+
+  function setArchiveTimelineCursorTime(timeS) {
+    if (!Number.isFinite(timeS)) {
+      archiveTimelineCursorTime = null;
+      return;
+    }
+    archiveTimelineCursorTime = Math.max(0, Number(timeS || 0));
+  }
+
   function updateTimelinePlayhead() {
-    const playerTime = archiveMediaCurrentTime();
-    if (playerTime == null || !streamEvents.length) {
+    const playheadTime = currentArchiveTimelineTime();
+    if (playheadTime == null || !streamEvents.length) {
       streamPlayheadEl.classList.remove("visible");
       streamPlayheadEl.dataset.time = "";
       renderArchiveTransport();
       return;
     }
-    const contentLeft = 20 + playerTime * timelineRenderScale;
+    const contentLeft = 20 + playheadTime * timelineRenderScale;
     if (archiveBrowseRef && archivePlaybackMediaAvailable() && !archiveMediaPlayer.paused && followLive) {
       const maxScroll = Math.max(0, streamViewport.scrollWidth - streamViewport.clientWidth);
       const desired = Math.max(0, Math.min(maxScroll, contentLeft - streamViewport.clientWidth * 0.55));
@@ -3696,7 +3765,7 @@
     }
     const left = contentLeft - streamViewport.scrollLeft;
     streamPlayheadEl.style.left = `${left}px`;
-    streamPlayheadEl.dataset.time = formatTimelineClock(playerTime, {fractional: true});
+    streamPlayheadEl.dataset.time = formatTimelineClock(playheadTime, {fractional: true});
     streamPlayheadEl.classList.add("visible");
     renderArchiveTransport();
   }
@@ -3719,6 +3788,7 @@
   function seekArchiveMedia(timeS, {syncSelection = true, autoPlay = false} = {}) {
     if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
     const target = Math.max(0, Number(timeS || 0));
+    setArchiveTimelineCursorTime(target);
     archiveMediaSeekLock = true;
     try {
       archiveMediaPlayer.currentTime = target;
@@ -3729,7 +3799,7 @@
     }
     if (syncSelection) {
       const key = nearestEventKeyForTime(target);
-      if (key) selectEvent(key, {seekMedia: false});
+      if (key) selectEvent(key, {seekMedia: false, syncTimeline: false});
     }
     updateTimelinePlayhead();
     renderArchiveTransport();
@@ -5351,6 +5421,7 @@
     archiveMediaPlayer.removeAttribute("src");
     archiveMediaPlayer.load();
     archiveMediaDuration = 0;
+    archiveTimelineCursorTime = null;
     setArchiveMediaStatus("");
     clearAnnotationState();
     setPromptModalOpen(false);
@@ -5426,6 +5497,7 @@
     archiveMediaPlayer.removeAttribute("src");
     archiveMediaPlayer.load();
     archiveMediaDuration = 0;
+    archiveTimelineCursorTime = null;
     setArchiveMediaStatus("");
     clearAnnotationState();
     setPromptModalOpen(false);
@@ -7269,6 +7341,9 @@
       const card = document.querySelector(`.stream-card[data-event-key="${relatedKey}"], .stream-dot[data-event-key="${relatedKey}"]`);
       if (card) card.classList.add("context");
     });
+    if (archiveBrowseRef && options.syncTimeline !== false) {
+      setArchiveTimelineCursorTime(relativeTime(event.timestamp));
+    }
     if (archiveBrowseRef && archivePlaybackMediaAvailable() && options.seekMedia !== false) {
       seekArchiveMedia(relativeTime(event.timestamp), {syncSelection: false});
     }
@@ -7713,9 +7788,9 @@
       dot.addEventListener("mouseleave", hideStreamHoverCard);
     });
     if (selectedStreamKey && streamEventByKey.has(selectedStreamKey)) {
-      selectEvent(selectedStreamKey, {seekMedia: false});
+      selectEvent(selectedStreamKey, {seekMedia: false, syncTimeline: false});
     } else {
-      selectEvent(streamEvents[streamEvents.length - 1].key, {seekMedia: false});
+      selectEvent(streamEvents[streamEvents.length - 1].key, {seekMedia: false, syncTimeline: false});
     }
     updateTimelinePlayhead();
     if (followLive) {
@@ -8518,6 +8593,7 @@
 
   archiveMediaPlayer.addEventListener("loadedmetadata", () => {
     archiveMediaDuration = Number.isFinite(archiveMediaPlayer.duration) ? Number(archiveMediaPlayer.duration) : 0;
+    if (!Number.isFinite(archiveTimelineCursorTime)) setArchiveTimelineCursorTime(archiveMediaPlayer.currentTime || 0);
     setArchiveMediaStatus(
       archiveMediaDuration > 0
         ? `Loaded archive media · ${formatWindow(archiveMediaDuration)}`
@@ -8536,23 +8612,35 @@
     renderArchiveTransport();
   });
   archiveMediaPlayer.addEventListener("timeupdate", () => {
+    setArchiveTimelineCursorTime(archiveMediaPlayer.currentTime || 0);
     updateTimelinePlayhead();
     if (archiveMediaSeekLock || archiveMediaScrubbing) return;
     const key = nearestEventKeyForTime(archiveMediaPlayer.currentTime || 0);
-    if (key && key !== selectedStreamKey) selectEvent(key, {seekMedia: false});
+    if (key && key !== selectedStreamKey) selectEvent(key, {seekMedia: false, syncTimeline: false});
   });
   streamRuler.addEventListener("pointerdown", (event) => {
     if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
     archiveMediaScrubbing = true;
+    updateStreamScrubCursor(event.clientX);
     seekArchiveMediaFromPointer(event.clientX);
     event.preventDefault();
   });
+  streamRuler.addEventListener("pointermove", (event) => {
+    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
+    updateStreamScrubCursor(event.clientX);
+  });
+  streamRuler.addEventListener("pointerleave", () => {
+    if (archiveMediaScrubbing) return;
+    hideStreamScrubCursor();
+  });
   window.addEventListener("pointermove", (event) => {
     if (!archiveMediaScrubbing) return;
+    updateStreamScrubCursor(event.clientX);
     seekArchiveMediaFromPointer(event.clientX);
   });
   window.addEventListener("pointerup", () => {
     archiveMediaScrubbing = false;
+    hideStreamScrubCursor();
     renderArchiveTransport();
   });
 

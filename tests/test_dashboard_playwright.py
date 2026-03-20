@@ -21,7 +21,7 @@ from character_eng.person import PeopleState
 from character_eng.world import Goals, Script, WorldState
 
 
-def _write_test_video(path: Path):
+def _write_test_video(path: Path, duration_s: float = 2.0):
     subprocess.run(
         [
             "ffmpeg",
@@ -31,7 +31,7 @@ def _write_test_video(path: Path):
             "-f",
             "lavfi",
             "-i",
-            "color=c=black:s=320x240:d=2:r=30",
+            f"color=c=black:s=320x240:d={duration_s}:r=30",
             "-c:v",
             "libx264",
             "-pix_fmt",
@@ -72,6 +72,7 @@ def _seed_archive_session(
     title: str | None = None,
     response_text: str = "Hey, what time is it to you?",
     extra_events: list[tuple[str, dict, float]] | None = None,
+    video_duration_s: float = 2.0,
 ):
     archive = history.start_session(session_id=session_id, character="greg", model="groq-llama-8b")
     archive_start = archive._started_at
@@ -100,7 +101,7 @@ def _seed_archive_session(
         had_user_input=False,
     )
     history.finalize_current()
-    _write_test_video(archive.media_dir / "playback.mp4")
+    _write_test_video(archive.media_dir / "playback.mp4", duration_s=video_duration_s)
     frame_path = archive.media_dir / "video" / "000001.jpg"
     frame_path.parent.mkdir(parents=True, exist_ok=True)
     _write_test_jpeg(frame_path)
@@ -238,6 +239,43 @@ def dashboard_server():
                 child.rmdir()
     history = HistoryService(root=history_root, free_warning_gib=0.0)
     _seed_archive_session(history, session_id="sess-archive-playback")
+    _seed_archive_session(
+        history,
+        session_id="sess-archive-long-playback",
+        title="Long Playback Archive",
+        response_text="Long playback archive is ready for scrub testing.",
+        video_duration_s=12.0,
+        extra_events=[
+            (
+                "vision_focus",
+                {
+                    "constant_question_count": 5,
+                    "ephemeral_question_count": 2,
+                    "constant_sam_target_count": 5,
+                    "ephemeral_sam_target_count": 2,
+                    "summary": "Greg is scanning the room for a visible clock.",
+                },
+                0.8,
+            ),
+            (
+                "eval",
+                {
+                    "script_status": "watching",
+                    "thought": "Planner holds the current beat while Greg inspects the room.",
+                    "plan_request": "Keep observing the room.",
+                },
+                3.8,
+            ),
+            (
+                "reconcile",
+                {
+                    "events": ["A wall clock is clearly visible near the doorway."],
+                    "add_facts": ["clock visible near doorway"],
+                },
+                8.6,
+            ),
+        ],
+    )
     _seed_archive_session(
         history,
         session_id="greg-offline-canonical-v1",
@@ -2661,6 +2699,124 @@ def test_archive_load_shows_timeline_and_scrubbable_media_player(
     )
     assert drag_result["currentTime"] <= 0.05
     assert drag_result["scrollLeft"] > 0
+
+
+def test_archive_ruler_scrubbing_updates_playhead_across_longer_spans(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+
+    page.locator("#archive-load-button").evaluate("(node) => node.click()")
+    page.locator(".archive-row").filter(has_text="sess-archive-long-playback").locator(".archive-load-action").click()
+
+    expect(page.locator("#archive-load-status")).to_contain_text("Browsing archive:")
+    expect(page.locator("#archive-transport")).to_have_class(re.compile(r"\bvisible\b"))
+    expect(page.locator("#stream-ruler")).to_have_class(re.compile(r"\bscrubbable\b"))
+
+    page.locator("#time-window").evaluate(
+        """(node) => {
+            node.value = "0";
+            node.dispatchEvent(new Event("input", {bubbles: true}));
+        }"""
+    )
+    page.locator("#archive-media-player").evaluate("(node) => { node.pause(); node.currentTime = 0; }")
+
+    targets = [
+        ("post_response", 3.8),
+        ("world_update", 8.6),
+    ]
+
+    results = []
+    for event_type, target in targets:
+        page.evaluate(
+            """(time) => {
+                const slider = document.getElementById('archive-transport-scrubber');
+                slider.value = String(time);
+                slider.dispatchEvent(new Event('input', {bubbles: true}));
+            }""",
+            target,
+        )
+        page.wait_for_timeout(50)
+        readout = page.locator("#current-playhead-value").inner_text()
+        playhead = page.locator("#stream-playhead").get_attribute("data-time") or ""
+        media_time = page.locator("#archive-media-player").evaluate("(node) => Number(node.currentTime || 0)")
+        scroll_left = page.locator("#stream-viewport").evaluate("(node) => Number(node.scrollLeft || 0)")
+        readout_seconds = page.evaluate(
+            """(text) => {
+                const parts = String(text || '').split(':');
+                if (parts.length !== 2) return NaN;
+                return (Number(parts[0]) * 60) + Number(parts[1]);
+            }""",
+            readout,
+        )
+        playhead_seconds = page.evaluate(
+            """(text) => {
+                const parts = String(text || '').split(':');
+                if (parts.length !== 2) return NaN;
+                return (Number(parts[0]) * 60) + Number(parts[1]);
+            }""",
+            playhead,
+        )
+        results.append(
+            {
+                "event_type": event_type,
+                "target": target,
+                "readout": readout,
+                "readoutSeconds": readout_seconds,
+                "playhead": playhead,
+                "playheadSeconds": playhead_seconds,
+                "mediaTime": media_time,
+                "selectedType": page.locator("#detail-type").inner_text(),
+                "scrollLeft": scroll_left,
+            }
+        )
+
+    for result in results:
+        assert abs(result["readoutSeconds"] - result["target"]) < 0.35, result
+        assert abs(result["playheadSeconds"] - result["target"]) < 0.35, result
+        assert abs(result["mediaTime"] - result["target"]) < 0.35, result
+        assert result["selectedType"] == result["event_type"], result
+    assert results[-1]["mediaTime"] > 8.0
 
 
 def test_rewind_keeps_new_active_path_visible_and_greys_out_superseded_events(
