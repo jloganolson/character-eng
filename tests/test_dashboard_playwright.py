@@ -721,7 +721,7 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#archive-load-status")).to_contain_text("Browsing archive:")
     expect(page.locator("#runtime-toggle")).to_have_text("Replay")
     expect(page.locator("#runtime-stop")).to_be_disabled()
-    expect(page.locator(".stream-card[data-event-type='session_start']")).to_have_count(1)
+    expect(page.locator(".stream-card[data-event-type='session_start']")).to_have_count(0)
     page.locator("#runtime-toggle").click()
     assert input_queue.get(timeout=2) == "/replay sess-playwright"
     expect(page.locator("#archive-load-button")).to_have_text("Return To Live")
@@ -2208,12 +2208,16 @@ def test_json_default_inspector_keeps_annotations_above_payload(
     )
     page = browser_page
     page.goto(f"{dashboard_url}?archive=sess-archive-playback&boot=live")
+    page.wait_for_function(
+        "() => document.querySelectorAll('.stream-card').length > 0",
+        timeout=5000,
+    )
 
     selected = page.evaluate(
         """() => {
             const target =
               document.querySelector(".stream-card[data-event-type='vision_focus']") ||
-              document.querySelector(".stream-card[data-event-type='history_status']") ||
+              document.querySelector(".stream-card[data-event-type='user_transcript_final']") ||
               document.querySelector(".stream-card");
             if (!target) return false;
             target.click();
@@ -2631,8 +2635,10 @@ def test_archive_load_shows_timeline_and_scrubbable_media_player(
     expect(page.locator("#stream-ruler")).to_have_class(re.compile(r"\bscrubbable\b"))
     expect(page.locator("#stream-ruler")).to_contain_text("00:00")
     expect(page.locator("#current-playhead-value")).to_have_text("00:00.0")
-    expect(page.locator(".stream-card[data-event-type='session_start']")).to_have_count(1)
+    expect(page.locator(".stream-card[data-event-type='session_start']")).to_have_count(0)
     expect(page.locator(".stream-card[data-event-type='user_transcript_final']")).to_have_count(1)
+    expect(page.locator(".stream-card[data-event-type='history_status']")).to_have_count(0)
+    expect(page.locator(".stream-card[data-event-type='runtime_controls']")).to_have_count(0)
     expect(page.locator(".stream-card").filter(has_text="Hey, what time is it to you?")).to_have_count(1)
 
     page.locator("#archive-transport-toggle").evaluate("(node) => node.click()")

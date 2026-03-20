@@ -2465,6 +2465,19 @@
   let archiveTimelineCursorTime = null;
   let archiveTimelineCursorPinned = false;
   const PREFERRED_OFFLINE_ARCHIVE_REF = "greg-offline-canonical-v1";
+  const TIMELINE_SUPPRESSED_TYPES = new Set([
+    "session_start",
+    "session_end",
+    "pause",
+    "resume",
+    "history_status",
+    "history_restore",
+    "history_rewind",
+    "history_promoted",
+    "history_playback",
+    "prompt_reload",
+    "runtime_controls",
+  ]);
   let timelineRenderScale = 1;
   let timelineRenderBaseWidth = 720;
   const ARCHIVE_BROWSE_LIVE_EVENT_ALLOWLIST = new Set([
@@ -7283,6 +7296,9 @@
       superseded: false,
       debugOnly,
     };
+    if (TIMELINE_SUPPRESSED_TYPES.has(type)) {
+      return event;
+    }
     streamEvents.push(event);
     streamEventByKey.set(key, event);
     syncEventIdIndex(event);
