@@ -7522,6 +7522,7 @@
     const baseWidth = Math.max(usableWidth + 40, 40 + (maxRelative + 1.5) * scale);
     timelineRenderScale = scale;
     timelineRenderBaseWidth = baseWidth;
+    streamRuler.style.width = `${baseWidth}px`;
     streamRulerInner.style.width = `${baseWidth}px`;
     const roughTickTarget = timelineWindowSeconds / 6;
     const step = roughTickTarget <= 2 ? 0.5
@@ -7548,6 +7549,7 @@
     if (!streamEvents.length) {
       streamEmpty.style.display = "";
       streamLanes.innerHTML = "";
+      streamRuler.style.width = "";
       streamRulerInner.innerHTML = "";
       updateTimelinePlayhead();
       return;
@@ -7622,7 +7624,7 @@
       laneHtml.push(
         `<section class="stream-lane lane-${esc(lane)}${hidden ? " hidden" : ""}" data-stream-lane="${esc(lane)}">
           <div class="stream-lane-label">${esc(laneDisplayName(lane))}</div>
-          <div class="lane-track">
+          <div class="lane-track" style="width:${baseWidth}px;">
             <div class="lane-track-inner" style="width:${baseWidth}px;height:${trackHeight}px;">${innerHtml}</div>
           </div>
         </section>`
