@@ -1480,26 +1480,6 @@
     font-size: 0.86em;
     line-height: 1.45;
   }
-  #detail-related button {
-    width: 100%;
-    text-align: left;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg-alt);
-    color: var(--text);
-    padding: 0.5em 0.6em;
-    cursor: pointer;
-    font-size: 0.86em;
-  }
-  #detail-related {
-    display: grid;
-    gap: 0.4em;
-  }
-  #detail-related small {
-    display: block;
-    margin-top: 0.22em;
-    color: var(--text-dim);
-  }
   #detail-payload {
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -1976,11 +1956,6 @@
             </div>
           </div>
 
-          <div class="detail-section" id="inspector-related-panel" data-panel-region="inspector" data-panel-id="related_in_turn" data-panel-scope="event">
-            <label id="inspector-related-label">Related Events</label>
-            <div id="detail-related"><div style="color:var(--text-dim);">No event selected.</div></div>
-          </div>
-
           <div class="detail-section" id="inspector-annotations-panel" data-panel-region="inspector" data-panel-id="annotations" data-panel-scope="event" style="position:relative;z-index:2;">
             <label id="inspector-annotations-label">Annotations</label>
             <div class="detail-actions">
@@ -2226,13 +2201,6 @@
       sectionId: "inspector-summary-panel",
       titleId: "inspector-summary-title",
       title: "Debug Timeline Event",
-      scope: "event",
-    },
-    {
-      id: "related_in_turn",
-      sectionId: "inspector-related-panel",
-      labelId: "inspector-related-label",
-      title: "Related In Turn",
       scope: "event",
     },
     {
@@ -5530,7 +5498,6 @@
     document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Raw event JSON appears here for the selected item.\"\n}";
     document.getElementById("detail-prompts").innerHTML = '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-prompts-pane").classList.add("compact-empty");
-    document.getElementById("detail-related").innerHTML = '<div style="color:var(--text-dim);">No event selected.</div>';
     document.getElementById("detail-loop").classList.remove("active");
     document.getElementById("detail-loop-track").innerHTML = "";
     document.getElementById("detail-loop-chips").innerHTML = "";
@@ -5634,7 +5601,6 @@
     document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Raw event JSON appears here for the selected item.\"\n}";
     document.getElementById("detail-prompts").innerHTML = '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-prompts-pane").classList.add("compact-empty");
-    document.getElementById("detail-related").innerHTML = '<div style="color:var(--text-dim);">No event selected.</div>';
     document.getElementById("detail-loop").classList.remove("active");
     document.getElementById("detail-loop-track").innerHTML = "";
     document.getElementById("detail-loop-chips").innerHTML = "";
@@ -7137,30 +7103,6 @@
 </html>`;
   }
 
-  function relatedKeysFor(event) {
-    const related = [];
-    const seen = new Set([event?.key]);
-    explicitRelatedKeysFor(event).forEach((key) => {
-      if (!seen.has(key)) {
-        seen.add(key);
-        related.push(key);
-      }
-    });
-    if (!event?.turnId) return related;
-    streamEvents
-      .filter((candidate) => {
-        if (candidate.turnId !== event.turnId || candidate.key === event.key) return false;
-        if (event.type === "assistant_reply") return candidate.timestamp <= event.timestamp;
-        return true;
-      })
-      .forEach((candidate) => {
-        if (seen.has(candidate.key)) return;
-        seen.add(candidate.key);
-        related.push(candidate.key);
-      });
-    return related;
-  }
-
   function eventForTurnType(event, type) {
     if (!event || !event.turnId) return null;
     return streamEvents.find((candidate) => candidate.turnId === event.turnId && candidate.type === type) || null;
@@ -7417,30 +7359,8 @@
     renderInspectorFrame(event);
     setDetailTab("payload");
 
-    const related = relatedKeysFor(event);
-    const relatedEl = document.getElementById("detail-related");
-    if (!related.length) {
-      relatedEl.innerHTML = '<div style="color:var(--text-dim);">No linked turn context captured for this event.</div>';
-    } else {
-      relatedEl.innerHTML = "";
-      related.forEach((relatedKey) => {
-        const relatedEvent = streamEventByKey.get(relatedKey);
-        if (!relatedEvent) return;
-        const button = document.createElement("button");
-        button.type = "button";
-        button.onclick = () => selectEvent(relatedKey);
-        button.innerHTML = `<div><b>${esc(relatedEvent.type)}</b> · ${esc(relatedEvent.label)}</div><small>${esc(relatedEvent.lane)} · +${relativeTime(relatedEvent.timestamp).toFixed(2)}s</small>`;
-        relatedEl.appendChild(button);
-      });
-    }
-
     document.querySelectorAll(".stream-card, .stream-dot").forEach((card) => {
       card.classList.toggle("selected", card.dataset.eventKey === key);
-      card.classList.remove("context");
-    });
-    related.forEach((relatedKey) => {
-      const card = document.querySelector(`.stream-card[data-event-key="${relatedKey}"], .stream-dot[data-event-key="${relatedKey}"]`);
-      if (card) card.classList.add("context");
     });
     if (archiveBrowseRef && options.syncTimeline !== false) {
       setArchiveTimelineCursorTime(relativeTime(event.timestamp));

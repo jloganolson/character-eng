@@ -731,10 +731,11 @@ def test_runtime_panel_interactions_in_browser(
     page.locator("#archive-load-button").click()
     page.locator(".archive-row").filter(has=page.locator(".archive-kind", has_text="session")).locator(".archive-replay-action").first.click()
     assert input_queue.get(timeout=2) == "/replay sess-playwright"
+    replay_transcript_card = page.locator(".stream-card[data-event-type='user_transcript_final']").first
+    replay_transcript_card.click()
     page.locator("#detail-open-json").click()
-    expect(page.locator("#detail-payload")).to_contain_text("\"session_id\": \"sess-playwright\"")
-    expect(page.locator("#detail-related")).to_contain_text("No linked turn context")
-    expect(page.locator("#detail-related")).not_to_contain_text("post_response")
+    expect(page.locator("#detail-payload")).to_contain_text("\"text\": \"Do you have water?\"")
+    expect(page.locator("#inspector-related-panel")).to_have_count(0)
     expect(page.locator("#tab-chronology")).to_have_count(0)
     expect(page.locator("#show-chronology")).to_have_count(0)
 
