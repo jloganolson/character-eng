@@ -34,8 +34,8 @@
     --stream-vision-raw: #10b981;
     --stream-other: #cbd5e1;
     --sidebar-width: 110px;
-    --inspector-width: 320px;
-    --right-panel-width: 280px;
+    --inspector-width: 380px;
+    --right-panel-width: 360px;
     --timeline-window-seconds: 30;
   }
   :root.light {
@@ -83,6 +83,56 @@
     opacity: 0.28;
     pointer-events: none;
     user-select: none;
+  }
+  #ux-spoof-banner {
+    display: none;
+    gap: 0.75rem;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.55rem 0.9rem;
+    border-bottom: 1px solid var(--border);
+    background:
+      linear-gradient(90deg, color-mix(in srgb, var(--warn) 26%, var(--panel) 74%), color-mix(in srgb, var(--panel-hover) 82%, var(--warn) 18%));
+    color: var(--text);
+    font-size: 0.82rem;
+  }
+  #ux-spoof-banner.active {
+    display: flex;
+  }
+  .ux-spoof-copy {
+    display: flex;
+    gap: 0.55rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .ux-spoof-actions {
+    display: flex;
+    gap: 0.45rem;
+    align-items: center;
+  }
+  .ux-spoof-label {
+    padding: 0.16rem 0.4rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--warn) 55%, var(--border) 45%);
+    background: color-mix(in srgb, var(--warn) 18%, transparent);
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.72rem;
+  }
+  .ux-spoof-detail {
+    color: var(--text-dim);
+  }
+  .ux-spoof-actions button {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--panel-hover) 84%, transparent);
+    color: var(--text);
+    padding: 0.28rem 0.72rem;
+    cursor: pointer;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
   button, input, select {
     font: inherit;
@@ -909,7 +959,7 @@
   }
   #stream-inspector {
     display: grid;
-    grid-template-rows: auto auto 1fr;
+    grid-template-rows: auto auto auto minmax(0, 1fr);
     gap: 0.75em;
     padding: 0.9em;
     min-height: 0;
@@ -1196,12 +1246,33 @@
   .detail-pane.active {
     display: grid;
   }
+  .detail-pane.compact-empty {
+    align-content: start;
+  }
   .detail-prompts {
     display: grid;
     gap: 0.75em;
     overflow: auto;
     min-height: 0;
     padding-right: 0.2em;
+  }
+  .prompt-preview-empty,
+  .detail-inline-empty {
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 0.75em 0.8em;
+    color: var(--text-dim);
+    background: color-mix(in srgb, var(--bg-alt) 82%, transparent);
+    display: grid;
+    gap: 0.45em;
+  }
+  .prompt-preview-card {
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.7em;
+    display: grid;
+    gap: 0.55em;
   }
   .prompt-block {
     background: var(--bg-alt);
@@ -1223,6 +1294,29 @@
   .prompt-meta {
     color: var(--text-dim);
     font-size: 0.76em;
+  }
+  .prompt-preview-excerpt {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.84em;
+    line-height: 1.45;
+    color: var(--text);
+  }
+  .prompt-preview-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.45em;
+  }
+  .prompt-preview-actions button {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--panel-hover);
+    color: var(--text);
+    padding: 0.28em 0.68em;
+    cursor: pointer;
+    font-size: 0.74em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
   .prompt-subsection {
     display: grid;
@@ -1294,6 +1388,69 @@
     min-height: 0;
     height: 100%;
   }
+  .runtime-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45em;
+  }
+  .runtime-summary-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel-hover);
+    padding: 0.55em 0.6em;
+    display: grid;
+    gap: 0.14em;
+  }
+  .runtime-summary-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5em;
+    align-items: baseline;
+    font-size: 0.78em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .runtime-summary-title {
+    color: var(--text-dim);
+  }
+  .runtime-summary-state {
+    font-weight: 700;
+  }
+  .runtime-summary-detail {
+    font-size: 0.8em;
+    line-height: 1.35;
+    color: var(--text);
+  }
+  .runtime-fold {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg-alt) 82%, transparent);
+    overflow: hidden;
+  }
+  .runtime-fold summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0.48em 0.62em;
+    font-size: 0.76em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .runtime-fold summary::-webkit-details-marker {
+    display: none;
+  }
+  .runtime-fold[open] summary {
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+  }
+  .runtime-fold-body {
+    padding: 0.6em;
+    display: grid;
+    gap: 0.55em;
+  }
   #sidebar {
     flex: 0 0 var(--right-panel-width);
     width: var(--right-panel-width);
@@ -1361,6 +1518,39 @@
     font-size: 0.92em;
     line-height: 1.45;
     color: var(--text);
+  }
+  .inspector-frame {
+    display: grid;
+    gap: 0.5em;
+  }
+  .inspector-frame img {
+    width: 100%;
+    min-height: 180px;
+    object-fit: contain;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: #000;
+  }
+  .inspector-frame-meta {
+    font-size: 0.78em;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+  .inspector-frame-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.4em;
+  }
+  .inspector-frame-actions a {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--panel-hover);
+    color: var(--text);
+    padding: 0.26em 0.68em;
+    text-decoration: none;
+    font-size: 0.72em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
   .beat-list { margin-top: 0.3em; }
   .beat-item { margin: 0.1em 0; font-size: 0.85em; }
@@ -1505,6 +1695,19 @@
   </div>
 </div>
 
+<div id="prompt-modal" class="app-modal" aria-hidden="true">
+  <div class="app-modal-card">
+    <div class="app-modal-head">
+      <div>
+        <div id="prompt-modal-title" class="app-modal-title">Prompt Detail</div>
+        <div id="prompt-modal-subtitle" class="app-modal-sub">Full prompt context for the selected event.</div>
+      </div>
+      <button id="prompt-modal-close" class="app-modal-close" type="button">Close</button>
+    </div>
+    <div id="prompt-modal-body" style="display:grid;gap:0.75em;"></div>
+  </div>
+</div>
+
 <div id="header">
   <span class="character" id="h-character">--</span>
   <span><span class="label">model:</span> <span class="value" id="h-model">--</span></span>
@@ -1544,6 +1747,17 @@
     <span id="livekit-status" style="color:var(--text-dim);font-size:0.82em;">livekit booting</span>
   </span>
   <button id="theme-toggle" title="Toggle light/dark">&#9789;</button>
+</div>
+
+<div id="ux-spoof-banner" aria-live="polite">
+  <div class="ux-spoof-copy">
+    <span class="ux-spoof-label">Spoofed For UX</span>
+    <span id="ux-spoof-banner-text">Archive-backed live shell override</span>
+    <span id="ux-spoof-banner-detail" class="ux-spoof-detail"></span>
+  </div>
+  <div class="ux-spoof-actions">
+    <button id="ux-spoof-copy-url" type="button">Copy Test URL</button>
+  </div>
 </div>
 
 <div id="main">
@@ -1614,6 +1828,17 @@
                 <div class="structure-title">Event Breakdown</div>
                 <div class="structure-grid" id="detail-structure-grid"></div>
               </div>
+              <div class="detail-section" id="inspector-frame-panel" data-panel-region="inspector" data-panel-id="inspected_frame" data-panel-scope="event" style="display:none;">
+                <label id="inspector-frame-label">Inspected Frame</label>
+                <div class="inspector-frame">
+                  <img id="detail-frame-image" alt="Inspected frame" style="display:none;">
+                  <div id="detail-frame-empty" class="detail-inline-empty">Select an archived vision event to inspect its nearest captured frame.</div>
+                  <div id="detail-frame-meta" class="inspector-frame-meta"></div>
+                  <div class="inspector-frame-actions">
+                    <a id="detail-frame-open" href="#" target="_blank" style="display:none;">Open Full Size</a>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1626,7 +1851,7 @@
             <label id="inspector-annotations-label">Annotations</label>
             <div class="detail-actions">
               <button class="detail-action" id="annotation-toggle" type="button" disabled>Annotate Event</button>
-              <button class="detail-action" id="snippet-toggle" type="button" disabled>Capture As Snippet</button>
+              <button class="detail-action" id="snippet-toggle" type="button" disabled style="display:none;">Capture Snippet</button>
             </div>
             <div id="annotation-form" style="display:none;margin-top:0.55em;">
               <input id="annotation-tags" type="text" placeholder="tags: interruption, latency, vision" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
@@ -1639,9 +1864,10 @@
               </div>
             </div>
             <div id="snippet-form" style="display:none;margin-top:0.55em;">
+              <div id="snippet-kind" class="detail-inline-empty" style="padding:0.55em 0.65em;"></div>
               <input id="snippet-title" type="text" placeholder="snippet title" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
               <input id="snippet-tags" type="text" placeholder="tags: false-barge-in, stt, echo" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
-              <select id="snippet-mode" style="width:100%;box-sizing:border-box;margin-bottom:0.45em;">
+              <select id="snippet-mode" style="display:none;width:100%;box-sizing:border-box;margin-bottom:0.45em;">
                 <option value="turn_context">Turn Context</option>
                 <option value="barge_in_turn">Barge-In Turn</option>
                 <option value="vision_state_turn">Vision State Turn</option>
@@ -1662,7 +1888,7 @@
           <div class="detail-section fill" id="inspector-detail-tabs-panel" data-panel-region="inspector" data-panel-id="detail_tabs" data-panel-scope="event">
             <label id="inspector-detail-tabs-label">Inspector Pane</label>
             <div class="detail-tabs" id="inspector-detail-tabs">
-              <button class="detail-tab active" id="tab-prompts" type="button" data-detail-tab="prompts" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">Conversation Memory / Prompt IO</button>
+              <button class="detail-tab active" id="tab-prompts" type="button" data-detail-tab="prompts" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">Prompt Preview</button>
               <button class="detail-tab" id="tab-payload" type="button" data-detail-tab="payload" data-panel-region="inspector" data-panel-id="payload" data-panel-scope="event">Debug Event JSON</button>
             </div>
             <div class="detail-pane active" id="detail-prompts-pane" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">
@@ -1690,18 +1916,29 @@
           <div id="boot-summary" class="boot-summary">Connecting to the local runtime...</div>
           <div id="boot-grid" class="boot-grid"></div>
         </div>
-        <div id="runtime-status" style="margin-bottom:0.5em;color:var(--text-dim);">Waiting for runtime state...</div>
+        <div id="runtime-summary-grid" class="runtime-summary-grid" style="margin-bottom:0.55em;"></div>
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
           <button id="runtime-toggle" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--narrator);color:var(--bg);cursor:pointer;">Start</button>
           <button id="runtime-stop" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--hold);color:var(--bg);cursor:pointer;">Stop Session</button>
           <button id="runtime-restart" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--error);color:var(--bg);cursor:pointer;">Restart Session</button>
         </div>
-        <div id="runtime-control-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.35em;margin-top:0.55em;"></div>
-        <div id="vision-service-status" style="margin-top:0.7em;color:var(--text-dim);">Vision service: waiting for runtime state...</div>
-        <div style="display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
-          <a id="vision-service-link" href="#" target="_blank" style="padding:0.45em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--cyan);text-decoration:none;text-align:center;">vision ui</a>
-        </div>
-        <div id="vision-model-status" style="margin-top:0.7em;display:grid;gap:0.4em;"></div>
+        <details id="runtime-controls-fold" class="runtime-fold" style="margin-top:0.55em;">
+          <summary>Controls</summary>
+          <div class="runtime-fold-body">
+            <div id="runtime-control-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.35em;"></div>
+          </div>
+        </details>
+        <details id="runtime-advanced-fold" class="runtime-fold" style="margin-top:0.55em;">
+          <summary>Advanced</summary>
+          <div class="runtime-fold-body">
+            <div id="runtime-status" style="color:var(--text-dim);">Waiting for runtime state...</div>
+            <div id="vision-service-status" style="color:var(--text-dim);">Vision service: waiting for runtime state...</div>
+            <div style="display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:0.45em;">
+              <a id="vision-service-link" href="#" target="_blank" style="padding:0.45em 0.6em;border-radius:6px;border:1px solid var(--border);background:var(--panel-hover);color:var(--cyan);text-decoration:none;text-align:center;">vision ui</a>
+            </div>
+            <div id="vision-model-status" style="display:grid;gap:0.4em;"></div>
+          </div>
+        </details>
       </div>
     </div>
 
@@ -1715,27 +1952,6 @@
         <audio id="archive-audio-playback" preload="auto" style="width:100%;margin-top:0.45em;display:none;" controls></audio>
         <div id="archive-media-status"></div>
         <div id="vision-meta"></div>
-      </div>
-    </div>
-
-    <div class="sidebar-panel" id="history-panel" data-panel-region="sidebar" data-panel-id="history" data-panel-scope="session">
-      <h3>Replay Capture</h3>
-      <div class="content">
-        <div id="history-status"><span style="color:var(--text-dim)">Replay record loading...</span></div>
-        <div id="history-recording-mode" style="margin-top:0.45em;color:var(--text-dim);font-size:0.78em;"></div>
-        <div style="display:grid;gap:0.45em;margin-top:0.55em;">
-          <input id="history-checkpoint" type="number" min="0" placeholder="Optional rewind checkpoint override" style="width:100%;box-sizing:border-box;">
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
-          <button id="history-rewind" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--narrator);color:var(--bg);cursor:pointer;">Rewind Current</button>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:0.45em;margin-top:0.45em;">
-          <button id="history-pin" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--accent);color:var(--bg);cursor:pointer;">Pin Session</button>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(1,minmax(0,1fr));gap:0.45em;margin-top:0.45em;">
-          <button id="history-prune" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--warn);color:var(--bg);cursor:pointer;">Prune Unsaved</button>
-        </div>
-        <div style="margin-top:0.45em;color:var(--text-dim);font-size:0.78em;">This panel tracks the current session’s replay/snippet capture status. For old sessions and snippets, use <b>Load Archive...</b> in the header.</div>
       </div>
     </div>
 
@@ -1786,6 +2002,8 @@
       history_playback: "session",
       prompt_reload: "session",
       vision_focus: "vision",
+      vision_snapshot: "vision",
+      vision_pass: "vision",
       vision_snapshot_read: "vision_raw",
       face_tracking: "vision_raw",
       sam3_detection: "vision_raw",
@@ -1884,6 +2102,13 @@
       scope: "event",
     },
     {
+      id: "inspected_frame",
+      sectionId: "inspector-frame-panel",
+      labelId: "inspector-frame-label",
+      title: "Inspected Frame",
+      scope: "event",
+    },
+    {
       id: "annotations",
       sectionId: "inspector-annotations-panel",
       labelId: "inspector-annotations-label",
@@ -1897,7 +2122,7 @@
       title: "Inspector Pane",
       scope: "event",
       tabs: [
-        {id: "prompts", tabId: "tab-prompts", paneId: "detail-prompts-pane", title: "Conversation Memory / Prompt IO", scope: "event"},
+        {id: "prompts", tabId: "tab-prompts", paneId: "detail-prompts-pane", title: "Prompt Preview", scope: "event"},
         {id: "payload", tabId: "tab-payload", paneId: "detail-payload-pane", title: "Debug Event JSON", scope: "event"},
       ],
     },
@@ -1911,16 +2136,16 @@
   const SIDEBAR_GROUPS = [
     {id: "session_control", label: "Session Control", order: 10},
     {id: "live_state", label: "Live State", order: 20},
+    {id: "tooling", label: "Tooling", order: 30},
   ];
   const SIDEBAR_PANELS = [
     {id: "runtime", panelId: "runtime-panel", title: "Runtime", scope: "session", group: "session_control", order: 10, defaultVisible: true, defaultCollapsed: false, required: true},
-    {id: "history", panelId: "history-panel", title: "Replay Capture", scope: "session", group: "session_control", order: 20, defaultVisible: true, defaultCollapsed: false},
-    {id: "prompt_assets", panelId: "prompt-assets-panel", title: "Mutable Prompts", scope: "session", group: "session_control", order: 30, defaultVisible: true, defaultCollapsed: false},
     {id: "vision", panelId: "vision-panel", title: "Vision", scope: "session", group: "live_state", order: 10, defaultVisible: true, defaultCollapsed: false, required: true, contentId: "vision-meta"},
     {id: "world", panelId: "world-panel", title: "World State", scope: "session", group: "live_state", order: 20, defaultVisible: true, defaultCollapsed: false, contentId: "world-content"},
     {id: "stage", panelId: "stage-panel", title: "Stage", scope: "session", group: "live_state", order: 30, defaultVisible: true, defaultCollapsed: false, contentId: "stage-content"},
     {id: "plan", panelId: "plan-panel", title: "Script", scope: "session", group: "live_state", order: 40, defaultVisible: true, defaultCollapsed: false, contentId: "plan-content"},
     {id: "people", panelId: "people-panel", title: "People", scope: "session", group: "live_state", order: 50, defaultVisible: true, defaultCollapsed: false, contentId: "people-content"},
+    {id: "prompt_assets", panelId: "prompt-assets-panel", title: "Mutable Prompts", scope: "session", group: "tooling", order: 10, defaultVisible: true, defaultCollapsed: true},
   ];
   const sidebarPanelConfigById = new Map(SIDEBAR_PANELS.map((panel) => [panel.id, panel]));
   const sidebarPanelState = new Map(
@@ -1964,6 +2189,10 @@
   const archiveRenameButton = document.getElementById("archive-rename-button");
   const reportRefStatus = document.getElementById("report-ref-status");
   const archiveLoadButton = document.getElementById("archive-load-button");
+  const uxSpoofBanner = document.getElementById("ux-spoof-banner");
+  const uxSpoofBannerText = document.getElementById("ux-spoof-banner-text");
+  const uxSpoofBannerDetail = document.getElementById("ux-spoof-banner-detail");
+  const uxSpoofCopyUrlButton = document.getElementById("ux-spoof-copy-url");
   const offlineLab = document.getElementById("offline-lab");
   const offlineFrameSelect = document.getElementById("offline-frame-select");
   const offlineArchiveSelect = document.getElementById("offline-archive-select");
@@ -1995,6 +2224,11 @@
   const saveCompleteLoadButton = document.getElementById("save-complete-load");
   const saveCompleteOkayButton = document.getElementById("save-complete-okay");
   const saveCompleteStatusEl = document.getElementById("save-complete-status");
+  const promptModal = document.getElementById("prompt-modal");
+  const promptModalTitle = document.getElementById("prompt-modal-title");
+  const promptModalSubtitle = document.getElementById("prompt-modal-subtitle");
+  const promptModalBody = document.getElementById("prompt-modal-body");
+  const promptModalCloseButton = document.getElementById("prompt-modal-close");
   const annotationToggleButton = document.getElementById("annotation-toggle");
   const annotationSaveButton = document.getElementById("annotation-save");
   const annotationCancelButton = document.getElementById("annotation-cancel");
@@ -2002,6 +2236,7 @@
   const snippetSaveButton = document.getElementById("snippet-save");
   const snippetCancelButton = document.getElementById("snippet-cancel");
   const snippetForm = document.getElementById("snippet-form");
+  const snippetKindEl = document.getElementById("snippet-kind");
   const snippetTitleInput = document.getElementById("snippet-title");
   const snippetTagsInput = document.getElementById("snippet-tags");
   const snippetModeSelect = document.getElementById("snippet-mode");
@@ -2023,6 +2258,13 @@
   const archiveAudioPlayback = document.getElementById("archive-audio-playback");
   const archiveMediaPlayer = document.getElementById("archive-media-player");
   const archiveMediaStatusEl = document.getElementById("archive-media-status");
+  const runtimeSummaryGrid = document.getElementById("runtime-summary-grid");
+  const bootPanel = document.getElementById("boot-panel");
+  const detailFramePanel = document.getElementById("inspector-frame-panel");
+  const detailFrameImage = document.getElementById("detail-frame-image");
+  const detailFrameEmpty = document.getElementById("detail-frame-empty");
+  const detailFrameMeta = document.getElementById("detail-frame-meta");
+  const detailFrameOpen = document.getElementById("detail-frame-open");
   const streamPlayheadEl = document.getElementById("stream-playhead");
   const INSPECTOR_WIDTH_STORAGE_KEY = "dashboard.inspector_width";
   const SIDEBAR_WIDTH_STORAGE_KEY = "dashboard.sidebar_width";
@@ -2048,9 +2290,15 @@
   let saveCompleteAutoHideDeadline = 0;
   let pendingFinalizeAction = "";
   let pendingStopReviewPause = false;
+  let promptPreviewBlocks = [];
+  let promptModalOpen = false;
+  let inspectorFrameRequestId = 0;
   const bootSearchParams = new URLSearchParams(window.location.search);
   const bootArchiveRef = bootSearchParams.get("archive") || "";
-  const bootFixtureName = bootSearchParams.get("fixture") || "";
+  const rawBootOverrideName = bootSearchParams.get("boot") || "";
+  const rawFixtureName = bootSearchParams.get("fixture") || "";
+  const bootVisualOverrideName = String(rawBootOverrideName || (bootArchiveRef ? rawFixtureName : "")).trim().toLowerCase();
+  const bootFixtureName = bootArchiveRef ? "" : String(rawFixtureName).trim().toLowerCase();
   let archiveBrowseRef = "";
   let archiveBrowseMeta = null;
   let archiveBrowseSeqFloor = 0;
@@ -2065,6 +2313,7 @@
   let snippetFormOpen = false;
   let loadedAnnotationSessionId = "";
   const annotationsByEventKey = new Map();
+  let latestRuntimePayload = null;
   let debugOnlyBoundaryTimestamp = null;
   let historyRecordMode = "full";
   let pendingPauseSince = 0;
@@ -2185,11 +2434,6 @@
         renderSidebarPanelContent("vision", "", {status: "idle", visible: true});
         document.getElementById("vision-model-status").innerHTML = "";
         break;
-      case "history":
-        historyStatusEl.innerHTML = '<span style="color:var(--text-dim)">Replay record loading...</span>';
-        historyRecordingModeEl.textContent = "";
-        setSidebarPanelStatus("history", "idle");
-        break;
       case "prompt_assets":
         promptAssetsStatusEl.textContent = "Scanning mutable prompt assets...";
         promptAssetsListEl.innerHTML = "";
@@ -2219,7 +2463,14 @@
   function buildSidebarLayout() {
     const sidebar = document.getElementById("sidebar");
     if (!sidebar) return;
-    const sortedGroups = [...SIDEBAR_GROUPS].sort((a, b) => (a.order || 0) - (b.order || 0));
+    const sortedGroups = [...SIDEBAR_GROUPS]
+      .map((group) => {
+        if (!archiveBrowseRef) return {...group};
+        if (group.id === "live_state") return {...group, order: 10};
+        if (group.id === "session_control") return {...group, order: 20};
+        return {...group};
+      })
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
     const panelsByGroup = new Map(sortedGroups.map((group) => [group.id, []]));
     SIDEBAR_PANELS.forEach((panel) => {
       const list = panelsByGroup.get(panel.group) || [];
@@ -2597,13 +2848,15 @@
       pendingReplayEventTime = null;
       stopArchiveAudioPlayback();
     }
+    const historyUiMounted = !!(historyStatusEl && historyRecordingModeEl && historyRewindButton && historyPinButton && historyPruneButton);
     if (!historyState.enabled) {
-      historyStatusEl.innerHTML = '<span style="color:var(--text-dim)">Replay capture disabled.</span>';
-      historyRecordingModeEl.textContent = "";
-      historyRewindButton.disabled = true;
-      historyPinButton.disabled = true;
-      historyPruneButton.disabled = true;
-      setSidebarPanelStatus("history", "error");
+      if (historyUiMounted) {
+        historyStatusEl.innerHTML = '<span style="color:var(--text-dim)">Replay capture disabled.</span>';
+        historyRecordingModeEl.textContent = "";
+        historyRewindButton.disabled = true;
+        historyPinButton.disabled = true;
+        historyPruneButton.disabled = true;
+      }
       return;
     }
     const current = historyState.current_session || {};
@@ -2621,14 +2874,15 @@
       historyState.playback?.warning ? `<span style="color:var(--warn)">${esc(historyState.playback.warning)}</span>` : "",
       historyState.warning ? `<span style="color:var(--warn)">${esc(historyState.warning)}</span>` : "",
     ].filter(Boolean);
-    historyStatusEl.innerHTML = lines.join("<br>");
-    historyRecordingModeEl.innerHTML = captureEnabled
-      ? `Recording mode: <b>${esc(historyRecordMode)}</b> · replay/snippet capture <b>on</b>`
-      : `Recording mode: <b>${esc(historyRecordMode)}</b> · replay/snippet capture <b style="color:var(--warn)">off</b>${current.debug_only_reason ? `<br><span style="color:var(--warn)">${esc(current.debug_only_reason)}</span>` : ""}<br><span style="color:var(--text-dim)">The active timeline continues below. Older future events are shown as superseded.</span>`;
-    historyRewindButton.disabled = !current.session_id;
-    historyPinButton.disabled = !current.session_id;
-    historyPruneButton.disabled = false;
-    setSidebarPanelStatus("history", current.session_id ? "ready" : "empty");
+    if (historyUiMounted) {
+      historyStatusEl.innerHTML = lines.join("<br>");
+      historyRecordingModeEl.innerHTML = captureEnabled
+        ? `Recording mode: <b>${esc(historyRecordMode)}</b> · replay/snippet capture <b>on</b>`
+        : `Recording mode: <b>${esc(historyRecordMode)}</b> · replay/snippet capture <b style="color:var(--warn)">off</b>${current.debug_only_reason ? `<br><span style="color:var(--warn)">${esc(current.debug_only_reason)}</span>` : ""}<br><span style="color:var(--text-dim)">The active timeline continues below. Older future events are shown as superseded.</span>`;
+      historyRewindButton.disabled = !current.session_id;
+      historyPinButton.disabled = !current.session_id;
+      historyPruneButton.disabled = false;
+    }
     renderSelectedEventAnnotations();
     if (selectedStreamKey) selectEvent(selectedStreamKey);
     maybeResolveSaveCompleteFromState().catch(() => {});
@@ -2842,14 +3096,17 @@
   }
 
   function renderArchiveBrowseState() {
+    buildSidebarLayout();
     if (archiveBrowseRef) {
       archiveLoadButton.textContent = "Return To Live";
       const title = archiveBrowseMeta?.title || archiveBrowseRef;
-      archiveLoadStatus.textContent = `Browsing archive: ${title}`;
+      archiveLoadStatus.textContent = activeArchiveBootOverride() ? "" : `Browsing archive: ${title}`;
     } else {
       archiveLoadButton.textContent = "Load Archive...";
       archiveLoadStatus.textContent = "";
     }
+    renderUxSpoofBanner();
+    renderRuntimeStatusPanel();
     renderOfflineLab();
     syncArchiveMediaPlayer();
     updateTimelinePlayhead();
@@ -2909,8 +3166,171 @@
     }
   }
 
+  function activeArchiveBootOverride() {
+    const override = String(bootVisualOverrideName || "").trim().toLowerCase();
+    if (!override) return "";
+    if (!(archiveBrowseRef || bootArchiveRef)) return "";
+    return ["loading", "ready", "startup-paused", "paused", "live"].includes(override) ? override : "";
+  }
+
+  function uxSpoofVisionServiceDetail() {
+    if (visionService.url) {
+      return `${visionService.state === "managed" || visionService.state === "external" ? visionService.state : "managed"} at ${visionService.url}${visionManagerActive ? " · manager attached" : ""}`;
+    }
+    return `managed at local vision service${visionManagerActive ? " · manager attached" : ""}`;
+  }
+
+  function renderUxSpoofBanner() {
+    const override = activeArchiveBootOverride();
+    if (!override) {
+      uxSpoofBanner.classList.remove("active");
+      uxSpoofBannerText.textContent = "Archive-backed live shell override";
+      uxSpoofBannerDetail.textContent = "";
+      uxSpoofCopyUrlButton.style.display = "none";
+      uxSpoofCopyUrlButton.disabled = true;
+      return;
+    }
+    const archiveLabel = archiveBrowseMeta?.title || archiveBrowseRef || bootArchiveRef || "archive";
+    uxSpoofBanner.classList.add("active");
+    uxSpoofBannerText.textContent = `${archiveLabel} · boot ${override.replace(/-/g, " ")}`;
+    uxSpoofBannerDetail.textContent = "Archive-backed data with live-looking shell and service state. Use this archive URL as the canonical UX test case.";
+    uxSpoofCopyUrlButton.style.display = "";
+    uxSpoofCopyUrlButton.disabled = false;
+  }
+
+  function archiveBootOverrideState(name) {
+    const archiveLabel = archiveBrowseMeta?.title || archiveBrowseRef || bootArchiveRef || "archive";
+    const archiveDetail = name === "loading"
+      ? "Waiting for runtime controls."
+      : (name === "live"
+        ? "Runtime is live and accepting turns."
+        : (name === "paused" || name === "startup-paused"
+          ? "Conversation is paused and ready to resume."
+          : "Fresh session is prepared. Hit Start when you want to begin."));
+    const visionDetail = uxSpoofVisionServiceDetail();
+    switch (name) {
+      case "loading":
+        return {
+          runtimeState: "waiting",
+          runtimeDetail: archiveDetail,
+          voiceState: "waiting",
+          voiceDetail: "Waiting for voice runtime info.",
+          visionServiceState: "waiting",
+          visionServiceDetail: "Waiting for runtime vision service info.",
+          modelState: "waiting",
+          modelDetail: "Waiting for per-model status.",
+          sessionState: "waiting",
+          sessionDetail: "Waiting for session start.",
+          phase: "offline loading shell",
+          summary: "Connecting to the local runtime... waiting for app runtime controls.",
+          sub: "The stack is warming voice, vision, and models. This view will unlock as soon as the local runtime is actually ready.",
+          bootReady: false,
+          bootBlocking: true,
+          bootToggleText: "Start",
+          bootToggleDisabled: true,
+          bootToggleBackground: "var(--advance)",
+          bootRestartText: "Restart Session",
+          bootRestartDisabled: true,
+        };
+      case "startup-paused":
+        return {
+          runtimeState: "ready",
+          runtimeDetail: archiveDetail,
+          voiceState: "ready",
+          voiceDetail: "Deepgram socket open. Pocket-TTS reachable.",
+          visionServiceState: "ready",
+          visionServiceDetail: visionDetail,
+          modelState: "ready",
+          modelDetail: "vllm ready · sam3 ready · face ready · person ready",
+          sessionState: "ready",
+          sessionDetail: `Session ${document.getElementById("h-session").textContent || "--"} for ${document.getElementById("h-character").textContent || "character"}`,
+          phase: "ready and paused",
+          summary: "Fresh session is ready. Press Play when you want to begin.",
+          sub: "The runtime is warm. Press Play when you want to begin the session.",
+          bootReady: false,
+          bootBlocking: false,
+          bootToggleText: "Play",
+          bootToggleDisabled: true,
+          bootToggleBackground: "var(--advance)",
+          bootRestartText: "Restart Session",
+          bootRestartDisabled: true,
+        };
+      case "paused":
+        return {
+          runtimeState: "ready",
+          runtimeDetail: archiveDetail,
+          voiceState: "ready",
+          voiceDetail: "Deepgram socket open. Pocket-TTS reachable.",
+          visionServiceState: "ready",
+          visionServiceDetail: visionDetail,
+          modelState: "ready",
+          modelDetail: "vllm ready · sam3 ready · face ready · person ready",
+          sessionState: "ready",
+          sessionDetail: `Session ${document.getElementById("h-session").textContent || "--"} for ${document.getElementById("h-character").textContent || "character"}`,
+          phase: "ready and paused",
+          summary: "Conversation is paused. Press Play when you want to continue.",
+          sub: "The runtime is ready. Press Play when you want to continue.",
+          bootReady: true,
+          bootBlocking: false,
+          bootToggleText: "Play",
+          bootToggleDisabled: true,
+          bootToggleBackground: "var(--advance)",
+          bootRestartText: "Restart Session",
+          bootRestartDisabled: true,
+        };
+      case "live":
+        return {
+          runtimeState: "active",
+          runtimeDetail: archiveDetail,
+          voiceState: "ready",
+          voiceDetail: "Deepgram socket open. Pocket-TTS reachable.",
+          visionServiceState: "ready",
+          visionServiceDetail: visionDetail,
+          modelState: "ready",
+          modelDetail: "vllm ready · sam3 ready · face ready · person ready",
+          sessionState: "ready",
+          sessionDetail: `Session ${document.getElementById("h-session").textContent || "--"} for ${document.getElementById("h-character").textContent || "character"}`,
+          phase: "runtime live",
+          summary: "Runtime is live. You can speak or type now.",
+          sub: "The runtime is live. Voice, vision, and models are all ready.",
+          bootReady: true,
+          bootBlocking: false,
+          bootToggleText: "Pause",
+          bootToggleDisabled: true,
+          bootToggleBackground: "var(--narrator)",
+          bootRestartText: "Restart Session",
+          bootRestartDisabled: true,
+        };
+      case "ready":
+      default:
+        return {
+          runtimeState: "ready",
+          runtimeDetail: archiveDetail,
+          voiceState: "ready",
+          voiceDetail: "Deepgram socket open. Pocket-TTS reachable.",
+          visionServiceState: "ready",
+          visionServiceDetail: visionDetail,
+          modelState: "ready",
+          modelDetail: "vllm ready · sam3 ready · face ready · person ready",
+          sessionState: "ready",
+          sessionDetail: "No active session. Hit Start to create a fresh one.",
+          phase: "ready to start",
+          summary: "Everything is warm. Start when you want to begin a fresh session.",
+          sub: "The runtime is ready. Use Start to create a session, Play to begin, or Pause/Stop once it is live.",
+          bootReady: true,
+          bootBlocking: false,
+          bootToggleText: "Start",
+          bootToggleDisabled: true,
+          bootToggleBackground: "var(--advance)",
+          bootRestartText: "Restart Session",
+          bootRestartDisabled: true,
+        };
+    }
+  }
+
   function activeOfflineFrameValue() {
     if (bootFixtureName) return bootFixtureName;
+    if (activeArchiveBootOverride()) return activeArchiveBootOverride();
     if (archiveBrowseRef || bootArchiveRef) return "real-archive";
     return archiveOnlyRuntime ? "archive-only" : "real-archive";
   }
@@ -2930,10 +3350,17 @@
     const url = new URL(window.location.href);
     url.searchParams.delete("fixture");
     url.searchParams.delete("archive");
+    url.searchParams.delete("boot");
     if (frameValue && frameValue !== "real-archive") {
-      url.searchParams.set("fixture", frameValue);
+      if (archiveRef && frameValue !== "archive-only") {
+        url.searchParams.set("boot", frameValue);
+      } else {
+        url.searchParams.set("fixture", frameValue);
+      }
     }
     if (archiveRef && (frameValue === "real-archive" || frameValue === "archive-only")) {
+      url.searchParams.set("archive", archiveRef);
+    } else if (archiveRef && frameValue && frameValue !== "archive-only") {
       url.searchParams.set("archive", archiveRef);
     }
     return url.toString();
@@ -3087,6 +3514,11 @@
     if (archiveBrowseRef) return archiveBrowseMeta?.title || archiveBrowseRef;
     if (historyState.current_session?.title) return historyState.current_session.title;
     return lastStoppedArchiveTitle || activeArchiveRef();
+  }
+
+  function currentArchiveTestUrl() {
+    if (!archiveBrowseRef && !bootArchiveRef) return window.location.href;
+    return offlineLabUrl(activeOfflineFrameValue(), preferredOfflineArchiveRef());
   }
 
   function stopButtonLabel() {
@@ -3529,6 +3961,11 @@
   function statusColor(status) {
     switch ((status || "").toLowerCase()) {
       case "ready": return "var(--advance)";
+      case "active": return "var(--cyan)";
+      case "live": return "var(--cyan)";
+      case "paused": return "var(--narrator)";
+      case "waiting": return "var(--narrator)";
+      case "warming": return "var(--narrator)";
       case "managed": return "var(--advance)";
       case "external": return "var(--cyan)";
       case "loading":
@@ -3699,56 +4136,89 @@
     return parts.join(" · ");
   }
 
+  function promptPreviewExcerpt(block) {
+    const sources = [];
+    if (block.output) sources.push(String(block.output));
+    if (block.rendered_prompt) sources.push(String(block.rendered_prompt));
+    if (Array.isArray(block.messages) && block.messages.length) {
+      const message = block.messages[block.messages.length - 1];
+      sources.push(String(message?.content || ""));
+    }
+    const text = sources.find((item) => item.trim()) || "";
+    const cleaned = text.replace(/\s+\n/g, "\n").trim();
+    if (!cleaned) return "No prompt text captured.";
+    return cleaned.length > 360 ? `${cleaned.slice(0, 360).trimEnd()}...` : cleaned;
+  }
+
+  function promptBlockDetailHtml(block) {
+    const parts = [];
+    if (block.inputs && block.inputs.length) {
+      parts.push(`<div class="prompt-subsection"><strong>Inputs</strong><div class="prompt-message-list">${
+        block.inputs.map((item) => `<div class="prompt-message role-input"><div class="prompt-message-role">input</div><div class="prompt-message-content">${esc(item)}</div></div>`).join("")
+      }</div></div>`);
+    }
+    if (block.messages && block.messages.length) {
+      parts.push(`<div class="prompt-subsection"><strong>Messages</strong><div class="prompt-message-list">${
+        block.messages.map((message) => `
+          <div class="prompt-message ${promptRoleClass(message.role)}">
+            <div class="prompt-message-role">${esc(message.role || "message")}</div>
+            <div class="prompt-message-content">${esc(message.content || "")}</div>
+          </div>`).join("")
+      }</div></div>`);
+    }
+    if (block.rendered_prompt) {
+      parts.push(`<div class="prompt-subsection"><strong>Rendered Prompt</strong><div class="prompt-message role-system"><div class="prompt-message-role">rendered</div><div class="prompt-message-content">${esc(block.rendered_prompt)}</div></div></div>`);
+    }
+    if (block.output) {
+      parts.push(`<div class="prompt-subsection"><strong>Output</strong><div class="prompt-message role-assistant"><div class="prompt-message-role">output</div><div class="prompt-message-content">${esc(block.output)}</div></div></div>`);
+    }
+    return `<section class="prompt-block">
+      <div class="prompt-head">
+        <div class="prompt-title">${esc(block.title || "Prompt")}</div>
+        ${promptMetaText(block) ? `<div class="prompt-meta">${esc(promptMetaText(block))}</div>` : ""}
+      </div>
+      ${parts.join("") || '<div class="detail-inline-empty">No full prompt body captured for this block.</div>'}
+    </section>`;
+  }
+
+  function setPromptModalOpen(open, block = null) {
+    promptModalOpen = !!open;
+    promptModal.classList.toggle("open", promptModalOpen);
+    promptModal.setAttribute("aria-hidden", promptModalOpen ? "false" : "true");
+    if (!promptModalOpen || !block) {
+      promptModalTitle.textContent = "Prompt Detail";
+      promptModalSubtitle.textContent = "Full prompt context for the selected event.";
+      promptModalBody.innerHTML = "";
+      return;
+    }
+    promptModalTitle.textContent = block.title || "Prompt Detail";
+    promptModalSubtitle.textContent = promptMetaText(block) || "Full prompt context for the selected event.";
+    promptModalBody.innerHTML = promptBlockDetailHtml(block);
+  }
+
   function renderPromptBlocks(blocks) {
     const root = document.getElementById("detail-prompts");
     root.innerHTML = "";
+    promptPreviewBlocks = Array.isArray(blocks) ? blocks.slice() : [];
     if (!blocks || !blocks.length) {
-      root.innerHTML = '<div style="color:var(--text-dim);">No prompt snapshot captured for this event.</div>';
-      return;
+      root.innerHTML = '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>';
+      root.parentElement?.classList.add("compact-empty");
+      return false;
     }
-    blocks.forEach((block) => {
-      const wrap = document.createElement("div");
-      wrap.className = "prompt-block";
-      const head = document.createElement("div");
-      head.className = "prompt-head";
-      head.innerHTML = `<div class="prompt-title">${esc(block.title || "Prompt")}</div>${
-        promptMetaText(block) ? `<div class="prompt-meta">${esc(promptMetaText(block))}</div>` : ""
-      }`;
-      wrap.appendChild(head);
-      if (block.inputs && block.inputs.length) {
-        const sec = document.createElement("div");
-        sec.className = "prompt-subsection";
-        sec.innerHTML = `<strong>Inputs</strong><div class="prompt-message-list">${
-          block.inputs.map((item) => `<div class="prompt-message role-input"><div class="prompt-message-role">input</div><div class="prompt-message-content">${esc(item)}</div></div>`).join("")
-        }</div>`;
-        wrap.appendChild(sec);
-      }
-      if (block.messages && block.messages.length) {
-        const sec = document.createElement("div");
-        sec.className = "prompt-subsection";
-        sec.innerHTML = `<strong>Messages</strong><div class="prompt-message-list">${
-          block.messages.map((message) => `
-            <div class="prompt-message ${promptRoleClass(message.role)}">
-              <div class="prompt-message-role">${esc(message.role || "message")}</div>
-              <div class="prompt-message-content">${esc(message.content || "")}</div>
-            </div>`).join("")
-        }</div>`;
-        wrap.appendChild(sec);
-      }
-      if (block.rendered_prompt) {
-        const sec = document.createElement("div");
-        sec.className = "prompt-subsection";
-        sec.innerHTML = `<strong>Rendered Prompt</strong><div class="prompt-message role-system"><div class="prompt-message-role">rendered</div><div class="prompt-message-content">${esc(block.rendered_prompt)}</div></div>`;
-        wrap.appendChild(sec);
-      }
-      if (block.output) {
-        const sec = document.createElement("div");
-        sec.className = "prompt-subsection";
-        sec.innerHTML = `<strong>Output</strong><div class="prompt-message role-assistant"><div class="prompt-message-role">output</div><div class="prompt-message-content">${esc(block.output)}</div></div>`;
-        wrap.appendChild(sec);
-      }
-      root.appendChild(wrap);
-    });
+    root.parentElement?.classList.remove("compact-empty");
+    root.innerHTML = blocks.map((block, index) => `
+      <section class="prompt-preview-card">
+        <div class="prompt-head">
+          <div class="prompt-title">${esc(block.title || "Prompt")}</div>
+          ${promptMetaText(block) ? `<div class="prompt-meta">${esc(promptMetaText(block))}</div>` : ""}
+        </div>
+        <div class="prompt-preview-excerpt">${esc(promptPreviewExcerpt(block))}</div>
+        <div class="prompt-preview-actions">
+          <button type="button" data-prompt-open="${index}">Open</button>
+        </div>
+      </section>
+    `).join("");
+    return true;
   }
 
   function clampNumber(value, min, max) {
@@ -3782,8 +4252,8 @@
   }
 
   function restoreLayoutWidths() {
-    let inspector = 320;
-    let sidebar = 280;
+    let inspector = 380;
+    let sidebar = 360;
     try {
       const storedInspector = parseFloat(localStorage.getItem(INSPECTOR_WIDTH_STORAGE_KEY) || "");
       const storedSidebar = parseFloat(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) || "");
@@ -4293,12 +4763,12 @@
     const overlaySubEl = document.getElementById("boot-overlay-sub");
     const overlayGridEl = document.getElementById("boot-overlay-grid");
     const now = Date.now();
-    const runtimeState = archiveBrowseRef
+    let runtimeState = archiveBrowseRef
       ? "ready"
       : archiveOnlyRuntime
         ? "ready"
       : (sessionSavePending ? "active" : (runtimeStateSeen ? (sessionStopped ? "ready" : (conversationPaused ? "ready" : "active")) : "waiting"));
-    const runtimeDetail = archiveBrowseRef
+    let runtimeDetail = archiveBrowseRef
       ? `Loaded archive ${archiveBrowseMeta?.title || archiveBrowseRef}. Use the header transport to play or scrub the recording, or Return To Live to go back.`
       : archiveOnlyRuntime
         ? (archiveOnlyReason || "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.")
@@ -4312,7 +4782,7 @@
           : "Runtime is live and accepting turns."))
       : "Waiting for the app to publish runtime controls."));
 
-    const voiceState = archiveOnlyRuntime
+    let voiceState = archiveOnlyRuntime
       ? "off"
       : runtimeStateSeen
       ? (
@@ -4322,7 +4792,7 @@
         : "ready"
       )
       : "waiting";
-    const voiceDetail = archiveOnlyRuntime
+    let voiceDetail = archiveOnlyRuntime
       ? "Archive-only mode does not start voice services."
       : runtimeStateSeen
       ? (
@@ -4391,8 +4861,8 @@
       modelState = allReady ? "ready" : (anyLoading ? "active" : "waiting");
     }
 
-    const sessionState = archiveBrowseRef ? "ready" : (sessionSavePending ? "active" : (sessionStopped ? "ready" : (sessionSeen ? "ready" : (restartPending ? "active" : "waiting"))));
-    const sessionDetail = archiveBrowseRef
+    let sessionState = archiveBrowseRef ? "ready" : (sessionSavePending ? "active" : (sessionStopped ? "ready" : (sessionSeen ? "ready" : (restartPending ? "active" : "waiting"))));
+    let sessionDetail = archiveBrowseRef
       ? `Browsing archive ${archiveBrowseMeta?.title || archiveBrowseRef}`
       : (sessionSavePending
       ? `Saving ${lastStoppedArchiveTitle || document.getElementById("h-session").textContent || "current session"}`
@@ -4402,20 +4872,16 @@
         ? "No active session. Hit Start to create a fresh one."
         : (restartPending ? "Waiting for the fresh session to attach." : "Waiting for session start."))));
 
-    const phase = bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState);
+    let phase = bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState);
     const lastEventText = lastEventAt ? `last event ${formatAge(now - lastEventAt)} ago` : "waiting for first event";
-    const heartbeatText = `${sseConnected ? "stream live" : "polling"} · ${phase} · page ${formatAge(now - pageLoadedAt)} · ${lastEventText}`;
-    heartbeatEl.textContent = heartbeatText;
-    overlayHeartbeatEl.textContent = heartbeatText;
-
-    const modelReady = modelState === "ready" || modelState === "off";
-    const voiceReady = voiceState === "ready" || voiceState === "off";
-    const visionReady = visionServiceState === "ready" || visionServiceState === "off";
-    const bootReady = archiveOnlyRuntime
+    let modelReady = modelState === "ready" || modelState === "off";
+    let voiceReady = voiceState === "ready" || voiceState === "off";
+    let visionReady = visionServiceState === "ready" || visionServiceState === "off";
+    let bootReady = archiveOnlyRuntime
       ? runtimeStateSeen
       : runtimeStateSeen && (sessionSavePending || sessionStopped || sessionSeen || restartPending) && visionReady && voiceReady && modelReady && !modelPollError;
 
-    const summary =
+    let summary =
       !runtimeStateSeen ? "Connecting to the local runtime... waiting for app runtime controls." :
       restartPending ? "Restarting conversation..." :
       archiveBrowseRef ? `Loaded archive ${archiveBrowseMeta?.title || archiveBrowseRef}. Use the transport to inspect the recording.` :
@@ -4436,19 +4902,47 @@
       !sessionSavePending &&
       !restartPending &&
       !pendingPauseState;
-    const bootBlocking = !bootReady && (!controlsInteractive || statePollingSuspended);
-    document.body.classList.toggle("booting", !bootReady);
-    document.body.classList.toggle("boot-blocking", bootBlocking);
-
-    summaryEl.textContent = summary;
-    overlaySummaryEl.textContent = summary;
-    overlaySubEl.textContent = archiveOnlyRuntime
+    let bootBlocking = !bootReady && (!controlsInteractive || statePollingSuspended);
+    let overlaySub = archiveOnlyRuntime
       ? "This runtime is intentionally skipping voice, vision, and model startup. Use Load Archive to browse recordings; switch back to the regular hot path for live sessions."
       : statePollingSuspended
       ? "The dashboard lost its connection to the local runtime. Restart the app if needed, then refresh this page."
       : !bootReady
         ? `Current step: ${phase}. Heavy services may already be warm; this page unlocks once the app layer publishes runtime, session, voice, and model state.`
         : "The runtime is ready. Use Start to create a session, Play to begin, or Pause/Stop once it is live.";
+
+    const archiveBootOverride = activeArchiveBootOverride();
+    if (archiveBootOverride) {
+      const override = archiveBootOverrideState(archiveBootOverride);
+      runtimeState = override.runtimeState;
+      runtimeDetail = override.runtimeDetail;
+      voiceState = override.voiceState;
+      voiceDetail = override.voiceDetail;
+      visionServiceState = override.visionServiceState;
+      visionServiceDetail = override.visionServiceDetail;
+      modelState = override.modelState;
+      modelDetail = override.modelDetail;
+      sessionState = override.sessionState;
+      sessionDetail = override.sessionDetail;
+      phase = override.phase;
+      modelReady = modelState === "ready" || modelState === "off";
+      voiceReady = voiceState === "ready" || voiceState === "off";
+      visionReady = visionServiceState === "ready" || visionServiceState === "off";
+      bootReady = override.bootReady;
+      summary = override.summary;
+      overlaySub = override.sub;
+      bootBlocking = override.bootBlocking;
+    }
+    const heartbeatText = `${sseConnected ? "stream live" : "polling"} · ${phase} · page ${formatAge(now - pageLoadedAt)} · ${lastEventText}`;
+    heartbeatEl.textContent = heartbeatText;
+    overlayHeartbeatEl.textContent = heartbeatText;
+    document.body.classList.toggle("booting", !bootReady);
+    document.body.classList.toggle("boot-blocking", bootBlocking);
+    bootPanel.style.display = bootReady ? "none" : "";
+
+    summaryEl.textContent = summary;
+    overlaySummaryEl.textContent = summary;
+    overlaySubEl.textContent = overlaySub;
     const cardHtml = [
       bootChip("dashboard", sseConnected ? "ready" : "active", sseConnected ? "Live event stream connected." : "Polling and waiting for server-side events."),
       bootChip("session", sessionState, sessionDetail),
@@ -4459,9 +4953,167 @@
     ].join("");
     gridEl.innerHTML = cardHtml;
     overlayGridEl.innerHTML = cardHtml;
+    renderUxSpoofBanner();
+  }
+
+  function runtimeSummaryCard(label, state, detail) {
+    return `<div class="runtime-summary-card" title="${esc(detail || label)}">
+      <div class="runtime-summary-head">
+        <span class="runtime-summary-title">${esc(label)}</span>
+        <span class="runtime-summary-state" style="color:${statusColor(state)}">${esc(state || "off")}</span>
+      </div>
+      <div class="runtime-summary-detail">${esc(detail || "")}</div>
+    </div>`;
+  }
+
+  function renderRuntimeSummaryPanel(data = latestRuntimePayload) {
+    const archiveBootOverride = activeArchiveBootOverride();
+    if (archiveBootOverride) {
+      const override = archiveBootOverrideState(archiveBootOverride);
+      runtimeSummaryGrid.innerHTML = [
+        runtimeSummaryCard("Runtime", override.runtimeState, override.runtimeDetail),
+        runtimeSummaryCard("Voice", override.voiceState, override.voiceDetail),
+        runtimeSummaryCard("Vision", override.visionServiceState, override.visionServiceDetail),
+        runtimeSummaryCard("Models", override.modelState, override.modelDetail),
+      ].join("");
+      return;
+    }
+    if (!data) {
+      runtimeSummaryGrid.innerHTML = [
+        runtimeSummaryCard("Runtime", "waiting", "Waiting for runtime state."),
+        runtimeSummaryCard("Voice", "off", "Voice inactive."),
+        runtimeSummaryCard("Vision", "off", "Vision service inactive."),
+        runtimeSummaryCard("Models", "off", "Waiting for model status."),
+      ].join("");
+      return;
+    }
+    const runtimeState = data.session_state || (data.conversation_paused ? "paused" : "live");
+    const runtimeDetail = archiveOnlyRuntime
+      ? (archiveOnlyReason || "Archive inspection mode.")
+      : (data.conversation_paused ? "Conversation paused." : "Runtime is accepting turns.");
+    const voiceStateValue = voiceStatus.active ? (voiceStatus.stt?.state || "ready") : "off";
+    const voiceDetailValue = voiceStatus.active
+      ? [voiceStatus.stt?.detail, voiceStatus.tts?.detail].filter(Boolean).join(" ")
+      : "Voice inactive.";
+    const visionStateValue = archiveBrowseRef ? "ready" : (visionService.state || (visionService.health ? "ready" : "off"));
+    const visionDetailValue = archiveBrowseRef
+      ? "Archive media is loaded."
+      : (currentVisionSourceKind() || "Vision service inactive.");
+    const modelsStateValue = modelPollError ? "error" : (archiveBrowseRef ? "ready" : (visionModels?.error ? "error" : (visionModels ? "ready" : "waiting")));
+    const modelsDetailValue = archiveBrowseRef
+      ? "Archive browsing uses recorded media."
+      : (visionModels?.error || [
+        visionModels?.vllm_model ? `vLLM ${visionModels.vllm_model}` : "",
+        visionMemory?.gpu ? `${visionMemory.gpu.allocated_mb}MB / ${visionMemory.gpu.total_mb}MB GPU` : "",
+      ].filter(Boolean).join(" · ") || "Waiting for model status.");
+    runtimeSummaryGrid.innerHTML = [
+      runtimeSummaryCard("Runtime", runtimeState, runtimeDetail),
+      runtimeSummaryCard("Voice", voiceStateValue, voiceDetailValue),
+      runtimeSummaryCard("Vision", visionStateValue, visionDetailValue),
+      runtimeSummaryCard("Models", modelsStateValue, modelsDetailValue),
+    ].join("");
+  }
+
+  function renderRuntimeStatusPanel(data = latestRuntimePayload) {
+    const status = document.getElementById("runtime-status");
+    renderRuntimeSummaryPanel(data);
+    const archiveBootOverride = activeArchiveBootOverride();
+    if (archiveBootOverride) {
+      const override = archiveBootOverrideState(archiveBootOverride);
+      const isLive = archiveBootOverride === "live";
+      const isPaused = archiveBootOverride === "paused" || archiveBootOverride === "startup-paused";
+      const stateLabel = archiveBootOverride === "loading"
+        ? "waiting"
+        : (isLive ? "live" : (isPaused ? "paused" : "ready"));
+      status.innerHTML = [
+        `state: <b>${esc(stateLabel)}</b>`,
+        `mode: <b>live</b>`,
+        `auto-beat: <b>${runtimeControls.auto_beat ? "on" : "off"}</b>`,
+        `filler: <b>${runtimeControls.filler ? "on" : "off"}</b>`,
+        `guardrails: <b>${runtimeControls.guardrails ? "on" : "off"}</b>`,
+        `thinker: <b>${runtimeControls.thinker ? "on" : "off"}</b>`,
+        `director: <b>${runtimeControls.director ? "on" : "off"}</b>`,
+        `expression: <b>${runtimeControls.expression ? "on" : "off"}</b>`,
+        `guidance: <b>${runtimeControls.beat_guidance ? "on" : "off"}</b>`,
+        `voice: <b>${archiveBootOverride === "loading" ? "warming" : "on"}</b>`,
+        `stt: <b style="color:${statusColor(archiveBootOverride === "loading" ? "waiting" : "ready")}">${esc(archiveBootOverride === "loading" ? "waiting" : "ready")}</b>`,
+        `tts: <b style="color:${statusColor(archiveBootOverride === "loading" ? "waiting" : "ready")}">${esc(archiveBootOverride === "loading" ? "waiting" : "ready")}</b>`,
+        `vision manager: <b>${archiveBootOverride === "loading" ? "warming" : "on"}</b>`,
+        `reconcile thread: <b>${isLive ? "running" : "idle"}</b>`,
+        `media path: <b>full local</b>`,
+      ].join("<br>");
+      return;
+    }
+    if (!data) {
+      status.innerHTML = "Waiting for runtime state...";
+      return;
+    }
+    const transportBits = [];
+    if ((transportStatus.mode || "local") === "remote_hot_webrtc") {
+      const video = transportStatus.video || {};
+      const audio = transportStatus.audio || {};
+      const webrtc = transportStatus.webrtc || {};
+      transportBits.push(`media path: <b>local app + LiveKit media</b>`);
+      if (webrtc.roomName) transportBits.push(`room: <b>${esc(String(webrtc.roomName))}</b>`);
+      if (Object.keys(video).length) {
+        const frameKb = video.last_frame_bytes ? `${Math.round(Number(video.last_frame_bytes) / 1024)}KB` : "";
+        transportBits.push(`camera ingress: <b>${esc(String(video.video_frames_sent ?? video.video_frames_in ?? "--"))}</b> frames${frameKb ? ` · <b>${esc(frameKb)}</b>` : ""}`);
+      } else {
+        transportBits.push(`camera ingress: <b style="color:${statusColor("waiting")}">waiting</b>`);
+      }
+      if (Object.keys(audio).length) {
+        transportBits.push(`audio transport: <b>${esc(String(audio.audio_frames_in ?? "--"))}</b> in · <b>${esc(String(audio.audio_frames_out ?? "--"))}</b> out`);
+      } else {
+        transportBits.push(`audio transport: <b style="color:${statusColor("waiting")}">waiting</b>`);
+      }
+    } else {
+      transportBits.push(`media path: <b>full local</b>`);
+    }
+    status.innerHTML = [
+      `state: <b>${esc(data.session_state || (data.conversation_paused ? "paused" : "live"))}</b>`,
+      `mode: <b>${archiveOnlyRuntime ? "archive only" : "live"}</b>`,
+      `auto-beat: <b>${runtimeControls.auto_beat ? "on" : "off"}</b>`,
+      `filler: <b>${runtimeControls.filler ? "on" : "off"}</b>`,
+      `guardrails: <b>${runtimeControls.guardrails ? "on" : "off"}</b>`,
+      `thinker: <b>${runtimeControls.thinker ? "on" : "off"}</b>`,
+      `director: <b>${runtimeControls.director ? "on" : "off"}</b>`,
+      `expression: <b>${runtimeControls.expression ? "on" : "off"}</b>`,
+      `guidance: <b>${runtimeControls.beat_guidance ? "on" : "off"}</b>`,
+      `voice: <b>${data.voice_active ? "on" : "off"}</b>`,
+      `stt: <b style="color:${statusColor(voiceStatus.stt?.state || "off")}">${esc(voiceStatus.stt?.state || "off")}</b>`,
+      `tts: <b style="color:${statusColor(voiceStatus.tts?.state || "off")}">${esc(voiceStatus.tts?.state || "off")}</b>`,
+      `vision manager: <b>${data.vision_active ? "on" : "off"}</b>`,
+      `reconcile thread: <b>${data.reconcile_thread_alive ? "running" : "idle"}</b>`,
+      ...transportBits,
+    ].join("<br>");
   }
 
   function updateRuntimeButtons() {
+    const archiveBootOverride = activeArchiveBootOverride();
+    if (archiveBootOverride) {
+      const override = archiveBootOverrideState(archiveBootOverride);
+      runtimeToggleButton.textContent = override.bootToggleText;
+      runtimeToggleButton.disabled = override.bootToggleDisabled;
+      runtimeToggleButton.style.opacity = override.bootToggleDisabled ? "0.6" : "1";
+      runtimeToggleButton.style.background = override.bootToggleBackground;
+      runtimeToggleButton.style.color = "var(--bg)";
+      runtimeStopButton.textContent = stopButtonLabel();
+      runtimeStopButton.disabled = true;
+      runtimeStopButton.style.opacity = "0.6";
+      runtimeStopButton.title = "Archive UX mode is visual-only. Open the saved archive URL to keep reviewing the same state.";
+      runtimeRestartButton.textContent = override.bootRestartText;
+      runtimeRestartButton.disabled = override.bootRestartDisabled;
+      runtimeRestartButton.style.opacity = override.bootRestartDisabled ? "0.6" : "1";
+      bootRuntimeToggleButton.textContent = override.bootToggleText;
+      bootRuntimeToggleButton.disabled = override.bootToggleDisabled;
+      bootRuntimeToggleButton.style.opacity = override.bootToggleDisabled ? "0.6" : "1";
+      bootRuntimeToggleButton.style.background = override.bootToggleBackground;
+      bootRuntimeToggleButton.style.color = "var(--bg)";
+      bootRestartButton.textContent = override.bootRestartText;
+      bootRestartButton.disabled = override.bootRestartDisabled;
+      bootRestartButton.style.opacity = override.bootRestartDisabled ? "0.6" : "1";
+      return;
+    }
     if (sessionSavePending) {
       runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Play" : "Pause");
       runtimeToggleButton.disabled = true;
@@ -4631,13 +5283,15 @@
     archiveMediaDuration = 0;
     setArchiveMediaStatus("");
     clearAnnotationState();
+    setPromptModalOpen(false);
     document.getElementById("h-session").textContent = "--";
     document.getElementById("h-stage").textContent = "--";
     resetSidebarPanelContentAll();
     document.getElementById("detail-label").textContent = "Select a debug timeline event to inspect it.";
     document.getElementById("detail-detail").textContent = "The stream view groups interwoven activity by lane and highlights all events from the same turn when selected.";
     document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Raw event JSON appears here for the selected item.\"\n}";
-    document.getElementById("detail-prompts").innerHTML = '<div style="color:var(--text-dim);">No prompt snapshot captured for this event.</div>';
+    document.getElementById("detail-prompts").innerHTML = '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>';
+    document.getElementById("detail-prompts-pane").classList.add("compact-empty");
     document.getElementById("detail-related").innerHTML = '<div style="color:var(--text-dim);">No event selected.</div>';
     document.getElementById("detail-loop").classList.remove("active");
     document.getElementById("detail-loop-track").innerHTML = "";
@@ -4651,6 +5305,14 @@
     detailOpenJsonButton.disabled = true;
     detailWarning.style.display = "none";
     detailWarning.textContent = "";
+    detailFramePanel.style.display = "none";
+    detailFrameImage.style.display = "none";
+    detailFrameImage.removeAttribute("src");
+    detailFrameMeta.textContent = "";
+    detailFrameOpen.style.display = "none";
+    detailFrameOpen.href = "#";
+    detailFrameEmpty.style.display = "";
+    detailFrameEmpty.textContent = "Select an archived vision event to inspect its nearest captured frame.";
     document.getElementById("boot-summary").textContent = message;
     document.getElementById("boot-overlay-summary").textContent = message;
     setDetailTab(activeDetailTab);
@@ -4696,6 +5358,7 @@
     archiveMediaDuration = 0;
     setArchiveMediaStatus("");
     clearAnnotationState();
+    setPromptModalOpen(false);
     conversationPaused = true;
     voiceActive = false;
     voiceStatus = {
@@ -4729,7 +5392,8 @@
     document.getElementById("detail-label").textContent = "Select a debug timeline event to inspect it.";
     document.getElementById("detail-detail").textContent = "The stream view groups interwoven activity by lane and highlights all events from the same turn when selected.";
     document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Raw event JSON appears here for the selected item.\"\n}";
-    document.getElementById("detail-prompts").innerHTML = '<div style="color:var(--text-dim);">No prompt snapshot captured for this event.</div>';
+    document.getElementById("detail-prompts").innerHTML = '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>';
+    document.getElementById("detail-prompts-pane").classList.add("compact-empty");
     document.getElementById("detail-related").innerHTML = '<div style="color:var(--text-dim);">No event selected.</div>';
     document.getElementById("detail-loop").classList.remove("active");
     document.getElementById("detail-loop-track").innerHTML = "";
@@ -4743,6 +5407,14 @@
     detailOpenJsonButton.disabled = true;
     detailWarning.style.display = "none";
     detailWarning.textContent = "";
+    detailFramePanel.style.display = "none";
+    detailFrameImage.style.display = "none";
+    detailFrameImage.removeAttribute("src");
+    detailFrameMeta.textContent = "";
+    detailFrameOpen.style.display = "none";
+    detailFrameOpen.href = "#";
+    detailFrameEmpty.style.display = "";
+    detailFrameEmpty.textContent = "Select an archived vision event to inspect its nearest captured frame.";
     setDetailTab(activeDetailTab);
     renderVisionServiceStatus();
     document.getElementById("boot-summary").textContent = message;
@@ -4826,6 +5498,24 @@
   function renderVisionServiceStatus() {
     const statusEl = document.getElementById("vision-service-status");
     const linkEl = document.getElementById("vision-service-link");
+    const archiveBootOverride = activeArchiveBootOverride();
+    if (archiveBootOverride) {
+      const serviceUrl = visionService.url || "http://127.0.0.1:7875";
+      setSidebarPanelVisibility("vision", true, "ready");
+      statusEl.innerHTML = [
+        `service: <b style="color:${statusColor("ready")}">ready</b>`,
+        `health: <b style="color:${statusColor("ready")}">ok</b>`,
+        `source: <b>managed by app</b>`,
+        `url: <b>${esc(serviceUrl)}</b>`,
+        visionService.mockReplay ? `mock: <b>${esc(visionService.mockReplay)}</b>` : "",
+      ].filter(Boolean).join("<br>");
+      linkEl.href = serviceUrl;
+      linkEl.style.pointerEvents = "auto";
+      linkEl.style.opacity = "1";
+      updateVisionFeedUrl();
+      renderBootStatus();
+      return;
+    }
     const source = currentVisionSourceKind();
     const missingVisionSource = !source;
     const health = missingVisionSource ? "missing source" : (modelPollError ? "unreachable" : (visionService.health ? "ok" : "unknown"));
@@ -4860,6 +5550,16 @@
 
   function renderVisionModelStatus() {
     const el = document.getElementById("vision-model-status");
+    if (activeArchiveBootOverride()) {
+      el.innerHTML = [
+        renderVisionModelCard("vLLM", "ready", "Weights loaded."),
+        renderVisionModelCard("SAM3", "ready", "Detector warm."),
+        renderVisionModelCard("InsightFace", "ready", "Face model warm."),
+        renderVisionModelCard("ReID", "ready", "Identity model warm."),
+      ].join("");
+      renderVisionServiceStatus();
+      return;
+    }
     if (archiveOnlyRuntime || archiveBrowseRef) {
       el.innerHTML = '<div style="color:var(--text-dim);font-size:0.85em;">Archive browsing does not poll live vision models.</div>';
       renderVisionServiceStatus();
@@ -5373,7 +6073,55 @@
   function defaultSnippetTags(mode) {
     if (mode === "barge_in_turn") return "barge-in";
     if (mode === "vision_state_turn") return "vision-state";
+    if (mode === "vision_full_stack") return "vision";
+    if (mode === "vision_synthesis_inputs") return "vision-synthesis";
     return "";
+  }
+
+  function snippetSpecForEvent(event) {
+    if (!event || event.debugOnly) return null;
+    const mode = defaultSnippetModeForEvent(event);
+    if (mode === "barge_in_turn") {
+      return {
+        mode,
+        buttonLabel: "Capture Interrupt Snippet",
+        formTitle: "Interrupt Snippet",
+        description: "Captures the interruption timing, transcript, and assistant speech context around this event.",
+      };
+    }
+    if (mode === "vision_state_turn") {
+      return {
+        mode,
+        buttonLabel: "Capture Vision State Snippet",
+        formTitle: "Vision State Snippet",
+        description: "Captures the interpreted vision state update and the task answers that produced it.",
+      };
+    }
+    if (mode === "vision_synthesis_inputs") {
+      return {
+        mode,
+        buttonLabel: "Capture Vision Context Snippet",
+        formTitle: "Vision Context Snippet",
+        description: "Captures the synthesis inputs used to produce this higher-level visual understanding.",
+      };
+    }
+    if (mode === "vision_full_stack") {
+      return {
+        mode,
+        buttonLabel: "Capture Vision Full Stack",
+        formTitle: "Vision Full Stack Snippet",
+        description: "Captures the nearest archived frame plus the raw detections and trace data tied to this visual event.",
+      };
+    }
+    if (["turn_start", "user_transcript_final", "assistant_reply", "post_response"].includes(event.type)) {
+      return {
+        mode: "turn_context",
+        buttonLabel: "Capture Turn Snippet",
+        formTitle: "Turn Snippet",
+        description: "Captures the selected turn with nearby conversation context for replay and debugging.",
+      };
+    }
+    return null;
   }
 
   function visionStateInputsForEvent(event, bundle) {
@@ -5464,12 +6212,28 @@
   function setSnippetFormOpen(open) {
     snippetFormOpen = !!open;
     snippetForm.style.display = snippetFormOpen ? "" : "none";
-    snippetToggleButton.textContent = snippetFormOpen ? "Close Snippet Form" : "Capture As Snippet";
+    const spec = snippetSpecForEvent(selectedEvent());
+    snippetToggleButton.textContent = snippetFormOpen ? "Close Snippet Form" : (spec?.buttonLabel || "Capture Snippet");
     if (!snippetFormOpen) {
       snippetTitleInput.value = "";
       snippetTagsInput.value = "";
       snippetModeSelect.value = "turn_context";
+      snippetKindEl.innerHTML = "";
     }
+  }
+
+  function applySnippetUiForEvent(event) {
+    const spec = snippetSpecForEvent(event);
+    const visible = !!spec;
+    snippetToggleButton.style.display = visible ? "" : "none";
+    snippetToggleButton.disabled = !visible;
+    snippetToggleButton.textContent = snippetFormOpen ? "Close Snippet Form" : (spec?.buttonLabel || "Capture Snippet");
+    if (!visible) {
+      setSnippetFormOpen(false);
+      return;
+    }
+    snippetModeSelect.value = spec.mode;
+    snippetKindEl.innerHTML = `<strong>${esc(spec.formTitle)}</strong><div style="margin-top:0.18em;">${esc(spec.description)}</div>`;
   }
 
   async function visionInputsForEvent(event) {
@@ -5526,7 +6290,8 @@
     annotationForm.style.display = "none";
     snippetForm.style.display = "none";
     annotationToggleButton.textContent = "Annotate Event";
-    snippetToggleButton.textContent = "Capture As Snippet";
+    snippetToggleButton.textContent = "Capture Snippet";
+    snippetToggleButton.style.display = "none";
     annotationTagsInput.value = "";
     annotationSubsystemInput.value = "";
     annotationNoteInput.value = "";
@@ -5534,6 +6299,7 @@
     snippetTitleInput.value = "";
     snippetTagsInput.value = "";
     snippetModeSelect.value = "turn_context";
+    snippetKindEl.innerHTML = "";
     annotationList.innerHTML = '<div style="color:var(--text-dim);">Select a debug timeline event to inspect or annotate it.</div>';
   }
 
@@ -5577,7 +6343,7 @@
   function renderSelectedEventAnnotations() {
     const event = selectedEvent();
     annotationToggleButton.disabled = !event;
-    snippetToggleButton.disabled = !event || !!event?.debugOnly;
+    applySnippetUiForEvent(event);
     if (!event) {
       annotationList.innerHTML = '<div style="color:var(--text-dim);">Select a debug timeline event to inspect or annotate it.</div>';
       return;
@@ -5588,6 +6354,48 @@
       return;
     }
     annotationList.innerHTML = entries.map(annotationSummaryHtml).join("");
+  }
+
+  function isInspectableVisionRawEvent(event) {
+    return !!event && ["vision_snapshot_read", "face_tracking", "sam3_detection", "reid_track", "vlm_answer", "vision_trigger", "vision_state_update"].includes(event.type);
+  }
+
+  async function renderInspectorFrame(event) {
+    inspectorFrameRequestId += 1;
+    const requestId = inspectorFrameRequestId;
+    detailFramePanel.style.display = "none";
+    detailFrameImage.style.display = "none";
+    detailFrameImage.removeAttribute("src");
+    detailFrameEmpty.style.display = "";
+    detailFrameMeta.textContent = "";
+    detailFrameOpen.style.display = "none";
+    detailFrameOpen.href = "#";
+    if (!isInspectableVisionRawEvent(event) || !archiveBrowseRef) return;
+    detailFramePanel.style.display = "";
+    detailFrameEmpty.textContent = "Looking up the nearest archived frame for this event...";
+    const eventTimeS = Number(relativeTime(event.timestamp).toFixed(3));
+    const sessionId = activeArchiveSessionId();
+    const imageUrl = `/history/frame?session_id=${encodeURIComponent(sessionId)}&event_time_s=${encodeURIComponent(String(eventTimeS))}&raw=1&_=${encodeURIComponent(selectedStreamKey || String(eventTimeS))}`;
+    try {
+      const response = await fetch(`/history/frame?session_id=${encodeURIComponent(sessionId)}&event_time_s=${encodeURIComponent(String(eventTimeS))}`);
+      const payload = await response.json();
+      if (requestId !== inspectorFrameRequestId) return;
+      const frame = payload?.frame || null;
+      if (!frame || (!frame.path && frame.frame_timestamp == null && frame.timestamp == null)) {
+        detailFrameEmpty.textContent = "No archived frame was captured near this event.";
+        return;
+      }
+      const nearestTime = Number(frame.event_time_s ?? frame.frame_time_s ?? eventTimeS);
+      detailFrameImage.src = imageUrl;
+      detailFrameImage.style.display = "";
+      detailFrameEmpty.style.display = "none";
+      detailFrameMeta.textContent = `Nearest archived frame at +${nearestTime.toFixed(2)}s${frame.timestamp_iso ? ` · ${frame.timestamp_iso}` : ""}`;
+      detailFrameOpen.href = imageUrl;
+      detailFrameOpen.style.display = "";
+    } catch (_) {
+      if (requestId !== inspectorFrameRequestId) return;
+      detailFrameEmpty.textContent = "Nearest archived frame lookup failed.";
+    }
   }
 
   function renderAnnotationBadge(event) {
@@ -5771,8 +6579,9 @@
       annotationStatus.textContent = "Select a debug timeline event before capturing a snippet.";
       return;
     }
-    if (event.debugOnly) {
-      annotationStatus.textContent = "This event is on the debug-only path after rewind, so it cannot become a replayable snippet.";
+    const spec = snippetSpecForEvent(event);
+    if (!spec) {
+      annotationStatus.textContent = "This event does not support snippet capture.";
       return;
     }
     snippetSaveButton.disabled = true;
@@ -5780,7 +6589,7 @@
     try {
       const bundle = selectedEventBundle(event) || {};
       bundle.vision_inputs = await visionInputsForEvent(event);
-      bundle.capture_mode = snippetModeSelect.value || defaultSnippetModeForEvent(event);
+      bundle.capture_mode = spec.mode;
       if (bundle.capture_mode === "barge_in_turn") {
         bundle.barge_in = bargeInInputsForEvent(event, bundle);
       } else if (bundle.capture_mode === "vision_state_turn") {
@@ -6362,6 +7171,8 @@
     renderSourceTrace(event);
     renderStructuredDetail(event);
     renderSelectedEventAnnotations();
+    renderInspectorFrame(event);
+    setDetailTab("payload");
 
     const related = relatedKeysFor(event);
     const relatedEl = document.getElementById("detail-related");
@@ -7193,7 +8004,7 @@
     },
 
     vision_snapshot(data, rawEvent) {
-      if (conversationPaused) return;
+      if (conversationPaused && !rawEvent.archive) return;
       let html = "";
       if (data.faces !== undefined) html += `Faces: ${data.faces} `;
       if (data.persons !== undefined) html += `People: ${data.persons} `;
@@ -7207,6 +8018,13 @@
       renderSidebarPanelContent("vision", html, {status: "ready", visible: true});
       rawEvent.turnId = currentTurnId || null;
       recordEvent("vision_snapshot", data, rawEvent);
+      renderStream();
+    },
+
+    vision_pass(data, rawEvent) {
+      if (conversationPaused && !rawEvent.archive) return;
+      rawEvent.turnId = currentTurnId || null;
+      recordEvent("vision_pass", data, rawEvent);
       renderStream();
     },
 
@@ -7394,6 +8212,7 @@
       voiceActive = !!data.voice_active;
       voiceStatus = data.voice_status || voiceStatus;
       transportStatus = data.transport || transportStatus;
+      latestRuntimePayload = data;
       visionManagerActive = !!data.vision_active;
       visionService = {
         url: data.vision_service_url || "",
@@ -7406,47 +8225,7 @@
         mockReplay: data.vision_mock_replay || ""
       };
       maybeInitLiveKitPanel();
-      const transportBits = [];
-      if ((transportStatus.mode || "local") === "remote_hot_webrtc") {
-        const video = transportStatus.video || {};
-        const audio = transportStatus.audio || {};
-        const webrtc = transportStatus.webrtc || {};
-        transportBits.push(`media path: <b>local app + LiveKit media</b>`);
-        if (webrtc.roomName) {
-          transportBits.push(`room: <b>${esc(String(webrtc.roomName))}</b>`);
-        }
-        if (Object.keys(video).length) {
-          const frameKb = video.last_frame_bytes ? `${Math.round(Number(video.last_frame_bytes) / 1024)}KB` : "";
-          transportBits.push(`camera ingress: <b>${esc(String(video.video_frames_sent ?? video.video_frames_in ?? "--"))}</b> frames${frameKb ? ` · <b>${esc(frameKb)}</b>` : ""}`);
-        } else {
-          transportBits.push(`camera ingress: <b style="color:${statusColor("waiting")}">waiting</b>`);
-        }
-        if (Object.keys(audio).length) {
-          transportBits.push(`audio transport: <b>${esc(String(audio.audio_frames_in ?? "--"))}</b> in · <b>${esc(String(audio.audio_frames_out ?? "--"))}</b> out`);
-        } else {
-          transportBits.push(`audio transport: <b style="color:${statusColor("waiting")}">waiting</b>`);
-        }
-      } else {
-        transportBits.push(`media path: <b>full local</b>`);
-      }
-      const status = document.getElementById("runtime-status");
-      status.innerHTML = [
-        `state: <b>${esc(data.session_state || (data.conversation_paused ? "paused" : "live"))}</b>`,
-        `mode: <b>${archiveOnlyRuntime ? "archive only" : "live"}</b>`,
-        `auto-beat: <b>${runtimeControls.auto_beat ? "on" : "off"}</b>`,
-        `filler: <b>${runtimeControls.filler ? "on" : "off"}</b>`,
-        `guardrails: <b>${runtimeControls.guardrails ? "on" : "off"}</b>`,
-        `thinker: <b>${runtimeControls.thinker ? "on" : "off"}</b>`,
-        `director: <b>${runtimeControls.director ? "on" : "off"}</b>`,
-        `expression: <b>${runtimeControls.expression ? "on" : "off"}</b>`,
-        `guidance: <b>${runtimeControls.beat_guidance ? "on" : "off"}</b>`,
-        `voice: <b>${data.voice_active ? "on" : "off"}</b>`,
-        `stt: <b style="color:${statusColor(voiceStatus.stt?.state || "off")}">${esc(voiceStatus.stt?.state || "off")}</b>`,
-        `tts: <b style="color:${statusColor(voiceStatus.tts?.state || "off")}">${esc(voiceStatus.tts?.state || "off")}</b>`,
-        `vision manager: <b>${data.vision_active ? "on" : "off"}</b>`,
-        `reconcile thread: <b>${data.reconcile_thread_alive ? "running" : "idle"}</b>`,
-        ...transportBits,
-      ].join("<br>");
+      renderRuntimeStatusPanel(data);
       renderArchivePicker();
       renderOfflineLab();
       renderRuntimeControlButtons();
@@ -7751,19 +8530,42 @@
   });
   annotationSaveButton.addEventListener("click", saveSelectedAnnotation);
   annotationCancelButton.addEventListener("click", () => setAnnotationFormOpen(false));
+  document.getElementById("detail-prompts").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-prompt-open]");
+    if (!button) return;
+    const index = Number(button.getAttribute("data-prompt-open"));
+    const block = promptPreviewBlocks[index];
+    if (!block) return;
+    setPromptModalOpen(true, block);
+  });
+  promptModalCloseButton.addEventListener("click", () => setPromptModalOpen(false));
+  promptModal.addEventListener("click", (event) => {
+    if (event.target === promptModal) setPromptModalOpen(false);
+  });
+  uxSpoofCopyUrlButton.addEventListener("click", async () => {
+    const targetUrl = currentArchiveTestUrl();
+    const copied = await copyText(targetUrl);
+    if (copied) {
+      archiveLoadStatus.textContent = "Copied canonical archive test URL.";
+    } else {
+      archiveLoadStatus.textContent = targetUrl;
+    }
+  });
   snippetToggleButton.addEventListener("click", () => {
     const event = selectedEvent();
     if (!event) {
       annotationStatus.textContent = "Select a debug timeline event before capturing a snippet.";
       return;
     }
-    if (event.debugOnly) {
-      annotationStatus.textContent = "This event is on the debug-only post-rewind path, so it cannot become a replayable snippet.";
+    const spec = snippetSpecForEvent(event);
+    if (!spec) {
+      annotationStatus.textContent = "This event does not support snippet capture.";
       return;
     }
-    snippetModeSelect.value = defaultSnippetModeForEvent(event);
-    snippetTitleInput.value = event.label || event.type || "snippet";
-    snippetTagsInput.value = defaultSnippetTags(snippetModeSelect.value);
+    snippetModeSelect.value = spec.mode;
+    snippetTitleInput.value = event.label || event.type || spec.formTitle || "snippet";
+    snippetTagsInput.value = defaultSnippetTags(spec.mode);
+    snippetKindEl.innerHTML = `<strong>${esc(spec.formTitle)}</strong><div style="margin-top:0.18em;">${esc(spec.description)}</div>`;
     setSnippetFormOpen(!snippetFormOpen);
   });
   snippetSaveButton.addEventListener("click", captureSelectedMoment);
@@ -7890,36 +8692,42 @@
       }
     }
   });
-  historyPinButton.addEventListener("click", async () => {
-    try {
-      const result = await postJson("/history/promote", {
-        session_id: activeArchiveSessionId(),
-        kind: "pinned",
-      });
-      renderHistoryState({...result.status, enabled: true});
-      refreshHistoryArchives();
-      annotationStatus.textContent = `Pinned session: ${result.path}`;
-    } catch (error) {
-      annotationStatus.textContent = `Pin failed: ${error.message || error}`;
-    }
-  });
-  historyRewindButton.addEventListener("click", () => {
-    const checkpoint = historyCheckpointInput.value.trim();
-    sendInput(checkpoint ? `/rewind ${checkpoint}` : "/rewind");
-    annotationStatus.textContent = `Requested rewind${checkpoint ? ` @ ${checkpoint}` : ""}`;
-  });
-  historyPruneButton.addEventListener("click", async () => {
-    try {
-      const result = await postJson("/history/prune", {
-        older_than_days: 0,
-      });
-      renderHistoryState({...result.status, enabled: true});
-      refreshHistoryArchives();
-      annotationStatus.textContent = `Pruned ${result.removed?.length || 0} unsaved session(s).`;
-    } catch (error) {
-      annotationStatus.textContent = `Prune failed: ${error.message || error}`;
-    }
-  });
+  if (historyPinButton) {
+    historyPinButton.addEventListener("click", async () => {
+      try {
+        const result = await postJson("/history/promote", {
+          session_id: activeArchiveSessionId(),
+          kind: "pinned",
+        });
+        renderHistoryState({...result.status, enabled: true});
+        refreshHistoryArchives();
+        annotationStatus.textContent = `Pinned session: ${result.path}`;
+      } catch (error) {
+        annotationStatus.textContent = `Pin failed: ${error.message || error}`;
+      }
+    });
+  }
+  if (historyRewindButton && historyCheckpointInput) {
+    historyRewindButton.addEventListener("click", () => {
+      const checkpoint = historyCheckpointInput.value.trim();
+      sendInput(checkpoint ? `/rewind ${checkpoint}` : "/rewind");
+      annotationStatus.textContent = `Requested rewind${checkpoint ? ` @ ${checkpoint}` : ""}`;
+    });
+  }
+  if (historyPruneButton) {
+    historyPruneButton.addEventListener("click", async () => {
+      try {
+        const result = await postJson("/history/prune", {
+          older_than_days: 0,
+        });
+        renderHistoryState({...result.status, enabled: true});
+        refreshHistoryArchives();
+        annotationStatus.textContent = `Pruned ${result.removed?.length || 0} unsaved session(s).`;
+      } catch (error) {
+        annotationStatus.textContent = `Prune failed: ${error.message || error}`;
+      }
+    });
+  }
   document.getElementById("sidebar").addEventListener("click", (event) => {
     const toggle = event.target.closest(".sidebar-panel-toggle");
     if (!toggle) return;

@@ -44,12 +44,34 @@ def _write_test_video(path: Path):
     )
 
 
+def _write_test_jpeg(path: Path):
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=#9ec5e5:s=320x240:d=0.1",
+            "-frames:v",
+            "1",
+            str(path),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
 def _seed_archive_session(
     history: HistoryService,
     *,
     session_id: str,
     title: str | None = None,
     response_text: str = "Hey, what time is it to you?",
+    extra_events: list[tuple[str, dict, float]] | None = None,
 ):
     archive = history.start_session(session_id=session_id, character="greg", model="groq-llama-8b")
     archive_start = archive._started_at
@@ -62,6 +84,8 @@ def _seed_archive_session(
     archive.record_event("user_transcript_final", {"text": "oh hey man"}, timestamp=archive_start + 0.4)
     archive.record_event("turn_start", {"input_text": "oh hey man", "input_type": "send"}, timestamp=archive_start + 0.45)
     archive.record_event("response_done", {"full_text": response_text}, timestamp=archive_start + 1.1)
+    for event_type, payload, offset_s in extra_events or []:
+        archive.record_event(event_type, payload, timestamp=archive_start + offset_s)
     archive.capture_checkpoint(
         label="start",
         character="greg",
@@ -77,10 +101,23 @@ def _seed_archive_session(
     )
     history.finalize_current()
     _write_test_video(archive.media_dir / "playback.mp4")
+    frame_path = archive.media_dir / "video" / "000001.jpg"
+    frame_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_test_jpeg(frame_path)
+    (archive.media_dir / "video" / "frames.jsonl").write_text(
+        json.dumps({
+            "timestamp": archive_start + 0.65,
+            "path": frame_path.name,
+            "source": "vision",
+        }) + "\n",
+        encoding="utf-8",
+    )
     archive_manifest = json.loads(archive.manifest_path.read_text())
     archive_media = dict(archive_manifest.get("media", {}))
     archive_media["playback_path"] = str(archive.media_dir / "playback.mp4")
     archive_media["video_path"] = str(archive.media_dir / "playback.mp4")
+    archive_media["video_frames_path"] = str(archive.media_dir / "video" / "frames.jsonl")
+    archive_media["video_frame_count"] = 1
     updates = {"media": archive_media}
     if title:
         updates["title"] = title
@@ -207,6 +244,69 @@ def dashboard_server():
         title="Greg Offline Canonical v1",
         response_text="Canonical archive is ready for offline UX work.",
     )
+    _seed_archive_session(
+        history,
+        session_id="sess-archive-legacy-vision",
+        title="Legacy Vision Archive",
+        response_text="Legacy vision archive is ready.",
+        extra_events=[
+            (
+                "vision_snapshot",
+                {
+                    "faces": 1,
+                    "persons": 1,
+                    "object_labels": ["clock"],
+                    "vlm_answers": [{"question": "What changed?", "answer": "A clock is visible."}],
+                },
+                0.7,
+            ),
+            (
+                "vision_pass",
+                {
+                    "latest_perception": "A clock is visible above the table.",
+                    "perception_count": 1,
+                    "vlm_answer_count": 1,
+                    "object_count": 1,
+                    "object_labels": ["clock"],
+                },
+                0.9,
+            ),
+        ],
+    )
+    _seed_archive_session(
+        history,
+        session_id="sess-archive-vision-raw-ui",
+        title="Vision Raw UI Archive",
+        response_text="Vision raw ui archive is ready.",
+        extra_events=[
+            (
+                "vision_snapshot_read",
+                {
+                    "event_id": "vision-cycle-test:snapshot",
+                    "vision_cycle_id": "vision-cycle-test",
+                    "faces": 0,
+                    "persons": 0,
+                    "objects": 2,
+                    "object_labels": ["clock", "table"],
+                    "vlm_answer_count": 1,
+                },
+                0.65,
+            ),
+            (
+                "sam3_detection",
+                {
+                    "vision_cycle_id": "vision-cycle-test",
+                    "objects": [
+                        {"label": "clock", "confidence": 0.92, "bbox": [0.1, 0.1, 0.4, 0.4]},
+                        {"label": "table", "confidence": 0.88, "bbox": [0.2, 0.45, 0.9, 0.9]},
+                    ],
+                    "persons": [],
+                    "timing": {"sam_ms": 0.018},
+                },
+                0.72,
+            ),
+        ],
+    )
     archive = history.start_session(session_id="sess-playwright", character="greg", model="groq-llama-8b")
     archive.record_event("session_start", {
         "character": "greg",
@@ -306,7 +406,6 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#runtime-status")).to_contain_text("state: ready")
     expect(page.locator("#boot-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
     expect(page.locator("#boot-overlay-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
-    expect(page.locator("#history-status")).to_contain_text("current:")
     expect(page.locator("#archive-load-button")).to_be_visible()
     expect(page.locator("#boot-grid")).to_contain_text("voice")
     expect(page.locator("#boot-grid")).to_contain_text("models")
@@ -524,13 +623,18 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#detail-loop")).to_have_class(re.compile(r"\bactive\b"))
     expect(page.locator("#detail-loop-chips")).to_contain_text("speech 0ms")
     expect(page.locator("#detail-loop-chips")).to_contain_text("first audio")
-    page.locator("#tab-prompts").click()
+    page.locator("#tab-prompts").evaluate("(node) => node.click()")
     expect(page.locator("#detail-prompts")).to_contain_text("Chat prompt")
-    expect(page.locator("#detail-prompts")).to_contain_text("Keep it short.")
-    expect(page.locator("#detail-prompts")).to_contain_text("Do you have water?")
+    expect(page.locator("#detail-prompts")).to_contain_text("Free water. Want one?")
+    expect(page.locator(".prompt-preview-card")).to_have_count(1)
+    page.locator("[data-prompt-open='0']").evaluate("(node) => node.click()")
+    expect(page.locator("#prompt-modal")).to_have_class(re.compile(r"\bopen\b"))
+    expect(page.locator("#prompt-modal")).to_contain_text("Keep it short.")
+    expect(page.locator("#prompt-modal")).to_contain_text("Do you have water?")
     expect(page.locator(".prompt-message.role-system")).to_have_count(2)
     expect(page.locator(".prompt-message.role-user")).to_have_count(1)
     expect(page.locator(".prompt-message.role-assistant")).to_have_count(1)
+    page.locator("#prompt-modal-close").click()
     page.locator("#annotation-toggle").click()
     expect(page.locator("#annotation-form")).to_be_visible()
     page.locator("#annotation-tags").fill("latency, interruption")
@@ -546,11 +650,6 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#snippet-form")).to_be_visible()
     page.locator("#snippet-save").click()
     expect(page.locator("#annotation-status")).to_contain_text("Captured snippet:")
-    page.locator("#history-pin").click()
-    expect(page.locator("#annotation-status")).to_contain_text("Pinned session:")
-    page.locator("#history-checkpoint").fill("2")
-    page.locator("#history-rewind").click()
-    assert input_queue.get(timeout=2) == "/rewind 2"
     page.locator("#archive-load-button").click()
     expect(page.locator("#archive-picker")).to_have_class(re.compile(r"\bopen\b"))
     page.locator(".archive-row").filter(has=page.locator(".archive-kind", has_text="session")).locator(".archive-load-action").first.click()
@@ -635,6 +734,7 @@ def test_runtime_panel_interactions_in_browser(
     page.mouse.up()
     expect(page.locator("#follow-live")).not_to_be_checked()
 
+    page.locator("#runtime-advanced-fold summary").evaluate("(node) => node.click()")
     with page.expect_popup() as vision_popup_info:
         page.locator("#vision-service-link").click()
     vision_popup = vision_popup_info.value
@@ -813,6 +913,7 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#runtime-toggle")).to_have_text("Play")
     expect(page.locator("#report-ref-status")).to_have_text("")
 
+    page.locator("#runtime-controls-fold summary").evaluate("(node) => node.click()")
     page.locator("button[data-runtime-control='thinker']").click()
     assert input_queue.get(timeout=2) == "/threads thinker toggle"
 
@@ -1304,6 +1405,122 @@ def test_archive_query_autoload_hides_boot_overlay(
     expect(page.locator("#boot-overlay")).not_to_be_visible()
 
 
+def test_archive_query_loading_boot_override_keeps_real_archive_loaded(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+            "archive_only": True,
+            "archive_only_reason": "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.",
+        },
+    )
+    page = browser_page
+    page.goto(f"{dashboard_url}?archive=greg-offline-canonical-v1&boot=loading")
+
+    expect(page).to_have_url(re.compile(r"archive=greg-offline-canonical-v1"))
+    expect(page.locator("#offline-frame-select")).to_have_value("loading")
+    expect(page.locator("#ux-spoof-banner")).to_contain_text("Spoofed For UX")
+    expect(page.locator("#ux-spoof-banner")).to_contain_text("Greg Offline Canonical v1")
+    expect(page.locator(".stream-card").filter(has_text="Canonical archive is ready for offline UX work.")).to_have_count(1)
+    expect(page.locator("body")).to_have_class(re.compile(r"\bbooting\b"))
+    expect(page.locator("#boot-overlay")).to_be_visible()
+    expect(page.locator("#boot-overlay-summary")).to_contain_text("Connecting to the local runtime")
+    expect(page.locator("#boot-overlay-sub")).not_to_contain_text("Offline boot override")
+    expect(page.locator("#vision-service-status")).not_to_contain_text("Failed to fetch")
+
+
+def test_archive_query_ready_boot_override_uses_start_frame_with_real_archive(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+            "archive_only": True,
+            "archive_only_reason": "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.",
+        },
+    )
+    page = browser_page
+    page.goto(f"{dashboard_url}?archive=greg-offline-canonical-v1&boot=ready")
+
+    expect(page.locator("#offline-frame-select")).to_have_value("ready")
+    expect(page.locator("#ux-spoof-banner")).to_contain_text("Spoofed For UX")
+    expect(page.locator(".stream-card").filter(has_text="Canonical archive is ready for offline UX work.")).to_have_count(1)
+    expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
+    expect(page.locator("#boot-overlay")).not_to_be_visible()
+    expect(page.locator("#boot-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
+    expect(page.locator("#boot-runtime-toggle")).to_have_text("Start")
+    expect(page.locator("#vision-service-status")).to_contain_text("service: ready")
+    expect(page.locator("#vision-service-status")).not_to_contain_text("Failed to fetch")
+    expect(page.locator("#vision-model-status")).to_contain_text("vLLM")
+
+
 def test_canonical_archive_query_renders_offline_archive_content(
     browser_page: Page,
     dashboard_server,
@@ -1359,6 +1576,59 @@ def test_canonical_archive_query_renders_offline_archive_content(
     expect(page.get_by_role("button", name="vision raw", exact=True)).to_be_visible()
     expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
     expect(page.locator("#boot-overlay")).not_to_be_visible()
+
+
+def test_legacy_archive_keeps_vision_and_vision_raw_lanes_visible_offline(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+            "archive_only": True,
+            "archive_only_reason": "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.",
+        },
+    )
+    page = browser_page
+    page.goto(f"{dashboard_url}?archive=sess-archive-legacy-vision")
+
+    expect(page.get_by_role("button", name="vision", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="vision raw", exact=True)).to_be_visible()
+    expect(page.locator("[data-stream-lane='vision'] .stream-card[data-event-type='vision_pass']")).to_have_count(1)
+    expect(page.locator("[data-stream-lane='vision_raw']")).to_be_visible()
+    expect(page.locator("[data-stream-lane='vision_raw']")).to_contain_text("No raw vision loop events captured yet")
 
 
 def test_vision_state_event_defaults_snippet_mode_in_browser(
@@ -1633,19 +1903,366 @@ def test_sidebar_registry_layout_and_panel_collapse(
 
     expect(page.locator(".sidebar-group-label").nth(0)).to_have_text("Session Control")
     expect(page.locator(".sidebar-group-label").nth(1)).to_have_text("Live State")
+    expect(page.locator(".sidebar-group-label").nth(2)).to_have_text("Tooling")
     expect(page.locator("#plan-panel")).to_be_visible()
+    expect(page.locator("#prompt-assets-panel")).to_have_class(re.compile(r"\bcollapsed\b"))
     expect(page.locator("#plan-panel")).to_have_attribute("data-panel-group", "live_state")
     expect(page.locator("#plan-content")).to_contain_text("No active script plan yet")
     assert page.evaluate(
         """() => Array.from(document.querySelectorAll('#sidebar .sidebar-panel'))
         .map((node) => node.dataset.panelId)"""
-    ) == ["runtime", "history", "prompt_assets", "vision", "world", "stage", "plan", "people"]
+    ) == ["runtime", "vision", "world", "stage", "plan", "people", "prompt_assets"]
 
     toggle = page.locator("#plan-panel .sidebar-panel-toggle")
     expect(toggle).to_have_text("Collapse")
     toggle.evaluate("(node) => node.click()")
     expect(page.locator("#plan-panel")).to_have_class(re.compile(r"\bcollapsed\b"))
     expect(toggle).to_have_text("Expand")
+
+
+def test_archive_boot_live_keeps_vision_panel_above_prompt_assets(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": True,
+                "filler": True,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": True,
+                "tts_backend": "pocket-tts",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket-tts"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": "http://127.0.0.1:7875",
+            "vision_service_health": True,
+            "vision_service_managed": True,
+            "vision_service_external": False,
+            "vision_service_state": "managed",
+            "vision_service_autostart": True,
+            "vision_service_mode": "mock",
+            "vision_mock_replay": "walkup.json",
+            "archive_only": True,
+            "archive_only_reason": "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.",
+        },
+    )
+    page = browser_page
+    page.goto(f"{dashboard_url}?archive=sess-archive-playback&boot=live")
+
+    expect(page.locator("#ux-spoof-banner")).to_contain_text("Spoofed For UX")
+    expect(page.locator(".stream-card").filter(has_text="Hey, what time is it to you?")).to_have_count(1)
+    expect(page.locator("#vision-panel")).to_be_visible()
+    assert page.locator(".sidebar-group-label").all_inner_texts() == ["LIVE STATE", "SESSION CONTROL", "TOOLING"]
+    assert page.evaluate(
+        """() => {
+          const panels = Array.from(document.querySelectorAll('#sidebar .sidebar-panel')).map((node) => node.dataset.panelId);
+          const vision = document.getElementById('vision-panel');
+          const runtime = document.getElementById('runtime-panel');
+          const promptAssets = document.getElementById('prompt-assets-panel');
+          return (
+            panels[0] === 'vision' &&
+            !!vision &&
+            !!runtime &&
+            !!promptAssets &&
+            vision.offsetTop < runtime.offsetTop &&
+            vision.offsetTop < promptAssets.offsetTop
+          );
+        }"""
+    )
+
+
+def test_archive_boot_live_runtime_actions_match_spoof_state(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": True,
+                "filler": True,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": True,
+                "tts_backend": "pocket-tts",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket-tts"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": "http://127.0.0.1:7875",
+            "vision_service_health": True,
+            "vision_service_managed": True,
+            "vision_service_external": False,
+            "vision_service_state": "managed",
+            "vision_service_autostart": True,
+            "vision_service_mode": "mock",
+            "vision_mock_replay": "walkup.json",
+            "archive_only": True,
+            "archive_only_reason": "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.",
+        },
+    )
+    page = browser_page
+    page.goto(f"{dashboard_url}?archive=sess-archive-playback&boot=live")
+
+    expect(page.locator("#ux-spoof-banner")).to_contain_text("Use this archive URL as the canonical UX test case.")
+    expect(page.locator("#ux-spoof-copy-url")).to_be_visible()
+    expect(page.locator("#runtime-toggle")).to_have_text("Pause")
+    expect(page.locator("#runtime-toggle")).to_be_disabled()
+    expect(page.locator("#runtime-stop")).to_have_text("Save + Stop")
+    expect(page.locator("#runtime-stop")).to_be_disabled()
+    expect(page.locator("#runtime-restart")).to_have_text("Restart Session")
+    expect(page.locator("#runtime-restart")).to_be_disabled()
+
+
+def test_archive_raw_event_shows_inspected_frame_in_inspector(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+            "archive_only": True,
+            "archive_only_reason": "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.",
+        },
+    )
+    page = browser_page
+    page.goto(f"{dashboard_url}?archive=sess-archive-vision-raw-ui&boot=live")
+
+    raw_dot = page.locator("[data-stream-lane='vision_raw'] .stream-dot[data-event-type='vision_snapshot_read']").first
+    expect(raw_dot).to_be_visible()
+    raw_dot.click()
+    expect(page.locator("#inspector-frame-panel")).to_be_visible()
+    expect(page.locator("#detail-frame-image")).to_be_visible()
+    expect(page.locator("#detail-frame-meta")).to_contain_text("Nearest archived frame")
+    expect(page.locator("#detail-frame-open")).to_have_attribute("href", re.compile(r"session_id=sess-archive-vision-raw-ui"))
+
+
+def test_json_default_inspector_keeps_annotations_above_payload(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+            "archive_only": True,
+            "archive_only_reason": "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.",
+        },
+    )
+    page = browser_page
+    page.goto(f"{dashboard_url}?archive=sess-archive-playback&boot=live")
+
+    selected = page.evaluate(
+        """() => {
+            const target =
+              document.querySelector(".stream-card[data-event-type='vision_focus']") ||
+              document.querySelector(".stream-card[data-event-type='history_status']") ||
+              document.querySelector(".stream-card");
+            if (!target) return false;
+            target.click();
+            return true;
+        }"""
+    )
+    assert selected is True
+    expect(page.locator("#tab-payload")).to_have_class(re.compile(r"\bactive\b"))
+    metrics = page.evaluate(
+        """() => {
+            const ann = document.getElementById('inspector-annotations-panel');
+            const tabs = document.getElementById('inspector-detail-tabs-panel');
+            const annRect = ann.getBoundingClientRect();
+            const tabsRect = tabs.getBoundingClientRect();
+            return {
+                annHeight: annRect.height,
+                annBottom: annRect.bottom,
+                tabsTop: tabsRect.top,
+            };
+        }"""
+    )
+    assert metrics["annHeight"] > 40
+    assert metrics["tabsTop"] >= metrics["annBottom"] - 1
+
+
+def test_prompt_preview_opens_modal_for_prompt_backed_event(
+    browser_page: Page,
+    dashboard_server,
+    vision_service,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": vision_service.url,
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-prompt-preview",
+            "stage": "engaged",
+        },
+    )
+    collector.push("prompt_trace", {
+        "label": "chat",
+        "title": "Chat prompt",
+        "provider": "Groq",
+        "model": "llama-test",
+        "messages": [
+            {"role": "system", "content": "Keep it short."},
+            {"role": "user", "content": "Do you have water?"},
+        ],
+        "output": "Free water. Want one?",
+        "started_at": time.time(),
+        "finished_at": time.time(),
+    })
+    collector.push(
+        "response_done",
+        {
+            "full_text": "Free water. Want one?",
+            "input_source": "voice",
+            "ttft_ms": 190,
+            "llm_ms": 780,
+        },
+    )
+
+    response_card = page.locator(".stream-card[data-event-type='assistant_reply']").first
+    expect(response_card).to_be_visible()
+    response_card.click()
+    expect(page.locator("#tab-payload")).to_have_class(re.compile(r"\bactive\b"))
+    page.locator("#tab-prompts").evaluate("(node) => node.click()")
+    expect(page.locator(".prompt-preview-card")).to_contain_text("Chat prompt")
+    expect(page.locator(".prompt-preview-card")).to_contain_text("Free water. Want one?")
+    page.locator("[data-prompt-open='0']").click()
+    expect(page.locator("#prompt-modal")).to_have_class(re.compile(r"\bopen\b"))
+    expect(page.locator("#prompt-modal")).to_contain_text("Rendered Prompt")
+    expect(page.locator("#prompt-modal")).to_contain_text("Free water. Want one?")
 
 
 def test_dashboard_preserves_unfinished_reply_when_new_turn_starts(
@@ -2061,7 +2678,6 @@ def test_rewind_keeps_new_active_path_visible_and_greys_out_superseded_events(
     collector.push("turn_start", {"input_type": "beat", "input_text": ""})
     collector.push("response_done", {"full_text": "Nice scarf, what brings you here? (rerun)"})
 
-    expect(page.locator("#history-recording-mode")).to_contain_text("Older future events are shown as superseded")
     expect(page.locator(".stream-card.superseded").filter(has_text="Right, my question was about the time.")).to_have_count(1)
     expect(page.locator(".stream-card").filter(has_text="Nice scarf, what brings you here? (rerun)")).to_have_count(1)
     expect(page.locator(".stream-card.superseded").filter(has_text="Nice scarf, what brings you here? (rerun)")).to_have_count(0)

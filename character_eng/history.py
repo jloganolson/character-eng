@@ -1268,6 +1268,9 @@ class SessionArchive:
         return self.update_manifest(title=cleaned)
 
     def record_event(self, event_type: str, data: dict, *, timestamp: float | None = None) -> None:
+        manifest = self._manifest()
+        if manifest.get("ended_at") and event_type != "session_end":
+            return
         payload = {
             "timestamp": float(timestamp or _now_ts()),
             "timestamp_iso": _iso(timestamp),

@@ -9,6 +9,7 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
+from character_eng.history import HistoryService
 from character_eng.vision.context import (
     FaceObservation,
     ObjectDetection,
@@ -666,6 +667,73 @@ def test_vision_manager_emits_raw_dashboard_stage_events(monkeypatch):
         "vision-cycle-42:reid:7",
         "vlm-3",
     ]
+
+
+def test_vision_manager_emits_raw_events_to_history_when_runtime_emitter_is_present(monkeypatch, tmp_path):
+    from character_eng.dashboard.events import DashboardEventCollector
+    from character_eng.vision.manager import VisionManager
+
+    collector = DashboardEventCollector()
+    history = HistoryService(root=tmp_path, free_warning_gib=0.0)
+    history.start_session(session_id="sess-vision-history", character="greg", model="test")
+
+    def runtime_emit(event_type: str, data: dict) -> None:
+        history.record_event(event_type, data)
+        collector.push(event_type, data)
+
+    mgr = VisionManager()
+    mgr._collector = collector
+    mgr._emitter = runtime_emit
+    mgr._model_config = {"name": "test"}
+    snapshot = RawVisualSnapshot(
+        faces=[FaceObservation(identity="Visitor", bbox=(1, 2, 30, 40), confidence=0.91, gaze_direction="left")],
+        persons=[PersonObservation(identity="Visitor", bbox=(0, 0, 100, 200), confidence=0.8)],
+        objects=[ObjectDetection(label="bottle", bbox=(50, 60, 30, 40), confidence=0.7)],
+        vlm_answers=[
+            VLMAnswer(
+                question="Is the visitor holding a bottle?",
+                answer="Yes.",
+                elapsed=0.42,
+                slot_type="ephemeral",
+                timestamp=123.0,
+                answer_id="vlm-3",
+            ),
+        ],
+        cycle_id="vision-cycle-history",
+        trace={
+            "face_tracking": {
+                "timing": {"total": 0.11, "fps": 9.1},
+                "faces": [{"identity": "Visitor", "bbox": [1, 2, 30, 40], "confidence": 0.91, "gaze_direction": "left", "track_id": 7}],
+            },
+            "sam3_detection": {
+                "timing": {"sam3": 0.28, "total": 0.36, "prompts": "person, bottle"},
+                "persons": [{"identity": "Visitor", "bbox": [0, 0, 100, 200], "confidence": 0.8, "track_id": 7}],
+                "objects": [{"label": "bottle", "bbox": [50, 60, 30, 40], "confidence": 0.7}],
+            },
+            "reid_tracking": {
+                "timing": {"reid": 0.05, "total": 0.36},
+                "persons": [{"identity": "Visitor", "bbox": [0, 0, 100, 200], "confidence": 0.8, "track_id": 7, "identity_source": "reid"}],
+            },
+        },
+    )
+
+    monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)
+    monkeypatch.setattr(
+        "character_eng.vision.manager.vision_synthesis_call",
+        lambda **kwargs: type("Synth", (), {"events": [], "signals": []})(),
+    )
+
+    mgr._tick()
+
+    history_events = history.list_events("sess-vision-history")["events"]
+    history_types = [event["type"] for event in history_events]
+    assert "vision_snapshot_read" in history_types
+    assert "face_tracking" in history_types
+    assert "sam3_detection" in history_types
+    assert "reid_track" in history_types
+    assert "vlm_answer" in history_types
+    collector_types = [event["type"] for event in collector.get_all()]
+    assert collector_types == history_types
 
 
 def test_vision_manager_raw_poll_is_faster_than_synthesis(monkeypatch):

@@ -29,6 +29,8 @@
     "scene_capture": "vision",
     "scene_eval": "vision",
     "vision_focus": "vision",
+    "vision_snapshot": "vision",
+    "vision_pass": "vision",
     "vision_snapshot_read": "vision_raw",
     "face_tracking": "vision_raw",
     "sam3_detection": "vision_raw",

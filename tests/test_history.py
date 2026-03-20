@@ -19,6 +19,7 @@ from character_eng.history import (
 )
 from character_eng.person import PeopleState
 from character_eng.world import Goals, Script, WorldState
+from services.vision.mock_server import MockVisionHandler
 
 
 def _session_snapshot():
@@ -115,6 +116,40 @@ class _MjpegHandler(BaseHTTPRequestHandler):
         pass
 
 
+def test_start_vision_capture_records_frames_from_mock_server(tmp_path):
+    replay_path = Path("services/vision/replays/walkup.json")
+    replay_data = json.loads(replay_path.read_text())
+    MockVisionHandler.replay_data = replay_data
+    MockVisionHandler.start_time = time.time()
+    MockVisionHandler.input_mode = "camera"
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), MockVisionHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        service = HistoryService(root=tmp_path, free_warning_gib=0.0)
+        archive = service.start_session(session_id="sess-mock-vision", character="greg", model="test")
+        archive.start_vision_capture(base_url, fps=4.0, playback_video_fps=8.0)
+        time.sleep(0.8)
+        archive.stop_vision_capture()
+
+        manifest = json.loads(archive.manifest_path.read_text())
+        media = manifest.get("media", {})
+        assert int(media.get("video_frame_count", 0)) > 0
+        frames_jsonl = archive.video_dir / "frames.jsonl"
+        assert frames_jsonl.exists()
+        entries = [json.loads(line) for line in frames_jsonl.read_text().splitlines() if line.strip()]
+        assert entries
+        first_frame = archive.video_dir / str(entries[0]["path"])
+        assert first_frame.exists()
+        assert first_frame.stat().st_size > 0
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_history_service_records_session_checkpoint_and_restore(tmp_path):
     service = HistoryService(root=tmp_path, free_warning_gib=0.0)
     archive = service.start_session(session_id="sess1", character="greg", model="test")
@@ -157,6 +192,24 @@ def test_history_service_can_rename_archive(tmp_path):
     service.start_session(session_id="sess-rename", character="greg", model="test")
     updated = service.rename(session_id="sess-rename", title="greg scarf retry")
     assert updated["title"] == "greg scarf retry"
+
+
+def test_finalized_archive_ignores_followup_events_except_session_end(tmp_path):
+    service = HistoryService(root=tmp_path, free_warning_gib=0.0)
+    archive = service.start_session(session_id="sess-finalized", character="greg", model="test")
+    archive.record_event("session_start", {"session_id": "sess-finalized"})
+
+    service.finalize_current()
+    service.record_event("vision_snapshot_read", {"event_id": "late:snapshot"})
+    service.record_event("history_status", {"current_session": {"session_id": "sess-finalized"}})
+    service.record_event("session_end", {"session_id": "sess-finalized"})
+
+    events = [
+        json.loads(line)
+        for line in archive.events_path.read_text().splitlines()
+        if line.strip()
+    ]
+    assert [event["type"] for event in events] == ["session_start", "session_end"]
 
 
 def test_history_service_can_discard_current_archive(tmp_path):

@@ -4316,7 +4316,7 @@ def _ensure_vision_manager(
             raw_poll_interval=vision_cfg.raw_poll_interval,
             min_interval=vision_cfg.synthesis_min_interval,
         )
-    vision_mgr.start(model_config, world=world, people=people, collector=_collector)
+    vision_mgr.start(model_config, world=world, people=people, collector=_collector, emitter=_push)
     vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal, scenario=scenario)
     try:
         vision_mgr.update_focus(

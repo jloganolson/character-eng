@@ -56,6 +56,7 @@ class VisionManager:
         self._event_history: collections.deque[str] = collections.deque(maxlen=10)
         # Dashboard integration
         self._collector = None
+        self._emitter = None
         self._last_focus: VisualFocusResult | None = None
         self._paused = False
         self._emitted_vlm_answer_ids: set[str] = set()
@@ -68,7 +69,7 @@ class VisionManager:
         self._last_synthesis_at = 0.0
         self._last_synth_snapshot_seq = 0
 
-    def start(self, model_config: dict, world=None, people=None, collector=None) -> None:
+    def start(self, model_config: dict, world=None, people=None, collector=None, emitter=None) -> None:
         if self._running:
             return
         self._model_config = model_config
@@ -76,6 +77,8 @@ class VisionManager:
         self._people = people
         if collector is not None:
             self._collector = collector
+        if emitter is not None:
+            self._emitter = emitter
         self._running = True
         self._raw_thread = threading.Thread(target=self._raw_loop, daemon=True)
         self._synthesis_thread = threading.Thread(target=self._synthesis_loop, daemon=True)
@@ -134,8 +137,8 @@ class VisionManager:
             self._client.set_sam_targets(result.constant_sam_targets, result.ephemeral_sam_targets)
         except Exception:
             pass
-        if self._collector is not None:
-            self._collector.push("vision_focus", {
+        if self._collector is not None or self._emitter is not None:
+            self._emit_runtime_event("vision_focus", {
                 "stage_goal": stage_goal,
                 "thought": thought,
                 "constant_questions": list(result.constant_questions),
@@ -297,6 +300,13 @@ class VisionManager:
         with self._events_lock:
             self._events.append(event)
 
+    def _emit_runtime_event(self, event_type: str, data: dict) -> None:
+        if self._emitter is not None:
+            self._emitter(event_type, data)
+            return
+        if self._collector is not None:
+            self._collector.push(event_type, data)
+
     @staticmethod
     def _has_human_presence(snapshot: RawVisualSnapshot) -> bool:
         if snapshot.persons or snapshot.faces:
@@ -450,7 +460,7 @@ class VisionManager:
         return event_ids
 
     def _emit_raw_dashboard_events(self, snapshot: RawVisualSnapshot) -> list[str]:
-        if self._collector is None:
+        if self._collector is None and self._emitter is None:
             return self._snapshot_input_event_ids(snapshot)
 
         cycle_id = snapshot.cycle_id or f"vision-cycle-{int(time.time() * 1000)}"
@@ -459,7 +469,7 @@ class VisionManager:
 
         snapshot_event_id = f"{cycle_id}:snapshot"
         event_ids.append(snapshot_event_id)
-        self._collector.push("vision_snapshot_read", {
+        self._emit_runtime_event("vision_snapshot_read", {
             "event_id": snapshot_event_id,
             "vision_cycle_id": cycle_id,
             "faces": len(snapshot.faces),
@@ -474,7 +484,7 @@ class VisionManager:
         if snapshot.faces or face_trace.get("timing"):
             face_event_id = f"{cycle_id}:face"
             event_ids.append(face_event_id)
-            self._collector.push("face_tracking", {
+            self._emit_runtime_event("face_tracking", {
                 "event_id": face_event_id,
                 "vision_cycle_id": cycle_id,
                 "input_event_ids": [snapshot_event_id],
@@ -496,7 +506,7 @@ class VisionManager:
         if snapshot.persons or snapshot.objects or sam3_trace.get("timing"):
             sam3_event_id = f"{cycle_id}:sam3"
             event_ids.append(sam3_event_id)
-            self._collector.push("sam3_detection", {
+            self._emit_runtime_event("sam3_detection", {
                 "event_id": sam3_event_id,
                 "vision_cycle_id": cycle_id,
                 "input_event_ids": [snapshot_event_id],
@@ -528,7 +538,7 @@ class VisionManager:
             track_id = person.get("track_id")
             event_id = f"{cycle_id}:reid:{track_id if track_id is not None else len(event_ids)}"
             event_ids.append(event_id)
-            self._collector.push("reid_track", {
+            self._emit_runtime_event("reid_track", {
                 "event_id": event_id,
                 "vision_cycle_id": cycle_id,
                 "input_event_ids": list(reid_input_ids),
@@ -546,7 +556,7 @@ class VisionManager:
                 continue
             self._emitted_vlm_answer_ids.add(answer_id)
             event_ids.append(answer_id)
-            self._collector.push("vlm_answer", {
+            self._emit_runtime_event("vlm_answer", {
                 "event_id": answer_id,
                 "vision_cycle_id": cycle_id,
                 "input_event_ids": [snapshot_event_id],
@@ -695,8 +705,8 @@ class VisionManager:
             kind="vision_state_update",
             payload=payload,
         ))
-        if self._collector is not None:
-            self._collector.push("vision_state_update", {
+        if self._collector is not None or self._emitter is not None:
+            self._emit_runtime_event("vision_state_update", {
                 "event_id": payload["event_id"],
                 "vision_cycle_id": cycle_id,
                 "input_event_ids": list(input_event_ids),
@@ -798,8 +808,8 @@ class VisionManager:
                 kind="vision_trigger",
                 payload=payload,
             ))
-            if self._collector is not None:
-                self._collector.push("vision_trigger", {
+            if self._collector is not None or self._emitter is not None:
+                self._emit_runtime_event("vision_trigger", {
                     "event_id": payload["event_id"],
                     "vision_cycle_id": cycle_id,
                     "input_event_ids": list(input_event_ids),
