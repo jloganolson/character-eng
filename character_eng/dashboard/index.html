@@ -8391,6 +8391,7 @@
   });
   streamViewport.addEventListener("mousedown", (event) => {
     if (event.button !== 0) return;
+    if (event.target.closest("#stream-ruler")) return;
     if (event.target.closest(".stream-card") || event.target.closest(".stream-dot")) return;
     disableFollowLive();
     isTimelineDragging = true;
@@ -8437,7 +8438,7 @@
 
   function seekArchiveMediaFromPointer(clientX) {
     if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
-    const bounds = streamViewport.getBoundingClientRect();
+    const bounds = streamRuler.getBoundingClientRect();
     const contentX = streamViewport.scrollLeft + (clientX - bounds.left);
     const timeS = Math.max(0, (contentX - 20) / Math.max(timelineRenderScale, 0.001));
     seekArchiveMedia(timeS, {syncSelection: true});
@@ -8470,13 +8471,6 @@
   });
   streamRuler.addEventListener("pointerdown", (event) => {
     if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
-    archiveMediaScrubbing = true;
-    seekArchiveMediaFromPointer(event.clientX);
-    event.preventDefault();
-  });
-  streamViewport.addEventListener("pointerdown", (event) => {
-    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
-    if (event.target.closest(".stream-card") || event.target.closest(".stream-dot")) return;
     archiveMediaScrubbing = true;
     seekArchiveMediaFromPointer(event.clientX);
     event.preventDefault();

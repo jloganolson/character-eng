@@ -2586,6 +2586,77 @@ def test_archive_load_shows_timeline_and_scrubbable_media_player(
     selected_time = page.locator("#archive-media-player").evaluate("(node) => node.currentTime")
     assert selected_time >= 0.9
 
+    ruler_seek_time = page.evaluate(
+        """() => {
+            const player = document.getElementById('archive-media-player');
+            const ruler = document.getElementById('stream-ruler');
+            player.pause();
+            player.currentTime = 0;
+            const rect = ruler.getBoundingClientRect();
+            const x = rect.left + rect.width * 0.75;
+            const y = rect.top + rect.height / 2;
+            ruler.dispatchEvent(new PointerEvent('pointerdown', {
+                bubbles: true,
+                clientX: x,
+                clientY: y,
+                pointerId: 1,
+                isPrimary: true,
+            }));
+            window.dispatchEvent(new PointerEvent('pointerup', {
+                bubbles: true,
+                clientX: x,
+                clientY: y,
+                pointerId: 1,
+                isPrimary: true,
+            }));
+            return player.currentTime;
+        }"""
+    )
+    assert ruler_seek_time > 0.5
+
+    page.locator("#time-window").evaluate(
+        """(node) => {
+            node.value = "0";
+            node.dispatchEvent(new Event("input", {bubbles: true}));
+        }"""
+    )
+    drag_result = page.evaluate(
+        """() => {
+            const player = document.getElementById('archive-media-player');
+            const viewport = document.getElementById('stream-viewport');
+            player.pause();
+            player.currentTime = 0;
+            viewport.scrollLeft = 0;
+            const rect = viewport.getBoundingClientRect();
+            const x = rect.left + rect.width * 0.7;
+            const y = rect.top + Math.min(rect.height - 30, 120);
+            viewport.dispatchEvent(new MouseEvent('mousedown', {
+                bubbles: true,
+                clientX: x,
+                clientY: y,
+                button: 0,
+            }));
+            window.dispatchEvent(new MouseEvent('mousemove', {
+                bubbles: true,
+                clientX: x - 180,
+                clientY: y,
+                buttons: 1,
+            }));
+            window.dispatchEvent(new MouseEvent('mouseup', {
+                bubbles: true,
+                clientX: x - 180,
+                clientY: y,
+                button: 0,
+            }));
+            return {
+                currentTime: player.currentTime,
+                scrollLeft: viewport.scrollLeft,
+            };
+        }"""
+    )
+    assert drag_result["currentTime"] <= 0.05
+    assert drag_result["scrollLeft"] > 0
+
 
 def test_rewind_keeps_new_active_path_visible_and_greys_out_superseded_events(
     browser_page: Page,
