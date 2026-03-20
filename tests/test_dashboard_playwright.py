@@ -278,6 +278,32 @@ def dashboard_server():
     )
     _seed_archive_session(
         history,
+        session_id="sess-archive-media-gap",
+        title="Media Gap Archive",
+        response_text="Media gap archive is ready for scrub testing.",
+        video_duration_s=4.2,
+        extra_events=[
+            (
+                "eval",
+                {
+                    "script_status": "watching",
+                    "thought": "Planner holds the current beat while Greg inspects the room.",
+                    "plan_request": "Keep observing the room.",
+                },
+                3.8,
+            ),
+            (
+                "reconcile",
+                {
+                    "events": ["A wall clock is clearly visible near the doorway."],
+                    "add_facts": ["clock visible near doorway"],
+                },
+                8.6,
+            ),
+        ],
+    )
+    _seed_archive_session(
+        history,
         session_id="greg-offline-canonical-v1",
         title="Greg Offline Canonical v1",
         response_text="Canonical archive is ready for offline UX work.",
@@ -2817,6 +2843,175 @@ def test_archive_ruler_scrubbing_updates_playhead_across_longer_spans(
         assert abs(result["mediaTime"] - result["target"]) < 0.35, result
         assert result["selectedType"] == result["event_type"], result
     assert results[-1]["mediaTime"] > 8.0
+
+
+def test_archive_playhead_reports_media_cap_when_timeline_moves_past_video(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+
+    page.locator("#archive-load-button").evaluate("(node) => node.click()")
+    page.locator(".archive-row").filter(has_text="sess-archive-media-gap").locator(".archive-load-action").click()
+    page.wait_for_function(
+        "() => { const node = document.getElementById('archive-transport-scrubber'); return !!node && Number(node.max || 0) >= 4; }",
+        timeout=5000,
+    )
+
+    page.evaluate("window.__dashboardTest.seekArchiveTime(8.6)")
+    page.wait_for_timeout(100)
+
+    state = page.evaluate("window.__dashboardTest.archivePlaybackState()")
+    assert abs(state["playheadTime"] - 8.6) < 0.35, state
+    assert abs(state["mediaTime"] - 4.2) < 0.2, state
+    assert state["capped"] is True, state
+    assert "4.2" in state["capNote"], state
+    expect(page.locator("#current-playhead-readout")).to_have_class(re.compile(r"\bwarn\b"))
+    expect(page.locator("#current-media-readout")).to_have_class(re.compile(r"\bwarn\b"))
+    expect(page.locator("#archive-timeline-gap-note")).to_have_class(re.compile(r"\bvisible\b"))
+
+
+def test_archive_scrub_cursor_uses_preview_on_hover_and_active_on_drag(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+
+    page.locator("#archive-load-button").evaluate("(node) => node.click()")
+    page.locator(".archive-row").filter(has_text="sess-archive-playback").locator(".archive-load-action").click()
+    page.wait_for_function(
+        "() => { const node = document.getElementById('archive-transport-scrubber'); return !!node && Number(node.max || 0) > 0; }",
+        timeout=5000,
+    )
+
+    ruler_box = page.locator("#stream-ruler").bounding_box()
+    assert ruler_box is not None
+    x = ruler_box["x"] + (ruler_box["width"] * 0.4)
+    y = ruler_box["y"] + (ruler_box["height"] / 2)
+    page.evaluate(
+        """({x, y}) => {
+            const ruler = document.getElementById('stream-ruler');
+            ruler.dispatchEvent(new PointerEvent('pointermove', {
+                bubbles: true,
+                clientX: x,
+                clientY: y,
+                pointerId: 1,
+                isPrimary: true,
+            }));
+        }""",
+        {"x": x, "y": y},
+    )
+    page.wait_for_timeout(50)
+    hover_state = page.evaluate("window.__dashboardTest.scrubCursorState()")
+    assert hover_state == {"visible": True, "preview": True, "active": False}
+
+    page.evaluate(
+        """({x, y}) => {
+            const ruler = document.getElementById('stream-ruler');
+            ruler.dispatchEvent(new PointerEvent('pointerdown', {
+                bubbles: true,
+                clientX: x,
+                clientY: y,
+                pointerId: 1,
+                isPrimary: true,
+            }));
+        }""",
+        {"x": x, "y": y},
+    )
+    page.wait_for_timeout(50)
+    active_state = page.evaluate("window.__dashboardTest.scrubCursorState()")
+    assert active_state == {"visible": True, "preview": False, "active": True}
+
+    page.evaluate(
+        """({x, y}) => {
+            window.dispatchEvent(new PointerEvent('pointerup', {
+                bubbles: true,
+                clientX: x,
+                clientY: y,
+                pointerId: 1,
+                isPrimary: true,
+            }));
+        }""",
+        {"x": x, "y": y},
+    )
 
 
 def test_rewind_keeps_new_active_path_visible_and_greys_out_superseded_events(

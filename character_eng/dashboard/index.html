@@ -361,6 +361,9 @@
     color: var(--text-dim);
     font-size: 0.82rem;
   }
+  .archive-transport-time.capped {
+    color: color-mix(in srgb, var(--warn) 78%, var(--text) 22%);
+  }
   #report-ref-button,
   #archive-load-button {
     background: var(--bg-alt);
@@ -473,6 +476,24 @@
   }
   .toolbar-readout.inactive {
     opacity: 0.6;
+  }
+  .toolbar-readout.warn {
+    color: color-mix(in srgb, var(--warn) 84%, var(--text) 16%);
+    border-color: color-mix(in srgb, var(--warn) 44%, var(--border) 56%);
+    background: color-mix(in srgb, var(--warn) 10%, var(--panel) 90%);
+  }
+  .toolbar-note {
+    display: none;
+    align-items: center;
+    gap: 0.35em;
+    font-size: 0.72em;
+    letter-spacing: 0.05em;
+    color: color-mix(in srgb, var(--warn) 74%, var(--text-dim) 26%);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .toolbar-note.visible {
+    display: inline-flex;
   }
   #lane-toggle-grid {
     display: flex;
@@ -595,6 +616,28 @@
   #stream-scrub-cursor.visible {
     display: block;
   }
+  #stream-scrub-cursor.preview::before {
+    top: 11px;
+    border-left-width: 5px;
+    border-right-width: 5px;
+    border-top-width: 7px;
+    border-top-color: color-mix(in srgb, #ff5f57 48%, transparent 52%);
+    filter: none;
+  }
+  #stream-scrub-cursor.preview::after {
+    display: none;
+  }
+  #stream-scrub-cursor.active::before {
+    top: 10px;
+    border-left-width: 7px;
+    border-right-width: 7px;
+    border-top-width: 10px;
+    border-top-color: #ff5f57;
+    filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.35));
+  }
+  #stream-scrub-cursor.active::after {
+    display: block;
+  }
   #stream-scrub-cursor::before {
     content: "";
     position: absolute;
@@ -618,6 +661,7 @@
     transform: translateX(-50%);
     background: linear-gradient(180deg, color-mix(in srgb, #ff5f57 85%, white 15%), color-mix(in srgb, #ff5f57 45%, transparent 55%));
     opacity: 0.9;
+    display: none;
   }
   #stream-ruler-inner {
     position: relative;
@@ -1859,6 +1903,11 @@
             <span class="toolbar-readout-label">Playhead</span>
             <span id="current-playhead-value">--</span>
           </span>
+          <span id="current-media-readout" class="toolbar-readout inactive">
+            <span class="toolbar-readout-label">Media</span>
+            <span id="current-media-value">--</span>
+          </span>
+          <span id="archive-timeline-gap-note" class="toolbar-note"></span>
         </div>
         <div class="toolbar-group">
           <label for="follow-live">Follow</label>
@@ -2267,6 +2316,9 @@
   const timeWindowValue = document.getElementById("time-window-value");
   const currentPlayheadReadout = document.getElementById("current-playhead-readout");
   const currentPlayheadValue = document.getElementById("current-playhead-value");
+  const currentMediaReadout = document.getElementById("current-media-readout");
+  const currentMediaValue = document.getElementById("current-media-value");
+  const archiveTimelineGapNote = document.getElementById("archive-timeline-gap-note");
   const inspectorResizer = document.getElementById("inspector-resizer");
   const sidebarResizer = document.getElementById("sidebar-resizer");
   const detailContinueFromEventButton = document.getElementById("detail-continue-from-event");
@@ -2411,6 +2463,7 @@
   let archiveMediaScrubbing = false;
   let archiveMediaDuration = 0;
   let archiveTimelineCursorTime = null;
+  let archiveTimelineCursorPinned = false;
   const PREFERRED_OFFLINE_ARCHIVE_REF = "greg-offline-canonical-v1";
   let timelineRenderScale = 1;
   let timelineRenderBaseWidth = 720;
@@ -3664,9 +3717,11 @@
 
   function hideStreamScrubCursor() {
     streamScrubCursorEl.classList.remove("visible");
+    streamScrubCursorEl.classList.remove("preview");
+    streamScrubCursorEl.classList.remove("active");
   }
 
-  function updateStreamScrubCursor(clientX) {
+  function updateStreamScrubCursor(clientX, {active = false} = {}) {
     if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) {
       hideStreamScrubCursor();
       return;
@@ -3675,6 +3730,8 @@
     const visibleX = Math.max(0, Math.min(bounds.width, clientX - bounds.left));
     streamScrubCursorEl.style.left = `${streamViewport.scrollLeft + visibleX}px`;
     streamScrubCursorEl.classList.add("visible");
+    streamScrubCursorEl.classList.toggle("active", !!active);
+    streamScrubCursorEl.classList.toggle("preview", !active);
   }
 
   function renderArchiveTransport() {
@@ -3682,6 +3739,7 @@
     archiveTransportEl.classList.toggle("visible", active);
     streamRuler.classList.toggle("scrubbable", active);
     currentPlayheadReadout.classList.toggle("inactive", !active);
+    currentMediaReadout.classList.toggle("inactive", !active);
     if (!active) {
       hideStreamScrubCursor();
       archiveTransportToggleButton.textContent = "Play";
@@ -3691,17 +3749,33 @@
       archiveTransportScrubber.disabled = true;
       archiveTransportTime.textContent = "0:00 / 0:00";
       currentPlayheadValue.textContent = "--";
+      currentMediaValue.textContent = "--";
+      currentPlayheadReadout.classList.remove("warn");
+      currentMediaReadout.classList.remove("warn");
+      archiveTransportTime.classList.remove("capped");
+      archiveTimelineGapNote.classList.remove("visible");
+      archiveTimelineGapNote.textContent = "";
       return;
     }
     const current = Math.max(0, Number(currentArchiveTimelineTime() ?? archiveMediaPlayer.currentTime ?? 0));
+    const mediaCurrent = Math.max(0, Number(archiveMediaCurrentTime() ?? 0));
     const duration = Math.max(0, Number(archiveMediaDuration || archiveMediaPlayer.duration || 0));
+    const capped = archiveMediaIsCappedAtTimeline();
     archiveTransportToggleButton.textContent = archiveMediaPlayer.paused ? "Play" : "Pause";
     archiveTransportToggleButton.disabled = duration <= 0 && archiveMediaPlayer.readyState < 1;
     archiveTransportScrubber.max = String(duration > 0 ? duration : 0);
     archiveTransportScrubber.value = String(Math.min(current, duration || current));
     archiveTransportScrubber.disabled = duration <= 0;
-    archiveTransportTime.textContent = `${formatMediaClock(current)} / ${formatMediaClock(duration)}`;
+    archiveTransportTime.textContent = `${formatMediaClock(mediaCurrent)} / ${formatMediaClock(duration)}`;
+    archiveTransportTime.classList.toggle("capped", capped);
     currentPlayheadValue.textContent = formatTimelineClock(current, {fractional: true});
+    currentMediaValue.textContent = formatTimelineClock(mediaCurrent, {fractional: true});
+    currentPlayheadReadout.classList.toggle("warn", capped);
+    currentMediaReadout.classList.toggle("warn", capped);
+    archiveTimelineGapNote.classList.toggle("visible", capped);
+    archiveTimelineGapNote.textContent = capped
+      ? `Media capped at ${formatTimelineClock(duration, {fractional: true})}`
+      : "";
   }
 
   function syncArchiveMediaPlayer() {
@@ -3733,6 +3807,12 @@
     return Math.max(0, Number(archiveMediaPlayer.currentTime || 0));
   }
 
+  function archiveMediaIsCappedAtTimeline() {
+    const current = currentArchiveTimelineTime();
+    const duration = Math.max(0, Number(archiveMediaDuration || archiveMediaPlayer.duration || 0));
+    return current != null && duration > 0 && current > duration + 0.049;
+  }
+
   function currentArchiveTimelineTime() {
     if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return null;
     if (Number.isFinite(archiveTimelineCursorTime)) return Math.max(0, Number(archiveTimelineCursorTime || 0));
@@ -3742,6 +3822,7 @@
   function setArchiveTimelineCursorTime(timeS) {
     if (!Number.isFinite(timeS)) {
       archiveTimelineCursorTime = null;
+      archiveTimelineCursorPinned = false;
       return;
     }
     archiveTimelineCursorTime = Math.max(0, Number(timeS || 0));
@@ -3788,6 +3869,8 @@
   function seekArchiveMedia(timeS, {syncSelection = true, autoPlay = false} = {}) {
     if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
     const target = Math.max(0, Number(timeS || 0));
+    const duration = Math.max(0, Number(archiveMediaDuration || archiveMediaPlayer.duration || 0));
+    archiveTimelineCursorPinned = duration > 0 && target > duration + 0.049;
     setArchiveTimelineCursorTime(target);
     archiveMediaSeekLock = true;
     try {
@@ -5422,6 +5505,7 @@
     archiveMediaPlayer.load();
     archiveMediaDuration = 0;
     archiveTimelineCursorTime = null;
+    archiveTimelineCursorPinned = false;
     setArchiveMediaStatus("");
     clearAnnotationState();
     setPromptModalOpen(false);
@@ -5498,6 +5582,7 @@
     archiveMediaPlayer.load();
     archiveMediaDuration = 0;
     archiveTimelineCursorTime = null;
+    archiveTimelineCursorPinned = false;
     setArchiveMediaStatus("");
     clearAnnotationState();
     setPromptModalOpen(false);
@@ -8604,6 +8689,10 @@
     renderArchiveTransport();
   });
   archiveMediaPlayer.addEventListener("play", () => {
+    if (archiveTimelineCursorPinned) {
+      archiveTimelineCursorPinned = false;
+      setArchiveTimelineCursorTime(archiveMediaPlayer.currentTime || 0);
+    }
     updateRuntimeButtons();
     renderArchiveTransport();
   });
@@ -8612,7 +8701,12 @@
     renderArchiveTransport();
   });
   archiveMediaPlayer.addEventListener("timeupdate", () => {
-    setArchiveTimelineCursorTime(archiveMediaPlayer.currentTime || 0);
+    const mediaTime = archiveMediaPlayer.currentTime || 0;
+    const pinnedTarget = Number(archiveTimelineCursorTime || 0);
+    if (!(archiveTimelineCursorPinned && mediaTime + 0.049 < pinnedTarget)) {
+      setArchiveTimelineCursorTime(mediaTime);
+      archiveTimelineCursorPinned = false;
+    }
     updateTimelinePlayhead();
     if (archiveMediaSeekLock || archiveMediaScrubbing) return;
     const key = nearestEventKeyForTime(archiveMediaPlayer.currentTime || 0);
@@ -8621,13 +8715,13 @@
   streamRuler.addEventListener("pointerdown", (event) => {
     if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
     archiveMediaScrubbing = true;
-    updateStreamScrubCursor(event.clientX);
+    updateStreamScrubCursor(event.clientX, {active: true});
     seekArchiveMediaFromPointer(event.clientX);
     event.preventDefault();
   });
   streamRuler.addEventListener("pointermove", (event) => {
     if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
-    updateStreamScrubCursor(event.clientX);
+    updateStreamScrubCursor(event.clientX, {active: archiveMediaScrubbing});
   });
   streamRuler.addEventListener("pointerleave", () => {
     if (archiveMediaScrubbing) return;
@@ -8635,7 +8729,7 @@
   });
   window.addEventListener("pointermove", (event) => {
     if (!archiveMediaScrubbing) return;
-    updateStreamScrubCursor(event.clientX);
+    updateStreamScrubCursor(event.clientX, {active: true});
     seekArchiveMediaFromPointer(event.clientX);
   });
   window.addEventListener("pointerup", () => {
@@ -9662,6 +9756,30 @@
     setInterval(refreshBridgeStatus, 3000);
     setInterval(pollBridgeAudio, 120);
   }
+
+  window.__dashboardTest = {
+    seekArchiveTime(timeS, options = {}) {
+      seekArchiveMedia(Number(timeS || 0), {syncSelection: options.syncSelection !== false});
+    },
+    archivePlaybackState() {
+      return {
+        playheadTime: currentArchiveTimelineTime(),
+        mediaTime: archiveMediaCurrentTime(),
+        mediaDuration: Math.max(0, Number(archiveMediaDuration || archiveMediaPlayer.duration || 0)),
+        capped: archiveMediaIsCappedAtTimeline(),
+        playheadLabel: currentPlayheadValue.textContent || "",
+        mediaLabel: currentMediaValue.textContent || "",
+        capNote: archiveTimelineGapNote.textContent || "",
+      };
+    },
+    scrubCursorState() {
+      return {
+        visible: streamScrubCursorEl.classList.contains("visible"),
+        preview: streamScrubCursorEl.classList.contains("preview"),
+        active: streamScrubCursorEl.classList.contains("active"),
+      };
+    },
+  };
 
   initBridgePanel();
   refreshLiveKitConfig().then(() => {
