@@ -3679,7 +3679,7 @@
     }
     const left = contentLeft - streamViewport.scrollLeft;
     streamPlayheadEl.style.left = `${left}px`;
-    streamPlayheadEl.dataset.time = formatTimelineClock(playerTime);
+    streamPlayheadEl.dataset.time = formatTimelineClock(playerTime, {fractional: true});
     streamPlayheadEl.classList.add("visible");
     renderArchiveTransport();
   }
@@ -4061,16 +4061,18 @@
     return rem ? `${minutes}m ${rem}s` : `${minutes}m`;
   }
 
-  function formatTimelineClock(value) {
+  function formatTimelineClock(value, {fractional = false} = {}) {
     const total = Math.max(0, Number(value || 0));
     const wholeSeconds = Math.floor(total);
     const hours = Math.floor(wholeSeconds / 3600);
     const minutes = Math.floor((wholeSeconds % 3600) / 60);
     const seconds = wholeSeconds % 60;
+    const fraction = fractional ? Math.floor((total % 1) * 10) : 0;
+    const suffix = fractional ? `.${fraction}` : "";
     if (hours > 0) {
-      return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+      return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}${suffix}`;
     }
-    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}${suffix}`;
   }
 
   function sliderToWindow(value) {

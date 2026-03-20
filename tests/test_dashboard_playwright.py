@@ -2579,7 +2579,7 @@ def test_archive_load_shows_timeline_and_scrubbable_media_player(
     assert player_time > 0.1
     expect(page.locator("#archive-transport-toggle")).to_have_text("Pause")
     expect(page.locator("#stream-playhead")).to_have_class(re.compile(r"\bvisible\b"))
-    expect(page.locator("#stream-playhead")).to_have_attribute("data-time", re.compile(r"\d{2}:\d{2}"))
+    expect(page.locator("#stream-playhead")).to_have_attribute("data-time", re.compile(r"\d{2}:\d{2}(?:\.\d)?"))
 
     page.locator("#archive-media-player").evaluate("(node) => { node.pause(); node.currentTime = 0; }")
     page.wait_for_timeout(100)
