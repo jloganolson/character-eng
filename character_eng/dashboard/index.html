@@ -2523,6 +2523,8 @@
   let lastStoppedArchiveTitle = "";
   let historyState = {enabled: false, current_session: {}};
   let historyArchives = [];
+  let scenarioSourceCharacter = "";
+  let scenarioStageSourceByName = new Map();
   let archivePickerOpen = false;
   let saveCompleteModalOpen = false;
   let saveCompleteMeta = null;
@@ -4710,7 +4712,48 @@
   function structuredSectionsForEvent(event) {
     if (!event) return [];
     const sections = [];
-    if (event.type === "vision_pass") {
+    if (event.type === "turn_start") {
+      if (isVisualStageAdvanceEvent(event)) {
+        const ctx = visualStageContextForEvent(event);
+        const currentSnippet = stageSourceText(ctx?.from) || scenarioStageSnippet({
+          name: ctx?.from || "",
+          goal: ctx?.fromGoal || "",
+          exitBlock: {
+            condition: ctx?.exitCondition || "",
+            goto: ctx?.to || "",
+            label: ctx?.exitLabel || "",
+            visual_signals: ctx?.ruleSignals || [],
+          },
+        });
+        const nextSnippet = stageSourceText(ctx?.to) || scenarioStageSnippet({
+          name: ctx?.to || "",
+          goal: ctx?.toGoal || "",
+        });
+        sections.push(structureSection("Why This Triggered", [
+          ctx?.observedSignals?.length ? {kind: "meta", key: "observed signals", value: ctx.observedSignals.join(", ")} : null,
+          ctx?.exitCondition ? {kind: "meta", key: "matched exit", value: ctx.exitCondition} : null,
+          ctx?.to ? {kind: "meta", key: "next stage", value: ctx.to} : null,
+        ].filter(Boolean)));
+        if (currentSnippet) {
+          sections.push(structureSection("Current Stage", [
+            {kind: "input", key: "toml", value: currentSnippet},
+          ]));
+        }
+        if (nextSnippet) {
+          sections.push(structureSection("Next Stage", [
+            {kind: "input", key: "toml", value: nextSnippet},
+          ]));
+        }
+      } else {
+        sections.push(structureSection("Trigger", [
+          {kind: "claim", key: "turn", value: turnStartLabel(event.data)},
+          {kind: "meta", key: "source", value: formatTurnSource(event.data?.trigger_source, event.data?.input_type || "")},
+          {kind: "meta", key: "kind", value: formatTurnKind(event.data?.turn_kind, event.data?.input_type || "")},
+          event.data?.trigger_reason ? {kind: "meta", key: "reason", value: event.data.trigger_reason} : null,
+          event.data?.trigger_signals?.length ? {kind: "meta", key: "signals", value: event.data.trigger_signals.join(", ")} : null,
+        ].filter(Boolean)));
+      }
+    } else if (event.type === "vision_pass") {
       const focus = visionPassFocus(event);
       const snapshot = visionPassSnapshot(event);
       const answers = visionPassAnswers(event);
@@ -4881,7 +4924,7 @@
       sections.push(structureSection("Summary", [{
         kind: "claim",
         key: "update",
-        value: event.data?.summary || event.label || "",
+        value: visionStateSummaryText(event.data) || event.label || "",
       }]));
       sections.push(structureSection("Inputs", (event.data?.task_answers || []).map((item) => ({
         kind: "answer",
@@ -5061,7 +5104,7 @@
         if (event.data?.signal) chipList.push(`signal ${event.data.signal}`);
         if (event.data?.rule?.source) chipList.push(`via ${event.data.rule.source}`);
       } else if (event.type === "vision_state_update") {
-        if (event.data?.summary) chipList.push(event.data.summary);
+        if (visionStateSummaryText(event.data)) chipList.push(visionStateSummaryText(event.data));
         chipList.push(...(event.data?.task_answers || []).slice(0, 2).map((item) => `task ${item.label || item.task_id || "vision"}`));
       } else if (event.type === "reid_track") {
         if (event.data?.identity) chipList.push(`identity ${event.data.identity}`);
@@ -6031,6 +6074,30 @@
     return archiveBrowseRef || historyState.current_session?.session_id || currentSessionId || "";
   }
 
+  function currentCharacterName() {
+    return String(document.getElementById("h-character")?.textContent || "").trim();
+  }
+
+  async function ensureScenarioSourceLoaded(character = currentCharacterName()) {
+    const name = String(character || "").trim();
+    if (!name || name === "--") return false;
+    if (scenarioSourceCharacter === name && scenarioStageSourceByName.size) return true;
+    try {
+      const response = await fetch(`/scenario-source?character=${encodeURIComponent(name)}`);
+      if (!response.ok) throw new Error(`scenario source ${response.status}`);
+      const payload = await response.json();
+      scenarioSourceCharacter = name;
+      scenarioStageSourceByName = new Map(Object.entries(payload?.stages || {}).map(([stageName, item]) => [stageName, item]));
+      const selected = selectedEvent();
+      if (selected && isVisualStageAdvanceEvent(selected)) {
+        renderStructuredDetail(selected);
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   function selectedArchiveVisionEventTime() {
     if (!streamEvents.length) return null;
     const target = selectedEvent() || streamEvents[streamEvents.length - 1];
@@ -6068,6 +6135,121 @@
     return key || "turn";
   }
 
+  function isGenericVisionStateSummary(text) {
+    const value = String(text || "").trim().toLowerCase();
+    return [
+      "",
+      "no updates.",
+      "no changes.",
+      "no changes observed in the room.",
+      "no significant state changes are observable in this moment.",
+      "no significant state changes are observable at this moment.",
+    ].includes(value);
+  }
+
+  function visionStateSummaryText(data) {
+    const summary = String(data?.summary || "").trim();
+    if (!isGenericVisionStateSummary(summary)) return summary;
+    if (Array.isArray(data?.add_facts) && data.add_facts.length) return data.add_facts[0];
+    if (Array.isArray(data?.events) && data.events.length) return data.events[0];
+    if (Array.isArray(data?.person_updates) && data.person_updates.length) {
+      const first = data.person_updates[0] || {};
+      if (Array.isArray(first.add_facts) && first.add_facts.length) return first.add_facts[0];
+      if (first.set_presence) return `${first.person_id || "person"} is now ${first.set_presence}`;
+      if (first.set_name) return `${first.person_id || "person"} is now ${first.set_name}`;
+    }
+    const worldAnswer = (data?.task_answers || []).find((item) => String(item?.interpret_as || "") === "world_state" && item?.answer);
+    if (worldAnswer?.answer) return worldAnswer.answer;
+    return summary || "Vision state update";
+  }
+
+  function visualStageAdvanceLabel(data) {
+    if (!data || String(data.trigger_reason || "").trim().toLowerCase() !== "visual_stage_exit") return "";
+    const from = String(data.trigger_stage_from || "").trim();
+    const to = String(data.trigger_stage_to || "").trim();
+    if (from && to) return `${from} -> ${to}`;
+    return "scenario stage advance";
+  }
+
+  function isVisualStageAdvanceEvent(event) {
+    return !!event && event.type === "turn_start" && String(event.data?.trigger_reason || "").trim().toLowerCase() === "visual_stage_exit";
+  }
+
+  function nearestStageChangeForEvent(event) {
+    if (!event) return null;
+    let best = null;
+    let bestDelta = Infinity;
+    for (const candidate of streamEvents) {
+      if (candidate.type !== "stage_change") continue;
+      const delta = Math.abs(Number(candidate.timestamp || 0) - Number(event.timestamp || 0));
+      if (delta > 1.5 || delta >= bestDelta) continue;
+      best = candidate;
+      bestDelta = delta;
+    }
+    return best;
+  }
+
+  function visualStageContextForEvent(event) {
+    if (!event) return null;
+    const data = event.data || {};
+    const stageChange = nearestStageChangeForEvent(event);
+    const from = String(data.trigger_stage_from || stageChange?.data?.old_stage || "").trim();
+    const to = String(data.trigger_stage_to || stageChange?.data?.new_stage || "").trim();
+    const fromGoal = String(data.trigger_stage_from_goal || "").trim();
+    const toGoal = String(data.trigger_stage_to_goal || stageChange?.data?.new_goal || "").trim();
+    const exitLabel = String(data.trigger_stage_exit_label || "").trim();
+    const exitCondition = String(data.trigger_stage_exit_condition || "").trim();
+    const ruleSignals = Array.isArray(data.trigger_stage_exit_visual_signals) ? data.trigger_stage_exit_visual_signals.filter(Boolean) : [];
+    const observedSignals = Array.isArray(data.trigger_signals) ? data.trigger_signals.filter(Boolean) : [];
+    if (!from && !to && !exitCondition && !ruleSignals.length && !observedSignals.length) return null;
+    return {
+      from,
+      to,
+      fromGoal,
+      toGoal,
+      exitLabel,
+      exitCondition,
+      ruleSignals,
+      observedSignals,
+    };
+  }
+
+  function stageSourceText(name) {
+    const key = String(name || "").trim();
+    if (!key) return "";
+    return String(scenarioStageSourceByName.get(key)?.text || "");
+  }
+
+  function scenarioStageSnippet({name = "", goal = "", exitBlock = null} = {}) {
+    if (!name && !goal && !exitBlock) return "";
+    const lines = ["[[stage]]"];
+    if (name) lines.push(`name = "${name}"`);
+    if (goal) lines.push(`goal = "${goal}"`);
+    if (exitBlock) {
+      lines.push("");
+      lines.push("[[stage.exit]]");
+      if (exitBlock.condition) lines.push(`condition = "${exitBlock.condition}"`);
+      if (exitBlock.goto) lines.push(`goto = "${exitBlock.goto}"`);
+      if (exitBlock.label) lines.push(`label = "${exitBlock.label}"`);
+      if (Array.isArray(exitBlock.visual_signals) && exitBlock.visual_signals.length) {
+        lines.push(`visual_signals = [${exitBlock.visual_signals.map((item) => `"${item}"`).join(", ")}]`);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  function visualStageSnippet(data) {
+    if (!data || String(data.trigger_reason || "").trim().toLowerCase() !== "visual_stage_exit") return "";
+    const lines = ["[[stage.exit]]"];
+    if (data.trigger_stage_exit_label) lines.push(`label = "${data.trigger_stage_exit_label}"`);
+    if (data.trigger_stage_exit_condition) lines.push(`condition = "${data.trigger_stage_exit_condition}"`);
+    if (Array.isArray(data.trigger_stage_exit_visual_signals) && data.trigger_stage_exit_visual_signals.length) {
+      lines.push(`visual_signals = [${data.trigger_stage_exit_visual_signals.map((item) => `"${item}"`).join(", ")}]`);
+    }
+    if (data.trigger_stage_to) lines.push(`goto = "${data.trigger_stage_to}"`);
+    return lines.join("\n");
+  }
+
   function turnSummaryReplyText(data) {
     if (!data) return "";
     if (data.interrupted && data.spoken_text) return data.spoken_text;
@@ -6100,6 +6282,14 @@
       director_status: "",
       plan_request: "",
       new_stage: "",
+      trigger_stage_from: "",
+      trigger_stage_from_goal: "",
+      trigger_stage_to: "",
+      trigger_stage_to_goal: "",
+      trigger_stage_exit_label: "",
+      trigger_stage_exit_condition: "",
+      trigger_stage_exit_index: null,
+      trigger_stage_exit_visual_signals: [],
       next_intent: "",
       plan_beats: 0,
       script_complete: false,
@@ -6139,6 +6329,25 @@
     return outcome;
   }
 
+  function turnStartLabel(data) {
+    if (!data) return "(empty input)";
+    const inputType = String(data.input_type || "").trim().toLowerCase();
+    const source = formatTurnSource(data.trigger_source, inputType);
+    const reason = String(data.trigger_reason || "").trim().toLowerCase();
+    if (inputType === "beat") {
+      if (source === "vision" && reason === "visual_stage_exit") return "Vision stage-advance beat";
+      if (source === "vision") return "Vision-triggered beat";
+      if (source === "timer" || reason === "auto_beat") return "Auto beat";
+      if (source === "manual" || source === "script") return "Manual beat";
+      if (source === "world") return "World-triggered beat";
+      if (source === "perception") return "Perception-triggered beat";
+      return "Beat turn";
+    }
+    if (inputType === "world") return "World-triggered turn";
+    if (inputType === "see") return "Vision-triggered turn";
+    return data.input_text || "(empty input)";
+  }
+
   function shouldRenderTimelineEvent(event) {
     return !!event && event.type !== "turn_summary";
   }
@@ -6159,10 +6368,7 @@
       case "resume":
         return "Conversation resumed";
       case "turn_start":
-        if (data.input_type === "beat") return "/beat";
-        if (data.input_type === "world") return `/world ${data.input_text || ""}`.trim();
-        if (data.input_type === "see") return `/see ${data.input_text || ""}`.trim();
-        return data.input_text || "(empty input)";
+        return turnStartLabel(data);
       case "user_speech_started":
         return "speech detected";
       case "user_transcript_final":
@@ -6215,7 +6421,7 @@
       case "vision_trigger":
         return data.description || data.signal || "Vision trigger";
       case "vision_state_update":
-        return data.summary || `${(data.task_answers || []).length} interpreted vision task${(data.task_answers || []).length === 1 ? "" : "s"}`;
+        return visionStateSummaryText(data) || `${(data.task_answers || []).length} interpreted vision task${(data.task_answers || []).length === 1 ? "" : "s"}`;
       case "vlm_answer":
         return data.answer || data.label || data.question || "VLM answer";
       case "vision_pass": {
@@ -6309,9 +6515,11 @@
         return data.text ? `final transcript` : "";
       case "turn_start":
         return [
-          `${formatTurnSource(data.trigger_source, data.input_type)} / ${formatTurnKind(data.turn_kind, data.input_type)}`,
-          data.trigger_reason ? `reason ${data.trigger_reason}` : "",
-          data.trigger_signals?.length ? `signals ${data.trigger_signals.join(", ")}` : "",
+          isVisualStageAdvanceEvent({type: "turn_start", data})
+            ? [visualStageAdvanceLabel(data), data.trigger_signals?.length ? `signals ${data.trigger_signals.join(", ")}` : ""].filter(Boolean).join(" · ")
+            : `${formatTurnSource(data.trigger_source, data.input_type)} / ${formatTurnKind(data.turn_kind, data.input_type)}`,
+          !isVisualStageAdvanceEvent({type: "turn_start", data}) && data.trigger_reason ? `reason ${data.trigger_reason}` : "",
+          !isVisualStageAdvanceEvent({type: "turn_start", data}) && data.trigger_signals?.length ? `signals ${data.trigger_signals.join(", ")}` : "",
           data.input_source ? `via ${data.input_source}` : "",
         ].filter(Boolean).join(" · ");
       case "vision_snapshot":
@@ -6354,6 +6562,7 @@
         ].filter(Boolean).join(" · ");
       case "vision_state_update":
         return [
+          visionStateSummaryText(data),
           (data.task_answers || []).length ? `${data.task_answers.length} task${data.task_answers.length === 1 ? "" : "s"}` : "",
           data.add_facts?.length ? `+${data.add_facts.length} world` : "",
           data.events?.length ? `~${data.events.length} event` : "",
@@ -6765,7 +6974,7 @@
   }
 
   function renderTurnContext(event) {
-    if (!event || !event.turnId) {
+    if (!event || !event.turnId || isVisualStageAdvanceEvent(event)) {
       detailTurnContext.classList.remove("active");
       detailTurnBadge.textContent = "turn";
       detailTurnGrid.innerHTML = "";
@@ -6780,6 +6989,9 @@
       {key: "source", value: source},
       {key: "kind", value: kind},
       {key: "outcome", value: outcome},
+      visualStageAdvanceLabel(summary?.data) ? {key: "scenario", value: visualStageAdvanceLabel(summary.data)} : null,
+      summary?.data?.trigger_stage_exit_label ? {key: "exit", value: summary.data.trigger_stage_exit_label} : null,
+      summary?.data?.trigger_stage_exit_condition ? {key: "condition", value: summary.data.trigger_stage_exit_condition} : null,
       summary?.data?.trigger_reason ? {key: "reason", value: summary.data.trigger_reason} : null,
       summary?.data?.trigger_signals?.length ? {key: "signals", value: summary.data.trigger_signals.join(", ")} : null,
       turnEvents.length ? {key: "events", value: `${turnEvents.length}`} : null,
@@ -7674,6 +7886,7 @@
       detailWarning.textContent = "";
     }
     document.getElementById("detail-payload").textContent = JSON.stringify(event.data || {}, null, 2);
+    if (isVisualStageAdvanceEvent(event)) ensureScenarioSourceLoaded();
     renderPromptBlocks(promptTraceBlocksForEvent(event));
     renderLoopTiming(event);
     renderSourceTrace(event);
@@ -7868,6 +8081,7 @@
       ].filter(Boolean);
       const subdetails = [
         event.data.input_text && event.data.input_type === "send" ? `heard: ${event.data.input_text}` : "",
+        visualStageAdvanceLabel(event.data) ? `scenario: ${visualStageAdvanceLabel(event.data)}` : "",
         event.data.trigger_reason ? `reason: ${event.data.trigger_reason}` : "",
         event.data.trigger_signals?.length ? `signals: ${event.data.trigger_signals.join(", ")}` : "",
       ].filter(Boolean);
@@ -7993,11 +8207,13 @@
       `;
     }
     if (event.type === "vision_state_update") {
+      const resolvedSummary = visionStateSummaryText(event.data);
+      const secondarySummary = String(event.data.summary || "").trim();
       return `
         <div class="stream-card-kicker">vision llm</div>
         <div class="stream-card-label">${esc(event.label)}</div>
         ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
-        ${event.data.summary ? `<div class="stream-card-subdetail">${esc(event.data.summary)}</div>` : ""}
+        ${secondarySummary && !isGenericVisionStateSummary(secondarySummary) && secondarySummary !== resolvedSummary ? `<div class="stream-card-subdetail">${esc(secondarySummary)}</div>` : ""}
       `;
     }
     if (event.type === "vlm_answer") {
@@ -8081,6 +8297,7 @@
       const selected = selectedStreamKey && streamEventByKey.get(selectedStreamKey)?.turnId === summary.turnId;
       const titleBits = [
         startLabel,
+        visualStageAdvanceLabel(summary.data) || "",
         summary.data?.trigger_reason ? `reason: ${summary.data.trigger_reason}` : "",
         summary.data?.trigger_signals?.length ? `signals: ${summary.data.trigger_signals.join(", ")}` : "",
         endLabel,
@@ -8298,6 +8515,7 @@
       document.getElementById("h-session").textContent = data.session_id || "--";
       if (data.stage) document.getElementById("h-stage").textContent = data.stage;
       document.title = `${data.character || "Character"} Dashboard`;
+      ensureScenarioSourceLoaded(data.character || "");
       refreshPromptAssets();
       recordEvent("session_start", data, rawEvent);
       renderBootStatus();
@@ -8329,6 +8547,16 @@
       summary.data.trigger_reason = data.trigger_reason || summary.data.trigger_reason;
       summary.data.trigger_signal = data.trigger_signal || summary.data.trigger_signal;
       summary.data.trigger_signals = Array.isArray(data.trigger_signals) ? [...data.trigger_signals] : summary.data.trigger_signals;
+      summary.data.trigger_stage_from = data.trigger_stage_from || summary.data.trigger_stage_from;
+      summary.data.trigger_stage_from_goal = data.trigger_stage_from_goal || summary.data.trigger_stage_from_goal;
+      summary.data.trigger_stage_to = data.trigger_stage_to || summary.data.trigger_stage_to;
+      summary.data.trigger_stage_to_goal = data.trigger_stage_to_goal || summary.data.trigger_stage_to_goal;
+      summary.data.trigger_stage_exit_label = data.trigger_stage_exit_label || summary.data.trigger_stage_exit_label;
+      summary.data.trigger_stage_exit_condition = data.trigger_stage_exit_condition || summary.data.trigger_stage_exit_condition;
+      summary.data.trigger_stage_exit_index = data.trigger_stage_exit_index ?? summary.data.trigger_stage_exit_index;
+      summary.data.trigger_stage_exit_visual_signals = Array.isArray(data.trigger_stage_exit_visual_signals)
+        ? [...data.trigger_stage_exit_visual_signals]
+        : summary.data.trigger_stage_exit_visual_signals;
       summary.data.input_type = data.input_type || summary.data.input_type;
       summary.data.input_text = data.input_text || summary.data.input_text;
       refreshTurnSummary(summary);

@@ -2579,6 +2579,231 @@ def test_play_rearms_follow_and_jumps_to_latest(
     assert after["scrollLeft"] >= after["maxScrollLeft"] - 4
 
 
+def test_turn_start_cards_use_explanatory_beat_labels(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-turn-start-copy",
+            "stage": "watching",
+        },
+    )
+    collector.push(
+        "turn_start",
+        {
+            "input_type": "beat",
+            "input_text": "/beat",
+            "trigger_source": "vision",
+            "turn_kind": "reaction",
+            "trigger_reason": "visual_stage_exit",
+            "trigger_signals": ["person_visible", "person_visible_stable"],
+            "trigger_stage_from": "watching",
+            "trigger_stage_from_goal": "Greg is indoors in a room, looking around and hoping to learn what time it is.",
+            "trigger_stage_to": "spotted",
+            "trigger_stage_to_goal": "Greg has noticed someone nearby. He makes one short grounded opener and quickly asks what time it is.",
+            "trigger_stage_exit_label": "notices",
+            "trigger_stage_exit_condition": "Someone becomes visible nearby or appears to notice Greg",
+            "trigger_stage_exit_visual_signals": ["person_visible", "person_visible_stable"],
+        },
+    )
+
+    card = page.locator(".stream-card[data-event-type='turn_start']").first
+    expect(card).to_be_visible()
+    expect(card).to_contain_text("Vision stage-advance beat")
+    expect(card).to_contain_text("watching -> spotted")
+    expect(card).not_to_contain_text("/beat")
+
+
+def test_visual_stage_exit_turn_start_inspector_shows_scenario_match(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {"reconcile": True, "vision": True, "auto_beat": False, "filler": False},
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push(
+        "session_start",
+        {"character": "greg", "model": "groq-llama-8b", "session_id": "sess-turn-stage", "stage": "watching"},
+    )
+    collector.push(
+        "turn_start",
+        {
+            "input_type": "beat",
+            "input_text": "",
+            "trigger_source": "vision",
+            "turn_kind": "reaction",
+            "trigger_reason": "visual_stage_exit",
+            "trigger_signals": ["person_visible", "person_visible_stable"],
+            "trigger_stage_from": "watching",
+            "trigger_stage_from_goal": "Greg is indoors in a room, looking around and hoping to learn what time it is.",
+            "trigger_stage_to": "spotted",
+            "trigger_stage_to_goal": "Greg has noticed someone nearby. He makes one short grounded opener and quickly asks what time it is.",
+            "trigger_stage_exit_label": "notices",
+            "trigger_stage_exit_condition": "Someone becomes visible nearby or appears to notice Greg",
+            "trigger_stage_exit_visual_signals": ["person_visible", "person_visible_stable"],
+        },
+    )
+
+    page.locator(".stream-card[data-event-type='turn_start']").first.click()
+    expect(page.locator("#detail-turn-context")).not_to_have_class(re.compile(r"active"))
+    expect(page.locator("#detail-structure")).to_contain_text('[[stage]]')
+    expect(page.locator("#detail-structure")).to_contain_text('name = "watching"')
+    expect(page.locator("#detail-structure")).to_contain_text('condition = "Someone becomes visible nearby or appears to notice Greg"')
+    expect(page.locator("#detail-structure")).to_contain_text('visual_signals = ["person_visible", "person_visible_stable"]')
+    expect(page.locator("#detail-structure")).to_contain_text('goto = "spotted"')
+    expect(page.locator("#detail-structure")).to_contain_text('name = "spotted"')
+
+
+def test_vision_state_update_falls_back_from_no_updates_summary(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {"reconcile": True, "vision": True, "auto_beat": False, "filler": False},
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push(
+        "session_start",
+        {"character": "greg", "model": "groq-llama-8b", "session_id": "sess-vision-summary", "stage": "watching"},
+    )
+    collector.push(
+        "vision_state_update",
+        {
+            "summary": "No updates.",
+            "task_answers": [
+                {
+                    "task_id": "world_state",
+                    "label": "World State",
+                    "question": "What changed in the room?",
+                    "answer": "The visible room has light-colored walls and a stackable ladder in the back left.",
+                    "interpret_as": "world_state",
+                    "target": "scene",
+                }
+            ],
+            "add_facts": [
+                "The visible room has light-colored walls and a stackable ladder in the back left."
+            ],
+            "remove_facts": [],
+            "events": [],
+            "person_updates": [],
+        },
+    )
+
+    card = page.locator(".stream-card[data-event-type='vision_state_update']").first
+    expect(card).to_be_visible()
+    expect(card).to_contain_text("The visible room has light-colored walls")
+    expect(card).not_to_contain_text("No updates.")
+    card.click()
+    expect(page.locator("#detail-structure")).to_contain_text("The visible room has light-colored walls and a stackable ladder in the back left.")
+
+
 def test_world_update_inspector_shows_facts_hides_prompt_tab_and_opens_json(
     browser_page: Page,
     dashboard_server,

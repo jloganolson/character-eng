@@ -108,6 +108,7 @@ def _set_pending_turn_meta(
     trigger_reason: str = "",
     trigger_signal: str = "",
     trigger_signals: list[str] | None = None,
+    extra: dict | None = None,
 ) -> None:
     global _pending_turn_meta
     payload = {}
@@ -124,6 +125,8 @@ def _set_pending_turn_meta(
         payload["trigger_signals"] = signals
         if "trigger_signal" not in payload:
             payload["trigger_signal"] = signals[0]
+    if extra:
+        payload.update({key: value for key, value in extra.items() if value not in (None, "", [], {})})
     _pending_turn_meta = payload or None
 
 
@@ -886,15 +889,15 @@ def _current_vision_text(vision_mgr) -> str:
         return ""
 
 
-def _advance_scenario_from_visual(session, scenario, script, world, people, goals, model_config, exit_index: int, vision_mgr=None) -> bool:
+def _advance_scenario_from_visual(session, scenario, script, world, people, goals, model_config, exit_index: int, vision_mgr=None) -> dict | None:
     if scenario is None or scenario.active_stage is None:
-        return False
+        return None
     stage = scenario.active_stage
     if exit_index < 0 or exit_index >= len(stage.exits):
-        return False
+        return None
     exit_obj = stage.exits[exit_index]
     if not scenario.advance_to(exit_obj.goto):
-        return False
+        return None
     new_stage = scenario.active_stage
     _push("director", {
         "thought": f"visual fast-path matched structured signal for exit {exit_index}",
@@ -924,7 +927,16 @@ def _advance_scenario_from_visual(session, scenario, script, world, people, goal
             )
             if result.beats:
                 apply_plan(script, result)
-    return True
+    return {
+        "trigger_stage_from": stage.name,
+        "trigger_stage_from_goal": getattr(stage, "goal", "") or "",
+        "trigger_stage_to": new_stage.name if new_stage is not None else exit_obj.goto,
+        "trigger_stage_to_goal": getattr(new_stage, "goal", "") if new_stage is not None else "",
+        "trigger_stage_exit_index": exit_index,
+        "trigger_stage_exit_label": getattr(exit_obj, "label", "") or "",
+        "trigger_stage_exit_condition": getattr(exit_obj, "condition", "") or "",
+        "trigger_stage_exit_visual_signals": list(getattr(exit_obj, "visual_signals", []) or []),
+    }
 
 
 def _consume_vision_updates(session, world, people, vision_mgr, scenario, script, goals, model_config) -> bool:
@@ -959,9 +971,10 @@ def _consume_vision_updates(session, world, people, vision_mgr, scenario, script
         _start_reconcile(world, model_config, people=people)
         exit_index = match_visual_exit(scenario, vision_events)
         if exit_index >= 0:
-            trigger_visual_turn = _advance_scenario_from_visual(
+            visual_exit_meta = _advance_scenario_from_visual(
                 session, scenario, script, world, people, goals, model_config, exit_index, vision_mgr=vision_mgr
             )
+            trigger_visual_turn = visual_exit_meta is not None
             if trigger_visual_turn:
                 _should_trigger_visual_turn(signals, people, force=True)
                 _set_pending_turn_meta(
@@ -969,6 +982,7 @@ def _consume_vision_updates(session, world, people, vision_mgr, scenario, script
                     turn_kind="reaction",
                     trigger_reason="visual_stage_exit",
                     trigger_signals=sorted(signals),
+                    extra=visual_exit_meta,
                 )
         elif _should_trigger_visual_turn(signals, people):
             trigger_visual_turn = True

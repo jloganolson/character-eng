@@ -8,19 +8,95 @@ import shutil
 import socket
 import subprocess
 import threading
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from character_eng.creative import resolve_character_scenario_path
 from character_eng.dashboard.events import DashboardEventCollector
-from character_eng.prompts import mutable_prompt_inventory
+from character_eng.prompts import CHARACTERS_DIR, mutable_prompt_inventory
 
 HTML_PATH = Path(__file__).parent / "index.html"
 SYSTEM_MAP_PATH = Path(__file__).parent / "system_map.html"
 STREAM_SCHEMA_PATH = Path(__file__).parent / "stream_schema.json"
 REPORTS_DIR = Path(__file__).resolve().parent.parent.parent / "logs" / "intermediate"
+
+
+def _toml_value(value):
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    return json.dumps(value)
+
+
+def _append_toml_fields(lines: list[str], payload: dict) -> None:
+    for key, value in payload.items():
+        if isinstance(value, dict):
+            continue
+        if isinstance(value, list) and any(isinstance(item, dict) for item in value):
+            continue
+        lines.append(f"{key} = {_toml_value(value)}")
+
+
+def _render_stage_block(stage_data: dict) -> str:
+    lines = ["[[stage]]"]
+    if "name" in stage_data:
+        lines.append(f'name = {_toml_value(stage_data.get("name", ""))}')
+    if "goal" in stage_data:
+        lines.append(f'goal = {_toml_value(stage_data.get("goal", ""))}')
+
+    visual_requirements = stage_data.get("visual_requirements") or stage_data.get("visual_focus")
+    if isinstance(visual_requirements, dict) and visual_requirements:
+        lines.append("")
+        lines.append("[stage.visual_requirements]")
+        _append_toml_fields(lines, visual_requirements)
+
+    for trigger in stage_data.get("vision_trigger", []):
+        if not isinstance(trigger, dict):
+            continue
+        lines.append("")
+        lines.append("[[stage.vision_trigger]]")
+        _append_toml_fields(lines, trigger)
+
+    for stage_exit in stage_data.get("exit", []):
+        if not isinstance(stage_exit, dict):
+            continue
+        lines.append("")
+        lines.append("[[stage.exit]]")
+        _append_toml_fields(lines, stage_exit)
+
+    return "\n".join(lines)
+
+
+def _scenario_stage_blocks(character: str) -> dict:
+    path = resolve_character_scenario_path(character, None, characters_dir=CHARACTERS_DIR)
+    if path is None or not path.exists():
+        return {"character": character, "path": str(path or ""), "stages": {}}
+    data = tomllib.loads(path.read_text())
+    stages = {}
+    for stage_data in data.get("stage", []):
+        if not isinstance(stage_data, dict):
+            continue
+        name = str(stage_data.get("name", "")).strip()
+        if not name:
+            continue
+        stages[name] = {
+            "name": name,
+            "goal": str(stage_data.get("goal", "") or ""),
+            "text": _render_stage_block(stage_data),
+        }
+    return {"character": character, "path": str(path), "stages": stages}
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -66,6 +142,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_history_media()
         elif path.startswith("/history/annotations"):
             self._serve_history_annotations()
+        elif path.startswith("/scenario-source"):
+            self._serve_scenario_source()
         elif path.startswith("/prompt-assets"):
             self._serve_prompt_assets()
         else:
@@ -279,6 +357,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
         query = parse_qs(urlparse(self.path).query)
         character = (query.get("character") or [None])[0] or self.default_character or None
         payload = mutable_prompt_inventory(character=character)
+        body = json.dumps(payload).encode()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_scenario_source(self):
+        query = parse_qs(urlparse(self.path).query)
+        character = (query.get("character") or [None])[0] or self.default_character or None
+        payload = _scenario_stage_blocks(str(character or "").strip())
         body = json.dumps(payload).encode()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json")
