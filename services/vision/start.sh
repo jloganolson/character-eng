@@ -24,6 +24,7 @@ else
 fi
 VLLM_ARGS="${VLLM_ARGS:-}"
 VLLM_GENERATION_CONFIG="${VLLM_GENERATION_CONFIG:-}"
+VLLM_TRUST_REMOTE_CODE="${VLLM_TRUST_REMOTE_CODE:-0}"
 APP_PORT="${APP_PORT:-7860}"
 APP_TIMEOUT="${APP_TIMEOUT:-30}"
 VLLM_BIN="${VLLM_BIN:-}"
@@ -76,9 +77,10 @@ export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-$VISION_ENV}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-$CACHE_ROOT/uv}"
 export HF_HOME="${HF_HOME:-$CACHE_ROOT/huggingface}"
 export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}"
-export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME/transformers}"
 export TORCH_HOME="${TORCH_HOME:-$CACHE_ROOT/torch}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$CACHE_ROOT/xdg}"
+# Transformers v5 deprecates TRANSFORMERS_CACHE in favor of HF_HOME.
+unset TRANSFORMERS_CACHE 2>/dev/null || true
 
 mkdir -p "$(dirname "$UV_PROJECT_ENVIRONMENT")" "$UV_CACHE_DIR" "$HF_HOME" "$TORCH_HOME" "$XDG_CACHE_HOME"
 
@@ -192,8 +194,10 @@ else
         --port "$VLLM_PORT"
         --max-model-len "$VLLM_MAX_MODEL_LEN"
         --gpu-memory-utilization "$VLLM_GPU_UTIL"
-        --trust-remote-code
     )
+    if [ "$VLLM_TRUST_REMOTE_CODE" = "1" ]; then
+        vllm_cmd+=(--trust-remote-code)
+    fi
     if [ -n "$VLLM_GENERATION_CONFIG" ]; then
         vllm_cmd+=(--generation-config "$VLLM_GENERATION_CONFIG")
     fi
