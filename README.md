@@ -74,6 +74,8 @@ The app works without `config.toml` — all settings have defaults. The `--voice
 ## Run
 
 ```bash
+./scripts/run_live.sh                   # app/dashboard only: voice + vision + paused-ready startup
+./scripts/stop_live.sh                  # stop only the app/dashboard layer
 ./scripts/run_local.sh                  # one-command local stack: voice + vision + paused-ready startup
 ./scripts/run_heavy.sh                  # keep vLLM/vision/Pocket-TTS hot in the background
 ./scripts/vision_smoke.sh               # one-shot heavy stack readiness check with model-status output
@@ -92,6 +94,15 @@ uv run -m character_eng --smoke          # smoke test (auto greg, scripted input
 ```
 
 `./scripts/run_local.sh` is the recommended hands-on entrypoint. By default it does a clean local restart first: it stops older character-eng app processes plus anything still bound to the usual local ports for dashboard/bridge (`:7862`), vision (`:7860`), vLLM (`:8000`), and Pocket-TTS (`:8003`), then launches the app with voice, vision, and startup-paused enabled.
+
+If you only want to manage the app/dashboard layer and leave heavy services alone, use:
+
+```bash
+./scripts/run_live.sh
+./scripts/stop_live.sh
+```
+
+`run_live.sh` is a thin wrapper around `uv run -m character_eng` with the usual `greg + voice + vision + start-paused` defaults. `stop_live.sh` only stops the app/dashboard layer; it does not tear down vLLM, Pocket-TTS, or the vision service.
 
 Useful variants:
 
