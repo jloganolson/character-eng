@@ -83,6 +83,8 @@ _history_playback_state = {
 }
 _archive_only_mode = False
 _archive_only_reason = ""
+_pending_turn_meta: dict | None = None
+_active_turn_meta: dict | None = None
 _vision_runtime = {
     "cfg": None,
     "proc": None,
@@ -97,6 +99,94 @@ def _push(event_type: str, data: dict) -> None:
         _history_service.record_event(event_type, data)
     if _collector is not None:
         _collector.push(event_type, data)
+
+
+def _set_pending_turn_meta(
+    *,
+    trigger_source: str = "",
+    turn_kind: str = "",
+    trigger_reason: str = "",
+    trigger_signal: str = "",
+    trigger_signals: list[str] | None = None,
+) -> None:
+    global _pending_turn_meta
+    payload = {}
+    if trigger_source:
+        payload["trigger_source"] = trigger_source
+    if turn_kind:
+        payload["turn_kind"] = turn_kind
+    if trigger_reason:
+        payload["trigger_reason"] = trigger_reason
+    if trigger_signal:
+        payload["trigger_signal"] = trigger_signal
+    signals = [str(item).strip() for item in (trigger_signals or []) if str(item).strip()]
+    if signals:
+        payload["trigger_signals"] = signals
+        if "trigger_signal" not in payload:
+            payload["trigger_signal"] = signals[0]
+    _pending_turn_meta = payload or None
+
+
+def _consume_turn_meta(*, default_source: str = "", default_kind: str = "") -> dict:
+    global _pending_turn_meta, _active_turn_meta
+    payload = dict(_pending_turn_meta or {})
+    _pending_turn_meta = None
+    if default_source and not payload.get("trigger_source"):
+        payload["trigger_source"] = default_source
+    if default_kind and not payload.get("turn_kind"):
+        payload["turn_kind"] = default_kind
+    _active_turn_meta = dict(payload)
+    return payload
+
+
+def _current_turn_payload(**fields) -> dict:
+    payload = dict(_active_turn_meta or {})
+    payload.update(fields)
+    return payload
+
+
+def _push_turn_start(
+    input_type: str,
+    input_text: str,
+    *,
+    default_source: str = "",
+    default_kind: str = "",
+    extra_fields: dict | None = None,
+) -> None:
+    global _active_turn_meta
+    payload = _consume_turn_meta(default_source=default_source, default_kind=default_kind)
+    payload.update({
+        "input_type": input_type,
+        "input_text": input_text,
+    })
+    if extra_fields:
+        payload.update(extra_fields)
+    _active_turn_meta = dict(payload)
+    _push("turn_start", payload)
+
+
+def _push_static_response_done(
+    text: str,
+    *,
+    turn_kind: str,
+    turn_outcome: str,
+    prompt_blocks: list[dict] | None = None,
+) -> None:
+    now = time.time()
+    _push("response_done", _current_turn_payload(
+        full_text=text,
+        ttft_ms=0,
+        llm_ms=0,
+        total_ms=0,
+        llm_start_ts=now,
+        response_ttft_ts=now,
+        response_done_ts=now,
+        first_audio_ts=None,
+        spoken_done_ts=now,
+        prompt_blocks=prompt_blocks or [],
+        turn_kind=turn_kind,
+        turn_outcome=turn_outcome,
+    ))
 
 
 def _record_prompt_trace(payload: dict) -> None:
@@ -874,8 +964,20 @@ def _consume_vision_updates(session, world, people, vision_mgr, scenario, script
             )
             if trigger_visual_turn:
                 _should_trigger_visual_turn(signals, people, force=True)
+                _set_pending_turn_meta(
+                    trigger_source="vision",
+                    turn_kind="reaction",
+                    trigger_reason="visual_stage_exit",
+                    trigger_signals=sorted(signals),
+                )
         elif _should_trigger_visual_turn(signals, people):
             trigger_visual_turn = True
+            _set_pending_turn_meta(
+                trigger_source="vision",
+                turn_kind="reaction",
+                trigger_reason="vision_signal",
+                trigger_signals=sorted(signals),
+            )
     vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal, scenario=scenario)
     _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
     return trigger_visual_turn
@@ -917,6 +1019,12 @@ def _wait_for_active_turn_input(session_id, voice_io, session, world, people, vi
                 )
         user_input = _poll_live_input(session_id, voice_io)
         if user_input:
+            if user_input == "/beat" and _pending_turn_meta is None:
+                _set_pending_turn_meta(
+                    trigger_source="timer",
+                    turn_kind="scripted",
+                    trigger_reason="auto_beat",
+                )
             return user_input
         if _consume_vision_updates(session, world, people, vision_mgr, scenario, script, goals, model_config):
             if voice_io is not None:
@@ -1615,7 +1723,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
               bridge=None, livekit_session: LiveKitSession | None = None,
               sim_speed: float = 1.0, start_paused: bool = False):
     """Run the chat loop for a character. Returns None normally, 'restart' to re-enter."""
-    global _conversation_paused, _session_stopped, _startup_pause_pending, _had_visible_people
+    global _conversation_paused, _session_stopped, _startup_pause_pending, _had_visible_people, _pending_turn_meta, _active_turn_meta
     set_llm_trace_hook(_record_prompt_trace)
     set_chat_trace_hook(_record_prompt_trace)
     label = character.replace("_", " ").title()
@@ -1863,6 +1971,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
         session_id = uuid.uuid4().hex[:8]
         log: list[dict] = []
+        _pending_turn_meta = None
+        _active_turn_meta = None
         _had_visible_people = False
         world = load_world_state(character)
         goals = load_goals(character)
@@ -3038,7 +3148,13 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
             # --- Turn flow ---
             input_timing = _consume_live_input_metadata(voice_io, user_input)
-            _push("turn_start", {"input_type": "send", "input_text": user_input, **input_timing})
+            _push_turn_start(
+                "send",
+                user_input,
+                default_source="user",
+                default_kind="dialogue",
+                extra_fields=input_timing,
+            )
 
             # First user input: natural LLM response, then parallel eval + replan
             if not had_user_input:
@@ -3352,12 +3468,12 @@ def deliver_beat(session, beat, label, voice_io=None):
     console.print(beat.line)
     console.print()
     _push("response_chunk", {"text": beat.line})
-    _push("response_done", {
-        "full_text": beat.line,
-        "ttft_ms": 0,
-        "total_ms": 0,
-        "prompt_blocks": [],
-    })
+    _push_static_response_done(
+        beat.line,
+        turn_kind=str((_active_turn_meta or {}).get("turn_kind") or "scripted"),
+        turn_outcome="beat_delivered",
+        prompt_blocks=[],
+    )
     if voice_io is not None:
         voice_io.speak_text(beat.line)
         if voice_io._barged_in:
@@ -3419,7 +3535,7 @@ def apply_plan(script, plan_result):
 
 def handle_beat(session, world, goals, script, label, model_config, big_model_config, eval_model_config, log, voice_io=None, people=None, scenario=None, vision_mgr=None):
     """Process a /beat command — condition-gated beat delivery (time passes)."""
-    _push("turn_start", {"input_type": "beat", "input_text": ""})
+    _push_turn_start("beat", "", default_source="manual", default_kind="scripted")
     entry = {"type": "beat"}
 
     # 1. If no current beat, replan (synchronous — user explicitly asked for a beat)
@@ -3475,6 +3591,12 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
                 console.print(f"[bold magenta]{npc_name}[/bold magenta]{cond_result.idle}")
                 console.print()
                 idle_text = cond_result.idle
+                _push_static_response_done(
+                    idle_text,
+                    turn_kind="idle",
+                    turn_outcome="idle_hold",
+                    prompt_blocks=[],
+                )
                 if voice_io is not None:
                     voice_io.speak_text(idle_text)
                     if voice_io._barged_in:
@@ -3540,7 +3662,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
 
 def handle_world_change(session, world, goals, script, change_text, label, model_config, big_model_config, eval_model_config, log, voice_io=None, people=None, scenario=None, vision_mgr=None):
     """Process a /world <description> command. Fast path: immediate reaction, background reconcile."""
-    _push("turn_start", {"input_type": "world", "input_text": change_text})
+    _push_turn_start("world", change_text, default_source="world", default_kind="reaction")
     # Store as pending
     world.add_pending(change_text)
 
@@ -3593,7 +3715,7 @@ def handle_world_change(session, world, goals, script, change_text, label, model
 
 def handle_perception(session, world, goals, script, people, scenario, see_text, label, model_config, big_model_config, eval_model_config, log, voice_io=None, vision_mgr=None):
     """Process a /see <text> command. Perception event: narrator injection, character reaction, background reconcile+eval+director."""
-    _push("turn_start", {"input_type": "see", "input_text": see_text})
+    _push_turn_start("see", see_text, default_source="perception", default_kind="reaction")
     event = PerceptionEvent(description=see_text, source="manual")
     _, narrator_msg = process_perception(event, people, world)
 
@@ -3957,18 +4079,19 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
     if t_llm_done is None:
         t_llm_done = t_end
     ttft_ms = int((t_first - t_start) * 1000) if t_first else 0
-    response_payload = {
-        "full_text": response_text,
-        "ttft_ms": ttft_ms,
-        "llm_start_ts": t_start,
-        "response_ttft_ts": t_first,
-        "response_done_ts": t_llm_done,
-        "tts_request_ts": t_tts_request,
-        "tts_synth_done_ts": t_tts_synth_done,
-        "first_audio_ts": None,
-        "spoken_done_ts": t_end,
-        "prompt_blocks": _prompt_trace_blocks_for_labels(("chat",)),
-    }
+    response_payload = _current_turn_payload(
+        full_text=response_text,
+        ttft_ms=ttft_ms,
+        llm_start_ts=t_start,
+        response_ttft_ts=t_first,
+        response_done_ts=t_llm_done,
+        tts_request_ts=t_tts_request,
+        tts_synth_done_ts=t_tts_synth_done,
+        first_audio_ts=None,
+        spoken_done_ts=t_end,
+        prompt_blocks=_prompt_trace_blocks_for_labels(("chat",)),
+        turn_outcome="replied",
+    )
     if input_timing:
         response_payload.update(input_timing)
     if voice_io is not None and t_first:

@@ -207,6 +207,7 @@ class TestDashboardServer:
         body = json.loads(resp.read())
         assert "lane_order" in body
         assert body["event_lane_map"]["assistant_reply"] == "chat"
+        assert body["event_lane_map"]["turn_summary"] == "chat"
         assert resp.status == 200
 
     def test_send_injects_input(self, server):

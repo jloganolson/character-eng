@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Error, Page, expect, sync_playwright
 
-from character_eng.dashboard.events import DashboardEventCollector
+from character_eng.dashboard.events import DashboardEvent, DashboardEventCollector
 from character_eng.dashboard.server import start_dashboard
 from character_eng.history import HistoryService
 from character_eng.person import PeopleState
@@ -63,6 +63,18 @@ def _write_test_jpeg(path: Path):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+
+def _collector_push_at(collector: DashboardEventCollector, event_type: str, data: dict, timestamp: float) -> None:
+    with collector._lock:
+        collector._seq += 1
+        event = DashboardEvent(type=event_type, data=data, timestamp=timestamp, seq=collector._seq)
+        collector._events.append(event)
+        for q in collector._subscribers:
+            try:
+                q.put_nowait(event)
+            except queue.Full:
+                pass
 
 
 def _seed_archive_session(
@@ -123,6 +135,99 @@ def _seed_archive_session(
     if title:
         updates["title"] = title
     archive.update_manifest(**updates)
+    return archive
+
+
+def _seed_turn_summary_archive(history: HistoryService, session_id: str = "sess-turn-summary"):
+    archive = history.start_session(session_id=session_id, character="greg", model="groq-llama-8b")
+    archive_start = archive._started_at
+    archive.record_event("session_start", {
+        "character": "greg",
+        "model": "groq-llama-8b",
+        "session_id": session_id,
+        "stage": "watching",
+    }, timestamp=archive_start + 0.0)
+    archive.record_event("user_transcript_final", {"text": "Do you have water?"}, timestamp=archive_start + 0.35)
+    archive.record_event("turn_start", {
+        "input_text": "Do you have water?",
+        "input_type": "send",
+        "trigger_source": "user",
+        "turn_kind": "dialogue",
+        "input_source": "voice",
+    }, timestamp=archive_start + 0.4)
+    archive.record_event("prompt_trace", {
+        "label": "chat",
+        "title": "Chat prompt",
+        "provider": "Groq",
+        "model": "llama-test",
+        "messages": [
+            {"role": "system", "content": "Keep it short."},
+            {"role": "user", "content": "Do you have water?"},
+        ],
+        "output": "Free water. Want one?",
+        "started_at": archive_start + 0.42,
+        "finished_at": archive_start + 0.5,
+    }, timestamp=archive_start + 0.5)
+    archive.record_event("response_done", {
+        "full_text": "Free water. Want one?",
+        "turn_kind": "dialogue",
+        "turn_outcome": "replied",
+        "input_source": "voice",
+        "ttft_ms": 190,
+    }, timestamp=archive_start + 0.8)
+    archive.record_event("eval", {
+        "script_status": "advance",
+        "thought": "Move to the next beat after answering.",
+        "plan_request": "Ask a grounded follow-up.",
+    }, timestamp=archive_start + 1.0)
+    archive.record_event("director", {
+        "status": "advance",
+        "thought": "Stay in the same stage.",
+        "new_stage": "watching",
+    }, timestamp=archive_start + 1.1)
+    archive.record_event("plan", {
+        "beats": [
+            {"intent": "Offer help", "line": "I can point you to the cooler."},
+            {"intent": "Ask a follow-up", "line": "You looking for cold water?"},
+        ],
+    }, timestamp=archive_start + 1.2)
+    archive.record_event("beat_advance", {
+        "next_intent": "Ask a follow-up",
+        "script_complete": False,
+    }, timestamp=archive_start + 1.3)
+    archive.capture_checkpoint(
+        label="turn-summary",
+        character="greg",
+        session_snapshot={"system_prompt": "system", "messages": [], "tagged_system_indices": {}},
+        world=WorldState(),
+        people=PeopleState(),
+        scenario=None,
+        script=Script(),
+        goals=Goals(),
+        log_entries=[],
+        context_version=0,
+        had_user_input=True,
+    )
+    history.finalize_current()
+    _write_test_video(archive.media_dir / "playback.mp4", duration_s=4.0)
+    frame_path = archive.media_dir / "video" / "000001.jpg"
+    frame_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_test_jpeg(frame_path)
+    (archive.media_dir / "video" / "frames.jsonl").write_text(
+        json.dumps({
+            "timestamp": archive_start + 0.8,
+            "path": frame_path.name,
+            "source": "vision",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    archive_manifest = json.loads(archive.manifest_path.read_text())
+    archive_media = dict(archive_manifest.get("media", {}))
+    archive_media["playback_path"] = str(archive.media_dir / "playback.mp4")
+    archive_media["video_path"] = str(archive.media_dir / "playback.mp4")
+    archive_media["video_frames_path"] = str(archive.media_dir / "video" / "frames.jsonl")
+    archive_media["video_frame_count"] = 1
+    archive.update_manifest(title="Turn Summary Archive", media=archive_media)
     return archive
 
 
@@ -302,6 +407,7 @@ def dashboard_server():
             ),
         ],
     )
+    _seed_turn_summary_archive(history)
     _seed_archive_session(
         history,
         session_id="greg-offline-canonical-v1",
@@ -675,7 +781,7 @@ def test_runtime_panel_interactions_in_browser(
 
     expect(page.locator(".stream-card[data-event-type='user_speech_started']")).to_have_count(1)
     expect(page.locator(".stream-card[data-event-type='user_transcript_final']")).to_have_count(1)
-    reply_card = page.locator(".stream-card").filter(has_text="Free water. Want one?").first
+    reply_card = page.locator(".stream-card[data-event-type='assistant_reply']").filter(has_text="Free water. Want one?").first
     reply_card.click()
     page.locator("#report-ref-button").click()
     expect(page.locator("#report-ref-status")).to_contain_text("Copied archive ref:")
@@ -2164,6 +2270,33 @@ def test_archive_raw_event_shows_inspected_frame_in_inspector(
     expect(page.locator("#detail-frame-open")).to_have_attribute("href", re.compile(r"session_id=sess-archive-vision-raw-ui"))
 
 
+def test_archive_turn_rail_and_context_show_turn_metadata(
+    browser_page: Page,
+    dashboard_server,
+):
+    _, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(f"{dashboard_url}?archive=sess-turn-summary&boot=live")
+
+    rail = page.locator(".turn-rail").first
+    expect(rail).to_be_visible()
+    expect(rail).to_contain_text("user / dialogue")
+    expect(rail).to_contain_text("replied")
+
+    reply_card = page.locator(".stream-card[data-event-type='assistant_reply']").first
+    reply_card.click()
+    expect(page.locator("#detail-type")).to_have_text("assistant_reply")
+    expect(page.locator("#detail-turn-context")).to_have_class(re.compile(r"\bactive\b"))
+    expect(page.locator("#detail-turn-badge")).to_contain_text("user / dialogue")
+    expect(page.locator("#detail-turn-grid")).to_contain_text("replied")
+    expect(page.locator(".turn-rail.active")).to_have_count(1)
+    page.locator("#tab-prompts").evaluate("(node) => node.click()")
+    expect(page.locator("#detail-prompts")).to_contain_text("Chat prompt")
+    expect(page.locator("#detail-prompts")).to_contain_text("Free water. Want one?")
+    page.locator("#detail-open-json").click()
+    expect(page.locator("#detail-payload")).to_contain_text("\"full_text\": \"Free water. Want one?\"")
+
+
 def test_json_default_inspector_keeps_annotations_above_payload(
     browser_page: Page,
     dashboard_server,
@@ -2332,6 +2465,201 @@ def test_prompt_preview_opens_modal_for_prompt_backed_event(
     expect(page.locator("#prompt-modal")).to_have_class(re.compile(r"\bopen\b"))
     expect(page.locator("#prompt-modal")).to_contain_text("Rendered Prompt")
     expect(page.locator("#prompt-modal")).to_contain_text("Free water. Want one?")
+
+
+def test_play_rearms_follow_and_jumps_to_latest(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, input_queue, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    now = time.time()
+    _collector_push_at(
+        collector,
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-follow-live",
+            "stage": "watching",
+        },
+        now - 90,
+    )
+    _collector_push_at(
+        collector,
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "paused",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+        now - 1,
+    )
+    _collector_push_at(
+        collector,
+        "response_done",
+        {
+            "full_text": "Latest reply in the stream.",
+            "input_source": "voice",
+            "ttft_ms": 190,
+            "llm_ms": 780,
+        },
+        now,
+    )
+
+    expect(page.locator(".stream-card[data-event-type='assistant_reply']")).to_contain_text("Latest reply in the stream")
+    page.evaluate(
+        """() => {
+            const viewport = document.getElementById('stream-viewport');
+            const follow = document.getElementById('follow-live');
+            viewport.scrollLeft = 0;
+            follow.checked = false;
+            follow.dispatchEvent(new Event('change', {bubbles: true}));
+        }"""
+    )
+
+    before = page.evaluate(
+        """() => {
+            const viewport = document.getElementById('stream-viewport');
+            return {
+                scrollLeft: Number(viewport.scrollLeft || 0),
+                maxScrollLeft: Number((viewport.scrollWidth || 0) - (viewport.clientWidth || 0)),
+                follow: document.getElementById('follow-live').checked,
+            };
+        }"""
+    )
+    assert before["scrollLeft"] == 0
+    assert before["maxScrollLeft"] > 0
+    assert before["follow"] is False
+
+    page.locator("#runtime-toggle").click()
+    assert input_queue.get(timeout=2) == "/play"
+
+    after = page.evaluate(
+        """() => {
+            const viewport = document.getElementById('stream-viewport');
+            return {
+                scrollLeft: Number(viewport.scrollLeft || 0),
+                maxScrollLeft: Number((viewport.scrollWidth || 0) - (viewport.clientWidth || 0)),
+                follow: document.getElementById('follow-live').checked,
+            };
+        }"""
+    )
+    assert after["follow"] is True
+    assert after["scrollLeft"] >= after["maxScrollLeft"] - 4
+
+
+def test_world_update_inspector_shows_facts_hides_prompt_tab_and_opens_json(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-world-update",
+            "stage": "watching",
+        },
+    )
+    collector.push(
+        "world_state",
+        {
+            "static_facts": [
+                {"id": "f1", "text": "Greg is indoors in a room with a bookshelf and a man wearing a dark shirt."},
+            ],
+            "dynamic_facts": [],
+            "pending": [],
+        },
+    )
+
+    world_card = page.locator(".stream-card[data-event-type='world_update']").first
+    expect(world_card).to_be_visible()
+    world_card.click()
+
+    expect(page.locator("#detail-label")).to_contain_text("1 facts")
+    expect(page.locator("#detail-detail")).to_contain_text("Greg is indoors in a room")
+    expect(page.locator("#detail-structure-grid")).to_contain_text("Greg is indoors in a room")
+    expect(page.locator("#detail-structure-grid")).to_contain_text("facts")
+    expect(page.locator("#tab-prompts")).to_be_hidden()
+
+    with page.expect_popup() as popup_info:
+        page.locator("#detail-open-json").evaluate("(node) => node.click()")
+    popup = popup_info.value
+    popup.wait_for_load_state()
+    expect(popup.locator("body")).to_contain_text("Greg is indoors in a room")
+    expect(popup.locator("body")).to_contain_text("\"facts\"")
 
 
 def test_dashboard_preserves_unfinished_reply_when_new_turn_starts(

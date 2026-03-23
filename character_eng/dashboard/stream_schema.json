@@ -48,6 +48,7 @@
     "user_transcript_final": "stt",
     "stt_result": "stt",
     "user_turn_start": "chat",
+    "turn_summary": "chat",
     "turn_start": "chat",
     "assistant_reply": "chat",
     "response_interrupted": "chat",

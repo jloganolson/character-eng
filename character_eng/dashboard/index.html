@@ -808,6 +808,61 @@
     position: relative;
     min-height: 100%;
   }
+  .turn-rail-strip {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    pointer-events: none;
+  }
+  .turn-rail {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 14px;
+    opacity: 0.88;
+  }
+  .turn-rail-line {
+    position: absolute;
+    height: 2px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--stream-chat) 48%, var(--border));
+    top: 7px;
+  }
+  .turn-rail-label {
+    position: absolute;
+    top: 0;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--stream-chat) 44%, var(--border));
+    background: color-mix(in srgb, var(--bg-alt) 92%, var(--bg) 8%);
+    color: var(--text-dim);
+    padding: 0.08em 0.44em;
+    font-size: 0.58em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .turn-rail-label.start {
+    transform: translateX(-2px);
+  }
+  .turn-rail-label.end {
+    transform: translateX(calc(-100% + 2px));
+  }
+  .turn-rail.active {
+    opacity: 1;
+  }
+  .turn-rail.active .turn-rail-line {
+    background: color-mix(in srgb, var(--narrator) 72%, white 28%);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--narrator) 38%, transparent);
+  }
+  .turn-rail.active .turn-rail-label {
+    color: var(--text);
+    border-color: color-mix(in srgb, var(--narrator) 50%, var(--border));
+    background: color-mix(in srgb, var(--panel-hover) 84%, var(--narrator) 16%);
+  }
   .stream-card {
     position: absolute;
     border-radius: 8px;
@@ -827,6 +882,10 @@
   }
   .stream-card.context {
     box-shadow: 0 0 0 1px var(--blue);
+  }
+  .stream-card.turn-peer {
+    border-color: color-mix(in srgb, var(--stream-chat) 46%, var(--border));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--stream-chat) 44%, transparent);
   }
   .stream-card.superseded {
     opacity: 0.56;
@@ -938,6 +997,9 @@
   .stream-card.type-user-transcript-final {
     background: rgba(77, 163, 255, 0.14);
   }
+  .stream-card.type-turn-summary {
+    background: rgba(242, 173, 82, 0.16);
+  }
   .stream-card.type-user-speech-started {
     background: rgba(77, 163, 255, 0.08);
   }
@@ -965,6 +1027,9 @@
   .stream-card.type-user-transcript-final .stream-card-type,
   .stream-card.type-user-speech-started .stream-card-type {
     color: #72b6ff;
+  }
+  .stream-card.type-turn-summary .stream-card-type {
+    color: #ffcf80;
   }
   .stream-card.type-assistant-reply .stream-card-type {
     color: #f5cf78;
@@ -1027,6 +1092,9 @@
   }
   .stream-dot.context {
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--stream-vision) 72%, transparent);
+  }
+  .stream-dot.turn-peer {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--stream-chat) 52%, transparent);
   }
   .stream-dot.superseded {
     opacity: 0.45;
@@ -1159,6 +1227,63 @@
     font-size: 0.78em;
     line-height: 1.45;
     white-space: pre-wrap;
+  }
+  #detail-turn-context {
+    display: none;
+    gap: 0.45em;
+    margin-top: 0.15em;
+    padding: 0.6em 0.7em;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg-alt) 86%, transparent);
+  }
+  #detail-turn-context.active {
+    display: grid;
+  }
+  .turn-context-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.55em;
+  }
+  .turn-context-title {
+    font-size: 0.74em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+  }
+  #detail-turn-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.16em 0.5em;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--stream-chat) 44%, var(--border));
+    background: color-mix(in srgb, var(--panel-hover) 82%, transparent);
+    color: var(--text);
+    font-size: 0.68em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .turn-context-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 0.38em 0.6em;
+  }
+  .turn-context-item {
+    min-width: 0;
+  }
+  .turn-context-key {
+    font-size: 0.66em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+    margin-bottom: 0.14em;
+  }
+  .turn-context-value {
+    font-size: 0.78em;
+    line-height: 1.35;
+    color: var(--text);
+    word-break: break-word;
   }
   #detail-loop {
     display: none;
@@ -1924,6 +2049,13 @@
               <div id="detail-label">Select a debug timeline event to inspect it.</div>
               <div id="detail-detail">This timeline is for observability. Conversation memory used by the character can differ from the archived replay record when replies are interrupted.</div>
               <div id="detail-warning" style="display:none;margin-top:0.45em;padding:0.55em 0.65em;border-radius:10px;border:1px solid var(--border);background:color-mix(in srgb, var(--panel-hover) 82%, var(--error) 18%);color:var(--text-dim);"></div>
+              <div id="detail-turn-context">
+                <div class="turn-context-head">
+                  <div class="turn-context-title">Turn Context</div>
+                  <div id="detail-turn-badge">turn</div>
+                </div>
+                <div id="detail-turn-grid" class="turn-context-grid"></div>
+              </div>
               <div class="detail-actions">
                 <button class="detail-action primary" id="detail-continue-from-event" type="button" disabled>Continue From Here</button>
                 <button class="detail-action" id="detail-open-json" type="button" disabled>Open JSON</button>
@@ -2123,6 +2255,7 @@
       world_update: "world",
       user_speech_started: "stt",
       user_transcript_final: "stt",
+      turn_summary: "chat",
       turn_start: "chat",
       assistant_reply: "chat",
       expression: "expression",
@@ -2139,6 +2272,7 @@
   let lastSeq = 0;
   let currentTurnId = 0;
   let pendingInputTurnId = null;
+  let activeTurnSummaryKey = null;
   let activeReplyKey = null;
   let activePostResponseKey = null;
   let activeWorldUpdateKey = null;
@@ -2292,6 +2426,9 @@
   const detailContinueFromEventButton = document.getElementById("detail-continue-from-event");
   const detailOpenJsonButton = document.getElementById("detail-open-json");
   const detailWarning = document.getElementById("detail-warning");
+  const detailTurnContext = document.getElementById("detail-turn-context");
+  const detailTurnBadge = document.getElementById("detail-turn-badge");
+  const detailTurnGrid = document.getElementById("detail-turn-grid");
   const reportRefButton = document.getElementById("report-ref-button");
   const archiveRenameButton = document.getElementById("archive-rename-button");
   const reportRefStatus = document.getElementById("report-ref-status");
@@ -3140,6 +3277,7 @@
       turnCount,
       currentTurnId,
       pendingInputTurnId,
+      activeTurnSummaryKey,
       activeReplyKey,
       activePostResponseKey,
       activeWorldUpdateKey,
@@ -3185,6 +3323,7 @@
     turnCount = liveTimelineSnapshot.turnCount || 0;
     currentTurnId = liveTimelineSnapshot.currentTurnId || 0;
     pendingInputTurnId = liveTimelineSnapshot.pendingInputTurnId ?? null;
+    activeTurnSummaryKey = liveTimelineSnapshot.activeTurnSummaryKey || null;
     activeReplyKey = liveTimelineSnapshot.activeReplyKey || null;
     activePostResponseKey = liveTimelineSnapshot.activePostResponseKey || null;
     activeWorldUpdateKey = liveTimelineSnapshot.activeWorldUpdateKey || null;
@@ -4264,6 +4403,7 @@
       return event.data.prompt_blocks;
     }
     const desired = {
+      turn_summary: ["chat", "thought", "script_check", "director", "next_beat", "plan"],
       assistant_reply: ["chat"],
       response_done: ["chat"],
       expression: ["expression"],
@@ -4402,13 +4542,20 @@
 
   function renderPromptBlocks(blocks) {
     const root = document.getElementById("detail-prompts");
+    const promptTab = document.getElementById("tab-prompts");
+    const promptPane = document.getElementById("detail-prompts-pane");
     root.innerHTML = "";
     promptPreviewBlocks = Array.isArray(blocks) ? blocks.slice() : [];
     if (!blocks || !blocks.length) {
+      promptTab.style.display = "none";
+      promptPane.style.display = "none";
       root.innerHTML = '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>';
       root.parentElement?.classList.add("compact-empty");
+      if (activeDetailTab === "prompts") setDetailTab("payload");
       return false;
     }
+    promptTab.style.display = "";
+    promptPane.style.display = "";
     root.parentElement?.classList.remove("compact-empty");
     root.innerHTML = blocks.map((block, index) => `
       <section class="prompt-preview-card">
@@ -4798,8 +4945,11 @@
       sections.push(structureSection("Post Response", items));
     } else if (event.type === "world_update") {
       const items = [
-        event.data?.latest_event ? {kind: "effect", key: "event", value: event.data.latest_event} : null,
-        event.data?.latest_fact ? {kind: "effect", key: "fact", value: event.data.latest_fact} : null,
+        ...((event.data?.facts || []).map((item) => ({kind: "effect", key: "fact", value: item}))),
+        ...((event.data?.events || []).map((item) => ({kind: "effect", key: "event", value: item}))),
+        ...((event.data?.people || []).map((item) => ({kind: "meta", key: "person", value: item}))),
+        (!event.data?.facts?.length && event.data?.latest_fact) ? {kind: "effect", key: "fact", value: event.data.latest_fact} : null,
+        (!event.data?.events?.length && event.data?.latest_event) ? {kind: "effect", key: "event", value: event.data.latest_event} : null,
         event.data?.fact_count != null ? {kind: "meta", key: "facts", value: String(event.data.fact_count)} : null,
         event.data?.people_count != null ? {kind: "meta", key: "people", value: String(event.data.people_count)} : null,
       ].filter(Boolean);
@@ -5419,6 +5569,11 @@
     }
     const nextState = sessionStopped ? "starting" : (conversationPaused ? "playing" : "pausing");
     const command = sessionStopped ? "/start" : (conversationPaused ? "/play" : "/pause");
+    if (sessionStopped || conversationPaused) {
+      followLive = true;
+      document.getElementById("follow-live").checked = true;
+      scrollTimelineToEnd();
+    }
     notePendingRuntimeAction(nextState);
     try {
       if (bridgeEnabled() && (sessionStopped || conversationPaused)) {
@@ -5468,6 +5623,7 @@
     turnCount = 0;
     currentTurnId = 0;
     pendingInputTurnId = null;
+    activeTurnSummaryKey = null;
     activeReplyKey = null;
     activePostResponseKey = null;
     activeWorldUpdateKey = null;
@@ -5495,6 +5651,9 @@
     resetSidebarPanelContentAll();
     document.getElementById("detail-label").textContent = "Select a debug timeline event to inspect it.";
     document.getElementById("detail-detail").textContent = "The stream view groups interwoven activity by lane and highlights all events from the same turn when selected.";
+    detailTurnContext.classList.remove("active");
+    detailTurnBadge.textContent = "turn";
+    detailTurnGrid.innerHTML = "";
     document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Raw event JSON appears here for the selected item.\"\n}";
     document.getElementById("detail-prompts").innerHTML = '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-prompts-pane").classList.add("compact-empty");
@@ -5544,6 +5703,7 @@
     turnCount = 0;
     currentTurnId = 0;
     pendingInputTurnId = null;
+    activeTurnSummaryKey = null;
     activeReplyKey = null;
     activePostResponseKey = null;
     activeWorldUpdateKey = null;
@@ -5598,6 +5758,9 @@
     document.getElementById("runtime-status").innerHTML = "Waiting for runtime state...";
     document.getElementById("detail-label").textContent = "Select a debug timeline event to inspect it.";
     document.getElementById("detail-detail").textContent = "The stream view groups interwoven activity by lane and highlights all events from the same turn when selected.";
+    detailTurnContext.classList.remove("active");
+    detailTurnBadge.textContent = "turn";
+    detailTurnGrid.innerHTML = "";
     document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Raw event JSON appears here for the selected item.\"\n}";
     document.getElementById("detail-prompts").innerHTML = '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-prompts-pane").classList.add("compact-empty");
@@ -5875,8 +6038,118 @@
     return Number(relativeTime(target.timestamp).toFixed(3));
   }
 
+  function displayEventType(type) {
+    if (type === "turn_summary") return "turn";
+    return type;
+  }
+
+  function formatTurnSource(source, inputType = "") {
+    const key = String(source || "").trim().toLowerCase();
+    if (key === "user") return "user";
+    if (key === "timer") return "timer";
+    if (key === "vision") return "vision";
+    if (key === "world") return "world";
+    if (key === "perception") return "perception";
+    if (key === "manual") return inputType === "beat" ? "script" : "manual";
+    if (inputType === "send") return "user";
+    if (inputType === "beat") return "script";
+    return key || "runtime";
+  }
+
+  function formatTurnKind(kind, inputType = "") {
+    const key = String(kind || "").trim().toLowerCase();
+    if (key === "dialogue") return "dialogue";
+    if (key === "scripted") return "scripted";
+    if (key === "reaction") return "reaction";
+    if (key === "idle") return "idle";
+    if (inputType === "send") return "dialogue";
+    if (inputType === "beat") return "scripted";
+    if (inputType === "see" || inputType === "world") return "reaction";
+    return key || "turn";
+  }
+
+  function turnSummaryReplyText(data) {
+    if (!data) return "";
+    if (data.interrupted && data.spoken_text) return data.spoken_text;
+    return data.response_text || "";
+  }
+
+  function refreshTurnSummary(event) {
+    if (!event) return event;
+    event.label = previewText("turn_summary", event.data || {});
+    event.detail = detailText("turn_summary", event.data || {});
+    return event;
+  }
+
+  function ensureTurnSummaryEvent(rawEvent) {
+    return ensureCompoundEvent("turn_summary", rawEvent, {
+      trigger_source: "",
+      turn_kind: "",
+      trigger_reason: "",
+      trigger_signal: "",
+      trigger_signals: [],
+      input_type: "",
+      input_text: "",
+      response_text: "",
+      spoken_text: "",
+      input_source: "",
+      turn_outcome: "",
+      interrupted: false,
+      interrupted_reason: "",
+      script_status: "",
+      director_status: "",
+      plan_request: "",
+      new_stage: "",
+      next_intent: "",
+      plan_beats: 0,
+      script_complete: false,
+    });
+  }
+
+  function turnSummaryEventForTurnId(turnId) {
+    if (!turnId) return null;
+    return streamEvents.find((event) => event.turnId === turnId && event.type === "turn_summary") || null;
+  }
+
+  function turnSummaryEventForEvent(event) {
+    if (!event) return null;
+    if (event.type === "turn_summary") return event;
+    return turnSummaryEventForTurnId(event.turnId);
+  }
+
+  function turnOutcomeLabel(data) {
+    if (!data) return "";
+    if (data.interrupted) return "interrupted";
+    if (data.turn_outcome === "beat_delivered") return "beat delivered";
+    if (data.turn_outcome === "idle_hold") return "idle hold";
+    if (data.turn_outcome === "replied") return "replied";
+    if (data.response_text || data.spoken_text) return "live";
+    return "pending";
+  }
+
+  function turnRailStartLabel(data) {
+    if (!data) return "";
+    return `${formatTurnSource(data.trigger_source, data.input_type)} / ${formatTurnKind(data.turn_kind, data.input_type)}`;
+  }
+
+  function turnRailEndLabel(data) {
+    if (!data) return "";
+    const outcome = turnOutcomeLabel(data);
+    if (data.script_status && outcome === "replied") return `${outcome} · ${data.script_status}`;
+    return outcome;
+  }
+
+  function shouldRenderTimelineEvent(event) {
+    return !!event && event.type !== "turn_summary";
+  }
+
   function previewText(type, data) {
     switch (type) {
+      case "turn_summary": {
+        const source = formatTurnSource(data.trigger_source, data.input_type);
+        const kind = formatTurnKind(data.turn_kind, data.input_type);
+        return `${source} -> ${kind}`;
+      }
       case "session_start":
         return `${data.character || "character"} started with ${data.model || "model"}`;
       case "session_end":
@@ -6003,6 +6276,15 @@
 
   function detailText(type, data) {
     switch (type) {
+      case "turn_summary": {
+        const bits = [];
+        const reply = turnSummaryReplyText(data);
+        if (reply) bits.push(reply);
+        else if (data.input_text && data.input_type === "send") bits.push(`heard: ${data.input_text}`);
+        if (data.trigger_reason) bits.push(`reason ${data.trigger_reason}`);
+        if (Array.isArray(data.trigger_signals) && data.trigger_signals.length) bits.push(`signals ${data.trigger_signals.join(", ")}`);
+        return bits.join(" · ");
+      }
       case "assistant_reply": {
         const bits = [];
         if (data.stt_ms != null) bits.push(`STT ${data.stt_ms}ms`);
@@ -6025,6 +6307,13 @@
         ].filter(Boolean).join(" · ");
       case "user_transcript_final":
         return data.text ? `final transcript` : "";
+      case "turn_start":
+        return [
+          `${formatTurnSource(data.trigger_source, data.input_type)} / ${formatTurnKind(data.turn_kind, data.input_type)}`,
+          data.trigger_reason ? `reason ${data.trigger_reason}` : "",
+          data.trigger_signals?.length ? `signals ${data.trigger_signals.join(", ")}` : "",
+          data.input_source ? `via ${data.input_source}` : "",
+        ].filter(Boolean).join(" · ");
       case "vision_snapshot":
         return [
           data.faces != null ? `faces ${data.faces}` : "",
@@ -6473,6 +6762,36 @@
     if (!event) return null;
     if (event.type === "turn_start") return event;
     return eventForTurnType(event, "turn_start");
+  }
+
+  function renderTurnContext(event) {
+    if (!event || !event.turnId) {
+      detailTurnContext.classList.remove("active");
+      detailTurnBadge.textContent = "turn";
+      detailTurnGrid.innerHTML = "";
+      return;
+    }
+    const summary = turnSummaryEventForEvent(event);
+    const turnEvents = streamEvents.filter((candidate) => candidate.turnId === event.turnId && shouldRenderTimelineEvent(candidate));
+    const source = formatTurnSource(summary?.data?.trigger_source, summary?.data?.input_type || turnStartForEvent(event)?.data?.input_type || "");
+    const kind = formatTurnKind(summary?.data?.turn_kind, summary?.data?.input_type || turnStartForEvent(event)?.data?.input_type || "");
+    const outcome = turnOutcomeLabel(summary?.data);
+    const items = [
+      {key: "source", value: source},
+      {key: "kind", value: kind},
+      {key: "outcome", value: outcome},
+      summary?.data?.trigger_reason ? {key: "reason", value: summary.data.trigger_reason} : null,
+      summary?.data?.trigger_signals?.length ? {key: "signals", value: summary.data.trigger_signals.join(", ")} : null,
+      turnEvents.length ? {key: "events", value: `${turnEvents.length}`} : null,
+    ].filter(Boolean);
+    detailTurnBadge.textContent = `${source} / ${kind}`;
+    detailTurnGrid.innerHTML = items.map((item) => `
+      <div class="turn-context-item">
+        <div class="turn-context-key">${esc(item.key)}</div>
+        <div class="turn-context-value">${esc(item.value)}</div>
+      </div>
+    `).join("");
+    detailTurnContext.classList.add("active");
   }
 
   function inputCommandForTurn(turnEvent, fallbackText = "") {
@@ -7293,11 +7612,14 @@
   }
 
   function ensureCompoundEvent(type, rawEvent, seedData) {
-    const activeKey = type === "post_response" ? activePostResponseKey : activeWorldUpdateKey;
+    const activeKey = type === "turn_summary"
+      ? activeTurnSummaryKey
+      : (type === "post_response" ? activePostResponseKey : activeWorldUpdateKey);
     let event = activeKey ? streamEventByKey.get(activeKey) : null;
     if (!event || event.turnId !== (rawEvent.turnId || null)) {
       event = addStreamEvent(type, {...seedData}, rawEvent);
-      if (type === "post_response") activePostResponseKey = event.key;
+      if (type === "turn_summary") activeTurnSummaryKey = event.key;
+      else if (type === "post_response") activePostResponseKey = event.key;
       else activeWorldUpdateKey = event.key;
     }
     event.turnId = rawEvent.turnId || event.turnId;
@@ -7323,6 +7645,7 @@
   }
 
   function resetReplyStream() {
+    activeTurnSummaryKey = null;
     activeReplyKey = null;
     activePostResponseKey = null;
     activeWorldUpdateKey = null;
@@ -7355,12 +7678,17 @@
     renderLoopTiming(event);
     renderSourceTrace(event);
     renderStructuredDetail(event);
+    renderTurnContext(event);
     renderSelectedEventAnnotations();
     renderInspectorFrame(event);
     setDetailTab("payload");
 
     document.querySelectorAll(".stream-card, .stream-dot").forEach((card) => {
       card.classList.toggle("selected", card.dataset.eventKey === key);
+      card.classList.toggle("turn-peer", !!event.turnId && card.dataset.turnId === String(event.turnId) && card.dataset.eventKey !== key);
+    });
+    document.querySelectorAll(".turn-rail").forEach((rail) => {
+      rail.classList.toggle("active", !!event.turnId && rail.dataset.turnId === String(event.turnId));
     });
     if (archiveBrowseRef && options.syncTimeline !== false) {
       setArchiveTimelineCursorTime(relativeTime(event.timestamp));
@@ -7371,9 +7699,42 @@
     updateVisionFeedUrl();
   }
 
+  function openSelectedEventJson() {
+    const event = selectedEvent();
+    if (!event) return;
+    const payload = selectedEventBundle(event) || {
+      event: {
+        key: event.key,
+        type: event.type,
+        lane: event.lane,
+        seq: event.seq || 0,
+        time_s: Number(relativeTime(event.timestamp).toFixed(2)),
+        label: event.label,
+        detail: event.detail,
+        data: event.data || {},
+      },
+    };
+    const json = JSON.stringify(payload, null, 2);
+    const html = `<!doctype html><html><head><title>${esc(`${event.type || "event"} · JSON`)}</title><style>
+      body{margin:0;padding:16px;background:#171717;color:#e6dfd0;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;}
+      pre{white-space:pre-wrap;word-break:break-word;margin:0;}
+    </style></head><body><pre>${esc(json)}</pre></body></html>`;
+    const url = URL.createObjectURL(new Blob([html], {type: "text/html"}));
+    const win = window.open(url, "_blank");
+    if (!win) {
+      setDetailTab("payload");
+      annotationStatus.textContent = "Popup blocked. Showing JSON in the inspector instead.";
+      return;
+    }
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
   function cardWidth(event) {
     if (compactMode) {
       return Math.max(110, Math.min(220, 90 + event.label.length * 4));
+    }
+    if (event.type === "turn_summary") {
+      return Math.max(260, Math.min(460, 220 + event.label.length * 4));
     }
     if (event.type === "assistant_reply") {
       return Math.max(260, Math.min(520, 220 + event.label.length * 3));
@@ -7395,6 +7756,7 @@
 
   function cardHeight(event) {
     if (compactMode) return 24;
+    if (event.type === "turn_summary") return 108;
     if (event.type === "assistant_reply") return 92;
     if (event.type === "response_interrupted") return 84;
     if (event.type === "vision_pass") return 132;
@@ -7421,7 +7783,7 @@
     const rowIndex = visionRawRowIndex(event.type);
     const top = 14 + rowIndex * 14;
     const title = [event.type, event.label, event.detail].filter(Boolean).join(" · ");
-    return `<button class="stream-dot type-${esc(typeClass(event.type))}${event.superseded ? " superseded" : ""}" type="button" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" title="${esc(title)}" style="left:${left}px;top:${top}px;"></button>`;
+    return `<button class="stream-dot type-${esc(typeClass(event.type))}${event.superseded ? " superseded" : ""}" type="button" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" data-turn-id="${esc(event.turnId != null ? String(event.turnId) : "")}" title="${esc(title)}" style="left:${left}px;top:${top}px;"></button>`;
   }
 
   function renderVisionRawLegend(baseWidth) {
@@ -7493,6 +7855,30 @@
   }
 
   function renderCardBody(event) {
+    if (event.type === "turn_summary") {
+      const source = formatTurnSource(event.data.trigger_source, event.data.input_type);
+      const kind = formatTurnKind(event.data.turn_kind, event.data.input_type);
+      const replyText = turnSummaryReplyText(event.data);
+      const chips = [
+        event.data.turn_outcome === "idle_hold" ? "idle" : "",
+        event.data.next_intent || event.data.script_complete ? "beat+" : "",
+        event.data.new_stage ? `stage ${event.data.new_stage}` : "",
+        event.data.plan_beats ? `${event.data.plan_beats} beats` : "",
+        event.data.interrupted ? "interrupted" : "",
+      ].filter(Boolean);
+      const subdetails = [
+        event.data.input_text && event.data.input_type === "send" ? `heard: ${event.data.input_text}` : "",
+        event.data.trigger_reason ? `reason: ${event.data.trigger_reason}` : "",
+        event.data.trigger_signals?.length ? `signals: ${event.data.trigger_signals.join(", ")}` : "",
+      ].filter(Boolean);
+      return `
+        <div class="stream-card-kicker">${esc(source)}</div>
+        <div class="stream-card-label">${esc(kind)}</div>
+        ${replyText ? `<div class="stream-card-detail">${esc(replyText)}</div>` : ""}
+        ${subdetails.map((item) => `<div class="stream-card-subdetail">${esc(item)}</div>`).join("")}
+        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+      `;
+    }
     if (event.type === "assistant_reply") {
       return `
         <div class="stream-card-label">${esc(event.label)}</div>
@@ -7667,6 +8053,52 @@
     return key.replace(/_/g, " ");
   }
 
+  function turnRailLabelWidth(text) {
+    return Math.max(56, Math.min(190, 14 + String(text || "").length * 5.6));
+  }
+
+  function renderTurnRails(scale) {
+    const summaryEvents = streamEvents.filter((event) => event.type === "turn_summary" && event.turnId);
+    if (!summaryEvents.length) return {html: "", offset: 0};
+    const intervals = [];
+    const rails = [];
+    summaryEvents.forEach((summary) => {
+      const turnEvents = streamEvents.filter((event) => event.turnId === summary.turnId && shouldRenderTimelineEvent(event));
+      if (!turnEvents.length) return;
+      const startTime = Math.min(...turnEvents.map((event) => relativeTime(event.timestamp)));
+      const endTime = Math.max(...turnEvents.map((event) => relativeTime(event.timestamp)));
+      const startLabel = turnRailStartLabel(summary.data);
+      const endLabel = turnRailEndLabel(summary.data);
+      const startLeft = 20 + startTime * scale;
+      const endLeft = 20 + endTime * scale;
+      const startWidth = turnRailLabelWidth(startLabel);
+      const endWidth = turnRailLabelWidth(endLabel);
+      let row = 0;
+      while (row < intervals.length && startLeft < intervals[row]) row += 1;
+      if (row === intervals.length) intervals.push(0);
+      intervals[row] = Math.max(endLeft + endWidth + 28, startLeft + startWidth + 28);
+      const top = 4 + row * 15;
+      const selected = selectedStreamKey && streamEventByKey.get(selectedStreamKey)?.turnId === summary.turnId;
+      const titleBits = [
+        startLabel,
+        summary.data?.trigger_reason ? `reason: ${summary.data.trigger_reason}` : "",
+        summary.data?.trigger_signals?.length ? `signals: ${summary.data.trigger_signals.join(", ")}` : "",
+        endLabel,
+      ].filter(Boolean).join(" · ");
+      rails.push(`
+        <div class="turn-rail${selected ? " active" : ""}" data-turn-id="${esc(String(summary.turnId))}" title="${esc(titleBits)}" style="top:${top}px;">
+          <span class="turn-rail-label start" style="left:${startLeft}px;">${esc(startLabel)}</span>
+          <span class="turn-rail-line" style="left:${startLeft}px;width:${Math.max(28, endLeft - startLeft)}px;"></span>
+          ${endLabel ? `<span class="turn-rail-label end" style="left:${endLeft}px;">${esc(endLabel)}</span>` : ""}
+        </div>
+      `);
+    });
+    return {
+      html: rails.length ? `<div class="turn-rail-strip" style="height:${intervals.length * 15 + 18}px;">${rails.join("")}</div>` : "",
+      offset: rails.length ? intervals.length * 15 + 10 : 0,
+    };
+  }
+
   function renderLaneToggles() {
     laneToggleGrid.innerHTML = laneOrder.map((lane) => {
       const inactive = hiddenLanes.has(lane) ? " inactive" : "";
@@ -7712,7 +8144,8 @@
     hideStreamHoverCard();
     renderLaneToggles();
 
-    if (!streamEvents.length) {
+    const visibleEvents = streamEvents.filter((event) => shouldRenderTimelineEvent(event));
+    if (!visibleEvents.length) {
       streamEmpty.style.display = "";
       streamLanes.innerHTML = "";
       streamRuler.style.width = "";
@@ -7722,11 +8155,12 @@
     }
 
     streamEmpty.style.display = "none";
-    const maxRelative = Math.max(...streamEvents.map((event) => relativeTime(event.timestamp)));
+    const maxRelative = Math.max(...visibleEvents.map((event) => relativeTime(event.timestamp)));
     const {baseWidth, scale} = renderRuler(maxRelative);
+    const turnRails = renderTurnRails(scale);
     const lanes = {};
     laneOrder.forEach((lane) => { lanes[lane] = []; });
-    streamEvents.forEach((event) => {
+    visibleEvents.forEach((event) => {
       const lane = lanes[event.lane] ? event.lane : "other";
       lanes[lane].push(event);
     });
@@ -7743,6 +8177,7 @@
       const cards = [];
       const rowStep = compactMode ? 28 : 144;
       let trackHeight = compactMode ? 34 : 96;
+      const railOffset = lane === "chat" ? turnRails.offset : 0;
       laneEvents.forEach((event) => {
         const left = 20 + relativeTime(event.timestamp) * scale;
         if (lane === "vision_raw") {
@@ -7756,12 +8191,12 @@
         while (row < trackEnds.length && left < trackEnds[row] + 8) row += 1;
         if (row === trackEnds.length) trackEnds.push(0);
         trackEnds[row] = left + width;
-        const top = compactMode ? 6 + row * rowStep : 8 + row * rowStep;
+        const top = (compactMode ? 6 : 8) + railOffset + row * rowStep;
         trackHeight = Math.max(trackHeight, top + height + 10);
         cards.push(
-          `<article class="stream-card type-${esc(typeClass(event.type))}${compactMode ? " compact" : ""}${event.superseded ? " superseded" : ""}" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;">
+          `<article class="stream-card type-${esc(typeClass(event.type))}${compactMode ? " compact" : ""}${event.superseded ? " superseded" : ""}" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" data-turn-id="${esc(event.turnId != null ? String(event.turnId) : "")}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;">
             <div class="stream-card-head">
-              <span class="stream-card-type">${esc(event.type)}</span>
+              <span class="stream-card-type">${esc(displayEventType(event.type))}</span>
               <span style="display:flex;align-items:center;gap:0.35em;">
                 ${renderStateBadges(event)}
                 ${renderAnnotationBadge(event)}
@@ -7772,6 +8207,9 @@
           </article>`
         );
       });
+      if (lane === "chat") {
+        trackHeight = Math.max(trackHeight, railOffset + (compactMode ? 34 : 96));
+      }
 
       if (shouldShowEmptyVisionRaw) {
         trackHeight = Math.max(trackHeight, compactMode ? 44 : 72);
@@ -7785,7 +8223,7 @@
 
       const innerHtml = lane === "vision_raw" && laneEvents.length
         ? `<div class="vision-raw-track" style="width:${baseWidth}px;height:${trackHeight}px;">${renderVisionRawLegend(baseWidth)}${cards.join("")}</div>`
-        : cards.join("");
+        : `${lane === "chat" ? turnRails.html : ""}${cards.join("")}`;
 
       laneHtml.push(
         `<section class="stream-lane lane-${esc(lane)}${hidden ? " hidden" : ""}" data-stream-lane="${esc(lane)}">
@@ -7811,7 +8249,8 @@
     if (selectedStreamKey && streamEventByKey.has(selectedStreamKey)) {
       selectEvent(selectedStreamKey, {seekMedia: false, syncTimeline: false});
     } else {
-      selectEvent(streamEvents[streamEvents.length - 1].key, {seekMedia: false, syncTimeline: false});
+      const fallbackEvent = [...visibleEvents].reverse().find((event) => event.type !== "turn_summary") || visibleEvents[visibleEvents.length - 1];
+      if (fallbackEvent) selectEvent(fallbackEvent.key, {seekMedia: false, syncTimeline: false});
     }
     updateTimelinePlayhead();
     if (followLive) {
@@ -7884,6 +8323,16 @@
       turnCount += 1;
       resetReplyStream();
       recordEvent("turn_start", data, rawEvent);
+      const summary = ensureTurnSummaryEvent(rawEvent);
+      summary.data.trigger_source = data.trigger_source || summary.data.trigger_source;
+      summary.data.turn_kind = data.turn_kind || summary.data.turn_kind;
+      summary.data.trigger_reason = data.trigger_reason || summary.data.trigger_reason;
+      summary.data.trigger_signal = data.trigger_signal || summary.data.trigger_signal;
+      summary.data.trigger_signals = Array.isArray(data.trigger_signals) ? [...data.trigger_signals] : summary.data.trigger_signals;
+      summary.data.input_type = data.input_type || summary.data.input_type;
+      summary.data.input_text = data.input_text || summary.data.input_text;
+      refreshTurnSummary(summary);
+      renderStream();
     },
 
     response_chunk(data, rawEvent) {
@@ -7928,6 +8377,15 @@
       event.data.prompt_blocks = promptTraceBlocksForEvent(event);
       event.label = previewText("assistant_reply", event.data);
       event.detail = detailText("assistant_reply", event.data);
+      const summary = ensureTurnSummaryEvent(rawEvent);
+      summary.data.turn_kind = data.turn_kind || summary.data.turn_kind;
+      summary.data.turn_outcome = data.turn_outcome || summary.data.turn_outcome || "replied";
+      summary.data.response_text = data.full_text || summary.data.response_text;
+      summary.data.spoken_text = "";
+      summary.data.input_source = data.input_source || summary.data.input_source;
+      summary.data.interrupted = false;
+      summary.data.interrupted_reason = "";
+      refreshTurnSummary(summary);
       renderStream();
     },
 
@@ -7951,6 +8409,11 @@
       target.data.truncated_text = data.truncated_text || target.data.truncated_text || "";
       target.label = previewText("assistant_reply", target.data);
       target.detail = detailText("assistant_reply", target.data);
+      const summary = ensureTurnSummaryEvent({...rawEvent, turnId: rawEvent.turnId});
+      summary.data.interrupted = true;
+      summary.data.interrupted_reason = data.reason || summary.data.interrupted_reason || "barge_in";
+      summary.data.spoken_text = data.truncated_text || summary.data.spoken_text || summary.data.response_text;
+      refreshTurnSummary(summary);
       recordEvent("response_interrupted", {
         ...data,
         reply_key: target.key,
@@ -7982,6 +8445,10 @@
       event.data.plan_request = data.plan_request || event.data.plan_request;
       event.label = previewText("post_response", event.data);
       event.detail = detailText("post_response", event.data);
+      const summary = ensureTurnSummaryEvent(rawEvent);
+      summary.data.script_status = event.data.script_status || summary.data.script_status;
+      summary.data.plan_request = event.data.plan_request || summary.data.plan_request;
+      refreshTurnSummary(summary);
       renderStream();
     },
 
@@ -8003,6 +8470,10 @@
       event.data.new_stage = data.new_stage || event.data.new_stage;
       event.label = previewText("post_response", event.data);
       event.detail = detailText("post_response", event.data);
+      const summary = ensureTurnSummaryEvent(rawEvent);
+      summary.data.director_status = event.data.director_status || summary.data.director_status;
+      summary.data.new_stage = event.data.new_stage || summary.data.new_stage;
+      refreshTurnSummary(summary);
       renderStream();
     },
 
@@ -8015,11 +8486,16 @@
         fact_count: 0,
         people_count: 0,
         latest_event: "",
-        latest_fact: ""
+        latest_fact: "",
+        facts: [],
+        events: [],
+        people: [],
       });
       event.data.add_count += (data.add_facts || []).length;
       event.data.remove_count += (data.remove_facts || []).length;
       event.data.event_count += (data.events || []).length;
+      event.data.facts.push(...(data.add_facts || []));
+      event.data.events.push(...(data.events || []));
       if (data.events && data.events.length) event.data.latest_event = data.events[data.events.length - 1];
       if (data.add_facts && data.add_facts.length) event.data.latest_fact = data.add_facts[data.add_facts.length - 1];
       event.label = previewText("world_update", event.data);
@@ -8047,13 +8523,17 @@
         fact_count: 0,
         people_count: 0,
         latest_event: "",
-        latest_fact: ""
+        latest_fact: "",
+        facts: [],
+        events: [],
+        people: [],
       });
-      event.data.fact_count = (data.static_facts || []).length + (data.dynamic_facts || []).length;
-      if (data.dynamic_facts && data.dynamic_facts.length) {
-        const latest = data.dynamic_facts[data.dynamic_facts.length - 1];
-        event.data.latest_fact = latest.text || latest;
-      }
+      const combinedFacts = [...(data.static_facts || []), ...(data.dynamic_facts || [])]
+        .map((fact) => fact?.text || fact)
+        .filter(Boolean);
+      event.data.fact_count = combinedFacts.length;
+      event.data.facts = combinedFacts;
+      if (combinedFacts.length) event.data.latest_fact = combinedFacts[combinedFacts.length - 1];
       event.label = previewText("world_update", event.data);
       event.detail = detailText("world_update", event.data);
       renderStream();
@@ -8076,9 +8556,13 @@
         fact_count: 0,
         people_count: 0,
         latest_event: "",
-        latest_fact: ""
+        latest_fact: "",
+        facts: [],
+        events: [],
+        people: [],
       });
       event.data.people_count = (data.people || []).length;
+      event.data.people = (data.people || []).map((person) => person.name || person.id || "").filter(Boolean);
       event.label = previewText("world_update", event.data);
       event.detail = detailText("world_update", event.data);
       renderStream();
@@ -8104,6 +8588,9 @@
       event.data.new_stage = data.new_stage || event.data.new_stage;
       event.label = previewText("post_response", event.data);
       event.detail = detailText("post_response", event.data);
+      const summary = ensureTurnSummaryEvent(rawEvent);
+      summary.data.new_stage = event.data.new_stage || summary.data.new_stage;
+      refreshTurnSummary(summary);
       renderStream();
     },
 
@@ -8131,6 +8618,9 @@
       event.data.plan_beats = (data.beats || []).length;
       event.label = previewText("post_response", event.data);
       event.detail = detailText("post_response", event.data);
+      const summary = ensureTurnSummaryEvent(rawEvent);
+      summary.data.plan_beats = event.data.plan_beats || summary.data.plan_beats;
+      refreshTurnSummary(summary);
       renderStream();
     },
 
@@ -8157,6 +8647,10 @@
       event.data.script_complete = !!data.script_complete;
       event.label = previewText("post_response", event.data);
       event.detail = detailText("post_response", event.data);
+      const summary = ensureTurnSummaryEvent(rawEvent);
+      summary.data.next_intent = event.data.next_intent || summary.data.next_intent;
+      summary.data.script_complete = !!event.data.script_complete;
+      refreshTurnSummary(summary);
       renderStream();
     },
 
@@ -8951,7 +9445,7 @@
     }
   });
   detailContinueFromEventButton.addEventListener("click", startFromSelectedEvent);
-  detailOpenJsonButton.addEventListener("click", () => setDetailTab("payload"));
+  detailOpenJsonButton.addEventListener("click", openSelectedEventJson);
   setupPaneResizer(inspectorResizer, (event) => {
     const streamMain = document.getElementById("stream-main");
     const rect = streamMain.getBoundingClientRect();
