@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TTS Debug</title>
+<style>
+  :root {
+    --bg: #282828;
+    --bg-alt: #1d2021;
+    --panel: #3c3836;
+    --panel-hover: #504945;
+    --border: #504945;
+    --text: #ebdbb2;
+    --text-dim: #928374;
+    --user: #83a598;
+    --npc: #b8bb26;
+    --beat: #d3869b;
+    --narrator: #fabd2f;
+    --error: #fb4934;
+    --advance: #8ec07c;
+    --hold: #928374;
+    --blue: #458588;
+    --cyan: #689d6a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "JetBrains Mono", "Fira Code", "SF Mono", "Consolas", monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 1.5rem 2rem;
+    line-height: 1.5;
+  }
+
+  h1 {
+    font-size: 1.4rem;
+    margin-bottom: 1.2rem;
+    color: var(--narrator);
+  }
+
+  /* --- Sections --- */
+  .section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem 1.2rem;
+    margin-bottom: 1rem;
+  }
+  .section-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    margin-bottom: 0.6rem;
+  }
+
+  /* --- Backend selector --- */
+  .backend-row {
+    display: flex;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .backend-option {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .backend-option input[type="radio"] {
+    accent-color: var(--npc);
+    cursor: pointer;
+  }
+  .backend-option.disabled-backend {
+    color: var(--text-dim);
+  }
+
+  /* --- Text area --- */
+  textarea {
+    width: 100%;
+    min-height: 70px;
+    background: var(--bg-alt);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.6rem 0.8rem;
+    font-family: inherit;
+    font-size: 0.85rem;
+    resize: vertical;
+    outline: none;
+  }
+  textarea:focus {
+    border-color: var(--user);
+  }
+
+  /* --- Quick fill --- */
+  .quick-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+    flex-wrap: wrap;
+  }
+  .quick-btn {
+    background: var(--panel-hover);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.3rem 0.7rem;
+    font-family: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .quick-btn:hover {
+    background: var(--border);
+  }
+
+  /* --- Speak button --- */
+  #speak-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: var(--npc);
+    color: var(--bg);
+    border: none;
+    border-radius: 5px;
+    padding: 0.55rem 1.4rem;
+    font-family: inherit;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+    margin-top: 0.8rem;
+  }
+  #speak-btn:hover:not(:disabled) {
+    opacity: 0.85;
+  }
+  #speak-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .spinner {
+    display: none;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--bg);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+  #speak-btn.loading .spinner { display: inline-block; }
+  #speak-btn.loading .speak-icon { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* --- Status / error --- */
+  #status-msg {
+    font-size: 0.82rem;
+    margin-top: 0.5rem;
+    min-height: 1.2em;
+  }
+  #status-msg.error { color: var(--error); }
+  #status-msg.ok { color: var(--advance); }
+  #status-msg.info { color: var(--user); }
+
+  /* --- Result panel --- */
+  .result-empty {
+    color: var(--text-dim);
+    font-size: 0.82rem;
+    font-style: italic;
+  }
+
+  /* --- Bar visualization --- */
+  .timing-bar-container {
+    display: flex;
+    height: 22px;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 0.7rem;
+    background: var(--bg-alt);
+  }
+  .timing-bar-segment {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--bg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0 0.4rem;
+    min-width: 2px;
+  }
+  .seg-ttfa { background: var(--narrator); }
+  .seg-synth { background: var(--user); }
+  .seg-play { background: var(--npc); }
+
+  .timing-stats {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    font-size: 0.82rem;
+  }
+  .timing-stat-label {
+    color: var(--text-dim);
+  }
+  .timing-stat-value {
+    font-weight: 600;
+  }
+  .timing-stat-value.ttfa { color: var(--narrator); }
+  .timing-stat-value.synth { color: var(--user); }
+  .timing-stat-value.play { color: var(--npc); }
+
+  /* --- History table --- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+  th {
+    text-align: left;
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 0.35rem 0.6rem;
+    border-bottom: 1px solid var(--bg-alt);
+  }
+  tr:hover td {
+    background: var(--panel-hover);
+  }
+  .text-cell {
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-dim);
+  }
+
+  /* --- Rolling stats --- */
+  .rolling-stats {
+    display: flex;
+    gap: 2rem;
+    flex-wrap: wrap;
+    font-size: 0.85rem;
+  }
+
+  /* --- Divider --- */
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 1rem 0;
+  }
+
+  /* --- Legend --- */
+  .legend {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    margin-bottom: 0.5rem;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .legend-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+
+<h1>TTS Debug</h1>
+
+<!-- Backend selector -->
+<div class="section">
+  <div class="section-label">Backend</div>
+  <div class="backend-row">
+    <label class="backend-option">
+      <input type="radio" name="backend" value="pocket" checked>
+      Pocket-TTS
+    </label>
+    <label class="backend-option disabled-backend">
+      <input type="radio" name="backend" value="elevenlabs">
+      ElevenLabs
+    </label>
+    <label class="backend-option disabled-backend">
+      <input type="radio" name="backend" value="local">
+      Local
+    </label>
+  </div>
+</div>
+
+<!-- Text input -->
+<div class="section">
+  <div class="section-label">Text</div>
+  <textarea id="text-input" placeholder="Type text to synthesize..."></textarea>
+  <div class="quick-row">
+    <button class="quick-btn" data-text="Hello there, welcome!">Short</button>
+    <button class="quick-btn" data-text="I've been thinking about what you said, and I think you make a really good point.">Medium</button>
+    <button class="quick-btn" data-text="Well, let me tell you something interesting. When I was younger, I used to spend hours watching the clouds go by, wondering what it would be like to fly among them. Those were simpler times, weren't they?">Long</button>
+  </div>
+</div>
+
+<!-- Speak -->
+<button id="speak-btn">
+  <span class="speak-icon">&#9679;</span>
+  <span class="spinner"></span>
+  Speak
+</button>
+<div id="status-msg"></div>
+
+<hr>
+
+<!-- Latest result -->
+<div class="section" id="result-section">
+  <div class="section-label">Latest Result</div>
+  <div id="result-content">
+    <span class="result-empty">No results yet. Type some text and click Speak.</span>
+  </div>
+</div>
+
+<!-- History -->
+<div class="section" id="history-section">
+  <div class="section-label">History</div>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Text</th>
+        <th>TTFA</th>
+        <th>Total Synth</th>
+        <th>Playback</th>
+      </tr>
+    </thead>
+    <tbody id="history-body">
+    </tbody>
+  </table>
+  <div id="history-empty" class="result-empty" style="margin-top:0.4rem;">No history yet.</div>
+</div>
+
+<!-- Rolling stats -->
+<div class="section" id="stats-section">
+  <div class="section-label">Rolling Stats</div>
+  <div class="rolling-stats" id="rolling-stats">
+    <span class="result-empty">Waiting for data...</span>
+  </div>
+</div>
+
+<script>
+(function() {
+  "use strict";
+
+  const textInput = document.getElementById("text-input");
+  const speakBtn = document.getElementById("speak-btn");
+  const statusMsg = document.getElementById("status-msg");
+  const resultContent = document.getElementById("result-content");
+  const historyBody = document.getElementById("history-body");
+  const historyEmpty = document.getElementById("history-empty");
+  const rollingStats = document.getElementById("rolling-stats");
+
+  const history = []; // {text, ttfa, totalSynth, playback, textLen}
+  const MAX_HISTORY = 10;
+
+  let audioCtx = null;
+  let currentSource = null;
+
+  function getAudioContext() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    return audioCtx;
+  }
+
+  function getSelectedBackend() {
+    return document.querySelector('input[name="backend"]:checked').value;
+  }
+
+  // Quick fill buttons
+  document.querySelectorAll(".quick-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      textInput.value = btn.dataset.text;
+      textInput.focus();
+    });
+  });
+
+  function setStatus(msg, cls) {
+    statusMsg.textContent = msg;
+    statusMsg.className = cls || "";
+  }
+
+  function setLoading(on) {
+    speakBtn.disabled = on;
+    if (on) {
+      speakBtn.classList.add("loading");
+    } else {
+      speakBtn.classList.remove("loading");
+    }
+  }
+
+  function truncate(s, n) {
+    return s.length > n ? s.slice(0, n) + "..." : s;
+  }
+
+  function fmtMs(v) {
+    if (v == null || isNaN(v)) return "--";
+    return Math.round(v) + "ms";
+  }
+
+  function fmtSec(v) {
+    if (v == null || isNaN(v)) return "--";
+    return (v / 1000).toFixed(2) + "s";
+  }
+
+  function renderResult(entry) {
+    const totalSpan = entry.ttfa + (entry.totalSynth - entry.ttfa) + entry.playback;
+    const ttfaPct = totalSpan > 0 ? (entry.ttfa / totalSpan * 100) : 33;
+    const synthRemainMs = Math.max(0, entry.totalSynth - entry.ttfa);
+    const synthPct = totalSpan > 0 ? (synthRemainMs / totalSpan * 100) : 33;
+    const playPct = totalSpan > 0 ? (entry.playback / totalSpan * 100) : 34;
+
+    resultContent.innerHTML = `
+      <div class="legend">
+        <span class="legend-item"><span class="legend-swatch" style="background:var(--narrator)"></span> TTFA</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:var(--user)"></span> Remaining synth</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:var(--npc)"></span> Playback</span>
+      </div>
+      <div class="timing-bar-container">
+        <div class="timing-bar-segment seg-ttfa" style="width:${ttfaPct}%">TTFA ${fmtMs(entry.ttfa)}</div>
+        <div class="timing-bar-segment seg-synth" style="width:${synthPct}%">synth ${fmtMs(synthRemainMs)}</div>
+        <div class="timing-bar-segment seg-play" style="width:${playPct}%">play ${fmtSec(entry.playback)}</div>
+      </div>
+      <div class="timing-stats">
+        <span><span class="timing-stat-label">TTFA: </span><span class="timing-stat-value ttfa">${fmtMs(entry.ttfa)}</span></span>
+        <span><span class="timing-stat-label">Total synth: </span><span class="timing-stat-value synth">${fmtMs(entry.totalSynth)}</span></span>
+        <span><span class="timing-stat-label">Playback: </span><span class="timing-stat-value play">${fmtSec(entry.playback)}</span></span>
+        <span><span class="timing-stat-label">Text len: </span><span class="timing-stat-value">${entry.textLen} chars</span></span>
+      </div>
+    `;
+  }
+
+  function renderHistory() {
+    if (history.length === 0) {
+      historyEmpty.style.display = "";
+      historyBody.innerHTML = "";
+      return;
+    }
+    historyEmpty.style.display = "none";
+    historyBody.innerHTML = history.map((e, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td class="text-cell" title="${e.text.replace(/"/g, '&quot;')}">"${truncate(e.text, 30)}"</td>
+        <td>${fmtMs(e.ttfa)}</td>
+        <td>${fmtMs(e.totalSynth)}</td>
+        <td>${fmtSec(e.playback)}</td>
+      </tr>
+    `).join("");
+  }
+
+  function renderRolling() {
+    if (history.length === 0) {
+      rollingStats.innerHTML = '<span class="result-empty">Waiting for data...</span>';
+      return;
+    }
+    const avgTtfa = history.reduce((s, e) => s + e.ttfa, 0) / history.length;
+    const avgTotal = history.reduce((s, e) => s + e.totalSynth, 0) / history.length;
+    const avgPlayback = history.reduce((s, e) => s + e.playback, 0) / history.length;
+    rollingStats.innerHTML = `
+      <span><span class="timing-stat-label">avg TTFA: </span><span class="timing-stat-value ttfa">${fmtMs(avgTtfa)}</span></span>
+      <span><span class="timing-stat-label">avg total synth: </span><span class="timing-stat-value synth">${fmtMs(avgTotal)}</span></span>
+      <span><span class="timing-stat-label">avg playback: </span><span class="timing-stat-value play">${fmtSec(avgPlayback)}</span></span>
+      <span><span class="timing-stat-label">count: </span><span class="timing-stat-value">${history.length}</span></span>
+    `;
+  }
+
+  async function doSpeak() {
+    const backend = getSelectedBackend();
+    if (backend !== "pocket") {
+      setStatus("Not yet supported. Only Pocket-TTS backend is available for standalone testing.", "error");
+      return;
+    }
+
+    const text = textInput.value.trim();
+    if (!text) {
+      setStatus("Please enter some text.", "error");
+      return;
+    }
+
+    // Stop any currently playing audio
+    if (currentSource) {
+      try { currentSource.stop(); } catch(e) {}
+      currentSource = null;
+    }
+
+    setLoading(true);
+    setStatus("Synthesizing...", "info");
+
+    try {
+      const resp = await fetch("/api/tts-debug", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: text, backend: backend }),
+      });
+
+      if (!resp.ok) {
+        let errMsg = "Server error: " + resp.status;
+        try {
+          const errBody = await resp.text();
+          if (errBody) errMsg += " - " + errBody;
+        } catch(e) {}
+        throw new Error(errMsg);
+      }
+
+      const ttfa = parseFloat(resp.headers.get("X-TTS-First-Chunk-Ms") || "0");
+      const totalSynth = parseFloat(resp.headers.get("X-TTS-Total-Ms") || "0");
+      const textLen = parseInt(resp.headers.get("X-TTS-Text-Length") || String(text.length), 10);
+
+      const arrayBuf = await resp.arrayBuffer();
+      if (arrayBuf.byteLength === 0) {
+        throw new Error("Empty audio response");
+      }
+
+      setStatus("Playing...", "info");
+
+      const ctx = getAudioContext();
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+      }
+
+      const audioBuffer = await ctx.decodeAudioData(arrayBuf);
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(ctx.destination);
+
+      const playbackMs = audioBuffer.duration * 1000;
+
+      const entry = {
+        text: text,
+        ttfa: ttfa,
+        totalSynth: totalSynth,
+        playback: playbackMs,
+        textLen: textLen,
+      };
+
+      // Add to history (newest first in array, but render oldest-first)
+      history.push(entry);
+      if (history.length > MAX_HISTORY) {
+        history.shift();
+      }
+
+      renderResult(entry);
+      renderHistory();
+      renderRolling();
+
+      source.start();
+      currentSource = source;
+
+      source.onended = () => {
+        currentSource = null;
+        setStatus("Done. Playback: " + fmtSec(playbackMs), "ok");
+      };
+
+      setStatus("Playing audio (" + fmtSec(playbackMs) + ")...", "info");
+    } catch (err) {
+      setStatus(err.message || "Request failed", "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  speakBtn.addEventListener("click", doSpeak);
+
+  // Allow Ctrl+Enter to submit
+  textInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      doSpeak();
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -436,6 +436,7 @@ class DeepgramSTT:
         self._pending_transcript = ""
         self._ws_open = threading.Event()
         self._last_error = ""
+        self._last_is_final_at: float | None = None
 
     def start(self):
         from deepgram import DeepgramClient
@@ -543,6 +544,7 @@ class DeepgramSTT:
 
         if transcript and is_final:
             self._pending_transcript = transcript
+            self._last_is_final_at = time.time()
 
         if speech_final and self._pending_transcript:
             text = self._pending_transcript.strip()
@@ -863,6 +865,7 @@ class VoiceIO:
         self._output_audio_hook = output_audio_hook
         self._last_speech_started_at: float | None = None
         self._last_transcript_final_at: float | None = None
+        self._last_speech_ended_at: float | None = None
         self._last_transcript_text: str = ""
         self._deferred_input_prefix: str = ""
 
@@ -1434,6 +1437,7 @@ class VoiceIO:
         SpeechStarted, since AEC residual can cause false VAD triggers.
         """
         self._last_transcript_final_at = time.time()
+        self._last_speech_ended_at = self._stt._last_is_final_at if self._stt is not None else None
         self._last_transcript_text = text
         self._trace("user_transcript_final", {"text": text})
         if self._is_speaking and not self.audio_started:
@@ -1475,9 +1479,11 @@ class VoiceIO:
         """Return and clear cached speech/transcript timing for the latest utterance."""
         started_at = self._last_speech_started_at
         final_at = self._last_transcript_final_at
+        speech_ended_at = self._last_speech_ended_at
         transcript_text = self._last_transcript_text
         self._last_speech_started_at = None
         self._last_transcript_final_at = None
+        self._last_speech_ended_at = None
         self._last_transcript_text = ""
 
         if started_at is None and final_at is None and not transcript_text:
@@ -1490,8 +1496,12 @@ class VoiceIO:
             payload["speech_started_ts"] = started_at
         if final_at is not None:
             payload["transcript_final_ts"] = final_at
+        if speech_ended_at is not None:
+            payload["speech_ended_ts"] = speech_ended_at
         if started_at is not None and final_at is not None:
             payload["stt_ms"] = round(max(0.0, final_at - started_at) * 1000)
+        if speech_ended_at is not None and final_at is not None:
+            payload["endpointing_ms"] = round(max(0.0, final_at - speech_ended_at) * 1000)
         cleaned_transcript = transcript_text.strip()
         cleaned_expected = expected_text.strip()
         if cleaned_transcript:

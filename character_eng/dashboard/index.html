@@ -1428,9 +1428,11 @@
     border-radius: 999px;
     opacity: 0.85;
   }
-  .loop-band.stt { background: rgba(77, 163, 255, 0.2); border: 1px solid rgba(77, 163, 255, 0.45); }
-  .loop-band.llm { background: rgba(249, 190, 109, 0.2); border: 1px solid rgba(249, 190, 109, 0.45); }
-  .loop-band.tts { background: rgba(136, 209, 134, 0.18); border: 1px solid rgba(136, 209, 134, 0.45); }
+  .loop-band.endpointing { background: rgba(77, 163, 255, 0.35); border: 1px solid rgba(77, 163, 255, 0.6); }
+  .loop-band.ttft { background: rgba(249, 190, 109, 0.15); border: 1px solid rgba(249, 190, 109, 0.3); }
+  .loop-band.llm { background: rgba(249, 190, 109, 0.25); border: 1px solid rgba(249, 190, 109, 0.5); }
+  .loop-band.tts { background: rgba(136, 209, 134, 0.25); border: 1px solid rgba(136, 209, 134, 0.5); }
+  .loop-band.playback { background: rgba(136, 209, 134, 0.12); border: 1px solid rgba(136, 209, 134, 0.3); }
   .loop-marker {
     position: absolute;
     top: 4px;
@@ -5867,7 +5869,8 @@
       if (event.data?.stt_text) inputItems.push({kind: "input", key: "heard", value: event.data.stt_text});
       if (event.data?.input_source) inputItems.push({kind: "meta", key: "source", value: event.data.input_source});
       const timingItems = [
-        event.data?.stt_ms != null ? {kind: "meta", key: "stt", value: `${event.data.stt_ms}ms`} : null,
+        event.data?.endpointing_ms != null ? {kind: "meta", key: "endpointing", value: `${event.data.endpointing_ms}ms`} : null,
+        event.data?.endpointing_ms == null && event.data?.stt_ms != null ? {kind: "meta", key: "stt", value: `${event.data.stt_ms}ms`} : null,
         event.data?.ttft_ms != null ? {kind: "meta", key: "ttft", value: `${event.data.ttft_ms}ms`} : null,
         event.data?.llm_ms != null ? {kind: "meta", key: "llm", value: `${event.data.llm_ms}ms`} : null,
         event.data?.first_audio_ms != null ? {kind: "meta", key: "first audio", value: `${event.data.first_audio_ms}ms`} : null,
@@ -7411,14 +7414,12 @@
       }
       case "assistant_reply": {
         const bits = [];
-        if (data.stt_ms != null) bits.push(`STT ${data.stt_ms}ms`);
+        if (data.endpointing_ms != null) bits.push(`endpointing ${data.endpointing_ms}ms`);
+        else if (data.stt_ms != null) bits.push(`STT ${data.stt_ms}ms`);
         if (data.ttft_ms != null) bits.push(`TTFT ${data.ttft_ms}ms`);
         if (data.llm_ms != null) bits.push(`LLM ${data.llm_ms}ms`);
-        if (data.total_ms != null) bits.push(`done ${data.total_ms}ms`);
-        if (data.tts_request_ms != null) bits.push(`tts req ${data.tts_request_ms}ms`);
         if (data.first_audio_ms != null) bits.push(`first audio ${data.first_audio_ms}ms`);
-        if (data.tts_synth_done_ms != null) bits.push(`tts done ${data.tts_synth_done_ms}ms`);
-        if (data.audio_ms != null) bits.push(`clip ${data.audio_ms}ms`);
+        if (data.total_ms != null) bits.push(`total ${data.total_ms}ms`);
         if (data.interrupted) bits.push("interrupted");
         else if (data.partial) bits.push("partial");
         return bits.join(" · ");
@@ -8577,65 +8578,109 @@
     chips.innerHTML = "";
     if (!event || event.type !== "assistant_reply") return;
 
+    const d = event.data || {};
     const inputEvent = eventForTurnType(event, "turn_start") || eventForTurnType(event, "user_transcript_final");
-    const startCandidates = [
-      Number(event.data?.speech_started_ts || 0),
-      Number(inputEvent?.data?.speech_started_ts || 0),
-      Number(inputEvent?.data?.transcript_final_ts || 0),
-      Number(event.data?.llm_start_ts || 0),
-    ].filter((value) => value > 0);
-    const baseTs = startCandidates.length ? Math.min(...startCandidates) : Number(event.timestamp || 0);
-    const markers = [];
+    const id = inputEvent?.data || {};
 
-    const pushMarker = (label, ts, fallbackMs = null) => {
-      const numericTs = Number(ts || 0);
-      if (numericTs > 0 && numericTs >= baseTs) {
-        markers.push({label, offsetMs: Math.round((numericTs - baseTs) * 1000)});
-        return;
-      }
-      if (fallbackMs != null && Number.isFinite(Number(fallbackMs))) {
-        markers.push({label, offsetMs: Math.max(0, Number(fallbackMs))});
+    // Resolve absolute timestamps (prefer event data, fall back to input event)
+    const speechEndedTs = Number(d.speech_ended_ts || id.speech_ended_ts || 0);
+    const transcriptTs = Number(d.transcript_final_ts || id.transcript_final_ts || 0);
+    const llmStartTs = Number(d.llm_start_ts || 0);
+    const ttftTs = Number(d.response_ttft_ts || 0);
+    const textDoneTs = Number(d.response_done_ts || 0);
+    const ttsReqTs = Number(d.tts_request_ts || 0);
+    const ttsSynthDoneTs = Number(d.tts_synth_done_ts || 0);
+    const firstAudioTs = Number(d.first_audio_ts || 0);
+    const spokenEndTs = Number(d.spoken_done_ts || 0);
+
+    // Anchor the timeline at the point the system starts working.
+    // For voice: anchor at speech_ended (last is_final) or transcript_final.
+    // For text: anchor at llm_start.
+    const anchorCandidates = [speechEndedTs, transcriptTs, llmStartTs].filter((v) => v > 0);
+    if (!anchorCandidates.length) return;
+    const baseTs = Math.min(...anchorCandidates);
+
+    const ms = (ts) => ts > 0 ? Math.round((ts - baseTs) * 1000) : null;
+
+    // Build segments: [{label, startMs, endMs, band}]
+    const segments = [];
+    const addSeg = (label, band, startMs, endMs) => {
+      if (startMs != null && endMs != null && endMs > startMs) {
+        segments.push({label, band, startMs, endMs});
       }
     };
 
-    pushMarker("speech", event.data?.speech_started_ts || inputEvent?.data?.speech_started_ts, 0);
-    pushMarker("transcript", event.data?.transcript_final_ts || inputEvent?.data?.transcript_final_ts, event.data?.stt_ms);
-    pushMarker("llm start", event.data?.llm_start_ts);
-    pushMarker("ttft", event.data?.response_ttft_ts, event.data?.ttft_ms);
-    pushMarker("text done", event.data?.response_done_ts, event.data?.llm_ms);
-    pushMarker("tts req", event.data?.tts_request_ts, event.data?.tts_request_ms);
-    pushMarker("tts done", event.data?.tts_synth_done_ts, event.data?.tts_synth_done_ms);
-    pushMarker("first audio", event.data?.first_audio_ts, event.data?.first_audio_ms);
-    pushMarker("spoken end", event.data?.spoken_done_ts, event.data?.total_ms);
+    const endpointStart = ms(speechEndedTs);
+    const endpointEnd = ms(transcriptTs);
+    const llmStart = ms(llmStartTs);
+    const ttft = ms(ttftTs);
+    const textDone = ms(textDoneTs);
+    const ttsReq = ms(ttsReqTs);
+    const firstAudio = ms(firstAudioTs);
+    const spokenEnd = ms(spokenEndTs);
 
-    const uniqueMarkers = markers
-      .filter((marker, index, list) => list.findIndex((item) => item.label === marker.label) === index)
+    // Endpointing: speech_ended → transcript_final (voice only)
+    addSeg("endpointing", "endpointing", endpointStart, endpointEnd);
+    // TTFT: llm_start → first token
+    addSeg("TTFT", "ttft", llmStart, ttft);
+    // LLM generation: first token → text done
+    addSeg("LLM gen", "llm", ttft, textDone);
+    // TTS: tts_request → first audio (synthesis pipeline)
+    addSeg("TTS", "tts", ttsReq ?? textDone, firstAudio);
+    // Playback: first audio → spoken end
+    addSeg("playback", "playback", firstAudio, spokenEnd);
+
+    if (!segments.length) return;
+
+    const totalMs = Math.max(...segments.map((s) => s.endMs), 1);
+    const pct = (v) => Math.min(98, Math.max(0.5, (v / totalMs) * 100));
+
+    segments.forEach((seg) => {
+      const left = pct(seg.startMs);
+      const width = Math.max(1, pct(seg.endMs) - left);
+      track.insertAdjacentHTML("beforeend",
+        `<div class="loop-band ${esc(seg.band)}" style="left:${left}%;width:${width}%;" title="${esc(seg.label)} ${seg.endMs - seg.startMs}ms"></div>`);
+    });
+
+    // Key milestone markers
+    const milestones = [];
+    const pushMilestone = (label, offsetMs) => {
+      if (offsetMs != null && offsetMs >= 0) milestones.push({label, offsetMs});
+    };
+    if (endpointStart != null) pushMilestone("speech ended", endpointStart);
+    if (endpointEnd != null) pushMilestone("transcript", endpointEnd);
+    if (ttft != null) pushMilestone("ttft", ttft);
+    if (textDone != null) pushMilestone("text done", textDone);
+    if (firstAudio != null) pushMilestone("first audio", firstAudio);
+    if (spokenEnd != null) pushMilestone("spoken end", spokenEnd);
+
+    const uniqueMilestones = milestones
+      .filter((m, i, arr) => arr.findIndex((x) => x.label === m.label) === i)
       .sort((a, b) => a.offsetMs - b.offsetMs);
-    if (!uniqueMarkers.length) return;
 
-    const totalMs = Math.max(uniqueMarkers[uniqueMarkers.length - 1].offsetMs, 1);
-    const clampLeft = (offsetMs) => Math.min(98, Math.max(1, (offsetMs / totalMs) * 100));
+    uniqueMilestones.forEach((m) => {
+      const left = pct(m.offsetMs);
+      track.insertAdjacentHTML("beforeend",
+        `<div class="loop-marker" style="left:${left}%"><span class="loop-marker-label">${esc(m.label)}</span></div>`);
+    });
 
-    const speechMs = Number(event.data?.stt_ms ?? inputEvent?.data?.stt_ms ?? 0);
-    const llmStartOffset = uniqueMarkers.find((marker) => marker.label === "llm start")?.offsetMs ?? speechMs;
-    const textDoneOffset = uniqueMarkers.find((marker) => marker.label === "text done")?.offsetMs ?? llmStartOffset;
-    const firstAudioOffset = uniqueMarkers.find((marker) => marker.label === "first audio")?.offsetMs ?? textDoneOffset;
-    const spokenEndOffset = uniqueMarkers.find((marker) => marker.label === "spoken end")?.offsetMs ?? totalMs;
+    // Chips: actionable summary metrics
+    const endpointingMs = d.endpointing_ms ?? (endpointEnd != null && endpointStart != null ? endpointEnd - endpointStart : null);
+    const ttftMs = d.ttft_ms ?? (ttft != null ? ttft - (llmStart ?? 0) : null);
+    const llmMs = d.llm_ms ?? (textDone != null && llmStart != null ? textDone - llmStart : null);
+    const firstAudioMs = d.first_audio_ms ?? firstAudio;
+    const totalMsFinal = d.total_ms ?? spokenEnd;
 
-    if (speechMs > 0) {
-      track.insertAdjacentHTML("beforeend", `<div class="loop-band stt" style="left:0%;width:${clampLeft(speechMs)}%;"></div>`);
-    }
-    if (textDoneOffset > llmStartOffset) {
-      track.insertAdjacentHTML("beforeend", `<div class="loop-band llm" style="left:${clampLeft(llmStartOffset)}%;width:${Math.max(1, clampLeft(textDoneOffset) - clampLeft(llmStartOffset))}%;"></div>`);
-    }
-    if (spokenEndOffset > textDoneOffset) {
-      track.insertAdjacentHTML("beforeend", `<div class="loop-band tts" style="left:${clampLeft(textDoneOffset)}%;width:${Math.max(1, clampLeft(spokenEndOffset) - clampLeft(textDoneOffset))}%;"></div>`);
-    }
+    const chipEntries = [];
+    if (endpointingMs != null) chipEntries.push({label: "endpointing", ms: endpointingMs, color: "rgba(77,163,255,0.7)"});
+    if (ttftMs != null) chipEntries.push({label: "TTFT", ms: ttftMs, color: "rgba(249,190,109,0.7)"});
+    if (llmMs != null) chipEntries.push({label: "LLM", ms: llmMs, color: "rgba(249,190,109,0.7)"});
+    if (firstAudioMs != null && firstAudioMs > 0) chipEntries.push({label: "first audio", ms: firstAudioMs, color: "rgba(136,209,134,0.7)"});
+    if (totalMsFinal != null) chipEntries.push({label: "total", ms: totalMsFinal, color: "var(--text-dim)"});
 
-    uniqueMarkers.forEach((marker) => {
-      const left = clampLeft(marker.offsetMs);
-      track.insertAdjacentHTML("beforeend", `<div class="loop-marker" style="left:${left}%"><span class="loop-marker-label">${esc(marker.label)}</span></div>`);
-      chips.insertAdjacentHTML("beforeend", `<span class="loop-chip">${esc(marker.label)} ${esc(String(marker.offsetMs))}ms</span>`);
+    chipEntries.forEach((c) => {
+      chips.insertAdjacentHTML("beforeend",
+        `<span class="loop-chip" style="border-color:${c.color}">${esc(c.label)} ${esc(String(Math.round(c.ms)))}ms</span>`);
     });
 
     root.classList.add("active");
@@ -8730,7 +8775,9 @@
         input_source: "",
         stt_ms: null,
         speech_started_ts: null,
+        speech_ended_ts: null,
         transcript_final_ts: null,
+        endpointing_ms: null,
         stt_text: "",
         stt_text_match: null,
         ttft_ms: null,
@@ -9914,6 +9961,20 @@
       renderStream();
     },
 
+    response_progress(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      const event = ensureReplyEvent(rawEvent);
+      // Merge timing fields progressively
+      for (const key of ["ttft_ms", "llm_ms", "total_ms", "llm_start_ts", "response_ttft_ts",
+        "response_done_ts", "tts_request_ts", "tts_synth_done_ts", "first_audio_ts",
+        "spoken_done_ts", "tts_request_ms", "tts_synth_done_ms", "first_audio_ms",
+        "speech_started_ts", "speech_ended_ts", "transcript_final_ts", "endpointing_ms",
+        "stt_ms", "input_source"]) {
+        if (data[key] != null) event.data[key] = data[key];
+      }
+      renderStream();
+    },
+
     response_done(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
       const event = ensureReplyEvent(rawEvent);
@@ -9923,7 +9984,9 @@
       event.data.input_source = data.input_source || event.data.input_source || "";
       event.data.stt_ms = data.stt_ms ?? event.data.stt_ms;
       event.data.speech_started_ts = data.speech_started_ts ?? event.data.speech_started_ts;
+      event.data.speech_ended_ts = data.speech_ended_ts ?? event.data.speech_ended_ts;
       event.data.transcript_final_ts = data.transcript_final_ts ?? event.data.transcript_final_ts;
+      event.data.endpointing_ms = data.endpointing_ms ?? event.data.endpointing_ms;
       event.data.stt_text = data.stt_text || event.data.stt_text || "";
       event.data.stt_text_match = data.stt_text_match ?? event.data.stt_text_match;
       event.data.ttft_ms = data.ttft_ms ?? event.data.ttft_ms;
