@@ -2344,6 +2344,7 @@
   let activeTurnSummaryKey = null;
   let activeReplyKey = null;
   let activePostResponseKey = null;
+  let activeWorldUpdateKey = null;
   let streamKey = 0;
   const streamEventIdToKey = new Map();
   let selectedStreamKey = null;
@@ -2385,6 +2386,7 @@
   let transportStatus = {mode: "local", audio: {}, video: {}, webrtc: {}};
   let bridgeConfig = null;
   let visionManagerActive = false;
+  let runtimePhase = "unknown";
   let sessionStopped = false;
   let startupPausePending = false;
   let lastEventAt = 0;
@@ -2397,6 +2399,56 @@
   let statePollingSuspended = false;
   let fixtureMode = false;
   const pageLoadedAt = Date.now();
+  const KNOWN_RUNTIME_PHASES = new Set([
+    "ready",
+    "startup_paused",
+    "paused",
+    "review",
+    "finalizing_save",
+    "finalizing_discard",
+    "restarting",
+    "live",
+  ]);
+
+  function normalizeRuntimePhase(phase) {
+    const key = String(phase || "").trim().toLowerCase();
+    return KNOWN_RUNTIME_PHASES.has(key) ? key : "unknown";
+  }
+
+  function deriveRuntimePhaseFromPayload(data) {
+    const explicit = normalizeRuntimePhase(data?.runtime_phase);
+    if (explicit !== "unknown") return explicit;
+    if (data?.session_stopped) return "ready";
+    if (data?.startup_pause_pending) return "startup_paused";
+    if (data?.conversation_paused) return "paused";
+    return "live";
+  }
+
+  function currentRuntimePhase() {
+    if (runtimePhase !== "unknown") return runtimePhase;
+    return deriveRuntimePhaseFromPayload({
+      conversation_paused: conversationPaused,
+      session_stopped: sessionStopped,
+      startup_pause_pending: startupPausePending,
+    });
+  }
+
+  function applyRuntimePhase(phase) {
+    const normalized = normalizeRuntimePhase(phase);
+    runtimePhase = normalized;
+    if (normalized === "unknown") return;
+    sessionStopped = normalized === "ready";
+    startupPausePending = normalized === "startup_paused";
+    conversationPaused = !["unknown", "ready", "live"].includes(normalized);
+  }
+
+  function runtimePhaseIsReview(phase = currentRuntimePhase()) {
+    return phase === "review";
+  }
+
+  function runtimePhaseIsFinalizing(phase = currentRuntimePhase()) {
+    return phase === "finalizing_save" || phase === "finalizing_discard";
+  }
   const INSPECTOR_PANELS = [
     {
       id: "event_summary",
@@ -3070,6 +3122,13 @@
         ...((overrides.voice_status || {}).tts || {}),
       },
     };
+    const nextPhase = deriveRuntimePhaseFromPayload({
+      conversation_paused: true,
+      session_stopped: true,
+      startup_pause_pending: false,
+      runtime_phase: "ready",
+      ...overrides,
+    });
     return {
       controls: {
         reconcile: true,
@@ -3084,10 +3143,11 @@
         beats: true,
         ...(overrides.controls || {}),
       },
-      conversation_paused: true,
-      session_stopped: true,
-      startup_pause_pending: false,
-      session_state: "ready",
+      conversation_paused: !["ready", "live", "unknown"].includes(nextPhase),
+      session_stopped: nextPhase === "ready",
+      startup_pause_pending: nextPhase === "startup_paused",
+      session_state: ["startup_paused", "review", "finalizing_save", "finalizing_discard", "restarting"].includes(nextPhase) ? "paused" : nextPhase,
+      runtime_phase: nextPhase,
       voice_active: false,
       voice_status: nextVoiceStatus,
       vision_active: false,
@@ -3104,6 +3164,7 @@
       archive_only: false,
       archive_only_reason: "",
       ...overrides,
+      runtime_phase: normalizeRuntimePhase(overrides.runtime_phase) === "unknown" ? nextPhase : normalizeRuntimePhase(overrides.runtime_phase),
       voice_status: nextVoiceStatus,
     };
   }
@@ -3409,6 +3470,7 @@
       activeTurnSummaryKey,
       activeReplyKey,
       activePostResponseKey,
+      activeWorldUpdateKey,
       selectedStreamKey,
       streamKey,
       lastSeq,
@@ -3456,6 +3518,7 @@
     activeTurnSummaryKey = liveTimelineSnapshot.activeTurnSummaryKey || null;
     activeReplyKey = liveTimelineSnapshot.activeReplyKey || null;
     activePostResponseKey = liveTimelineSnapshot.activePostResponseKey || null;
+    activeWorldUpdateKey = liveTimelineSnapshot.activeWorldUpdateKey || null;
     selectedStreamKey = liveTimelineSnapshot.selectedStreamKey || null;
     streamKey = liveTimelineSnapshot.streamKey || 0;
     lastSeq = liveTimelineSnapshot.lastSeq || 0;
@@ -3928,6 +3991,7 @@
     if (activeTurnSummaryKey && !streamEventByKey.has(activeTurnSummaryKey)) activeTurnSummaryKey = null;
     if (activeReplyKey && !streamEventByKey.has(activeReplyKey)) activeReplyKey = null;
     if (activePostResponseKey && !streamEventByKey.has(activePostResponseKey)) activePostResponseKey = null;
+    if (activeWorldUpdateKey && !streamEventByKey.has(activeWorldUpdateKey)) activeWorldUpdateKey = null;
     if (selectedStreamKey && !streamEventByKey.has(selectedStreamKey)) selectedStreamKey = null;
   }
 
@@ -3946,6 +4010,7 @@
       if (activeTurnSummaryKey === event.key) activeTurnSummaryKey = null;
       if (activeReplyKey === event.key) activeReplyKey = null;
       if (activePostResponseKey === event.key) activePostResponseKey = null;
+      if (activeWorldUpdateKey === event.key) activeWorldUpdateKey = null;
       if (hoveredStreamDotKey === event.key) {
         hoveredStreamDotKey = "";
         hideStreamHoverCard();
@@ -4360,6 +4425,7 @@
       activeTurnSummaryKey || "",
       activeReplyKey || "",
       activePostResponseKey || "",
+      activeWorldUpdateKey || "",
       hoveredStreamDotKey || "",
     ].filter(Boolean));
     const compactLimit = Math.max(0, liveEvents.length - LIVE_EVENT_COMPACTION_HOT_COUNT);
@@ -4726,6 +4792,20 @@
     renderBootStatus();
   }
 
+  async function cancelSaveCompleteReview() {
+    if (saveCompleteMode !== "review" || !runtimePhaseIsReview()) {
+      closeSaveCompleteModal();
+      return;
+    }
+    saveCompleteStatusEl.textContent = "Returning to the paused session...";
+    try {
+      await sendInput("/cancel_review");
+      closeSaveCompleteModal();
+    } catch (error) {
+      saveCompleteStatusEl.textContent = `Review cancel failed: ${error.message || error}`;
+    }
+  }
+
   function renderSaveCompleteModal() {
     const meta = saveCompleteMeta || {};
     const item = archiveItemByRef(meta.sessionId || "");
@@ -4805,6 +4885,49 @@
     saveCompleteModal.setAttribute("aria-hidden", "false");
   }
 
+  async function syncSaveCompleteModalWithRuntimePhase() {
+    const phase = currentRuntimePhase();
+    const current = historyState.current_session || {};
+    const sessionId = currentSessionId || current.session_id || document.getElementById("h-session").textContent || "";
+    const title = current.title || activeArchiveTitle() || sessionId || "session";
+    const sessionPath = current.session_path || "";
+    if (phase === "review") {
+      sessionSavePending = false;
+      pendingFinalizeAction = "";
+      await openSaveCompleteModal({
+        sessionId,
+        title,
+        reportPath: "",
+        sessionPath,
+        mode: "review",
+      });
+      saveCompleteStatusEl.textContent = "Paused. Save or discard this session.";
+      return;
+    }
+    if (phase === "finalizing_save" || phase === "finalizing_discard") {
+      sessionSavePending = true;
+      saveCompleteMeta = {
+        ...(saveCompleteMeta || {}),
+        sessionId: saveCompleteMeta?.sessionId || sessionId,
+        title: saveCompleteMeta?.title || title,
+        reportPath: saveCompleteMeta?.reportPath || "",
+        sessionPath: saveCompleteMeta?.sessionPath || sessionPath,
+      };
+      saveCompleteMode = phase === "finalizing_discard" ? "discarding" : "saving";
+      if (!saveCompleteModalOpen) {
+        await openSaveCompleteModal({
+          sessionId: saveCompleteMeta.sessionId,
+          title: saveCompleteMeta.title,
+          reportPath: saveCompleteMeta.reportPath,
+          sessionPath: saveCompleteMeta.sessionPath,
+          mode: saveCompleteMode,
+        });
+      } else {
+        renderSaveCompleteModal();
+      }
+    }
+  }
+
   async function maybeResolveSaveCompleteFromState() {
     if (!sessionSavePending || saveCompletionResolving || archiveBrowseRef) return;
     if (saveCompleteMode === "discarding") return;
@@ -4850,7 +4973,8 @@
     const expectedSessionId = String(saveCompleteMeta?.sessionId || currentSessionId || "").trim();
     const current = historyState.current_session || {};
     const currentSessionIdFromState = String(current.session_id || "").trim();
-    const runtimeReadyForNextSession = !!startupPausePending || latestRuntimePayload?.session_state === "ready";
+    const currentPhase = currentRuntimePhase();
+    const runtimeReadyForNextSession = currentPhase === "ready" || currentPhase === "startup_paused";
     if (
       currentSessionIdFromState
       && (!expectedSessionId || currentSessionIdFromState === expectedSessionId)
@@ -5678,9 +5802,14 @@
   }
 
   function bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState) {
+    const phase = currentRuntimePhase();
     if (archiveBrowseRef) return "archive loaded";
     if (archiveOnlyRuntime) return "archive-only ready";
     if (statePollingSuspended) return "dashboard disconnected";
+    if (phase === "restarting") return "restarting session";
+    if (phase === "finalizing_discard") return "discarding session";
+    if (phase === "finalizing_save") return "saving session";
+    if (phase === "review") return "reviewing session";
     if (sessionSavePending) return "saving session";
     if (!runtimeStateSeen) return "attaching app runtime";
     if (sessionStopped) return "ready to start";
@@ -5704,16 +5833,25 @@
     const overlaySubEl = document.getElementById("boot-overlay-sub");
     const overlayGridEl = document.getElementById("boot-overlay-grid");
     const now = Date.now();
+    const phase = currentRuntimePhase();
     let runtimeState = archiveBrowseRef
       ? "ready"
       : archiveOnlyRuntime
         ? "ready"
-      : (sessionSavePending ? "active" : (runtimeStateSeen ? (sessionStopped ? "ready" : (conversationPaused ? "ready" : "active")) : "waiting"));
+      : ((runtimePhaseIsFinalizing(phase) || phase === "restarting" || sessionSavePending)
+        ? "active"
+        : (runtimeStateSeen ? (sessionStopped ? "ready" : (conversationPaused ? "ready" : "active")) : "waiting"));
     let runtimeDetail = archiveBrowseRef
       ? `Loaded archive ${archiveBrowseMeta?.title || archiveBrowseRef}. Use the header transport to play or scrub the recording, or Return To Live to go back.`
       : archiveOnlyRuntime
         ? (archiveOnlyReason || "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.")
-      : (sessionSavePending
+      : ((phase === "review")
+      ? "Session review is open. Save, discard, or cancel to return to the paused session."
+      : (phase === "finalizing_discard")
+      ? "The current session is being discarded."
+      : (phase === "restarting")
+      ? "The current session is being finalized before restart."
+      : (sessionSavePending || phase === "finalizing_save")
       ? "The current session is being finalized and archived."
       : (runtimeStateSeen
       ? (sessionStopped
@@ -5802,10 +5940,12 @@
       modelState = allReady ? "ready" : (anyLoading ? "active" : "waiting");
     }
 
-    let sessionState = archiveBrowseRef ? "ready" : (sessionSavePending ? "active" : (sessionStopped ? "ready" : (sessionSeen ? "ready" : (restartPending ? "active" : "waiting"))));
+    let sessionState = archiveBrowseRef ? "ready" : ((runtimePhaseIsFinalizing(phase) || phase === "restarting" || sessionSavePending) ? "active" : (sessionStopped ? "ready" : (sessionSeen ? "ready" : (restartPending ? "active" : "waiting"))));
     let sessionDetail = archiveBrowseRef
       ? `Browsing archive ${archiveBrowseMeta?.title || archiveBrowseRef}`
-      : (sessionSavePending
+      : ((phase === "review")
+      ? `Reviewing ${document.getElementById("h-session").textContent || "current session"} before finalizing`
+      : (sessionSavePending || runtimePhaseIsFinalizing(phase))
       ? `Saving ${lastStoppedArchiveTitle || document.getElementById("h-session").textContent || "current session"}`
       : (sessionSeen
       ? `Session ${document.getElementById("h-session").textContent || "--"} for ${document.getElementById("h-character").textContent || "character"}`
@@ -5813,7 +5953,7 @@
         ? "No active session. Hit Start to create a fresh one."
         : (restartPending ? "Waiting for the fresh session to attach." : "Waiting for session start."))));
 
-    let phase = bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState);
+    let bootStage = bootPhase(runtimeState, sessionState, voiceState, visionServiceState, modelState);
     const lastEventText = lastEventAt ? `last event ${formatAge(now - lastEventAt)} ago` : "waiting for first event";
     let modelReady = modelState === "ready" || modelState === "off";
     let voiceReady = voiceState === "ready" || voiceState === "off";
@@ -5828,11 +5968,14 @@
       archiveBrowseRef ? `Loaded archive ${archiveBrowseMeta?.title || archiveBrowseRef}. Use the transport to inspect the recording.` :
       statePollingSuspended ? "Dashboard disconnected. Refresh after the local runtime comes back." :
       archiveOnlyRuntime ? "Archive-only mode is ready. Load an archive to inspect recordings; live conversation is disabled." :
+      phase === "review" ? "Review is open. Save, discard, or cancel to return to the paused session." :
+      phase === "finalizing_discard" ? "Discarding the finished session." :
+      phase === "restarting" ? "Finalizing the current session before restart." :
       visionServiceState === "error" ? "Vision needs attention before the runtime is ready." :
       modelPollError ? "Vision models need attention before the runtime is ready." :
       voiceState === "error" ? "Voice needs attention before the runtime is ready." :
-      sessionSavePending ? "Saving the finished session. A completion modal will appear when the archive is ready." :
-      !bootReady ? `Waiting on ${phase} before the runtime can unlock.` :
+      (sessionSavePending || phase === "finalizing_save") ? "Saving the finished session. A completion modal will appear when the archive is ready." :
+      !bootReady ? `Waiting on ${bootStage} before the runtime can unlock.` :
       sessionStopped ? "Everything is warm. Start when you want to begin a fresh session." :
       conversationPaused ? (startupPausePending ? "Fresh session is ready. Press Play when you want to begin." : "Conversation is paused. Press Play when you want to continue.") :
       "Runtime is live. You can speak or type now.";
@@ -5849,7 +5992,7 @@
       : statePollingSuspended
       ? "The dashboard lost its connection to the local runtime. Restart the app if needed, then refresh this page."
       : !bootReady
-        ? `Current step: ${phase}. Heavy services may already be warm; this page unlocks once the app layer publishes runtime, session, voice, and model state.`
+        ? `Current step: ${bootStage}. Heavy services may already be warm; this page unlocks once the app layer publishes runtime, session, voice, and model state.`
         : "The runtime is ready. Use Start to create a session, Play to begin, or Pause/Stop once it is live.";
 
     const archiveBootOverride = activeArchiveBootOverride();
@@ -5865,7 +6008,7 @@
       modelDetail = override.modelDetail;
       sessionState = override.sessionState;
       sessionDetail = override.sessionDetail;
-      phase = override.phase;
+      bootStage = override.phase;
       modelReady = modelState === "ready" || modelState === "off";
       voiceReady = voiceState === "ready" || voiceState === "off";
       visionReady = visionServiceState === "ready" || visionServiceState === "off";
@@ -5874,7 +6017,7 @@
       overlaySub = override.sub;
       bootBlocking = override.bootBlocking;
     }
-    const heartbeatText = `${sseConnected ? "stream live" : "polling"} · ${phase} · page ${formatAge(now - pageLoadedAt)} · ${lastEventText}`;
+    const heartbeatText = `${sseConnected ? "stream live" : "polling"} · ${bootStage} · page ${formatAge(now - pageLoadedAt)} · ${lastEventText}`;
     heartbeatEl.textContent = heartbeatText;
     overlayHeartbeatEl.textContent = heartbeatText;
     document.body.classList.toggle("booting", !bootReady);
@@ -5928,10 +6071,18 @@
       ].join("");
       return;
     }
-    const runtimeState = data.session_state || (data.conversation_paused ? "paused" : "live");
+    const runtimeState = data.runtime_phase || data.session_state || (data.conversation_paused ? "paused" : "live");
     const runtimeDetail = archiveOnlyRuntime
       ? (archiveOnlyReason || "Archive inspection mode.")
-      : (data.conversation_paused ? "Conversation paused." : "Runtime is accepting turns.");
+      : ((data.runtime_phase === "review")
+        ? "Session review is open."
+        : (data.runtime_phase === "finalizing_save")
+          ? "Saving the current session."
+          : (data.runtime_phase === "finalizing_discard")
+            ? "Discarding the current session."
+            : (data.runtime_phase === "restarting")
+              ? "Restarting the current session."
+              : (data.conversation_paused ? "Conversation paused." : "Runtime is accepting turns."));
     const voiceStateValue = voiceStatus.active ? (voiceStatus.stt?.state || "ready") : "off";
     const voiceDetailValue = voiceStatus.active
       ? [voiceStatus.stt?.detail, voiceStatus.tts?.detail].filter(Boolean).join(" ")
@@ -6030,6 +6181,10 @@
   }
 
   function updateRuntimeButtons() {
+    const phase = currentRuntimePhase();
+    const reviewActive = runtimePhaseIsReview(phase);
+    const finalizingActive = runtimePhaseIsFinalizing(phase);
+    const restartingActive = phase === "restarting";
     const archiveBootOverride = activeArchiveBootOverride();
     if (archiveBootOverride) {
       const override = archiveBootOverrideState(archiveBootOverride);
@@ -6055,7 +6210,12 @@
       bootRestartButton.style.opacity = override.bootRestartDisabled ? "0.6" : "1";
       return;
     }
-    if (sessionSavePending) {
+    if (reviewActive) {
+      runtimeToggleButton.textContent = "Reviewing...";
+      runtimeToggleButton.disabled = true;
+      runtimeToggleButton.style.opacity = "0.75";
+      runtimeToggleButton.style.background = "var(--hold)";
+    } else if (finalizingActive || restartingActive || sessionSavePending) {
       runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Play" : "Pause");
       runtimeToggleButton.disabled = true;
       runtimeToggleButton.style.opacity = "0.75";
@@ -6105,14 +6265,14 @@
       runtimeToggleButton.style.opacity = "1";
     }
     runtimeToggleButton.style.color = "var(--bg)";
-    runtimeStopButton.textContent = sessionSavePending
-      ? (saveCompleteMode === "discarding" ? "Discarding..." : "Saving...")
+    runtimeStopButton.textContent = (finalizingActive || sessionSavePending)
+      ? (((phase === "finalizing_discard") || saveCompleteMode === "discarding") ? "Discarding..." : "Saving...")
       : (pendingPauseState === "stopping" ? "Saving..." : stopButtonLabel());
-    runtimeStopButton.disabled = archiveOnlyRuntime || !!archiveBrowseRef || sessionSavePending || pendingPauseState === "stopping" || restartPending || sessionStopped;
+    runtimeStopButton.disabled = archiveOnlyRuntime || !!archiveBrowseRef || reviewActive || finalizingActive || sessionSavePending || pendingPauseState === "stopping" || restartPending || restartingActive || sessionStopped;
     runtimeStopButton.style.opacity = runtimeStopButton.disabled ? "0.6" : "1";
     runtimeStopButton.title = activeArchiveTitle() ? `Finalize archive: ${activeArchiveTitle()}` : "Finalize the current session archive and stop.";
     runtimeRestartButton.textContent = "Restart Session";
-    runtimeRestartButton.disabled = archiveOnlyRuntime || !!archiveBrowseRef;
+    runtimeRestartButton.disabled = archiveOnlyRuntime || !!archiveBrowseRef || finalizingActive || restartingActive;
     runtimeRestartButton.style.opacity = runtimeRestartButton.disabled ? "0.6" : "1";
     bootRuntimeToggleButton.textContent = runtimeToggleButton.textContent;
     bootRuntimeToggleButton.disabled = runtimeToggleButton.disabled;
@@ -6154,16 +6314,21 @@
       }
       return;
     }
-    const nextState = sessionStopped ? "starting" : (conversationPaused ? "playing" : "pausing");
-    const command = sessionStopped ? "/start" : (conversationPaused ? "/play" : "/pause");
-    if (sessionStopped || conversationPaused) {
+    const phase = currentRuntimePhase();
+    if (runtimePhaseIsReview(phase) || runtimePhaseIsFinalizing(phase) || phase === "restarting") {
+      archiveLoadStatus.textContent = "Finish the current review/finalize flow before changing runtime state.";
+      return;
+    }
+    const nextState = phase === "ready" ? "starting" : ((phase === "paused" || phase === "startup_paused") ? "playing" : "pausing");
+    const command = phase === "ready" ? "/start" : ((phase === "paused" || phase === "startup_paused") ? "/play" : "/pause");
+    if (phase === "ready" || phase === "paused" || phase === "startup_paused") {
       followLive = true;
       document.getElementById("follow-live").checked = true;
       scrollTimelineToEnd();
     }
     notePendingRuntimeAction(nextState);
     try {
-      if (bridgeEnabled() && (sessionStopped || conversationPaused)) {
+      if (bridgeEnabled() && (phase === "ready" || phase === "paused" || phase === "startup_paused")) {
         await armBridgeAudio();
       }
       await sendInput(command);
@@ -6216,6 +6381,7 @@
     activeTurnSummaryKey = null;
     activeReplyKey = null;
     activePostResponseKey = null;
+    activeWorldUpdateKey = null;
     selectedStreamKey = null;
     streamKey = 0;
     lastSeq = 0;
@@ -6262,6 +6428,7 @@
     detailFrameOpen.href = "#";
     detailFrameEmpty.style.display = "";
     detailFrameEmpty.textContent = "Select an archived vision event to inspect its nearest captured frame.";
+    runtimePhase = "unknown";
     document.getElementById("boot-summary").textContent = message;
     document.getElementById("boot-overlay-summary").textContent = message;
     setDetailTab(activeDetailTab);
@@ -6295,6 +6462,7 @@
     activeTurnSummaryKey = null;
     activeReplyKey = null;
     activePostResponseKey = null;
+    activeWorldUpdateKey = null;
     selectedStreamKey = null;
     streamKey = 0;
     lastSeq = 0;
@@ -6315,7 +6483,10 @@
     clearAnnotationState();
     setPromptModalOpen(false);
     document.getElementById("inspector-summary-title").textContent = "Debug Timeline Event";
+    runtimePhase = "unknown";
     conversationPaused = true;
+    sessionStopped = false;
+    startupPausePending = false;
     voiceActive = false;
     voiceStatus = {
       active: false,
@@ -7000,7 +7171,7 @@
         }
         return `faces ${data.faces || 0} · people ${data.persons || 0}`;
       case "runtime_controls":
-        return `state ${data.conversation_paused ? "paused" : "live"} · stt ${data.voice_status?.stt?.state || "off"} · tts ${data.voice_status?.tts?.state || "off"}`;
+        return `state ${data.runtime_phase || data.session_state || (data.conversation_paused ? "paused" : "live")} · stt ${data.voice_status?.stt?.state || "off"} · tts ${data.voice_status?.tts?.state || "off"}`;
       case "history_status":
         return data.current_session?.replay_capture_enabled === false
           ? "debug-only after rewind"
@@ -7163,7 +7334,7 @@
         ].filter(Boolean).join(" · ");
       case "runtime_controls":
         return [
-          `state ${data.conversation_paused ? "paused" : "live"}`,
+          `state ${data.runtime_phase || data.session_state || (data.conversation_paused ? "paused" : "live")}`,
           `voice ${data.voice_active ? "on" : "off"}`,
           `vision manager ${data.vision_active ? "on" : "off"}`,
           `reconcile ${data.reconcile_thread_alive ? "running" : "idle"}`
@@ -7978,25 +8149,27 @@
     const current = historyState.current_session || {};
     const sessionId = currentSessionId || current.session_id || document.getElementById("h-session").textContent || "";
     const title = current.title || activeArchiveTitle() || sessionId || "session";
-    const needsPauseFirst = !conversationPaused && !sessionStopped;
+    const needsReviewTransition = !runtimePhaseIsReview() && !sessionStopped;
     await openSaveCompleteModal({
       sessionId,
       title,
       reportPath: "",
       sessionPath: current.session_path || "",
-      mode: needsPauseFirst ? "preparing_review" : "review",
+      mode: needsReviewTransition ? "preparing_review" : "review",
     });
-    if (!needsPauseFirst) return;
-    pendingStopReviewPause = true;
+    if (!needsReviewTransition) {
+      saveCompleteStatusEl.textContent = "Paused. Save or discard this session.";
+      return;
+    }
+    pendingStopReviewPause = false;
     notePendingRuntimeAction("pausing");
     try {
-      await sendInput("/pause");
+      await sendInput("/review");
     } catch (error) {
-      pendingStopReviewPause = false;
-      clearPendingRuntimeAction(`Pause before review failed: ${error.message || error}`);
+      clearPendingRuntimeAction(`Review open failed: ${error.message || error}`);
       saveCompleteMode = "review";
       renderSaveCompleteModal();
-      saveCompleteStatusEl.textContent = `Pause before review failed: ${error.message || error}`;
+      saveCompleteStatusEl.textContent = `Review open failed: ${error.message || error}`;
     }
   }
 
@@ -8026,17 +8199,9 @@
       updateRuntimeButtons();
       renderBootStatus();
       renderSaveCompleteModal();
-      if (!conversationPaused && !sessionStopped) {
-        pendingFinalizeAction = "/stop";
-        notePendingRuntimeAction("pausing");
-        saveCompleteMode = "preparing_save";
-        renderSaveCompleteModal();
-        await sendInput("/pause");
-      } else {
-        pendingFinalizeAction = "";
-        notePendingRuntimeAction("stopping");
-        await sendInput("/stop");
-      }
+      pendingFinalizeAction = "";
+      notePendingRuntimeAction("stopping");
+      await sendInput("/save");
     } catch (error) {
       pendingFinalizeAction = "";
       sessionSavePending = false;
@@ -8057,17 +8222,9 @@
     renderBootStatus();
     renderSaveCompleteModal();
     try {
-      if (!conversationPaused && !sessionStopped) {
-        pendingFinalizeAction = "/discard";
-        notePendingRuntimeAction("pausing");
-        saveCompleteMode = "preparing_discard";
-        renderSaveCompleteModal();
-        await sendInput("/pause");
-      } else {
-        pendingFinalizeAction = "";
-        notePendingRuntimeAction("stopping");
-        await sendInput("/discard");
-      }
+      pendingFinalizeAction = "";
+      notePendingRuntimeAction("stopping");
+      await sendInput("/discard");
       if (ref) setLastStoppedArchive(ref, "");
     } catch (error) {
       pendingFinalizeAction = "";
@@ -8389,11 +8546,12 @@
   function ensureCompoundEvent(type, rawEvent, seedData) {
     const activeKey = type === "turn_summary"
       ? activeTurnSummaryKey
-      : activePostResponseKey;
+      : (type === "world_update" ? activeWorldUpdateKey : activePostResponseKey);
     let event = activeKey ? streamEventByKey.get(activeKey) : null;
     if (!event || event.turnId !== (rawEvent.turnId || null)) {
       event = addStreamEvent(type, {...seedData}, rawEvent);
       if (type === "turn_summary") activeTurnSummaryKey = event.key;
+      else if (type === "world_update") activeWorldUpdateKey = event.key;
       else activePostResponseKey = event.key;
     }
     event.turnId = rawEvent.turnId || event.turnId;
@@ -8422,6 +8580,50 @@
     activeTurnSummaryKey = null;
     activeReplyKey = null;
     activePostResponseKey = null;
+    activeWorldUpdateKey = null;
+  }
+
+  function updateWorldUpdateCompoundEvent(rawEvent, data = {}) {
+    const event = ensureCompoundEvent("world_update", rawEvent, {
+      add_count: 0,
+      remove_count: 0,
+      event_count: 0,
+      fact_count: 0,
+      people_count: 0,
+      latest_event: "",
+      latest_fact: "",
+    });
+    if (Array.isArray(data.add_facts)) {
+      event.data.add_count = data.add_facts.length;
+      if (data.add_facts.length) event.data.latest_fact = data.add_facts[data.add_facts.length - 1] || event.data.latest_fact;
+    } else if (data.add_count != null) {
+      event.data.add_count = Number(data.add_count || 0);
+    }
+    if (Array.isArray(data.remove_facts)) {
+      event.data.remove_count = data.remove_facts.length;
+    } else if (data.remove_count != null) {
+      event.data.remove_count = Number(data.remove_count || 0);
+    }
+    if (Array.isArray(data.events)) {
+      event.data.event_count = data.events.length;
+      if (data.events.length) event.data.latest_event = data.events[data.events.length - 1] || event.data.latest_event;
+    } else if (data.event_count != null) {
+      event.data.event_count = Number(data.event_count || 0);
+    }
+    if (data.fact_count != null) event.data.fact_count = Number(data.fact_count || 0);
+    if (data.people_count != null) event.data.people_count = Number(data.people_count || 0);
+    if (Array.isArray(data.facts) && data.facts.length) {
+      event.data.fact_count = Number(data.fact_count || data.facts.length || 0);
+      event.data.latest_fact = data.facts[data.facts.length - 1] || event.data.latest_fact;
+    }
+    if (Array.isArray(data.people) && data.people.length) {
+      event.data.people_count = Number(data.people_count || data.people.length || 0);
+    }
+    if (data.latest_event) event.data.latest_event = data.latest_event;
+    if (data.latest_fact) event.data.latest_fact = data.latest_fact;
+    event.label = previewText("world_update", event.data);
+    event.detail = detailText("world_update", event.data);
+    return event;
   }
 
   function selectEvent(key, options = {}) {
@@ -9622,6 +9824,7 @@
 
     reconcile(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
+      updateWorldUpdateCompoundEvent(rawEvent, data);
       recordEvent("reconcile", data, rawEvent);
     },
 
@@ -9656,7 +9859,8 @@
 
     world_update(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
-      recordEvent("world_update", data, rawEvent);
+      updateWorldUpdateCompoundEvent(rawEvent, data);
+      renderStream();
     },
 
     stage_change(data, rawEvent) {
@@ -9830,9 +10034,7 @@
       }
       if (data.discarded) {
         sessionSavePending = false;
-        sessionStopped = true;
-        conversationPaused = true;
-        startupPausePending = false;
+        applyRuntimePhase("ready");
         pendingFinalizeAction = "";
         pendingPauseState = null;
         pendingPauseSince = 0;
@@ -9862,9 +10064,7 @@
       playbackVisionFrame = null;
       const payload = buildReportSnapshotPayload(event, finishedSessionId);
       sessionSavePending = false;
-      sessionStopped = true;
-      conversationPaused = true;
-      startupPausePending = false;
+      applyRuntimePhase("ready");
       pendingPauseState = null;
       pendingPauseSince = 0;
       updateRuntimeButtons();
@@ -9899,7 +10099,7 @@
         recordEvent("pause", data, rawEvent);
         return;
       }
-      conversationPaused = true;
+      applyRuntimePhase((data && data.startup) || startupPausePending ? "startup_paused" : "paused");
       if (pendingPauseState === "pausing") {
         pendingPauseState = null;
         pendingPauseSince = 0;
@@ -9915,6 +10115,7 @@
       recordEvent("pause", data, rawEvent);
       updateRuntimeButtons();
       renderBootStatus();
+      syncSaveCompleteModalWithRuntimePhase().catch(() => {});
       flushPendingFinalizeAction().catch(() => {});
     },
 
@@ -9923,9 +10124,7 @@
         recordEvent("resume", data, rawEvent);
         return;
       }
-      conversationPaused = false;
-      sessionStopped = false;
-      startupPausePending = false;
+      applyRuntimePhase("live");
       pendingPauseState = null;
       pendingPauseSince = 0;
       recordEvent("resume", data, rawEvent);
@@ -9942,9 +10141,7 @@
       runtimeStateSeen = true;
       archiveOnlyRuntime = !!data.archive_only;
       archiveOnlyReason = data.archive_only_reason || "";
-      conversationPaused = !!data.conversation_paused;
-      sessionStopped = !!data.session_stopped;
-      startupPausePending = !!data.startup_pause_pending;
+      applyRuntimePhase(deriveRuntimePhaseFromPayload(data));
       if (
         (pendingPauseState === "pausing" && conversationPaused && !sessionStopped) ||
         (pendingPauseState === "playing" && !conversationPaused && !sessionStopped) ||
@@ -9965,7 +10162,7 @@
       voiceActive = !!data.voice_active;
       voiceStatus = data.voice_status || voiceStatus;
       transportStatus = data.transport || transportStatus;
-      latestRuntimePayload = data;
+      latestRuntimePayload = {...data, runtime_phase: currentRuntimePhase()};
       visionManagerActive = !!data.vision_active;
       visionService = {
         url: data.vision_service_url || "",
@@ -9988,6 +10185,7 @@
       pollVisionModelStatus();
       recordEvent("runtime_controls", data, rawEvent);
       renderBootStatus();
+      syncSaveCompleteModalWithRuntimePhase().catch(() => {});
       flushPendingFinalizeAction().catch(() => {});
       maybeResolveSaveCompleteFromState().catch(() => {});
       maybeResolveDiscardCompleteFromState().catch(() => {});
@@ -10457,13 +10655,15 @@
   archivePickerCloseButton.addEventListener("click", () => setArchivePickerOpen(false));
   saveCompleteCloseButton.addEventListener("click", () => {
     if (saveCompleteMode === "saving" || saveCompleteMode === "discarding") return;
-    closeSaveCompleteModal();
+    cancelSaveCompleteReview().catch(() => {});
   });
   archivePicker.addEventListener("click", (event) => {
     if (event.target === archivePicker) setArchivePickerOpen(false);
   });
   saveCompleteModal.addEventListener("click", (event) => {
-    if (event.target === saveCompleteModal && saveCompleteMode !== "saving" && saveCompleteMode !== "discarding") closeSaveCompleteModal();
+    if (event.target === saveCompleteModal && saveCompleteMode !== "saving" && saveCompleteMode !== "discarding") {
+      cancelSaveCompleteReview().catch(() => {});
+    }
   });
   saveCompleteCopyRefButton.addEventListener("click", async () => {
     const ref = saveCompleteMeta?.sessionId || "";
@@ -10488,7 +10688,9 @@
     const ok = await copyText(path);
     saveCompleteStatusEl.textContent = ok ? `Copied report path: ${path}` : "Copy report path failed.";
   });
-  saveCompleteCancelButton.addEventListener("click", closeSaveCompleteModal);
+  saveCompleteCancelButton.addEventListener("click", () => {
+    cancelSaveCompleteReview().catch(() => {});
+  });
   saveCompleteDiscardButton.addEventListener("click", confirmDiscardSession);
   saveCompleteSaveButton.addEventListener("click", confirmSaveAndStop);
   saveCompleteLoadButton.addEventListener("click", async () => {
@@ -10503,7 +10705,9 @@
       saveCompleteStatusEl.textContent = `Load failed: ${error.message || error}`;
     }
   });
-  saveCompleteOkayButton.addEventListener("click", closeSaveCompleteModal);
+  saveCompleteOkayButton.addEventListener("click", () => {
+    cancelSaveCompleteReview().catch(() => {});
+  });
   archivePickerSearchInput.addEventListener("input", renderArchivePicker);
   archivePickerList.addEventListener("click", async (event) => {
     const loadButton = event.target.closest(".archive-load-action");

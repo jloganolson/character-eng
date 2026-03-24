@@ -119,26 +119,12 @@ class TestEventCollector:
 
 class TestDashboardServer:
     @pytest.fixture()
-    def server(self):
+    def server(self, tmp_path):
         c = DashboardEventCollector()
         iq = queue.Queue()
-        report_dir = Path("/tmp/character-eng-dashboard-test-reports")
-        if report_dir.exists():
-            for child in report_dir.iterdir():
-                child.unlink()
-        else:
-            report_dir.mkdir(parents=True)
-        history_root = Path("/tmp/character-eng-dashboard-test-history")
-        if history_root.exists():
-            for child in history_root.rglob("*"):
-                if child.is_file():
-                    child.unlink()
-            for child in sorted(history_root.glob("*"), reverse=True):
-                if child.is_dir():
-                    for nested in sorted(child.rglob("*"), reverse=True):
-                        if nested.is_dir():
-                            nested.rmdir()
-                    child.rmdir()
+        report_dir = tmp_path / "reports"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        history_root = tmp_path / "history"
         history = HistoryService(root=history_root, free_warning_gib=0.0)
         archive = history.start_session(session_id="sess-test", character="greg", model="test")
         archive.capture_checkpoint(
@@ -169,8 +155,13 @@ class TestDashboardServer:
                 break
             except Exception:
                 time.sleep(0.05)
-        yield c, iq, port, report_dir, history
-        # Server thread is daemon, will die with test
+        try:
+            yield c, iq, port, report_dir, history
+        finally:
+            c.shutdown()
+            thread.server.shutdown()  # type: ignore[attr-defined]
+            thread.server.server_close()  # type: ignore[attr-defined]
+            thread.join(timeout=2)
 
     def test_root_returns_html(self, server):
         _, _, port, _, _ = server

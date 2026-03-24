@@ -705,5 +705,6 @@ def start_dashboard(collector: DashboardEventCollector, input_queue: queue.Queue
     actual_port = server.server_address[1]
 
     thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.server = server  # type: ignore[attr-defined]
     thread.start()
     return thread, actual_port

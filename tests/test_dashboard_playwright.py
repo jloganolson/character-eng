@@ -414,20 +414,12 @@ def vision_service() -> VisionServiceController:
 
 
 @pytest.fixture()
-def dashboard_server():
+def dashboard_server(tmp_path):
     collector = DashboardEventCollector()
     input_queue: queue.Queue[str] = queue.Queue()
-    report_dir = Path("/tmp/character-eng-dashboard-playwright-reports")
+    report_dir = tmp_path / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
-    for child in report_dir.iterdir():
-        child.unlink()
-    history_root = Path("/tmp/character-eng-dashboard-playwright-history")
-    if history_root.exists():
-        for child in sorted(history_root.rglob("*"), reverse=True):
-            if child.is_file():
-                child.unlink()
-            elif child.is_dir():
-                child.rmdir()
+    history_root = tmp_path / "history"
     history = HistoryService(root=history_root, free_warning_gib=0.0)
     _seed_archive_session(history, session_id="sess-archive-playback")
     _seed_archive_session(
@@ -584,7 +576,7 @@ def dashboard_server():
         context_version=0,
         had_user_input=False,
     )
-    _, port = start_dashboard(
+    thread, port = start_dashboard(
         collector,
         input_queue,
         port=0,
@@ -598,8 +590,13 @@ def dashboard_server():
             break
         except Exception:
             time.sleep(0.05)
-    yield collector, input_queue, f"http://127.0.0.1:{port}/", report_dir
-    collector.shutdown()
+    try:
+        yield collector, input_queue, f"http://127.0.0.1:{port}/", report_dir
+    finally:
+        collector.shutdown()
+        thread.server.shutdown()  # type: ignore[attr-defined]
+        thread.server.server_close()  # type: ignore[attr-defined]
+        thread.join(timeout=2)
 
 
 def _seed_rendered_card_inventory_fixture(collector: DashboardEventCollector) -> dict[str, dict[str, object]]:
@@ -1216,8 +1213,7 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#save-complete-modal")).to_have_class(re.compile(r"\bopen\b"))
     expect(page.locator("#save-complete-heading")).to_contain_text("Pausing Session")
     expect(page.locator("#save-complete-status")).to_contain_text("Pausing before review")
-    assert input_queue.get(timeout=2) == "/pause"
-    collector.push("pause", {})
+    assert input_queue.get(timeout=2) == "/review"
     collector.push(
         "runtime_controls",
         {
@@ -1231,6 +1227,7 @@ def test_runtime_panel_interactions_in_browser(
             "session_stopped": False,
             "startup_pause_pending": False,
             "session_state": "paused",
+            "runtime_phase": "review",
             "voice_active": True,
             "voice_status": {
                 "active": True,
@@ -1262,7 +1259,7 @@ def test_runtime_panel_interactions_in_browser(
     page.locator("#save-complete-save").click()
     expect(page.locator("#save-complete-status")).to_contain_text("Saving...")
     expect(page.locator("#runtime-stop")).to_have_text("Saving...")
-    assert input_queue.get(timeout=2) == "/stop"
+    assert input_queue.get(timeout=2) == "/save"
 
     collector.push("session_end", {"total_turns": 2})
     expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
@@ -4491,8 +4488,7 @@ def test_save_stop_fallback_opens_modal_without_session_end(
     expect(page.locator("#save-complete-modal")).to_have_class(re.compile(r"\bopen\b"))
     expect(page.locator("#save-complete-heading")).to_contain_text("Pausing Session")
     expect(page.locator("#save-complete-status")).to_contain_text("Pausing before review")
-    assert input_queue.get(timeout=2) == "/pause"
-    collector.push("pause", {})
+    assert input_queue.get(timeout=2) == "/review"
     collector.push(
         "runtime_controls",
         {
@@ -4506,6 +4502,7 @@ def test_save_stop_fallback_opens_modal_without_session_end(
             "session_stopped": False,
             "startup_pause_pending": False,
             "session_state": "paused",
+            "runtime_phase": "review",
             "voice_active": True,
             "voice_status": {
                 "active": True,
@@ -4533,7 +4530,7 @@ def test_save_stop_fallback_opens_modal_without_session_end(
     page.locator("#save-complete-save").click()
     expect(page.locator("#save-complete-status")).to_contain_text("Saving...")
     expect(page.locator("#runtime-stop")).to_have_text("Saving...")
-    assert input_queue.get(timeout=2) == "/stop"
+    assert input_queue.get(timeout=2) == "/save"
 
     collector.push(
         "runtime_controls",
@@ -4659,8 +4656,7 @@ def test_discard_session_stays_in_discard_flow(
     page.locator("#runtime-stop").click()
     expect(page.locator("#save-complete-heading")).to_contain_text("Pausing Session")
     expect(page.locator("#save-complete-status")).to_contain_text("Pausing before review")
-    assert input_queue.get(timeout=2) == "/pause"
-    collector.push("pause", {})
+    assert input_queue.get(timeout=2) == "/review"
     collector.push(
         "runtime_controls",
         {
@@ -4674,6 +4670,7 @@ def test_discard_session_stays_in_discard_flow(
             "session_stopped": False,
             "startup_pause_pending": False,
             "session_state": "paused",
+            "runtime_phase": "review",
             "voice_active": True,
             "voice_status": {
                 "active": True,
@@ -4817,8 +4814,7 @@ def test_discard_session_resolves_without_session_end_event(
     collector.push("response_done", {"full_text": "Discard me"})
 
     page.locator("#runtime-stop").click()
-    assert input_queue.get(timeout=2) == "/pause"
-    collector.push("pause", {})
+    assert input_queue.get(timeout=2) == "/review"
     collector.push(
         "runtime_controls",
         {
@@ -4832,6 +4828,7 @@ def test_discard_session_resolves_without_session_end_event(
             "session_stopped": False,
             "startup_pause_pending": False,
             "session_state": "paused",
+            "runtime_phase": "review",
             "voice_active": True,
             "voice_status": {
                 "active": True,

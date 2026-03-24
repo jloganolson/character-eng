@@ -64,25 +64,54 @@ def test_runtime_snapshot_includes_vision_service_metadata(monkeypatch):
 
 
 def test_runtime_snapshot_includes_ready_state(monkeypatch):
-    previous_paused = app._conversation_paused
-    previous_stopped = app._session_stopped
-    previous_startup = app._startup_pause_pending
+    previous_phase = app._runtime_phase
     cfg = AppConfig()
     monkeypatch.setattr(app, "_vision_service_health", lambda vision_cfg=None: False)
     monkeypatch.setitem(app._vision_runtime, "cfg", cfg.vision)
     try:
-        app._conversation_paused = False
-        app._session_stopped = True
-        app._startup_pause_pending = False
+        app._set_runtime_phase(app.RuntimePhase.READY)
         state = app._runtime_controls_snapshot(vision_cfg=cfg.vision)
         assert state["conversation_paused"] is False
         assert state["session_stopped"] is True
         assert state["startup_pause_pending"] is False
         assert state["session_state"] == "ready"
+        assert state["runtime_phase"] == "ready"
     finally:
-        app._conversation_paused = previous_paused
-        app._session_stopped = previous_stopped
-        app._startup_pause_pending = previous_startup
+        app._set_runtime_phase(previous_phase)
+
+
+def test_runtime_snapshot_exposes_startup_paused_phase(monkeypatch):
+    previous_phase = app._runtime_phase
+    cfg = AppConfig()
+    monkeypatch.setattr(app, "_vision_service_health", lambda vision_cfg=None: False)
+    monkeypatch.setitem(app._vision_runtime, "cfg", cfg.vision)
+    try:
+        app._set_runtime_phase(app.RuntimePhase.STARTUP_PAUSED)
+        state = app._runtime_controls_snapshot(vision_cfg=cfg.vision)
+        assert state["conversation_paused"] is True
+        assert state["session_stopped"] is False
+        assert state["startup_pause_pending"] is True
+        assert state["session_state"] == "paused"
+        assert state["runtime_phase"] == "startup_paused"
+    finally:
+        app._set_runtime_phase(previous_phase)
+
+
+def test_runtime_snapshot_exposes_review_phase(monkeypatch):
+    previous_phase = app._runtime_phase
+    cfg = AppConfig()
+    monkeypatch.setattr(app, "_vision_service_health", lambda vision_cfg=None: False)
+    monkeypatch.setitem(app._vision_runtime, "cfg", cfg.vision)
+    try:
+        app._set_runtime_phase(app.RuntimePhase.REVIEW)
+        state = app._runtime_controls_snapshot(vision_cfg=cfg.vision)
+        assert state["conversation_paused"] is True
+        assert state["session_stopped"] is False
+        assert state["startup_pause_pending"] is False
+        assert state["session_state"] == "paused"
+        assert state["runtime_phase"] == "review"
+    finally:
+        app._set_runtime_phase(previous_phase)
 
 
 def test_runtime_snapshot_includes_voice_status(monkeypatch):
@@ -267,8 +296,7 @@ def test_turn_guardrails_add_short_fragment_reference_bias():
 
 def test_voice_trace_is_suppressed_until_live(monkeypatch):
     pushed = []
-    previous_paused = app._conversation_paused
-    previous_stopped = app._session_stopped
+    previous_phase = app._runtime_phase
 
     class FakeVoice:
         def __init__(self, **kwargs):
@@ -276,20 +304,17 @@ def test_voice_trace_is_suppressed_until_live(monkeypatch):
 
     monkeypatch.setattr(app, "_push", lambda event_type, data: pushed.append((event_type, data)))
     try:
-        app._session_stopped = True
-        app._conversation_paused = False
+        app._set_runtime_phase(app.RuntimePhase.READY)
         voice = app._create_voice_io(None, FakeVoice)
         voice.trace_hook("user_speech_started", {})
         assert pushed == []
 
-        app._session_stopped = False
-        app._conversation_paused = True
+        app._set_runtime_phase(app.RuntimePhase.PAUSED)
         voice.trace_hook("user_transcript_final", {"text": "hello"})
         assert pushed == []
 
-        app._conversation_paused = False
+        app._set_runtime_phase(app.RuntimePhase.LIVE)
         voice.trace_hook("user_transcript_final", {"text": "hello"})
         assert pushed == [("user_transcript_final", {"text": "hello"})]
     finally:
-        app._conversation_paused = previous_paused
-        app._session_stopped = previous_stopped
+        app._set_runtime_phase(previous_phase)
