@@ -229,6 +229,30 @@ class TestDashboardServer:
         assert "Character Runtime & Design Map" in body
         assert resp.status == 200
 
+    def test_stt_debug_returns_html(self, server):
+        _, _, port, _, _ = server
+        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/stt-debug.html")
+        body = resp.read().decode()
+        assert "STT Debug" in body
+        assert resp.status == 200
+
+    def test_tts_debug_returns_html(self, server):
+        _, _, port, _, _ = server
+        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/tts-debug.html")
+        body = resp.read().decode()
+        assert "TTS Debug" in body
+        assert resp.status == 200
+
+    def test_stt_config_returns_json_for_loopback(self, server, monkeypatch):
+        _, _, port, _, _ = server
+        monkeypatch.setenv("DEEPGRAM_API_KEY", "dg-test")
+        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/stt-config")
+        body = json.loads(resp.read())
+        assert body["key"] == "dg-test"
+        assert body["params"]["model"] == "nova-3"
+        assert resp.headers["Cache-Control"] == "no-store"
+        assert resp.status == 200
+
     def test_stream_schema_returns_json(self, server):
         _, _, port, _, _ = server
         resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/stream-schema.json")

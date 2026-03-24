@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import ipaddress
 import queue
 import shutil
 import socket
@@ -121,9 +122,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path == "/system-map.html":
             self._serve_system_map()
         elif path == "/stt-debug.html":
-            self._serve_static_html(STT_DEBUG_PATH)
+            self._serve_static_html(STT_DEBUG_PATH, local_only=True)
         elif path == "/tts-debug.html":
-            self._serve_static_html(TTS_DEBUG_PATH)
+            self._serve_static_html(TTS_DEBUG_PATH, local_only=True)
         elif path == "/api/stt-config":
             self._serve_stt_config()
         elif path == "/stream-schema.json":
@@ -250,7 +251,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def _serve_static_html(self, path: Path):
+    def _client_is_loopback(self) -> bool:
+        host = ""
+        if isinstance(self.client_address, tuple) and self.client_address:
+            host = str(self.client_address[0] or "").strip()
+        try:
+            return bool(host) and ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            return host in {"localhost"}
+
+    def _serve_static_html(self, path: Path, *, local_only: bool = False):
+        if local_only and not self._client_is_loopback():
+            self.send_error(HTTPStatus.FORBIDDEN, f"{path.name} is available only from localhost")
+            return
         try:
             content = path.read_bytes()
         except FileNotFoundError:
@@ -263,6 +276,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def _serve_stt_config(self):
+        if not self._client_is_loopback():
+            self._json_error(HTTPStatus.FORBIDDEN, "STT debug config is available only from localhost")
+            return
         import os
         key = os.environ.get("DEEPGRAM_API_KEY", "")
         payload = {
@@ -283,10 +299,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
     def _handle_tts_debug(self):
+        if not self._client_is_loopback():
+            self._json_error(HTTPStatus.FORBIDDEN, "TTS debug proxy is available only from localhost")
+            return
         import os
         import struct
         import time as _time
@@ -314,6 +334,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         server_url = config.voice.tts_server_url or "http://localhost:8003"
         ref_audio = config.voice.ref_audio or ""
         pocket_voice = config.voice.pocket_voice or ""
+        voice_path = ""
+        if pocket_voice:
+            voice_candidate = Path(pocket_voice)
+            if not voice_candidate.is_absolute():
+                voice_candidate = Path(__file__).resolve().parent.parent.parent / voice_candidate
+            voice_path = str(voice_candidate)
 
         # Collect audio chunks with timing
         chunks: list[bytes] = []
@@ -331,7 +357,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 on_audio=on_audio,
                 server_url=server_url,
                 ref_audio=ref_audio,
-                voice="" if pocket_voice else "alba",
+                voice="" if ref_audio else (voice_path or "alba"),
             )
             tts.send_text(text)
             tts.flush()
