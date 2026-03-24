@@ -28,7 +28,7 @@ VISION_DIR = Path(__file__).resolve().parent.parent / "services" / "vision"
 if str(VISION_DIR) not in sys.path:
     sys.path.insert(0, str(VISION_DIR))
 
-from person_tracker import PersonTracker
+from person_tracker import PersonTracker, ReIDExtractor
 
 
 class _FakeNativeSam3Processor:
@@ -66,3 +66,43 @@ def test_person_tracker_supports_native_sam3_processor_api():
     assert results["person"][0]["confidence"] == pytest.approx(0.91)
     assert results["person"][0]["label"] == "person"
     assert results["person"][0]["mask"].dtype == np.bool_
+
+
+def test_reid_extractor_keeps_bfloat16_service_mode_on_fp32():
+    extractor = ReIDExtractor(device="cpu", dtype=torch.bfloat16)
+
+    assert extractor._dtype == torch.float32
+
+
+def test_person_tracker_wraps_native_sam3_in_autocast(monkeypatch):
+    calls = []
+
+    class _FakeAutocast:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def _fake_autocast(*, device_type, dtype):
+        calls.append((device_type, dtype))
+        return _FakeAutocast()
+
+    monkeypatch.setattr(torch, "autocast", _fake_autocast)
+
+    tracker = PersonTracker(
+        cam=None,
+        sam3_getter=lambda: (object(), _FakeNativeSam3Processor()),
+        face_getter=lambda: [],
+        device="cuda",
+        dtype=torch.bfloat16,
+    )
+    pil = _FakeImageModule.fromarray(np.zeros((12, 12, 3), dtype=np.uint8))
+
+    tracker._run_native_sam3_all(_FakeNativeSam3Processor(), pil, ["person", "cup"])
+
+    assert calls == [
+        ("cuda", torch.bfloat16),
+        ("cuda", torch.bfloat16),
+        ("cuda", torch.bfloat16),
+    ]

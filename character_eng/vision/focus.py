@@ -76,6 +76,36 @@ def _load_line_asset(key: str, default_filename: str, fallback: list[str]) -> li
     return items or list(fallback)
 
 
+def _clean_model_output_list(
+    values,
+    *,
+    limit: int,
+    dict_keys: tuple[str, ...],
+) -> list[str]:
+    """Normalize loosely-structured LLM JSON arrays into distinct strings."""
+    if not isinstance(values, list):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        candidate = ""
+        if isinstance(value, str):
+            candidate = value.strip()
+        elif isinstance(value, dict):
+            for key in dict_keys:
+                raw = value.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    candidate = raw.strip()
+                    break
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        result.append(candidate)
+        if len(result) >= limit:
+            break
+    return result
+
+
 def visual_focus_call(
     beat,
     stage_goal: str,
@@ -165,14 +195,23 @@ def visual_focus_call(
             constant_vlm_specs=authored_constant_specs,
         )
 
-    ephemeral_questions = data.get("ephemeral_questions", [])[:2]
+    ephemeral_questions = _clean_model_output_list(
+        data.get("ephemeral_questions", []),
+        limit=2,
+        dict_keys=("question", "text", "label", "name", "value"),
+    )
     ephemeral_specs = generic_task_specs(ephemeral_questions, prefix="ephemeral", cadence_s=2.0)
+    ephemeral_sam_targets = _clean_model_output_list(
+        data.get("ephemeral_sam_targets", []),
+        limit=2,
+        dict_keys=("target", "label", "name", "text", "value"),
+    )
 
     return VisualFocusResult(
         constant_questions=authored_constant_questions,
         ephemeral_questions=ephemeral_questions,
         constant_sam_targets=authored_constant_sam_targets,
-        ephemeral_sam_targets=data.get("ephemeral_sam_targets", [])[:2],
+        ephemeral_sam_targets=ephemeral_sam_targets,
         constant_vlm_specs=authored_constant_specs,
         ephemeral_vlm_specs=ephemeral_specs,
     )

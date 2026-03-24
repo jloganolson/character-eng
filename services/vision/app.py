@@ -1086,10 +1086,22 @@ def _get_sam_prompts() -> list[str]:
     seen = set()
     result = []
     for p in prompts:
-        if p not in seen:
-            seen.add(p)
-            result.append(p)
+        normalized = _normalize_sam_prompt_item(p)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
     return result
+
+
+def _normalize_sam_prompt_item(value) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        for key in ("target", "label", "name", "text", "value"):
+            raw = value.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -1268,8 +1280,16 @@ def set_sam_targets():
     data = request.get_json()
     with _sam_targets_lock:
         global _constant_sam_targets, _ephemeral_sam_targets
-        _constant_sam_targets = data.get("constant", ["person"])
-        _ephemeral_sam_targets = data.get("ephemeral", [])
+        _constant_sam_targets = [
+            prompt
+            for prompt in (_normalize_sam_prompt_item(item) for item in data.get("constant", ["person"]))
+            if prompt
+        ] or ["person"]
+        _ephemeral_sam_targets = [
+            prompt
+            for prompt in (_normalize_sam_prompt_item(item) for item in data.get("ephemeral", []))
+            if prompt
+        ]
     # Update person tracker's extra prompts
     if pt is not None:
         combined = _get_sam_prompts()

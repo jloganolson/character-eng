@@ -703,6 +703,31 @@ Return JSON:
 }"""
 
 _CONTROL_TAG_RE = re.compile(r"\[(?:gaze|glance|emote):[^\]]+\]", re.IGNORECASE)
+_RESPONSE_GUARD_META_TERMS = (
+    "prompt",
+    "system",
+    "instruction",
+    "instructions",
+    "language model",
+    "assistant",
+    "beat",
+    "script",
+    "runtime",
+    "hidden",
+    "policy",
+    "guardrail",
+)
+
+
+def _is_plain_dialogue_reply(reply_text: str) -> bool:
+    lowered = reply_text.lower()
+    if any(term in lowered for term in _RESPONSE_GUARD_META_TERMS):
+        return False
+    if any(token in reply_text for token in "[]<>`{}"):
+        return False
+    if "\n" in reply_text or len(reply_text) > 240:
+        return False
+    return True
 
 
 def script_check_call(
@@ -778,6 +803,8 @@ def response_guard_call(
             issues=["control_tag_leak"],
             rationale="Reply included robot control tags in spoken dialogue.",
         )
+    if _is_plain_dialogue_reply(reply_text):
+        return ResponseGuardResult(status="pass")
 
     parts: list[str] = []
     parts.append("=== CHARACTER SYSTEM PROMPT ===")

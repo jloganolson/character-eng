@@ -757,6 +757,19 @@ def test_response_guard_call_fast_fails_on_control_tag_leak():
 
 
 @patch("character_eng.world._make_client")
+def test_response_guard_call_fast_passes_plain_dialogue_without_llm(mock_make_client):
+    result = response_guard_call(
+        system_prompt="Stay in character.",
+        history=[{"role": "user", "content": "hello"}],
+        reply="You just walked in. What time is it?",
+        model_config=TEST_CONFIG,
+    )
+
+    assert result.status == "pass"
+    mock_make_client.assert_not_called()
+
+
+@patch("character_eng.world._make_client")
 def test_response_guard_call_uses_llm_for_non_obvious_cases(mock_make_client):
     data = {
         "status": "warn",

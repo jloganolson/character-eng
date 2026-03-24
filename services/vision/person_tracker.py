@@ -9,6 +9,7 @@ Pipeline:
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import threading
 import time
 
@@ -104,7 +105,7 @@ class ReIDExtractor:
         self._device = device
         # torchreid's pretrained ResNet path is stable in fp32/fp16, but the
         # bf16 path can fail with mixed input/weight dtypes on some CUDA stacks.
-        self._dtype = None if dtype == torch.bfloat16 else dtype
+        self._dtype = torch.float32 if dtype in (None, torch.bfloat16) else dtype
 
     def load(self):
         import torchreid
@@ -116,9 +117,7 @@ class ReIDExtractor:
             loss="softmax",
             pretrained=True,
         )
-        self._model = self._model.to(self._device).eval()
-        if self._dtype is not None:
-            self._model = self._model.to(self._dtype)
+        self._model = self._model.to(device=self._device, dtype=self._dtype).eval()
 
         self._transform = transforms.Compose([
             transforms.ToPILImage(),
@@ -539,14 +538,21 @@ class PersonTracker:
 
         return results
 
+    def _sam3_inference_context(self):
+        if self._device.startswith("cuda") and self._dtype in {torch.float16, torch.bfloat16}:
+            return torch.autocast(device_type="cuda", dtype=self._dtype)
+        return nullcontext()
+
     def _run_native_sam3_all(
         self, sam3_proc, pil: Image.Image, prompts: list[str]
     ) -> dict[str, list[dict]]:
-        state = sam3_proc.set_image(pil, state={})
+        with self._sam3_inference_context():
+            state = sam3_proc.set_image(pil, state={})
         results: dict[str, list[dict]] = {}
 
         for prompt in prompts:
-            prompt_state = sam3_proc.set_text_prompt(prompt, state)
+            with self._sam3_inference_context():
+                prompt_state = sam3_proc.set_text_prompt(prompt, state)
             masks = prompt_state.get("masks", [])
             boxes = prompt_state.get("boxes", [])
             scores = prompt_state.get("scores", [])
