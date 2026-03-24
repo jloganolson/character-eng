@@ -3912,6 +3912,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
     t_llm_done = None
     t_tts_request = None
     t_tts_synth_done = None
+    t_first_audio = None
     gen = session.send(message)
 
     if voice_io is not None:
@@ -3986,6 +3987,12 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
                 break
             if t_first is None:
                 t_first = time.time()
+                _push("response_progress", _current_turn_payload(
+                    phase="ttft",
+                    ttft_ms=int((t_first - t_start) * 1000),
+                    llm_start_ts=t_start,
+                    response_ttft_ts=t_first,
+                ))
             full_response.append(chunk)
             if gated_output_released:
                 emit_chunk(chunk)
@@ -3997,6 +4004,11 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
                     flush_pending_chunks()
 
         t_llm_done = time.time()
+        _push("response_progress", _current_turn_payload(
+            phase="llm_done",
+            llm_ms=int((t_llm_done - t_start) * 1000),
+            response_done_ts=t_llm_done,
+        ))
 
         if maybe_continue_listening():
             gated_output_released = True
@@ -4024,6 +4036,11 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
                     break
                 if voice_io._tts.wait_for_done(timeout=0.05):
                     t_tts_synth_done = time.time()
+                    _push("response_progress", _current_turn_payload(
+                        phase="tts_synth_done",
+                        tts_synth_done_ms=int((t_tts_synth_done - t_start) * 1000),
+                        tts_synth_done_ts=t_tts_synth_done,
+                    ))
                     break
 
         # Wait for first audio to arrive at the speaker
@@ -4031,6 +4048,11 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
         if not voice_io._cancelled.is_set() and voice_io._speaker is not None:
             if voice_io._speaker.wait_for_audio(timeout=0.5):
                 t_first_audio = time.time()
+                _push("response_progress", _current_turn_payload(
+                    phase="first_audio",
+                    first_audio_ms=int((t_first_audio - t_start) * 1000),
+                    first_audio_ts=t_first_audio,
+                ))
         voice_io.cancel_latency_filler()
 
         # Wait for speaker to finish playback
@@ -4101,7 +4123,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
         response_done_ts=t_llm_done,
         tts_request_ts=t_tts_request,
         tts_synth_done_ts=t_tts_synth_done,
-        first_audio_ts=None,
+        first_audio_ts=t_first_audio,
         spoken_done_ts=t_end,
         prompt_blocks=_prompt_trace_blocks_for_labels(("chat",)),
         turn_outcome="replied",

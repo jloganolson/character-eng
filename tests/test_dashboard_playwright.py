@@ -1096,7 +1096,7 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#detail-detail")).to_contain_text("STT 420ms")
     expect(page.locator("#detail-detail")).to_contain_text("TTFT 190ms")
     expect(page.locator("#detail-loop")).to_have_class(re.compile(r"\bactive\b"))
-    expect(page.locator("#detail-loop-chips")).to_contain_text("speech 0ms")
+    expect(page.locator("#detail-loop-chips")).to_contain_text("TTFT 190ms")
     expect(page.locator("#detail-loop-chips")).to_contain_text("first audio")
     page.locator("#tab-prompts").evaluate("(node) => node.click()")
     expect(page.locator("#detail-prompts")).to_contain_text("Chat prompt")

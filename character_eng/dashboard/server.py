@@ -24,6 +24,8 @@ from character_eng.prompts import CHARACTERS_DIR, mutable_prompt_inventory
 
 HTML_PATH = Path(__file__).parent / "index.html"
 SYSTEM_MAP_PATH = Path(__file__).parent / "system_map.html"
+STT_DEBUG_PATH = Path(__file__).parent / "stt_debug.html"
+TTS_DEBUG_PATH = Path(__file__).parent / "tts_debug.html"
 STREAM_SCHEMA_PATH = Path(__file__).parent / "stream_schema.json"
 REPORTS_DIR = Path(__file__).resolve().parent.parent.parent / "logs" / "intermediate"
 
@@ -118,6 +120,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_html()
         elif path == "/system-map.html":
             self._serve_system_map()
+        elif path == "/stt-debug.html":
+            self._serve_static_html(STT_DEBUG_PATH)
+        elif path == "/tts-debug.html":
+            self._serve_static_html(TTS_DEBUG_PATH)
+        elif path == "/api/stt-config":
+            self._serve_stt_config()
         elif path == "/stream-schema.json":
             self._serve_stream_schema()
         elif path == "/events":
@@ -213,6 +221,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._handle_prompt_asset_action()
         elif path == "/livekit/token":
             self._handle_livekit_token()
+        elif path == "/api/tts-debug":
+            self._handle_tts_debug()
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -239,6 +249,138 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
         self.wfile.write(content)
+
+    def _serve_static_html(self, path: Path):
+        try:
+            content = path.read_bytes()
+        except FileNotFoundError:
+            self.send_error(HTTPStatus.NOT_FOUND, f"{path.name} not found")
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _serve_stt_config(self):
+        import os
+        key = os.environ.get("DEEPGRAM_API_KEY", "")
+        payload = {
+            "key": key,
+            "params": {
+                "model": "nova-3",
+                "encoding": "linear16",
+                "sample_rate": "16000",
+                "channels": "1",
+                "interim_results": "true",
+                "utterance_end_ms": "1500",
+                "vad_events": "true",
+                "endpointing": "300",
+            },
+        }
+        body = json.dumps(payload).encode()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _handle_tts_debug(self):
+        import os
+        import struct
+        import time as _time
+
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length)
+        try:
+            data = json.loads(body)
+        except Exception:
+            self._json_error(HTTPStatus.BAD_REQUEST, "Invalid JSON")
+            return
+
+        text = data.get("text", "").strip()
+        backend = data.get("backend", "pocket")
+        if not text:
+            self._json_error(HTTPStatus.BAD_REQUEST, "No text provided")
+            return
+        if backend != "pocket":
+            self._json_error(HTTPStatus.BAD_REQUEST, f"Only pocket backend is currently supported (got '{backend}')")
+            return
+
+        # Read Pocket-TTS config
+        from character_eng.config import load_config
+        config = load_config()
+        server_url = config.voice.tts_server_url or "http://localhost:8003"
+        ref_audio = config.voice.ref_audio or ""
+        pocket_voice = config.voice.pocket_voice or ""
+
+        # Collect audio chunks with timing
+        chunks: list[bytes] = []
+        first_chunk_at: list[float] = []
+        started_at = _time.time()
+
+        def on_audio(pcm: bytes):
+            if not first_chunk_at:
+                first_chunk_at.append(_time.time())
+            chunks.append(pcm)
+
+        try:
+            from character_eng.pocket_tts import PocketTTS
+            tts = PocketTTS(
+                on_audio=on_audio,
+                server_url=server_url,
+                ref_audio=ref_audio,
+                voice="" if pocket_voice else "alba",
+            )
+            tts.send_text(text)
+            tts.flush()
+            tts.wait_for_done(timeout=30.0)
+            tts.close()
+        except Exception as exc:
+            self._json_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"TTS failed: {exc}")
+            return
+
+        done_at = _time.time()
+        first_chunk_ms = int((first_chunk_at[0] - started_at) * 1000) if first_chunk_at else 0
+        total_ms = int((done_at - started_at) * 1000)
+
+        # Build WAV
+        pcm_data = b"".join(chunks)
+        sample_rate = 24000
+        num_channels = 1
+        bits_per_sample = 16
+        data_size = len(pcm_data)
+        fmt_chunk_size = 16
+        wav_header = struct.pack(
+            "<4sI4s4sIHHIIHH4sI",
+            b"RIFF", 36 + data_size, b"WAVE",
+            b"fmt ", fmt_chunk_size, 1, num_channels,
+            sample_rate, sample_rate * num_channels * bits_per_sample // 8,
+            num_channels * bits_per_sample // 8, bits_per_sample,
+            b"data", data_size,
+        )
+        wav_bytes = wav_header + pcm_data
+
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Length", str(len(wav_bytes)))
+        self.send_header("X-TTS-First-Chunk-Ms", str(first_chunk_ms))
+        self.send_header("X-TTS-Total-Ms", str(total_ms))
+        self.send_header("X-TTS-Text-Length", str(len(text)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Expose-Headers", "X-TTS-First-Chunk-Ms, X-TTS-Total-Ms, X-TTS-Text-Length")
+        self.end_headers()
+        self.wfile.write(wav_bytes)
+
+    def _json_error(self, status, message):
+        body = json.dumps({"error": message}).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _serve_stream_schema(self):
         try:

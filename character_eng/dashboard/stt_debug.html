@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STT Debug</title>
+<style>
+  :root {
+    --bg: #282828;
+    --bg-alt: #1d2021;
+    --panel: #3c3836;
+    --panel-hover: #504945;
+    --border: #504945;
+    --text: #ebdbb2;
+    --text-dim: #928374;
+    --user: #83a598;
+    --npc: #b8bb26;
+    --beat: #d3869b;
+    --narrator: #fabd2f;
+    --error: #fb4934;
+    --advance: #8ec07c;
+    --hold: #928374;
+    --blue: #458588;
+    --cyan: #689d6a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "JetBrains Mono", "Fira Code", "SF Mono", "Consolas", monospace;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 1rem;
+    gap: 0.75rem;
+  }
+
+  /* Header */
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-shrink: 0;
+  }
+  .header h1 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--narrator);
+  }
+  .mode-group {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .mode-btn {
+    font-family: inherit;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--panel);
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .mode-btn.active {
+    background: var(--blue);
+    color: var(--text);
+    border-color: var(--blue);
+  }
+  .mode-btn:hover:not(.active) {
+    background: var(--panel-hover);
+    color: var(--text);
+  }
+  .action-group {
+    display: flex;
+    gap: 0.4rem;
+    margin-left: auto;
+    align-items: center;
+  }
+  .action-btn {
+    font-family: inherit;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .start-btn {
+    background: var(--advance);
+    color: var(--bg);
+    border-color: var(--advance);
+    font-weight: 600;
+  }
+  .start-btn:hover { opacity: 0.85; }
+  .start-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .stop-btn {
+    background: var(--error);
+    color: var(--bg);
+    border-color: var(--error);
+    font-weight: 600;
+  }
+  .stop-btn:hover { opacity: 0.85; }
+  .stop-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .status-indicator {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text-dim);
+  }
+  .status-indicator.connected {
+    border-color: var(--advance);
+    color: var(--advance);
+  }
+  .status-indicator.connecting {
+    border-color: var(--narrator);
+    color: var(--narrator);
+  }
+  .status-indicator.error {
+    border-color: var(--error);
+    color: var(--error);
+  }
+  .interim-toggle {
+    font-family: inherit;
+    font-size: 0.72rem;
+    padding: 0.2rem 0.55rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--panel);
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .interim-toggle.active {
+    background: var(--panel-hover);
+    color: var(--text);
+  }
+
+  /* Event log */
+  .event-log-container {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-alt);
+    overflow: hidden;
+  }
+  .event-log-header {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .event-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.78rem;
+    line-height: 1.7;
+  }
+  .event-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.15rem 0;
+  }
+  .event-row.interim {
+    display: none;
+    opacity: 0.5;
+  }
+  .event-row.interim.show-interim {
+    display: flex;
+  }
+  .event-time {
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    min-width: 90px;
+    flex-shrink: 0;
+  }
+  .event-delta {
+    color: var(--text-dim);
+    font-size: 0.68rem;
+    min-width: 65px;
+    flex-shrink: 0;
+    text-align: right;
+  }
+  .badge {
+    display: inline-block;
+    padding: 0.08rem 0.45rem;
+    border-radius: 3px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .badge-speech-started {
+    background: color-mix(in srgb, var(--advance) 25%, transparent);
+    color: var(--advance);
+    border: 1px solid color-mix(in srgb, var(--advance) 40%, transparent);
+  }
+  .badge-is-final {
+    background: color-mix(in srgb, var(--blue) 25%, transparent);
+    color: var(--user);
+    border: 1px solid color-mix(in srgb, var(--blue) 40%, transparent);
+  }
+  .badge-endpoint {
+    background: color-mix(in srgb, var(--narrator) 25%, transparent);
+    color: var(--narrator);
+    border: 1px solid color-mix(in srgb, var(--narrator) 40%, transparent);
+  }
+  .badge-utterance-end {
+    background: color-mix(in srgb, var(--error) 25%, transparent);
+    color: var(--error);
+    border: 1px solid color-mix(in srgb, var(--error) 40%, transparent);
+  }
+  .badge-interim {
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+  }
+  .badge-info {
+    background: color-mix(in srgb, var(--cyan) 20%, transparent);
+    color: var(--cyan);
+    border: 1px solid color-mix(in srgb, var(--cyan) 35%, transparent);
+  }
+  .badge-error {
+    background: color-mix(in srgb, var(--error) 20%, transparent);
+    color: var(--error);
+    border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);
+  }
+  .event-text {
+    color: var(--text);
+    word-break: break-word;
+  }
+  .event-text.dim {
+    color: var(--text-dim);
+  }
+
+  /* Bottom panels */
+  .bottom-panels {
+    display: flex;
+    gap: 0.75rem;
+    flex-shrink: 0;
+    max-height: 40vh;
+    min-height: 160px;
+  }
+
+  /* Utterance timing panel */
+  .timing-panel {
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-alt);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .timing-panel-header {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex-shrink: 0;
+  }
+  .timing-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .utterance-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 0.5rem 0.65rem;
+  }
+  .utterance-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.35rem;
+    font-size: 0.75rem;
+  }
+  .utterance-number {
+    font-weight: 700;
+    color: var(--narrator);
+  }
+  .utterance-transcript {
+    color: var(--text);
+    font-size: 0.72rem;
+    font-style: italic;
+    max-width: 350px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .timing-bar-container {
+    height: 18px;
+    display: flex;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 0.3rem;
+    background: var(--bg);
+  }
+  .timing-bar-speaking {
+    background: var(--advance);
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.6rem;
+    color: var(--bg);
+    font-weight: 600;
+    min-width: 2px;
+  }
+  .timing-bar-endpointing {
+    background: var(--narrator);
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.6rem;
+    color: var(--bg);
+    font-weight: 600;
+    min-width: 2px;
+  }
+  .timing-labels {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.68rem;
+    color: var(--text-dim);
+  }
+  .timing-labels span strong {
+    color: var(--text);
+  }
+
+  /* Stats panel */
+  .stats-panel {
+    width: 280px;
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-alt);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .stats-panel-header {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    flex-shrink: 0;
+  }
+  .stats-body {
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.78rem;
+  }
+  .stat-label {
+    color: var(--text-dim);
+  }
+  .stat-value {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .stat-value.good { color: var(--advance); }
+  .stat-value.warn { color: var(--narrator); }
+  .stat-value.bad { color: var(--error); }
+  .stat-divider {
+    border: none;
+    border-top: 1px solid var(--border);
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <h1>STT Debug</h1>
+  <div class="mode-group">
+    <button class="mode-btn active" id="btn-direct" onclick="setMode('direct')">Direct</button>
+    <button class="mode-btn" id="btn-bridge" onclick="setMode('bridge')">Bridge</button>
+  </div>
+  <span class="status-indicator" id="status">disconnected</span>
+  <div class="action-group">
+    <button class="interim-toggle" id="btn-interim" onclick="toggleInterim()">Show Interim</button>
+    <button class="action-btn start-btn" id="btn-start" onclick="startSession()">Start</button>
+    <button class="action-btn stop-btn" id="btn-stop" onclick="stopSession()" disabled>Stop</button>
+  </div>
+</div>
+
+<!-- Event Log -->
+<div class="event-log-container">
+  <div class="event-log-header">
+    <span>Event Log</span>
+    <span id="event-count" style="font-size:0.7rem">0 events</span>
+  </div>
+  <div class="event-log" id="event-log"></div>
+</div>
+
+<!-- Bottom panels -->
+<div class="bottom-panels">
+  <div class="timing-panel">
+    <div class="timing-panel-header">Utterance Timing</div>
+    <div class="timing-list" id="timing-list"></div>
+  </div>
+  <div class="stats-panel">
+    <div class="stats-panel-header">Rolling Stats (last 20)</div>
+    <div class="stats-body" id="stats-body">
+      <div class="stat-row">
+        <span class="stat-label">avg endpointing</span>
+        <span class="stat-value" id="stat-avg-ep">--</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">p95 endpointing</span>
+        <span class="stat-value" id="stat-p95-ep">--</span>
+      </div>
+      <hr class="stat-divider">
+      <div class="stat-row">
+        <span class="stat-label">avg total</span>
+        <span class="stat-value" id="stat-avg-total">--</span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-label">p95 total</span>
+        <span class="stat-value" id="stat-p95-total">--</span>
+      </div>
+      <hr class="stat-divider">
+      <div class="stat-row">
+        <span class="stat-label">avg speaking</span>
+        <span class="stat-value" id="stat-avg-speak">--</span>
+      </div>
+      <hr class="stat-divider">
+      <div class="stat-row">
+        <span class="stat-label">utterance count</span>
+        <span class="stat-value" id="stat-count">0</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── State ───────────────────────────────────────────────────────────────────
+let mode = 'direct'; // 'direct' | 'bridge'
+let showInterim = false;
+let running = false;
+let audioContext = null;
+let micStream = null;
+let workletNode = null;
+let scriptNode = null;
+let dgSocket = null;
+let bridgeSocket = null;
+let eventCount = 0;
+
+// Utterance tracking
+let currentUtterance = null;
+let utterances = []; // last 20 completed
+let utteranceCounter = 0;
+
+// ─── Mode selection ──────────────────────────────────────────────────────────
+function setMode(m) {
+  if (running) return;
+  mode = m;
+  document.getElementById('btn-direct').classList.toggle('active', m === 'direct');
+  document.getElementById('btn-bridge').classList.toggle('active', m === 'bridge');
+}
+
+function toggleInterim() {
+  showInterim = !showInterim;
+  document.getElementById('btn-interim').classList.toggle('active', showInterim);
+  document.querySelectorAll('.event-row.interim').forEach(el => {
+    el.classList.toggle('show-interim', showInterim);
+  });
+}
+
+// ─── Status ──────────────────────────────────────────────────────────────────
+function setStatus(state, text) {
+  const el = document.getElementById('status');
+  el.className = 'status-indicator ' + state;
+  el.textContent = text || state;
+}
+
+// ─── Event logging ───────────────────────────────────────────────────────────
+function formatTime(d) {
+  return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    + '.' + String(d.getMilliseconds()).padStart(3, '0');
+}
+
+function addEvent(badgeClass, badgeText, text, isInterim, deltaMs) {
+  const log = document.getElementById('event-log');
+  const row = document.createElement('div');
+  row.className = 'event-row' + (isInterim ? ' interim' + (showInterim ? ' show-interim' : '') : '');
+
+  const time = document.createElement('span');
+  time.className = 'event-time';
+  time.textContent = formatTime(new Date());
+
+  const delta = document.createElement('span');
+  delta.className = 'event-delta';
+  delta.textContent = deltaMs != null ? '+' + deltaMs + 'ms' : '';
+
+  const badge = document.createElement('span');
+  badge.className = 'badge ' + badgeClass;
+  badge.textContent = badgeText;
+
+  const msg = document.createElement('span');
+  msg.className = 'event-text' + (isInterim ? ' dim' : '');
+  msg.textContent = text || '';
+
+  row.appendChild(time);
+  row.appendChild(delta);
+  row.appendChild(badge);
+  row.appendChild(msg);
+  log.appendChild(row);
+
+  // Auto-scroll
+  log.scrollTop = log.scrollHeight;
+
+  eventCount++;
+  document.getElementById('event-count').textContent = eventCount + ' events';
+}
+
+// ─── Audio capture ───────────────────────────────────────────────────────────
+const WORKLET_CODE = `
+class PcmCaptureProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this._buf = [];
+    this._count = 0;
+    // Determine ratio: sampleRate is global in worklet scope
+    this._srcRate = sampleRate;
+    this._dstRate = 16000;
+    this._ratio = this._srcRate / this._dstRate;
+  }
+  process(inputs) {
+    const input = inputs[0];
+    if (!input || !input[0]) return true;
+    const ch = input[0]; // Float32 samples at source rate
+
+    // Resample by picking nearest sample
+    for (let i = this._count; i < ch.length; i += this._ratio) {
+      const idx = Math.round(i);
+      if (idx < ch.length) {
+        const s = Math.max(-1, Math.min(1, ch[idx]));
+        this._buf.push(s < 0 ? s * 0x8000 : s * 0x7FFF);
+      }
+    }
+    // Track fractional leftover
+    this._count = (this._count + ch.length) % this._ratio;
+
+    // Send chunks of ~320 samples (20ms at 16kHz)
+    while (this._buf.length >= 320) {
+      const chunk = this._buf.splice(0, 320);
+      const pcm = new Int16Array(chunk);
+      this.port.postMessage(pcm.buffer, [pcm.buffer]);
+    }
+    return true;
+  }
+}
+registerProcessor('pcm-capture', PcmCaptureProcessor);
+`;
+
+let onPcmChunk = null; // callback: (ArrayBuffer of Int16) => void
+
+async function startMic() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      sampleRate: 16000,
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    }
+  });
+  micStream = stream;
+  audioContext = new AudioContext({ sampleRate: stream.getAudioTracks()[0].getSettings().sampleRate || 48000 });
+  const source = audioContext.createMediaStreamSource(stream);
+
+  // Try AudioWorklet, fall back to ScriptProcessorNode
+  try {
+    const blob = new Blob([WORKLET_CODE], { type: 'application/javascript' });
+    const url = URL.createObjectURL(blob);
+    await audioContext.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+
+    workletNode = new AudioWorkletNode(audioContext, 'pcm-capture');
+    workletNode.port.onmessage = (e) => {
+      if (onPcmChunk) onPcmChunk(e.data);
+    };
+    source.connect(workletNode);
+    workletNode.connect(audioContext.destination); // needed to keep processing
+    addEvent('badge-info', 'MIC', 'AudioWorklet started at ' + audioContext.sampleRate + 'Hz, resampling to 16kHz', false);
+  } catch (err) {
+    addEvent('badge-info', 'MIC', 'AudioWorklet failed (' + err.message + '), using ScriptProcessor fallback', false);
+    // Fallback: ScriptProcessorNode
+    const bufSize = 4096;
+    scriptNode = audioContext.createScriptProcessor(bufSize, 1, 1);
+    const srcRate = audioContext.sampleRate;
+    const ratio = srcRate / 16000;
+    let residual = 0;
+
+    scriptNode.onaudioprocess = (e) => {
+      const input = e.inputBuffer.getChannelData(0);
+      const out = [];
+      for (let i = residual; i < input.length; i += ratio) {
+        const idx = Math.round(i);
+        if (idx < input.length) {
+          const s = Math.max(-1, Math.min(1, input[idx]));
+          out.push(s < 0 ? s * 0x8000 : s * 0x7FFF);
+        }
+      }
+      residual = (residual + input.length) % ratio;
+      if (out.length > 0 && onPcmChunk) {
+        const pcm = new Int16Array(out);
+        onPcmChunk(pcm.buffer);
+      }
+    };
+    source.connect(scriptNode);
+    scriptNode.connect(audioContext.destination);
+  }
+}
+
+function stopMic() {
+  if (workletNode) { workletNode.disconnect(); workletNode = null; }
+  if (scriptNode) { scriptNode.disconnect(); scriptNode = null; }
+  if (audioContext) { audioContext.close().catch(() => {}); audioContext = null; }
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  onPcmChunk = null;
+}
+
+// ─── Deepgram direct mode ────────────────────────────────────────────────────
+async function startDirect() {
+  setStatus('connecting', 'fetching key...');
+  let key;
+  try {
+    const resp = await fetch('/api/stt-config');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    key = data.key;
+    if (!key) throw new Error('No key in response');
+  } catch (err) {
+    setStatus('error', 'key fetch failed');
+    addEvent('badge-error', 'ERROR', 'Failed to fetch STT config: ' + err.message, false);
+    return false;
+  }
+
+  setStatus('connecting', 'connecting to Deepgram...');
+
+  const params = new URLSearchParams({
+    token: key,
+    model: 'nova-3',
+    encoding: 'linear16',
+    sample_rate: '16000',
+    channels: '1',
+    interim_results: 'true',
+    utterance_end_ms: '1500',
+    vad_events: 'true',
+    endpointing: '300',
+  });
+  const url = 'wss://api.deepgram.com/v1/listen?' + params.toString();
+
+  return new Promise((resolve) => {
+    dgSocket = new WebSocket(url);
+    dgSocket.binaryType = 'arraybuffer';
+
+    dgSocket.onopen = () => {
+      setStatus('connected', 'connected (direct)');
+      addEvent('badge-info', 'WS', 'Connected to Deepgram', false);
+      resolve(true);
+    };
+
+    dgSocket.onclose = (e) => {
+      if (running) {
+        setStatus('error', 'disconnected');
+        addEvent('badge-error', 'WS', 'Deepgram connection closed: ' + e.code, false);
+      }
+    };
+
+    dgSocket.onerror = (e) => {
+      setStatus('error', 'ws error');
+      addEvent('badge-error', 'ERROR', 'WebSocket error', false);
+      resolve(false);
+    };
+
+    dgSocket.onmessage = (e) => {
+      handleDeepgramMessage(e.data);
+    };
+
+    // Timeout
+    setTimeout(() => {
+      if (dgSocket && dgSocket.readyState === WebSocket.CONNECTING) {
+        dgSocket.close();
+        setStatus('error', 'timeout');
+        addEvent('badge-error', 'ERROR', 'Connection timeout', false);
+        resolve(false);
+      }
+    }, 10000);
+  });
+}
+
+function handleDeepgramMessage(data) {
+  let msg;
+  try {
+    msg = JSON.parse(data);
+  } catch {
+    return;
+  }
+
+  const now = performance.now();
+
+  if (msg.type === 'SpeechStarted') {
+    // Start a new utterance if we don't have one active
+    if (!currentUtterance) {
+      utteranceCounter++;
+      currentUtterance = {
+        id: utteranceCounter,
+        speechStartedAt: now,
+        lastIsFinalAt: null,
+        speechFinalAt: null,
+        utteranceEndAt: null,
+        transcript: '',
+      };
+    }
+    addEvent('badge-speech-started', 'SpeechStarted', '', false,
+      currentUtterance ? null : null);
+    return;
+  }
+
+  if (msg.type === 'UtteranceEnd') {
+    let delta = null;
+    if (currentUtterance) {
+      currentUtterance.utteranceEndAt = now;
+      delta = Math.round(now - currentUtterance.speechStartedAt);
+    }
+    addEvent('badge-utterance-end', 'UtteranceEnd', '', false, delta);
+    // Finalize if speech_final already came
+    if (currentUtterance && currentUtterance.speechFinalAt) {
+      finalizeUtterance();
+    }
+    return;
+  }
+
+  if (msg.type === 'Results') {
+    const alt = msg.channel && msg.channel.alternatives && msg.channel.alternatives[0];
+    const transcript = alt ? alt.transcript : '';
+    const isFinal = msg.is_final;
+    const speechFinal = msg.speech_final;
+
+    if (!isFinal) {
+      // Interim
+      addEvent('badge-interim', 'interim', '"' + transcript + '"', true, null);
+      return;
+    }
+
+    if (speechFinal) {
+      // Endpointing event
+      let delta = null;
+      if (currentUtterance) {
+        currentUtterance.speechFinalAt = now;
+        if (transcript) currentUtterance.transcript = transcript;
+        delta = Math.round(now - currentUtterance.speechStartedAt);
+      }
+      addEvent('badge-endpoint', 'ENDPOINT', transcript ? '"' + transcript + '"' : '(empty)', false, delta);
+      // Finalize utterance
+      if (currentUtterance) {
+        finalizeUtterance();
+      }
+    } else {
+      // is_final but not speech_final
+      let delta = null;
+      if (currentUtterance) {
+        currentUtterance.lastIsFinalAt = now;
+        if (transcript) currentUtterance.transcript = transcript;
+        delta = Math.round(now - currentUtterance.speechStartedAt);
+      }
+      addEvent('badge-is-final', 'is_final', transcript ? '"' + transcript + '"' : '(empty)', false, delta);
+    }
+    return;
+  }
+
+  // Other message types
+  if (msg.type === 'Metadata') {
+    addEvent('badge-info', 'META', 'request_id=' + (msg.request_id || '?'), false);
+  }
+}
+
+// ─── Bridge mode ─────────────────────────────────────────────────────────────
+function startBridge() {
+  setStatus('connecting', 'connecting to bridge...');
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = proto + '//' + location.host + '/bridge';
+
+  return new Promise((resolve) => {
+    bridgeSocket = new WebSocket(url);
+    bridgeSocket.binaryType = 'arraybuffer';
+
+    bridgeSocket.onopen = () => {
+      setStatus('connected', 'connected (bridge)');
+      addEvent('badge-info', 'WS', 'Connected to bridge at ' + url, false);
+      resolve(true);
+    };
+
+    bridgeSocket.onclose = (e) => {
+      if (running) {
+        setStatus('error', 'bridge disconnected');
+        addEvent('badge-error', 'WS', 'Bridge connection closed: ' + e.code, false);
+      }
+    };
+
+    bridgeSocket.onerror = () => {
+      setStatus('error', 'bridge error');
+      addEvent('badge-error', 'ERROR', 'Bridge WebSocket error', false);
+      resolve(false);
+    };
+
+    bridgeSocket.onmessage = (e) => {
+      // Bridge sends back JSON transcript events
+      if (typeof e.data === 'string') {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === 'transcript') {
+            const delta = null; // No precise timing in bridge mode
+            if (msg.is_final) {
+              if (!currentUtterance) {
+                utteranceCounter++;
+                currentUtterance = {
+                  id: utteranceCounter,
+                  speechStartedAt: performance.now() - 500, // estimate
+                  lastIsFinalAt: null,
+                  speechFinalAt: null,
+                  utteranceEndAt: null,
+                  transcript: '',
+                };
+              }
+              currentUtterance.lastIsFinalAt = performance.now();
+              currentUtterance.speechFinalAt = performance.now();
+              currentUtterance.transcript = msg.text || '';
+              addEvent('badge-endpoint', 'ENDPOINT', '"' + (msg.text || '') + '"', false, null);
+              finalizeUtterance();
+            } else {
+              addEvent('badge-interim', 'interim', '"' + (msg.text || '') + '"', true, null);
+            }
+          }
+        } catch {}
+      }
+    };
+
+    setTimeout(() => {
+      if (bridgeSocket && bridgeSocket.readyState === WebSocket.CONNECTING) {
+        bridgeSocket.close();
+        setStatus('error', 'timeout');
+        resolve(false);
+      }
+    }, 10000);
+  });
+}
+
+// ─── Utterance finalization ──────────────────────────────────────────────────
+function finalizeUtterance() {
+  if (!currentUtterance) return;
+  const u = currentUtterance;
+  currentUtterance = null;
+
+  // Compute timing
+  u.speakingMs = u.lastIsFinalAt ? Math.round(u.lastIsFinalAt - u.speechStartedAt) : null;
+  u.endpointingMs = (u.speechFinalAt && u.lastIsFinalAt) ? Math.round(u.speechFinalAt - u.lastIsFinalAt) : null;
+  u.totalMs = u.speechFinalAt ? Math.round(u.speechFinalAt - u.speechStartedAt) : null;
+
+  utterances.push(u);
+  if (utterances.length > 20) utterances.shift();
+
+  renderUtteranceCard(u);
+  updateStats();
+}
+
+function renderUtteranceCard(u) {
+  const list = document.getElementById('timing-list');
+
+  const card = document.createElement('div');
+  card.className = 'utterance-card';
+
+  // Header
+  const header = document.createElement('div');
+  header.className = 'utterance-card-header';
+  const num = document.createElement('span');
+  num.className = 'utterance-number';
+  num.textContent = '#' + u.id;
+  const transcript = document.createElement('span');
+  transcript.className = 'utterance-transcript';
+  transcript.textContent = u.transcript || '(no transcript)';
+  transcript.title = u.transcript || '';
+  header.appendChild(num);
+  header.appendChild(transcript);
+  card.appendChild(header);
+
+  // Bar
+  const speakMs = u.speakingMs || 0;
+  const epMs = u.endpointingMs || 0;
+  const total = speakMs + epMs || 1;
+
+  const barContainer = document.createElement('div');
+  barContainer.className = 'timing-bar-container';
+
+  const barSpeak = document.createElement('div');
+  barSpeak.className = 'timing-bar-speaking';
+  barSpeak.style.width = Math.max(5, (speakMs / total) * 100) + '%';
+  if (speakMs > 100) barSpeak.textContent = speakMs + 'ms';
+
+  const barEp = document.createElement('div');
+  barEp.className = 'timing-bar-endpointing';
+  barEp.style.width = Math.max(5, (epMs / total) * 100) + '%';
+  if (epMs > 60) barEp.textContent = epMs + 'ms';
+
+  barContainer.appendChild(barSpeak);
+  barContainer.appendChild(barEp);
+  card.appendChild(barContainer);
+
+  // Labels
+  const labels = document.createElement('div');
+  labels.className = 'timing-labels';
+  labels.innerHTML =
+    '<span>speaking: <strong>' + (u.speakingMs != null ? u.speakingMs + 'ms' : '--') + '</strong></span>' +
+    '<span>endpoint: <strong>' + (u.endpointingMs != null ? u.endpointingMs + 'ms' : '--') + '</strong></span>' +
+    '<span>total: <strong>' + (u.totalMs != null ? u.totalMs + 'ms' : '--') + '</strong></span>';
+  card.appendChild(labels);
+
+  list.appendChild(card);
+  list.scrollTop = list.scrollHeight;
+}
+
+// ─── Stats ───────────────────────────────────────────────────────────────────
+function updateStats() {
+  const valid = utterances.filter(u => u.endpointingMs != null && u.totalMs != null);
+  const count = valid.length;
+
+  document.getElementById('stat-count').textContent = utterances.length;
+
+  if (count === 0) {
+    document.getElementById('stat-avg-ep').textContent = '--';
+    document.getElementById('stat-p95-ep').textContent = '--';
+    document.getElementById('stat-avg-total').textContent = '--';
+    document.getElementById('stat-p95-total').textContent = '--';
+    document.getElementById('stat-avg-speak').textContent = '--';
+    return;
+  }
+
+  const epValues = valid.map(u => u.endpointingMs).sort((a, b) => a - b);
+  const totalValues = valid.map(u => u.totalMs).sort((a, b) => a - b);
+  const speakValues = valid.filter(u => u.speakingMs != null).map(u => u.speakingMs).sort((a, b) => a - b);
+
+  const avg = arr => Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
+  const p95 = arr => arr[Math.min(arr.length - 1, Math.floor(arr.length * 0.95))];
+
+  const avgEp = avg(epValues);
+  const p95Ep = p95(epValues);
+  const avgTotal = avg(totalValues);
+  const p95Total = p95(totalValues);
+  const avgSpeak = speakValues.length > 0 ? avg(speakValues) : null;
+
+  const epEl = document.getElementById('stat-avg-ep');
+  epEl.textContent = avgEp + 'ms';
+  epEl.className = 'stat-value ' + (avgEp < 350 ? 'good' : avgEp < 500 ? 'warn' : 'bad');
+
+  const p95El = document.getElementById('stat-p95-ep');
+  p95El.textContent = p95Ep + 'ms';
+  p95El.className = 'stat-value ' + (p95Ep < 400 ? 'good' : p95Ep < 600 ? 'warn' : 'bad');
+
+  const totalEl = document.getElementById('stat-avg-total');
+  totalEl.textContent = avgTotal + 'ms';
+  totalEl.className = 'stat-value';
+
+  const p95TotalEl = document.getElementById('stat-p95-total');
+  p95TotalEl.textContent = p95Total + 'ms';
+  p95TotalEl.className = 'stat-value';
+
+  const speakEl = document.getElementById('stat-avg-speak');
+  speakEl.textContent = avgSpeak != null ? avgSpeak + 'ms' : '--';
+  speakEl.className = 'stat-value';
+}
+
+// ─── Session control ─────────────────────────────────────────────────────────
+async function startSession() {
+  if (running) return;
+
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('btn-stop').disabled = false;
+
+  try {
+    // Start mic first
+    addEvent('badge-info', 'INIT', 'Requesting microphone...', false);
+    await startMic();
+
+    // Connect
+    let ok = false;
+    if (mode === 'direct') {
+      ok = await startDirect();
+    } else {
+      ok = await startBridge();
+    }
+
+    if (!ok) {
+      stopMic();
+      document.getElementById('btn-start').disabled = false;
+      document.getElementById('btn-stop').disabled = true;
+      return;
+    }
+
+    running = true;
+
+    // Wire up audio sending
+    if (mode === 'direct') {
+      onPcmChunk = (buf) => {
+        if (dgSocket && dgSocket.readyState === WebSocket.OPEN) {
+          dgSocket.send(buf);
+        }
+      };
+    } else {
+      onPcmChunk = (buf) => {
+        if (bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
+          // Prefix with 0x01 byte
+          const pcmBytes = new Uint8Array(buf);
+          const frame = new Uint8Array(1 + pcmBytes.length);
+          frame[0] = 0x01;
+          frame.set(pcmBytes, 1);
+          bridgeSocket.send(frame.buffer);
+        }
+      };
+    }
+
+    addEvent('badge-info', 'READY', 'Streaming audio (' + mode + ' mode)', false);
+
+  } catch (err) {
+    setStatus('error', 'mic error');
+    addEvent('badge-error', 'ERROR', 'Mic access failed: ' + err.message, false);
+    stopMic();
+    document.getElementById('btn-start').disabled = false;
+    document.getElementById('btn-stop').disabled = true;
+  }
+}
+
+function stopSession() {
+  running = false;
+
+  // Close WebSocket
+  if (dgSocket) {
+    // Send close message to Deepgram
+    try { dgSocket.send(JSON.stringify({ type: 'CloseStream' })); } catch {}
+    dgSocket.close();
+    dgSocket = null;
+  }
+  if (bridgeSocket) {
+    bridgeSocket.close();
+    bridgeSocket = null;
+  }
+
+  // Stop mic
+  stopMic();
+
+  // Reset utterance tracking
+  currentUtterance = null;
+
+  setStatus('', 'disconnected');
+  addEvent('badge-info', 'STOP', 'Session stopped', false);
+
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').disabled = true;
+}
+
+// ─── Cleanup on unload ──────────────────────────────────────────────────────
+window.addEventListener('beforeunload', () => {
+  stopSession();
+});
+</script>
+</body>
+</html>
