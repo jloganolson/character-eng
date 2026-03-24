@@ -6,66 +6,22 @@
 <title>Character Dashboard</title>
 <style>
   :root {
-    --bg: #282828;
-    --bg-alt: #1d2021;
-    --panel: #3c3836;
-    --panel-hover: #504945;
-    --border: #504945;
-    --text: #ebdbb2;
-    --text-dim: #928374;
-    --user: #83a598;
-    --npc: #b8bb26;
-    --beat: #d3869b;
-    --narrator: #fabd2f;
-    --error: #fb4934;
-    --advance: #8ec07c;
-    --hold: #928374;
-    --blue: #458588;
-    --cyan: #689d6a;
-    --stream-session: #7dd3fc;
-    --stream-input: #83a598;
-    --stream-chat: #f59e0b;
-    --stream-expression: #fb7185;
-    --stream-eval: #8ec07c;
-    --stream-director: #c084fc;
-    --stream-planner: #60a5fa;
-    --stream-world: #d3869b;
-    --stream-vision: #34d399;
-    --stream-vision-raw: #10b981;
-    --stream-other: #cbd5e1;
+    /* defaults (gruvbox dark) — overridden by JS applyTheme() */
+    --bg: #282828; --bg-alt: #1d2021; --panel: #3c3836;
+    --panel-hover: #504945; --border: #504945;
+    --text: #ebdbb2; --text-dim: #928374;
+    --user: #83a598; --npc: #b8bb26; --beat: #d3869b; --narrator: #fabd2f;
+    --error: #fb4934; --advance: #8ec07c; --hold: #928374;
+    --blue: #458588; --cyan: #689d6a;
+    --stream-session: #7dd3fc; --stream-input: #83a598; --stream-chat: #f59e0b;
+    --stream-expression: #fb7185; --stream-eval: #8ec07c; --stream-director: #c084fc;
+    --stream-planner: #60a5fa; --stream-world: #d3869b; --stream-vision: #34d399;
+    --stream-vision-raw: #10b981; --stream-other: #cbd5e1;
+    /* layout */
     --sidebar-width: 110px;
     --inspector-width: 380px;
     --right-panel-width: 360px;
     --timeline-window-seconds: 30;
-  }
-  :root.light {
-    --bg: #fbf1c7;
-    --bg-alt: #f2e5bc;
-    --panel: #ebdbb2;
-    --panel-hover: #d5c4a1;
-    --border: #d5c4a1;
-    --text: #3c3836;
-    --text-dim: #928374;
-    --user: #076678;
-    --npc: #79740e;
-    --beat: #8f3f71;
-    --narrator: #b57614;
-    --error: #cc241d;
-    --advance: #427b58;
-    --hold: #928374;
-    --blue: #458588;
-    --cyan: #689d6a;
-    --stream-session: #1d4ed8;
-    --stream-input: #076678;
-    --stream-chat: #b45309;
-    --stream-expression: #be185d;
-    --stream-eval: #427b58;
-    --stream-director: #7c3aed;
-    --stream-planner: #1d4ed8;
-    --stream-world: #8f3f71;
-    --stream-vision: #047857;
-    --stream-vision-raw: #059669;
-    --stream-other: #475569;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -446,15 +402,42 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  #theme-toggle {
+  #theme-controls {
     margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+  }
+  #mode-toggle {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  #mode-toggle button {
     background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 0.2em 0.45em;
+    font-size: 0.95em;
+    line-height: 1;
+  }
+  #mode-toggle button:not(:last-child) {
+    border-right: 1px solid var(--border);
+  }
+  #mode-toggle button.active {
+    background: var(--panel-hover);
+    color: var(--text);
+  }
+  #scheme-select {
+    background: var(--panel);
     border: 1px solid var(--border);
     color: var(--text);
-    cursor: pointer;
-    padding: 0.2em 0.5em;
     border-radius: 4px;
-    font-size: 1em;
+    padding: 0.2em 0.35em;
+    font-size: 0.82em;
+    cursor: pointer;
   }
   #main {
     display: flex;
@@ -2052,7 +2035,19 @@
     <button id="livekit-cam-toggle" type="button">Cam On</button>
     <span id="livekit-status" style="color:var(--text-dim);font-size:0.82em;">livekit booting</span>
   </span>
-  <button id="theme-toggle" title="Toggle light/dark">&#9789;</button>
+  <div id="theme-controls">
+    <div id="mode-toggle" title="Color mode">
+      <button data-mode="light" title="Light">&#9788;</button>
+      <button data-mode="system" title="System default">&#9684;</button>
+      <button data-mode="dark" title="Dark" class="active">&#9789;</button>
+    </div>
+    <select id="scheme-select" title="Color scheme">
+      <option value="gruvbox">Gruvbox</option>
+      <option value="solarized">Solarized</option>
+      <option value="nord">Nord</option>
+      <option value="grayscale">Grayscale</option>
+    </select>
+  </div>
 </div>
 
 <div id="ux-spoof-banner" aria-live="polite">
@@ -3088,16 +3083,153 @@
     renderStream();
   }
 
-  const themeBtn = document.getElementById("theme-toggle");
-  function setTheme(light) {
-    document.documentElement.classList.toggle("light", light);
-    themeBtn.textContent = light ? "\u2600" : "\u263D";
-    localStorage.setItem("dashboard-theme", light ? "light" : "dark");
+  /* ── Color scheme definitions ── */
+  const COLOR_SCHEMES = {
+    gruvbox: {
+      dark: {
+        bg:"#282828", "bg-alt":"#1d2021", panel:"#3c3836", "panel-hover":"#504945", border:"#504945",
+        text:"#ebdbb2", "text-dim":"#928374",
+        user:"#83a598", npc:"#b8bb26", beat:"#d3869b", narrator:"#fabd2f",
+        error:"#fb4934", advance:"#8ec07c", hold:"#928374", blue:"#458588", cyan:"#689d6a",
+        "stream-session":"#7dd3fc", "stream-input":"#83a598", "stream-chat":"#f59e0b",
+        "stream-expression":"#fb7185", "stream-eval":"#8ec07c", "stream-director":"#c084fc",
+        "stream-planner":"#60a5fa", "stream-world":"#d3869b", "stream-vision":"#34d399",
+        "stream-vision-raw":"#10b981", "stream-other":"#cbd5e1"
+      },
+      light: {
+        bg:"#fbf1c7", "bg-alt":"#f2e5bc", panel:"#ebdbb2", "panel-hover":"#d5c4a1", border:"#d5c4a1",
+        text:"#3c3836", "text-dim":"#928374",
+        user:"#076678", npc:"#79740e", beat:"#8f3f71", narrator:"#b57614",
+        error:"#cc241d", advance:"#427b58", hold:"#928374", blue:"#458588", cyan:"#689d6a",
+        "stream-session":"#1d4ed8", "stream-input":"#076678", "stream-chat":"#b45309",
+        "stream-expression":"#be185d", "stream-eval":"#427b58", "stream-director":"#7c3aed",
+        "stream-planner":"#1d4ed8", "stream-world":"#8f3f71", "stream-vision":"#047857",
+        "stream-vision-raw":"#059669", "stream-other":"#475569"
+      }
+    },
+    solarized: {
+      dark: {
+        bg:"#002b36", "bg-alt":"#073642", panel:"#073642", "panel-hover":"#586e75", border:"#586e75",
+        text:"#839496", "text-dim":"#657b83",
+        user:"#268bd2", npc:"#859900", beat:"#d33682", narrator:"#b58900",
+        error:"#dc322f", advance:"#2aa198", hold:"#657b83", blue:"#268bd2", cyan:"#2aa198",
+        "stream-session":"#268bd2", "stream-input":"#268bd2", "stream-chat":"#b58900",
+        "stream-expression":"#d33682", "stream-eval":"#2aa198", "stream-director":"#6c71c4",
+        "stream-planner":"#268bd2", "stream-world":"#d33682", "stream-vision":"#2aa198",
+        "stream-vision-raw":"#859900", "stream-other":"#93a1a1"
+      },
+      light: {
+        bg:"#fdf6e3", "bg-alt":"#eee8d5", panel:"#eee8d5", "panel-hover":"#d3cbab", border:"#d3cbab",
+        text:"#657b83", "text-dim":"#93a1a1",
+        user:"#268bd2", npc:"#859900", beat:"#d33682", narrator:"#b58900",
+        error:"#dc322f", advance:"#2aa198", hold:"#93a1a1", blue:"#268bd2", cyan:"#2aa198",
+        "stream-session":"#268bd2", "stream-input":"#268bd2", "stream-chat":"#b58900",
+        "stream-expression":"#d33682", "stream-eval":"#2aa198", "stream-director":"#6c71c4",
+        "stream-planner":"#268bd2", "stream-world":"#d33682", "stream-vision":"#2aa198",
+        "stream-vision-raw":"#859900", "stream-other":"#586e75"
+      }
+    },
+    nord: {
+      dark: {
+        bg:"#2e3440", "bg-alt":"#242933", panel:"#3b4252", "panel-hover":"#434c5e", border:"#434c5e",
+        text:"#d8dee9", "text-dim":"#7b88a1",
+        user:"#88c0d0", npc:"#a3be8c", beat:"#b48ead", narrator:"#ebcb8b",
+        error:"#bf616a", advance:"#a3be8c", hold:"#7b88a1", blue:"#81a1c1", cyan:"#8fbcbb",
+        "stream-session":"#88c0d0", "stream-input":"#88c0d0", "stream-chat":"#ebcb8b",
+        "stream-expression":"#b48ead", "stream-eval":"#a3be8c", "stream-director":"#b48ead",
+        "stream-planner":"#81a1c1", "stream-world":"#d08770", "stream-vision":"#a3be8c",
+        "stream-vision-raw":"#8fbcbb", "stream-other":"#d8dee9"
+      },
+      light: {
+        bg:"#eceff4", "bg-alt":"#e5e9f0", panel:"#d8dee9", "panel-hover":"#c2c9d6", border:"#c2c9d6",
+        text:"#2e3440", "text-dim":"#7b88a1",
+        user:"#5e81ac", npc:"#4c8a5a", beat:"#b48ead", narrator:"#d08770",
+        error:"#bf616a", advance:"#4c8a5a", hold:"#7b88a1", blue:"#5e81ac", cyan:"#5e9a8f",
+        "stream-session":"#5e81ac", "stream-input":"#5e81ac", "stream-chat":"#d08770",
+        "stream-expression":"#b48ead", "stream-eval":"#4c8a5a", "stream-director":"#b48ead",
+        "stream-planner":"#5e81ac", "stream-world":"#d08770", "stream-vision":"#4c8a5a",
+        "stream-vision-raw":"#5e9a8f", "stream-other":"#4c566a"
+      }
+    },
+    grayscale: {
+      dark: {
+        bg:"#1a1a1a", "bg-alt":"#111111", panel:"#2a2a2a", "panel-hover":"#3a3a3a", border:"#3a3a3a",
+        text:"#d4d4d4", "text-dim":"#808080",
+        user:"#6ba3d6", npc:"#7ec87e", beat:"#c87ec8", narrator:"#d6b86b",
+        error:"#d66b6b", advance:"#6bc89b", hold:"#808080", blue:"#6ba3d6", cyan:"#6bc89b",
+        "stream-session":"#7db8e8", "stream-input":"#6ba3d6", "stream-chat":"#d6b86b",
+        "stream-expression":"#c87ec8", "stream-eval":"#6bc89b", "stream-director":"#a87ed6",
+        "stream-planner":"#6ba3d6", "stream-world":"#c87ec8", "stream-vision":"#6bc89b",
+        "stream-vision-raw":"#5ab88a", "stream-other":"#b0b0b0"
+      },
+      light: {
+        bg:"#f5f5f5", "bg-alt":"#ebebeb", panel:"#e0e0e0", "panel-hover":"#cccccc", border:"#cccccc",
+        text:"#2a2a2a", "text-dim":"#808080",
+        user:"#2e6da4", npc:"#3a7d3a", beat:"#8f3f8f", narrator:"#a48520",
+        error:"#c0392b", advance:"#2d8659", hold:"#808080", blue:"#2e6da4", cyan:"#2d8659",
+        "stream-session":"#2e6da4", "stream-input":"#2e6da4", "stream-chat":"#a48520",
+        "stream-expression":"#8f3f8f", "stream-eval":"#2d8659", "stream-director":"#7040a0",
+        "stream-planner":"#2e6da4", "stream-world":"#8f3f8f", "stream-vision":"#2d8659",
+        "stream-vision-raw":"#1e7048", "stream-other":"#555555"
+      }
+    }
+  };
+
+  /* ── Theme application ── */
+  const modeToggle = document.getElementById("mode-toggle");
+  const schemeSelect = document.getElementById("scheme-select");
+  let _currentResolvedMode = "dark";
+
+  function resolveMode(mode) {
+    if (mode === "system") {
+      return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    }
+    return mode;
   }
-  themeBtn.addEventListener("click", () => {
-    setTheme(!document.documentElement.classList.contains("light"));
+
+  function applyTheme(mode, scheme) {
+    const resolved = resolveMode(mode);
+    _currentResolvedMode = resolved;
+    const vars = COLOR_SCHEMES[scheme]?.[resolved] || COLOR_SCHEMES.gruvbox.dark;
+    const root = document.documentElement;
+    for (const [k, v] of Object.entries(vars)) root.style.setProperty("--" + k, v);
+    root.classList.toggle("light", resolved === "light");
+    /* update mode toggle active state */
+    modeToggle.querySelectorAll("button").forEach(b => {
+      b.classList.toggle("active", b.dataset.mode === mode);
+    });
+    schemeSelect.value = scheme;
+    localStorage.setItem("dashboard-mode", mode);
+    localStorage.setItem("dashboard-scheme", scheme);
+  }
+
+  function getStoredMode() { return localStorage.getItem("dashboard-mode") || "dark"; }
+  function getStoredScheme() { return localStorage.getItem("dashboard-scheme") || "gruvbox"; }
+
+  modeToggle.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-mode]");
+    if (!btn) return;
+    applyTheme(btn.dataset.mode, getStoredScheme());
   });
-  if (localStorage.getItem("dashboard-theme") === "light") setTheme(true);
+  schemeSelect.addEventListener("change", () => {
+    applyTheme(getStoredMode(), schemeSelect.value);
+  });
+
+  /* React to OS theme changes when in system mode */
+  window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+    if (getStoredMode() === "system") applyTheme("system", getStoredScheme());
+  });
+
+  /* Migrate old localStorage key */
+  (function migrateOldTheme() {
+    const old = localStorage.getItem("dashboard-theme");
+    if (old && !localStorage.getItem("dashboard-mode")) {
+      localStorage.setItem("dashboard-mode", old === "light" ? "light" : "dark");
+      localStorage.removeItem("dashboard-theme");
+    }
+  })();
+
+  applyTheme(getStoredMode(), getStoredScheme());
 
   setInterval(() => {
     if (document.hidden || !sessionStart) return;
@@ -11888,7 +12020,7 @@
     wrap.appendChild(micButton);
     wrap.appendChild(camButton);
     wrap.appendChild(status);
-    header.insertBefore(wrap, document.getElementById("theme-toggle"));
+    header.insertBefore(wrap, document.getElementById("theme-controls"));
     bridgeControls = {wrap, armButton, micButton, camButton, status};
     updateBridgeButtons();
     refreshBridgeStatus();
