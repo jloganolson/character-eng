@@ -99,6 +99,23 @@ class TestEventCollector:
         assert events[0]["type"] == "c"
         assert events[0]["seq"] == 3
 
+    def test_get_since_returns_incremental_events(self):
+        c = DashboardEventCollector()
+        c.push("a", {"i": 1})
+        c.push("b", {"i": 2})
+        c.push("c", {"i": 3})
+        events = c.get_since(1)
+        assert [event["type"] for event in events] == ["b", "c"]
+        assert [event["seq"] for event in events] == [2, 3]
+
+    def test_max_history_bounds_retained_events(self):
+        c = DashboardEventCollector(max_history=3)
+        for idx in range(6):
+            c.push(f"e{idx}", {"i": idx})
+        events = c.get_all()
+        assert [event["type"] for event in events] == ["e3", "e4", "e5"]
+        assert [event["seq"] for event in events] == [4, 5, 6]
+
 
 class TestDashboardServer:
     @pytest.fixture()
@@ -180,6 +197,17 @@ class TestDashboardServer:
         data = json.loads(resp.read())
         assert len(data) == 1
         assert data[0]["type"] == "test_event"
+
+    def test_state_since_seq_returns_incremental_slice(self, server):
+        c, _, port, _, _ = server
+        c.push("first", {"key": "one"})
+        c.push("second", {"key": "two"})
+        c.push("third", {"key": "three"})
+        time.sleep(0.05)
+        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/state?since_seq=1")
+        data = json.loads(resp.read())
+        assert [event["type"] for event in data] == ["second", "third"]
+        assert [event["seq"] for event in data] == [2, 3]
 
     def test_livekit_config_accepts_query_params(self, server):
         _, _, port, _, _ = server

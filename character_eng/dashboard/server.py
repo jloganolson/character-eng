@@ -282,7 +282,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.collector.unsubscribe(q)
 
     def _serve_state(self):
-        events = self.collector.get_all()
+        parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
+        since_seq = 0
+        try:
+            since_seq = max(0, int((query.get("since_seq") or ["0"])[0] or 0))
+        except (TypeError, ValueError):
+            since_seq = 0
+        events = self.collector.get_since(since_seq) if since_seq else self.collector.get_all()
         body = json.dumps(events).encode()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json")

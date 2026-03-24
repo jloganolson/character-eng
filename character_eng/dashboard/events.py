@@ -24,17 +24,21 @@ class DashboardEvent:
 class DashboardEventCollector:
     """Collects events pushed from the chat loop and fans them out to SSE subscribers."""
 
-    def __init__(self):
+    def __init__(self, *, max_history: int = 4096):
         self._events: list[DashboardEvent] = []
         self._lock = threading.Lock()
         self._seq = 0
         self._subscribers: list[queue.Queue] = []
+        self._max_history = max(1, int(max_history))
 
     def push(self, event_type: str, data: dict) -> None:
         with self._lock:
             self._seq += 1
             event = DashboardEvent(type=event_type, data=data, seq=self._seq)
             self._events.append(event)
+            overflow = len(self._events) - self._max_history
+            if overflow > 0:
+                del self._events[:overflow]
             for q in self._subscribers:
                 try:
                     q.put_nowait(event)
@@ -59,6 +63,14 @@ class DashboardEventCollector:
             return [{"type": e.type, "data": e.data,
                      "timestamp": e.timestamp, "seq": e.seq}
                     for e in self._events]
+
+    def get_since(self, after_seq: int) -> list[dict]:
+        with self._lock:
+            return [
+                {"type": e.type, "data": e.data, "timestamp": e.timestamp, "seq": e.seq}
+                for e in self._events
+                if e.seq > after_seq
+            ]
 
     def reset(self) -> None:
         with self._lock:

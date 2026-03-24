@@ -668,6 +668,13 @@
     height: 34px;
     min-width: 100%;
   }
+  #stream-ruler-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
   #archive-media-player {
     width: 100%;
     display: none;
@@ -798,6 +805,8 @@
     min-height: 96px;
     overflow: hidden;
     cursor: grab;
+    background: color-mix(in srgb, var(--bg-alt) 86%, var(--bg) 14%);
+    border-radius: 10px;
   }
   #stream-viewport.grabbing,
   #stream-viewport.grabbing .lane-track,
@@ -807,12 +816,21 @@
   .lane-track-inner {
     position: relative;
     min-height: 100%;
+    background: transparent;
   }
   .turn-rail-strip {
     position: absolute;
     left: 0;
     right: 0;
     top: 0;
+    pointer-events: none;
+  }
+  .turn-rail-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
     pointer-events: none;
   }
   .turn-rail {
@@ -1057,6 +1075,13 @@
   .lane-other .stream-card { border-left: 3px solid var(--stream-other); }
   .vision-raw-track {
     position: relative;
+    width: 100%;
+    height: 100%;
+  }
+  .vision-raw-canvas {
+    position: absolute;
+    inset: 0;
+    display: block;
     width: 100%;
     height: 100%;
   }
@@ -2027,7 +2052,7 @@
 
       <div id="stream-main">
         <div id="stream-viewport">
-          <div id="stream-ruler"><div id="stream-ruler-inner"></div></div>
+          <div id="stream-ruler"><div id="stream-ruler-inner"><canvas id="stream-ruler-canvas"></canvas></div></div>
           <div id="stream-scrub-cursor" aria-hidden="true"></div>
           <div id="stream-playhead" aria-hidden="true"></div>
           <div id="stream-empty" class="stream-empty">Waiting for debug timeline events. The dashboard will populate as the session starts.</div>
@@ -2398,11 +2423,47 @@
   const hiddenLanes = new Set();
   const streamEvents = [];
   const streamEventByKey = new Map();
+  const LIVE_TIMELINE_TOTAL_CAP = 2400;
+  const LIVE_TIMELINE_DEFAULT_LANE_CAP = 240;
+  const LIVE_EVENT_COMPACTION_HOT_COUNT = 720;
+  const LIVE_EVENT_COMPACTION_MIN_AGE_S = 90;
+  const LIVE_PROMPT_TRACE_CAP = 160;
+  const LIVE_PROMPT_TRACE_MAX_AGE_S = 180;
+  const LIVE_TIMELINE_LANE_CAPS = {
+    session: 120,
+    stt: 240,
+    chat: 480,
+    expression: 180,
+    planner: 240,
+    world: 240,
+    vision: 320,
+    vision_raw: 1200,
+    other: 240,
+  };
+  let pendingStreamRenderFrame = 0;
+  const VIRTUALIZED_CARD_LANES = new Set(["chat", "planner", "world", "vision"]);
+  const VIRTUALIZATION_OVERSCAN_PX = 320;
+  const VIRTUALIZATION_RENDER_PADDING_PX = VIRTUALIZATION_OVERSCAN_PX * 2;
+  let selectedTimelineNode = null;
+  let selectedTurnPeerNodes = [];
+  let selectedTurnRailNodes = [];
+  let hoveredStreamDotKey = "";
+  let visionRawCanvasSerial = 0;
+  const visionRawCanvasStateById = new Map();
+  let turnRailCanvasSerial = 0;
+  const turnRailCanvasStateById = new Map();
+  let renderedCardWindow = null;
+  let refreshStateInFlight = false;
+  let renderableEventTimelineIndex = [];
+  let renderableEventTimelineTimes = [];
+  let pendingStateRefreshBurst = 0;
+  let pendingStateRefreshTimer = 0;
 
   const timeline = document.getElementById("timeline");
   const streamViewport = document.getElementById("stream-viewport");
   const streamRuler = document.getElementById("stream-ruler");
   const streamRulerInner = document.getElementById("stream-ruler-inner");
+  const streamRulerCanvas = document.getElementById("stream-ruler-canvas");
   const streamLanes = document.getElementById("stream-lanes");
   const streamEmpty = document.getElementById("stream-empty");
   const laneToggleGrid = document.getElementById("lane-toggle-grid");
@@ -2569,6 +2630,8 @@
   let archiveMediaSeekLock = false;
   let archiveMediaScrubbing = false;
   let archiveMediaDuration = 0;
+  let pendingArchiveScrubSeekTime = null;
+  let pendingArchiveScrubSeekFrame = 0;
   let archiveTimelineCursorTime = null;
   let archiveTimelineCursorPinned = false;
   const PREFERRED_OFFLINE_ARCHIVE_REF = "greg-offline-canonical-v1";
@@ -2850,7 +2913,7 @@
   if (localStorage.getItem("dashboard-theme") === "light") setTheme(true);
 
   setInterval(() => {
-    if (!sessionStart) return;
+    if (document.hidden || !sessionStart) return;
     const s = Math.floor((Date.now() / 1000) - sessionStart);
     const m = Math.floor(s / 60);
     const sec = s % 60;
@@ -2908,9 +2971,11 @@
     pendingPauseState = state;
     pendingPauseSince = Date.now();
     updateRuntimeButtons();
+    scheduleStateRefreshBurst();
   }
 
   function checkPendingRuntimeActionHealth() {
+    if (document.hidden) return;
     if (!pendingPauseState || !pendingPauseSince) return;
     if (statePollingSuspended) {
       clearPendingRuntimeAction("Runtime connection lost before the action completed. Refresh or restart the app.");
@@ -2918,6 +2983,25 @@
     }
     if ((Date.now() - pendingPauseSince) < pendingPauseTimeoutMs) return;
     clearPendingRuntimeAction("Runtime action timed out waiting for confirmation. Check the app logs and try again.");
+  }
+
+  function scheduleStateRefreshBurst(count = 6, delayMs = 120) {
+    if (fixtureMode || statePollingSuspended || archiveBrowseRef || document.hidden) return;
+    pendingStateRefreshBurst = Math.max(pendingStateRefreshBurst, Math.max(0, Number(count || 0)));
+    if (pendingStateRefreshTimer) return;
+    const tick = () => {
+      pendingStateRefreshTimer = 0;
+      if (!pendingStateRefreshBurst || fixtureMode || statePollingSuspended || archiveBrowseRef || document.hidden) {
+        pendingStateRefreshBurst = 0;
+        return;
+      }
+      pendingStateRefreshBurst = Math.max(0, pendingStateRefreshBurst - 1);
+      refreshState();
+      if (pendingStateRefreshBurst > 0) {
+        pendingStateRefreshTimer = window.setTimeout(tick, Math.max(40, Number(delayMs || 120)));
+      }
+    };
+    pendingStateRefreshTimer = window.setTimeout(tick, Math.max(0, Number(delayMs || 120)));
   }
 
   function fixtureRuntimeControls(overrides = {}) {
@@ -3304,6 +3388,8 @@
 
   function restoreLiveTimelineSnapshot() {
     if (!liveTimelineSnapshot) return false;
+    cancelScheduledStreamRender();
+    cancelQueuedArchiveScrubSeek();
     streamEvents.length = 0;
     streamEventByKey.clear();
     streamEventIdToKey.clear();
@@ -3351,7 +3437,7 @@
     document.getElementById("h-session").textContent = liveTimelineSnapshot.headerSession || "--";
     document.getElementById("h-stage").textContent = liveTimelineSnapshot.headerStage || "--";
     document.getElementById("h-uptime").textContent = liveTimelineSnapshot.headerUptime || "--";
-    renderStream();
+    renderStream({immediate: true});
     setDetailTab(liveTimelineSnapshot.detailTab || activeDetailTab);
     if (selectedStreamKey && streamEventByKey.has(selectedStreamKey)) selectEvent(selectedStreamKey);
     renderSelectedEventAnnotations();
@@ -3392,6 +3478,7 @@
     } finally {
       archiveHydrating = false;
     }
+    renderStream({immediate: true});
     await refreshAnnotations(sessionRef);
     renderArchiveBrowseState();
     updateVisionFeedUrl();
@@ -3399,6 +3486,8 @@
 
   function exitArchiveBrowseMode() {
     if (!archiveBrowseRef) return;
+    cancelQueuedArchiveScrubSeek();
+    pendingArchiveScrubSeekTime = null;
     archiveBrowseRef = "";
     archiveBrowseMeta = null;
     archiveBrowseSeqFloor = 0;
@@ -3726,12 +3815,523 @@
   }
 
   async function refreshHistoryArchives() {
+    if (document.hidden) return;
     try {
       const response = await fetch("/history/list");
       if (!response.ok) throw new Error(`list ${response.status}`);
       renderHistoryArchives(await response.json());
     } catch (err) {
       renderHistoryArchives([]);
+    }
+  }
+
+  function cssEscape(value) {
+    const raw = String(value ?? "");
+    if (window.CSS?.escape) return window.CSS.escape(raw);
+    return raw.replace(/["\\]/g, "\\$&");
+  }
+
+  function cancelScheduledStreamRender() {
+    if (!pendingStreamRenderFrame) return;
+    window.cancelAnimationFrame(pendingStreamRenderFrame);
+    pendingStreamRenderFrame = 0;
+  }
+
+  function scheduleStreamRender() {
+    if (pendingStreamRenderFrame) return;
+    pendingStreamRenderFrame = window.requestAnimationFrame(() => {
+      pendingStreamRenderFrame = 0;
+      renderStreamNow();
+    });
+  }
+
+  function liveTimelineLaneCap(lane) {
+    return LIVE_TIMELINE_LANE_CAPS[lane] || LIVE_TIMELINE_DEFAULT_LANE_CAP;
+  }
+
+  function clearTimelineSelectionDom() {
+    if (selectedTimelineNode?.isConnected) selectedTimelineNode.classList.remove("selected");
+    selectedTimelineNode = null;
+    selectedTurnPeerNodes.forEach((node) => {
+      if (node?.isConnected) node.classList.remove("turn-peer");
+    });
+    selectedTurnPeerNodes = [];
+    selectedTurnRailNodes = [];
+  }
+
+  function syncTimelineSelectionDom(event) {
+    clearTimelineSelectionDom();
+    if (!event?.key) {
+      redrawTurnRailCanvases();
+      redrawVisionRawCanvases();
+      return;
+    }
+    const keySelector = cssEscape(event.key);
+    selectedTimelineNode = streamLanes.querySelector(`[data-event-key="${keySelector}"]`);
+    if (selectedTimelineNode) selectedTimelineNode.classList.add("selected");
+    if (event.turnId == null || event.turnId === "") {
+      redrawTurnRailCanvases();
+      redrawVisionRawCanvases();
+      return;
+    }
+    const turnSelector = cssEscape(String(event.turnId));
+    selectedTurnPeerNodes = Array.from(streamLanes.querySelectorAll(`.stream-card[data-turn-id="${turnSelector}"], .stream-dot[data-turn-id="${turnSelector}"]`))
+      .filter((node) => node.dataset.eventKey !== event.key);
+    selectedTurnPeerNodes.forEach((node) => node.classList.add("turn-peer"));
+    selectedTurnRailNodes = [];
+    redrawTurnRailCanvases();
+    redrawVisionRawCanvases();
+  }
+
+  function syncActiveStreamPointers() {
+    if (activeTurnSummaryKey && !streamEventByKey.has(activeTurnSummaryKey)) activeTurnSummaryKey = null;
+    if (activeReplyKey && !streamEventByKey.has(activeReplyKey)) activeReplyKey = null;
+    if (activePostResponseKey && !streamEventByKey.has(activePostResponseKey)) activePostResponseKey = null;
+    if (activeWorldUpdateKey && !streamEventByKey.has(activeWorldUpdateKey)) activeWorldUpdateKey = null;
+    if (selectedStreamKey && !streamEventByKey.has(selectedStreamKey)) selectedStreamKey = null;
+  }
+
+  function removeStreamEventAt(index) {
+    const [event] = streamEvents.splice(index, 1);
+    if (!event) return null;
+    if (event.key) {
+      streamEventByKey.delete(event.key);
+      annotationsByEventKey.delete(event.key);
+      eventIdsFor(event).forEach((eventId) => {
+        if (streamEventIdToKey.get(eventId) === event.key) {
+          streamEventIdToKey.delete(eventId);
+        }
+      });
+      if (selectedStreamKey === event.key) selectedStreamKey = null;
+      if (activeTurnSummaryKey === event.key) activeTurnSummaryKey = null;
+      if (activeReplyKey === event.key) activeReplyKey = null;
+      if (activePostResponseKey === event.key) activePostResponseKey = null;
+      if (activeWorldUpdateKey === event.key) activeWorldUpdateKey = null;
+      if (hoveredStreamDotKey === event.key) {
+        hoveredStreamDotKey = "";
+        hideStreamHoverCard();
+      }
+    }
+    return event;
+  }
+
+  function trimLiveStreamEvents() {
+    if (!streamEvents.length || archiveHydrating || archiveBrowseRef) return;
+    const liveLaneCounts = new Map();
+    let liveCount = 0;
+    streamEvents.forEach((event) => {
+      if (!event || event.archive) return;
+      liveCount += 1;
+      liveLaneCounts.set(event.lane, (liveLaneCounts.get(event.lane) || 0) + 1);
+    });
+    if (
+      liveCount <= LIVE_TIMELINE_TOTAL_CAP
+      && Array.from(liveLaneCounts.entries()).every(([lane, count]) => count <= liveTimelineLaneCap(lane))
+    ) {
+      return;
+    }
+    let index = 0;
+    while (index < streamEvents.length) {
+      if (
+        liveCount <= LIVE_TIMELINE_TOTAL_CAP
+        && Array.from(liveLaneCounts.entries()).every(([lane, count]) => count <= liveTimelineLaneCap(lane))
+      ) {
+        break;
+      }
+      const event = streamEvents[index];
+      if (!event || event.archive) {
+        index += 1;
+        continue;
+      }
+      const lane = event.lane || "other";
+      const laneCount = liveLaneCounts.get(lane) || 0;
+      if (liveCount <= LIVE_TIMELINE_TOTAL_CAP && laneCount <= liveTimelineLaneCap(lane)) {
+        index += 1;
+        continue;
+      }
+      removeStreamEventAt(index);
+      liveCount = Math.max(0, liveCount - 1);
+      liveLaneCounts.set(lane, Math.max(0, laneCount - 1));
+    }
+    syncActiveStreamPointers();
+  }
+
+  function trimLivePromptTraceEvents(anchorTs = Date.now() / 1000) {
+    if (!promptTraceEvents.length || archiveHydrating || archiveBrowseRef) return;
+    let removeCount = Math.max(0, promptTraceEvents.length - LIVE_PROMPT_TRACE_CAP);
+    while (removeCount < promptTraceEvents.length) {
+      const trace = promptTraceEvents[removeCount];
+      const traceTs = Number(trace?.finished_at || trace?.started_at || trace?.timestamp || 0);
+      if (!(traceTs > 0) || (anchorTs - traceTs) <= LIVE_PROMPT_TRACE_MAX_AGE_S) break;
+      removeCount += 1;
+    }
+    if (removeCount > 0) promptTraceEvents.splice(0, removeCount);
+  }
+
+  function truncateString(value, maxLength = 240) {
+    const text = String(value || "");
+    if (!text || text.length <= maxLength) return text;
+    return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+  }
+
+  function truncateList(items, limit = 4, mapItem = null) {
+    if (!Array.isArray(items) || !items.length) return [];
+    const normalizedLimit = Math.max(0, Number(limit || 0));
+    const sliced = items.slice(0, normalizedLimit);
+    return mapItem ? sliced.map((item) => mapItem(item)) : sliced;
+  }
+
+  function compactPromptBlock(block) {
+    if (!block || typeof block !== "object") return null;
+    return {
+      title: block.title || block.label || "Prompt",
+      label: block.label || "",
+      provider: block.provider || "",
+      model: block.model || "",
+      messages: truncateList(block.messages, 3, (message) => ({
+        role: message?.role || "message",
+        content: truncateString(message?.content || "", 220),
+      })),
+      inputs: truncateList(block.inputs, 3, (item) => truncateString(item, 160)),
+      started_at: block.started_at || null,
+      finished_at: block.finished_at || null,
+      rendered_prompt: truncateString(block.rendered_prompt || "", 320),
+      output: truncateString(block.output || "", 320),
+    };
+  }
+
+  function compactVlmAnswer(answer) {
+    if (typeof answer === "string") return truncateString(answer, 220);
+    if (!answer || typeof answer !== "object") return {};
+    return {
+      task_id: answer.task_id || "",
+      label: answer.label || "",
+      question: truncateString(answer.question || "", 180),
+      answer: truncateString(answer.answer || "", 220),
+      slot_type: answer.slot_type || "",
+      answer_id: answer.answer_id || "",
+      target: answer.target || "",
+      target_identity: answer.target_identity || "",
+      interpret_as: answer.interpret_as || "",
+      cadence_s: answer.cadence_s ?? null,
+    };
+  }
+
+  function compactFocus(focus) {
+    if (!focus || typeof focus !== "object") return null;
+    return {
+      constant_questions: truncateList(focus.constant_questions, 3, (item) => truncateString(item, 140)),
+      ephemeral_questions: truncateList(focus.ephemeral_questions, 3, (item) => truncateString(item, 140)),
+      constant_sam_targets: truncateList(focus.constant_sam_targets, 3, (item) => truncateString(item, 80)),
+      ephemeral_sam_targets: truncateList(focus.ephemeral_sam_targets, 3, (item) => truncateString(item, 80)),
+    };
+  }
+
+  function compactSourceTrace(trace) {
+    if (!trace || typeof trace !== "object") return null;
+    return {
+      event_id: trace.event_id || "",
+      input_event_ids: mergeUniqueEventIds(trace.input_event_ids).slice(0, 16),
+      kind: trace.kind || "",
+      source: trace.source || "",
+      identity: trace.identity || "",
+      object_labels: truncateList(trace.object_labels, 4, (item) => truncateString(item, 80)),
+      supporting_answers: truncateList(trace.supporting_answers, 2, compactVlmAnswer),
+      contradicting_answers: truncateList(trace.contradicting_answers, 2, compactVlmAnswer),
+      vlm_answers: truncateList(trace.vlm_answers, 3, compactVlmAnswer),
+      focus: compactFocus(trace.focus),
+      provenance: trace.provenance ? {
+        label: trace.provenance.label || "",
+        primary: trace.provenance.primary || "",
+        components: truncateList(trace.provenance.components, 4, (item) => truncateString(item, 60)),
+        inference: truncateString(trace.provenance.inference || "", 180),
+      } : null,
+    };
+  }
+
+  function compactVisionSnapshotData(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") return null;
+    return {
+      faces: snapshot.faces ?? 0,
+      persons: snapshot.persons ?? 0,
+      objects: snapshot.objects ?? 0,
+      object_labels: truncateList(snapshot.object_labels, 4, (item) => truncateString(item, 80)),
+      vlm_answers: truncateList(snapshot.vlm_answers, 3, compactVlmAnswer),
+    };
+  }
+
+  function compactPersonUpdates(updates) {
+    return truncateList(updates, 3, (item) => ({
+      person_id: item?.person_id || "",
+      set_presence: item?.set_presence || "",
+      set_name: item?.set_name || "",
+      add_facts: truncateList(item?.add_facts, 3, (fact) => truncateString(fact, 160)),
+      remove_facts: truncateList(item?.remove_facts, 3, (fact) => truncateString(fact, 120)),
+    }));
+  }
+
+  function compactWorldEffects(data) {
+    return {
+      add_facts: truncateList(data?.add_facts, 4, (item) => truncateString(item, 180)),
+      remove_facts: truncateList(data?.remove_facts, 4, (item) => truncateString(item, 180)),
+      events: truncateList(data?.events, 4, (item) => truncateString(item, 180)),
+      person_updates: compactPersonUpdates(data?.person_updates),
+    };
+  }
+
+  function compactEventData(event) {
+    const data = event?.data || {};
+    const eventId = String(data.event_id || data.payload?.event_id || data.source_trace?.event_id || "").trim();
+    const inputEventIds = mergeUniqueEventIds(
+      data.input_event_ids,
+      data.payload?.input_event_ids,
+      data.source_trace?.input_event_ids
+    ).slice(0, 16);
+    const compacted = {
+      __compacted: true,
+      compacted_reason: "live_history",
+      event_id: eventId,
+      input_event_ids: inputEventIds,
+    };
+    switch (event?.type) {
+      case "assistant_reply":
+        return {
+          ...compacted,
+          full_text: truncateString(data.full_text || "", 280),
+          raw_full_text: truncateString(data.raw_full_text || "", 280),
+          truncated_text: truncateString(data.truncated_text || "", 220),
+          input_source: data.input_source || "",
+          stt_text: truncateString(data.stt_text || "", 180),
+          stt_ms: data.stt_ms ?? null,
+          ttft_ms: data.ttft_ms ?? null,
+          llm_ms: data.llm_ms ?? null,
+          first_audio_ms: data.first_audio_ms ?? null,
+          audio_ms: data.audio_ms ?? null,
+          total_ms: data.total_ms ?? null,
+          speech_started_ts: data.speech_started_ts ?? null,
+          transcript_final_ts: data.transcript_final_ts ?? null,
+          llm_start_ts: data.llm_start_ts ?? null,
+          response_ttft_ts: data.response_ttft_ts ?? null,
+          response_done_ts: data.response_done_ts ?? null,
+          tts_request_ts: data.tts_request_ts ?? null,
+          tts_synth_done_ts: data.tts_synth_done_ts ?? null,
+          first_audio_ts: data.first_audio_ts ?? null,
+          spoken_done_ts: data.spoken_done_ts ?? null,
+          tts_request_ms: data.tts_request_ms ?? null,
+          tts_start_ms: data.tts_start_ms ?? null,
+          tts_synth_done_ms: data.tts_synth_done_ms ?? null,
+          interrupted: !!data.interrupted,
+          partial: !!data.partial,
+          interrupted_reason: data.interrupted_reason || "",
+          prompt_blocks: truncateList(data.prompt_blocks, 2, compactPromptBlock),
+        };
+      case "post_response":
+        return {
+          ...compacted,
+          script_status: data.script_status || "",
+          eval_thought: truncateString(data.eval_thought || "", 220),
+          plan_request: truncateString(data.plan_request || "", 220),
+          director_status: data.director_status || "",
+          director_thought: truncateString(data.director_thought || "", 220),
+          new_stage: data.new_stage || "",
+          next_intent: data.next_intent || "",
+          plan_beats: data.plan_beats ?? 0,
+          script_complete: !!data.script_complete,
+        };
+      case "world_update":
+        return {
+          ...compacted,
+          add_count: data.add_count ?? 0,
+          remove_count: data.remove_count ?? 0,
+          event_count: data.event_count ?? 0,
+          fact_count: data.fact_count ?? 0,
+          people_count: data.people_count ?? 0,
+          latest_event: truncateString(data.latest_event || "", 180),
+          latest_fact: truncateString(data.latest_fact || "", 180),
+          facts: truncateList(data.facts, 4, (item) => truncateString(item, 180)),
+          events: truncateList(data.events, 4, (item) => truncateString(item, 180)),
+          people: truncateList(data.people, 4, (item) => truncateString(item, 100)),
+        };
+      case "vision_snapshot":
+        return {
+          ...compacted,
+          faces: data.faces ?? 0,
+          persons: data.persons ?? 0,
+          objects: data.objects ?? 0,
+          object_labels: truncateList(data.object_labels, 4, (item) => truncateString(item, 80)),
+          vlm_answers: truncateList(data.vlm_answers, 3, compactVlmAnswer),
+          focus: compactFocus(data.focus),
+        };
+      case "vision_focus":
+        return {
+          ...compacted,
+          stage_goal: truncateString(data.stage_goal || "", 180),
+          constant_questions: truncateList(data.constant_questions, 3, (item) => truncateString(item, 140)),
+          ephemeral_questions: truncateList(data.ephemeral_questions, 3, (item) => truncateString(item, 140)),
+          constant_sam_targets: truncateList(data.constant_sam_targets, 3, (item) => truncateString(item, 80)),
+          ephemeral_sam_targets: truncateList(data.ephemeral_sam_targets, 3, (item) => truncateString(item, 80)),
+        };
+      case "vision_snapshot_read":
+        return {
+          ...compacted,
+          faces: data.faces ?? 0,
+          persons: data.persons ?? 0,
+          objects: data.objects ?? 0,
+          vlm_answer_count: data.vlm_answer_count ?? 0,
+          object_labels: truncateList(data.object_labels, 4, (item) => truncateString(item, 80)),
+          vision_cycle_id: data.vision_cycle_id || "",
+        };
+      case "face_tracking":
+        return {
+          ...compacted,
+          faces: truncateList(data.faces, 4, (face) => ({
+            identity: face?.identity || "",
+            track_id: face?.track_id ?? null,
+            confidence: face?.confidence ?? null,
+            bbox: Array.isArray(face?.bbox) ? face.bbox.slice(0, 4) : [],
+            looking_at_camera: !!face?.looking_at_camera,
+          })),
+          timing: data.timing || {},
+          vision_cycle_id: data.vision_cycle_id || "",
+        };
+      case "sam3_detection":
+        return {
+          ...compacted,
+          persons: truncateList(data.persons, 3, (person) => ({
+            identity: person?.identity || "",
+            track_id: person?.track_id ?? null,
+            confidence: person?.confidence ?? null,
+            bbox: Array.isArray(person?.bbox) ? person.bbox.slice(0, 4) : [],
+          })),
+          objects: truncateList(data.objects, 4, (obj) => ({
+            label: obj?.label || "",
+            confidence: obj?.confidence ?? null,
+            bbox: Array.isArray(obj?.bbox) ? obj.bbox.slice(0, 4) : [],
+          })),
+          timing: data.timing || {},
+          prompts: truncateList(data.prompts, 4, (item) => truncateString(item, 120)),
+          tracking: data.tracking || "",
+          vision_cycle_id: data.vision_cycle_id || "",
+        };
+      case "reid_track":
+        return {
+          ...compacted,
+          identity: data.identity || "",
+          identity_source: data.identity_source || "",
+          track_id: data.track_id ?? null,
+          timing: data.timing || {},
+          vision_cycle_id: data.vision_cycle_id || "",
+        };
+      case "vision_trigger":
+        return {
+          ...compacted,
+          signal: truncateString(data.signal || "", 120),
+          description: truncateString(data.description || "", 220),
+          streak: data.streak ?? null,
+          rule: data.rule ? {
+            source: data.rule.source || "",
+            label: data.rule.label || "",
+            task_id: data.rule.task_id || "",
+            frames: data.rule.frames ?? null,
+          } : null,
+          evidence: data.evidence || {},
+        };
+      case "vision_state_update":
+        return {
+          ...compacted,
+          source: data.source || "",
+          description: truncateString(data.description || "", 220),
+          summary: truncateString(data.summary || "", 220),
+          kind: data.kind || "",
+          payload: data.payload ? {
+            event_id: data.payload.event_id || "",
+            input_event_ids: mergeUniqueEventIds(data.payload.input_event_ids).slice(0, 16),
+            vision_cycle_id: data.payload.vision_cycle_id || "",
+            task_answers: truncateList(data.payload.task_answers, 3, compactVlmAnswer),
+            ...compactWorldEffects(data.payload),
+          } : null,
+          source_trace: compactSourceTrace(data.source_trace),
+          task_answers: truncateList(data.task_answers, 3, compactVlmAnswer),
+          ...compactWorldEffects(data),
+        };
+      case "vlm_answer":
+        return {
+          ...compacted,
+          task_id: data.task_id || "",
+          label: data.label || "",
+          question: truncateString(data.question || "", 180),
+          answer: truncateString(data.answer || "", 240),
+          slot_type: data.slot_type || "",
+          target: data.target || "",
+          target_identity: data.target_identity || "",
+          target_bbox: Array.isArray(data.target_bbox) ? data.target_bbox.slice(0, 4) : [],
+          interpret_as: data.interpret_as || "",
+          cadence_s: data.cadence_s ?? null,
+          elapsed: data.elapsed ?? null,
+          vision_cycle_id: data.vision_cycle_id || "",
+        };
+      case "vision_pass":
+        return {
+          ...compacted,
+          perception_count: data.perception_count ?? 0,
+          vlm_answer_count: data.vlm_answer_count ?? 0,
+          object_count: data.object_count ?? 0,
+          latest_answer: truncateString(data.latest_answer || "", 220),
+          object_labels: truncateList(data.object_labels, 4, (item) => truncateString(item, 80)),
+          source_trace: compactSourceTrace(data.source_trace),
+          snapshot: compactVisionSnapshotData(data.snapshot),
+          focus: compactFocus(data.focus),
+          perceptions: truncateList(data.perceptions, 4, (item) => truncateString(item, 180)),
+          claim_traces: truncateList(data.claim_traces, 3, (item) => ({
+            description: truncateString(item?.description || "", 200),
+            supporting_answers: truncateList(item?.supporting_answers, 2, compactVlmAnswer),
+            contradicting_answers: truncateList(item?.contradicting_answers, 2, compactVlmAnswer),
+            provenance: item?.provenance ? {
+              label: item.provenance.label || "",
+              primary: item.provenance.primary || "",
+              components: truncateList(item.provenance.components, 4, (value) => truncateString(value, 60)),
+            } : null,
+          })),
+        };
+      case "perception":
+        return {
+          ...compacted,
+          source: data.source || "",
+          description: truncateString(data.description || "", 220),
+          source_trace: compactSourceTrace(data.source_trace),
+          payload: data.payload ? {
+            event_id: data.payload.event_id || "",
+            input_event_ids: mergeUniqueEventIds(data.payload.input_event_ids).slice(0, 16),
+          } : null,
+        };
+      default:
+        return {
+          ...compacted,
+          ...data,
+        };
+    }
+  }
+
+  function compactLiveStreamEvents(anchorTs = Date.now() / 1000) {
+    if (archiveHydrating || archiveBrowseRef) return;
+    const liveEvents = streamEvents.filter((event) => event && !event.archive);
+    if (liveEvents.length <= LIVE_EVENT_COMPACTION_HOT_COUNT) return;
+    const protectedKeys = new Set([
+      selectedStreamKey || "",
+      activeTurnSummaryKey || "",
+      activeReplyKey || "",
+      activePostResponseKey || "",
+      activeWorldUpdateKey || "",
+      hoveredStreamDotKey || "",
+    ].filter(Boolean));
+    const compactLimit = Math.max(0, liveEvents.length - LIVE_EVENT_COMPACTION_HOT_COUNT);
+    for (let index = 0; index < compactLimit; index += 1) {
+      const event = liveEvents[index];
+      if (!event || event.compacted || protectedKeys.has(event.key)) continue;
+      if (currentTurnId && event.turnId != null && event.turnId === currentTurnId) continue;
+      if ((anchorTs - Number(event.timestamp || 0)) < LIVE_EVENT_COMPACTION_MIN_AGE_S) continue;
+      event.data = compactEventData(event);
+      event.compacted = true;
     }
   }
 
@@ -3941,6 +4541,11 @@
     return archiveMediaCurrentTime();
   }
 
+  function setRenderableEventTimelineIndex(visibleEvents) {
+    renderableEventTimelineIndex = Array.isArray(visibleEvents) ? visibleEvents.slice() : [];
+    renderableEventTimelineTimes = renderableEventTimelineIndex.map((event) => relativeTime(event.timestamp));
+  }
+
   function setArchiveTimelineCursorTime(timeS) {
     if (!Number.isFinite(timeS)) {
       archiveTimelineCursorTime = null;
@@ -3974,17 +4579,23 @@
   }
 
   function nearestEventKeyForTime(timeS) {
-    if (!streamEvents.length) return "";
+    if (!renderableEventTimelineIndex.length) return "";
     const target = Math.max(0, Number(timeS || 0));
-    let best = streamEvents[0];
-    let bestDelta = Math.abs(relativeTime(best.timestamp) - target);
-    for (const event of streamEvents) {
-      const delta = Math.abs(relativeTime(event.timestamp) - target);
-      if (delta < bestDelta) {
-        best = event;
-        bestDelta = delta;
-      }
+    const times = renderableEventTimelineTimes;
+    let left = 0;
+    let right = times.length - 1;
+    while (left < right) {
+      const mid = Math.floor((left + right) / 2);
+      if (times[mid] < target) left = mid + 1;
+      else right = mid;
     }
+    let bestIndex = left;
+    if (bestIndex > 0) {
+      const prevDelta = Math.abs(times[bestIndex - 1] - target);
+      const nextDelta = Math.abs(times[bestIndex] - target);
+      if (prevDelta <= nextDelta) bestIndex -= 1;
+    }
+    const best = renderableEventTimelineIndex[bestIndex];
     return best?.key || "";
   }
 
@@ -4195,13 +4806,18 @@
   }
 
   async function maybeResolveDiscardCompleteFromState() {
-    if (!sessionSavePending || discardCompletionResolving) return;
+    if (!sessionSavePending) return;
     if (saveCompleteMode !== "discarding") return;
     if (!sessionStopped) return;
     const expectedSessionId = String(saveCompleteMeta?.sessionId || currentSessionId || "").trim();
     const current = historyState.current_session || {};
     const currentSessionIdFromState = String(current.session_id || "").trim();
-    if (currentSessionIdFromState && (!expectedSessionId || currentSessionIdFromState === expectedSessionId)) return;
+    const runtimeReadyForNextSession = !!startupPausePending || latestRuntimePayload?.session_state === "ready";
+    if (
+      currentSessionIdFromState
+      && (!expectedSessionId || currentSessionIdFromState === expectedSessionId)
+      && !runtimeReadyForNextSession
+    ) return;
     sessionSavePending = false;
     pendingFinalizeAction = "";
     if (discardCompletionProbeTimer) {
@@ -5656,6 +6272,9 @@
   }
 
   function clearConversationState(message = "Waiting for conversation...") {
+    cancelScheduledStreamRender();
+    cancelQueuedArchiveScrubSeek();
+    pendingArchiveScrubSeekTime = null;
     streamEvents.length = 0;
     streamEventByKey.clear();
     streamEventIdToKey.clear();
@@ -5725,7 +6344,8 @@
     setDetailTab(activeDetailTab);
     resetSidebarPanels();
     renderVisionServiceStatus();
-    renderStream();
+    clearTimelineSelectionDom();
+    renderStream({immediate: true});
     renderSelectedEventAnnotations();
     renderBootStatus();
     updateRuntimeButtons();
@@ -5733,6 +6353,9 @@
 
   function resetDashboardState(message = "Connecting to the local runtime...") {
     restartPending = false;
+    cancelScheduledStreamRender();
+    cancelQueuedArchiveScrubSeek();
+    pendingArchiveScrubSeekTime = null;
     streamEvents.length = 0;
     streamEventByKey.clear();
     streamEventIdToKey.clear();
@@ -5831,7 +6454,8 @@
     renderVisionServiceStatus();
     document.getElementById("boot-summary").textContent = message;
     document.getElementById("boot-overlay-summary").textContent = message;
-    renderStream();
+    clearTimelineSelectionDom();
+    renderStream({immediate: true});
     renderSelectedEventAnnotations();
     updateRuntimeButtons();
   }
@@ -6009,6 +6633,7 @@
   }
 
   async function pollVisionModelStatus() {
+    if (document.hidden) return;
     if (fixtureMode || archiveOnlyRuntime || archiveBrowseRef) {
       renderVisionModelStatus();
       return;
@@ -6736,6 +7361,7 @@
         label: event.label,
         detail: event.detail,
         data: event.data || {},
+        compacted: !!event.compacted,
         superseded: !!event.superseded,
         debug_only: !!event.debugOnly,
       },
@@ -7775,6 +8401,10 @@
     streamEvents.push(event);
     streamEventByKey.set(key, event);
     syncEventIdIndex(event);
+    if (!rawEvent.archive) {
+      trimLiveStreamEvents();
+      compactLiveStreamEvents(timestamp);
+    }
     return event;
   }
 
@@ -7878,6 +8508,7 @@
     const warnings = [];
     if (event.superseded) warnings.push("This event is on the superseded pre-rewind path. It stays visible for debugging, but it is not the active conversation path.");
     if (event.debugOnly) warnings.push("This event is on the active exploratory path after rewind. It remains visible in the timeline, but it is not replay/snippet-capturable.");
+    if (event.compacted) warnings.push("Older live event payload compacted to keep dashboard memory bounded. The timeline summary is preserved, but some deep trace detail was reduced.");
     if (warnings.length) {
       detailWarning.style.display = "";
       detailWarning.textContent = warnings.join(" ");
@@ -7895,14 +8526,7 @@
     renderSelectedEventAnnotations();
     renderInspectorFrame(event);
     setDetailTab("payload");
-
-    document.querySelectorAll(".stream-card, .stream-dot").forEach((card) => {
-      card.classList.toggle("selected", card.dataset.eventKey === key);
-      card.classList.toggle("turn-peer", !!event.turnId && card.dataset.turnId === String(event.turnId) && card.dataset.eventKey !== key);
-    });
-    document.querySelectorAll(".turn-rail").forEach((rail) => {
-      rail.classList.toggle("active", !!event.turnId && rail.dataset.turnId === String(event.turnId));
-    });
+    syncTimelineSelectionDom(event);
     if (archiveBrowseRef && options.syncTimeline !== false) {
       setArchiveTimelineCursorTime(relativeTime(event.timestamp));
     }
@@ -7992,11 +8616,138 @@
     return idx >= 0 ? idx : VISION_RAW_ROW_ORDER.length;
   }
 
-  function renderVisionRawDot(event, left) {
+  function visionRawTopForRow(rowIndex) {
+    return 14 + rowIndex * 14;
+  }
+
+  function visionRawDotFill(type) {
+    if (type === "vision_snapshot_read") return "#1cc8a0";
+    if (type === "face_tracking") return "#7dd3fc";
+    if (type === "sam3_detection") return "#34d399";
+    if (type === "reid_track") return "#f59e0b";
+    if (type === "vlm_answer") return "#60a5fa";
+    return "#10b981";
+  }
+
+  function visionRawPointForEvent(event, left) {
     const rowIndex = visionRawRowIndex(event.type);
-    const top = 14 + rowIndex * 14;
-    const title = [event.type, event.label, event.detail].filter(Boolean).join(" · ");
-    return `<button class="stream-dot type-${esc(typeClass(event.type))}${event.superseded ? " superseded" : ""}" type="button" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" data-turn-id="${esc(event.turnId != null ? String(event.turnId) : "")}" title="${esc(title)}" style="left:${left}px;top:${top}px;"></button>`;
+    return {
+      event,
+      left,
+      top: visionRawTopForRow(rowIndex),
+      rowIndex,
+    };
+  }
+
+  function createVisionRawCanvasState(trackId, laneEvents, width, height, scale) {
+    return {
+      trackId,
+      width,
+      height,
+      scale,
+      points: laneEvents.map((event) => visionRawPointForEvent(event, 20 + relativeTime(event.timestamp) * scale)),
+      canvas: null,
+    };
+  }
+
+  function drawVisionRawCanvas(state) {
+    if (!state?.canvas) return;
+    const canvas = state.canvas;
+    const width = Math.max(1, Number(state.width || canvas.clientWidth || 1));
+    const height = Math.max(1, Number(state.height || canvas.clientHeight || 1));
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    ctx.save();
+    for (let row = 0; row < VISION_RAW_ROW_ORDER.length; row += 1) {
+      const y = visionRawTopForRow(row);
+      ctx.strokeStyle = row % 2 === 0 ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.025)";
+      ctx.beginPath();
+      ctx.moveTo(20, y);
+      ctx.lineTo(width - 8, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    const selected = selectedEvent();
+    const selectedTurnId = selected?.turnId != null ? String(selected.turnId) : "";
+    state.points.forEach((point) => {
+      const event = point.event;
+      const isSelected = selected?.key === event.key;
+      const isTurnPeer = !!selectedTurnId && event.turnId != null && String(event.turnId) === selectedTurnId && !isSelected;
+      const radius = isSelected ? 5.4 : 4.1;
+      ctx.globalAlpha = event.superseded ? 0.45 : 0.96;
+      ctx.fillStyle = visionRawDotFill(event.type);
+      ctx.strokeStyle = "rgba(16, 20, 28, 0.72)";
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.arc(point.left, point.top, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      if (isTurnPeer) {
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = "rgba(245, 158, 11, 0.82)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(point.left, point.top, radius + 2.2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (isSelected) {
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = "rgba(235, 219, 178, 0.96)";
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.arc(point.left, point.top, radius + 2.8, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  function redrawVisionRawCanvases() {
+    visionRawCanvasStateById.forEach((state) => drawVisionRawCanvas(state));
+  }
+
+  function visionRawEventAtClientPoint(clientX, clientY) {
+    let bestPoint = null;
+    let bestDistanceSq = 11 * 11;
+    visionRawCanvasStateById.forEach((state) => {
+      if (!state?.canvas) return;
+      const rect = state.canvas.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      if (x < 0 || y < 0 || x > rect.width || y > rect.height) return;
+      state.points.forEach((point) => {
+        const dx = point.left - x;
+        const dy = point.top - y;
+        const distanceSq = dx * dx + dy * dy;
+        if (distanceSq <= bestDistanceSq) {
+          bestPoint = point;
+          bestDistanceSq = distanceSq;
+        }
+      });
+    });
+    return bestPoint?.event || null;
+  }
+
+  function visionRawEventAtPointer(target, clientX, clientY) {
+    if (target?.closest?.(".stream-card, .stream-dot")) return null;
+    if (!target?.closest?.("[data-stream-lane='vision_raw'], .vision-raw-track, .vision-raw-canvas")) {
+      return null;
+    }
+    const x = Number(clientX);
+    const y = Number(clientY);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    let bestPoint = null;
+    bestPoint = visionRawEventAtClientPoint(x, y);
+    return bestPoint || null;
   }
 
   function renderVisionRawLegend(baseWidth) {
@@ -8275,7 +9026,7 @@
 
   function renderTurnRails(scale) {
     const summaryEvents = streamEvents.filter((event) => event.type === "turn_summary" && event.turnId);
-    if (!summaryEvents.length) return {html: "", offset: 0};
+    if (!summaryEvents.length) return {html: "", offset: 0, rails: []};
     const intervals = [];
     const rails = [];
     summaryEvents.forEach((summary) => {
@@ -8302,18 +9053,62 @@
         summary.data?.trigger_signals?.length ? `signals: ${summary.data.trigger_signals.join(", ")}` : "",
         endLabel,
       ].filter(Boolean).join(" · ");
-      rails.push(`
-        <div class="turn-rail${selected ? " active" : ""}" data-turn-id="${esc(String(summary.turnId))}" title="${esc(titleBits)}" style="top:${top}px;">
-          <span class="turn-rail-label start" style="left:${startLeft}px;">${esc(startLabel)}</span>
-          <span class="turn-rail-line" style="left:${startLeft}px;width:${Math.max(28, endLeft - startLeft)}px;"></span>
-          ${endLabel ? `<span class="turn-rail-label end" style="left:${endLeft}px;">${esc(endLabel)}</span>` : ""}
-        </div>
-      `);
+      rails.push({
+        turnId: String(summary.turnId),
+        top,
+        startLeft,
+        endLeft,
+        startLabel,
+        endLabel,
+        selected,
+        titleBits,
+      });
     });
+    if (!rails.length) return {html: "", offset: 0, rails: []};
+    const trackId = `turn-rails-${++turnRailCanvasSerial}`;
     return {
-      html: rails.length ? `<div class="turn-rail-strip" style="height:${intervals.length * 15 + 18}px;">${rails.join("")}</div>` : "",
-      offset: rails.length ? intervals.length * 15 + 10 : 0,
+      html: `<div class="turn-rail-strip" data-track-id="${esc(trackId)}" style="height:${intervals.length * 15 + 18}px;"><canvas class="turn-rail-canvas"></canvas></div>`,
+      offset: intervals.length * 15 + 10,
+      rails,
+      trackId,
+      height: intervals.length * 15 + 18,
     };
+  }
+
+  function drawTurnRailCanvas(state) {
+    if (!state?.canvas) return;
+    const ctx = configureCanvasSurface(state.canvas, state.width, state.height);
+    if (!ctx) return;
+    ctx.clearRect(0, 0, state.width, state.height);
+    const selectedTurnId = streamEventByKey.get(selectedStreamKey || "")?.turnId != null
+      ? String(streamEventByKey.get(selectedStreamKey || "").turnId)
+      : "";
+    state.rails.forEach((rail) => {
+      const isSelected = !!selectedTurnId && rail.turnId === selectedTurnId;
+      const lineY = rail.top + 7;
+      ctx.save();
+      ctx.strokeStyle = isSelected ? "rgba(250, 189, 47, 0.95)" : "rgba(245, 158, 11, 0.58)";
+      ctx.lineWidth = isSelected ? 2.4 : 2;
+      ctx.beginPath();
+      ctx.moveTo(rail.startLeft, lineY);
+      ctx.lineTo(Math.max(rail.startLeft + 28, rail.endLeft), lineY);
+      ctx.stroke();
+      if (isSelected) {
+        ctx.strokeStyle = "rgba(250, 189, 47, 0.28)";
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(rail.startLeft, lineY);
+        ctx.lineTo(Math.max(rail.startLeft + 28, rail.endLeft), lineY);
+        ctx.stroke();
+      }
+      drawTimelineLabelPill(ctx, rail.startLabel, rail.startLeft - 2, rail.top, "left", isSelected);
+      if (rail.endLabel) drawTimelineLabelPill(ctx, rail.endLabel, rail.endLeft + 2, rail.top, "right", isSelected);
+      ctx.restore();
+    });
+  }
+
+  function redrawTurnRailCanvases() {
+    turnRailCanvasStateById.forEach((state) => drawTurnRailCanvas(state));
   }
 
   function renderLaneToggles() {
@@ -8321,14 +9116,72 @@
       const inactive = hiddenLanes.has(lane) ? " inactive" : "";
       return `<button class="lane-toggle${inactive}" type="button" data-lane-toggle="${esc(lane)}">${esc(laneDisplayName(lane))}</button>`;
     }).join("");
-    laneToggleGrid.querySelectorAll(".lane-toggle").forEach((button) => {
-      button.addEventListener("click", () => {
-        const lane = button.dataset.laneToggle;
-        if (hiddenLanes.has(lane)) hiddenLanes.delete(lane);
-        else hiddenLanes.add(lane);
-        renderStream();
-      });
-    });
+  }
+
+  function configureCanvasSurface(canvas, width, height) {
+    if (!canvas) return null;
+    const safeWidth = Math.max(1, Math.round(Number(width || 1)));
+    const safeHeight = Math.max(1, Math.round(Number(height || 1)));
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = Math.round(safeWidth * dpr);
+    canvas.height = Math.round(safeHeight * dpr);
+    canvas.style.width = `${safeWidth}px`;
+    canvas.style.height = `${safeHeight}px`;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return ctx;
+  }
+
+  function drawTimelineLabelPill(ctx, text, x, y, align = "left", active = false) {
+    const label = String(text || "");
+    if (!label) return;
+    ctx.save();
+    ctx.font = '600 9px "JetBrains Mono", "Fira Code", monospace';
+    const metrics = ctx.measureText(label);
+    const paddingX = 7;
+    const width = Math.min(180, Math.ceil(metrics.width) + paddingX * 2);
+    const height = 14;
+    const drawX = align === "right" ? x - width : x;
+    ctx.fillStyle = active ? "rgba(250, 189, 47, 0.18)" : "rgba(29, 32, 33, 0.92)";
+    ctx.strokeStyle = active ? "rgba(250, 189, 47, 0.52)" : "rgba(80, 73, 69, 0.95)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(drawX, y, width, height, 999);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = active ? "rgba(235, 219, 178, 0.98)" : "rgba(146, 131, 116, 0.98)";
+    ctx.textBaseline = "middle";
+    ctx.fillText(label, drawX + paddingX, y + height / 2 + 0.5, width - paddingX * 2);
+    ctx.restore();
+  }
+
+  function drawRulerCanvas(maxRelative, scale, baseWidth) {
+    const ctx = configureCanvasSurface(streamRulerCanvas, baseWidth, 34);
+    if (!ctx) return;
+    ctx.clearRect(0, 0, baseWidth, 34);
+    const roughTickTarget = timelineWindowSeconds / 6;
+    const step = roughTickTarget <= 2 ? 0.5
+      : roughTickTarget <= 5 ? 1
+      : roughTickTarget <= 12 ? 2
+      : roughTickTarget <= 24 ? 5
+      : roughTickTarget <= 60 ? 10
+      : roughTickTarget <= 120 ? 20
+      : 30;
+    const tickCount = Math.max(4, Math.ceil((maxRelative + 1.5) / step));
+    ctx.strokeStyle = "rgba(80, 73, 69, 0.95)";
+    ctx.fillStyle = "rgba(146, 131, 116, 0.96)";
+    ctx.font = '500 11px "JetBrains Mono", "Fira Code", monospace';
+    ctx.textBaseline = "top";
+    for (let i = 0; i <= tickCount; i += 1) {
+      const time = i * step;
+      const left = 20 + time * scale;
+      ctx.beginPath();
+      ctx.moveTo(left + 0.5, 0);
+      ctx.lineTo(left + 0.5, 34);
+      ctx.stroke();
+      ctx.fillText(formatTimelineClock(time), left + 6, 5);
+    }
   }
 
   function renderRuler(maxRelative) {
@@ -8339,42 +9192,106 @@
     timelineRenderBaseWidth = baseWidth;
     streamRuler.style.width = `${baseWidth}px`;
     streamRulerInner.style.width = `${baseWidth}px`;
-    const roughTickTarget = timelineWindowSeconds / 6;
-    const step = roughTickTarget <= 2 ? 0.5
-      : roughTickTarget <= 5 ? 1
-      : roughTickTarget <= 12 ? 2
-      : roughTickTarget <= 24 ? 5
-      : roughTickTarget <= 60 ? 10
-      : roughTickTarget <= 120 ? 20
-      : 30;
-    const tickCount = Math.max(4, Math.ceil((maxRelative + 1.5) / step));
-    const ticks = [];
-    for (let i = 0; i <= tickCount; i += 1) {
-      const time = i * step;
-      ticks.push(`<div class="ruler-tick" style="left:${20 + time * scale}px;"><span>${esc(formatTimelineClock(time))}</span></div>`);
-    }
-    streamRulerInner.innerHTML = ticks.join("");
+    drawRulerCanvas(maxRelative, scale, baseWidth);
     return {baseWidth, scale};
   }
 
-  function renderStream() {
+  function cardVirtualizationWindow() {
+    return {
+      left: Math.max(0, Number(streamViewport.scrollLeft || 0) - VIRTUALIZATION_OVERSCAN_PX),
+      right: Math.max(0, Number(streamViewport.scrollLeft || 0) + Number(streamViewport.clientWidth || 0) + VIRTUALIZATION_OVERSCAN_PX),
+    };
+  }
+
+  function cardRenderWindow() {
+    return {
+      left: Math.max(0, Number(streamViewport.scrollLeft || 0) - VIRTUALIZATION_RENDER_PADDING_PX),
+      right: Math.max(0, Number(streamViewport.scrollLeft || 0) + Number(streamViewport.clientWidth || 0) + VIRTUALIZATION_RENDER_PADDING_PX),
+    };
+  }
+
+  function laneUsesCardVirtualization(lane) {
+    return VIRTUALIZED_CARD_LANES.has(lane);
+  }
+
+  function scrollNeedsVirtualizedRender() {
+    if (!renderedCardWindow) return true;
+    const viewportWindow = cardVirtualizationWindow();
+    return viewportWindow.left < renderedCardWindow.left || viewportWindow.right > renderedCardWindow.right;
+  }
+
+  function renderLaneCard(event, left, top, width, height) {
+    return `<article class="stream-card type-${esc(typeClass(event.type))}${compactMode ? " compact" : ""}${event.superseded ? " superseded" : ""}" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" data-turn-id="${esc(event.turnId != null ? String(event.turnId) : "")}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;">
+      <div class="stream-card-head">
+        <span class="stream-card-type">${esc(displayEventType(event.type))}</span>
+        <span style="display:flex;align-items:center;gap:0.35em;">
+          ${renderStateBadges(event)}
+          ${renderAnnotationBadge(event)}
+          <span class="stream-card-time">+${relativeTime(event.timestamp).toFixed(2)}s</span>
+        </span>
+      </div>
+      ${renderCardBody(event)}
+    </article>`;
+  }
+
+  function buildLaneCardLayouts(lane, laneEvents, scale, railOffset) {
+    const layouts = [];
+    const trackEnds = [];
+    const rowStep = compactMode ? 28 : 144;
+    let trackHeight = compactMode ? 34 : 96;
+    laneEvents.forEach((event) => {
+      const left = 20 + relativeTime(event.timestamp) * scale;
+      const width = cardWidth(event);
+      const height = cardHeight(event);
+      let row = 0;
+      while (row < trackEnds.length && left < trackEnds[row] + 8) row += 1;
+      if (row === trackEnds.length) trackEnds.push(0);
+      trackEnds[row] = left + width;
+      const top = (compactMode ? 6 : 8) + railOffset + row * rowStep;
+      trackHeight = Math.max(trackHeight, top + height + 10);
+      layouts.push({event, left, width, height, top});
+    });
+    return {layouts, trackHeight};
+  }
+
+  function trackHeightForLayouts(layouts, railOffset = 0) {
+    const baseHeight = compactMode ? 34 : 96;
+    if (!layouts.length) return Math.max(baseHeight, railOffset + baseHeight);
+    const maxBottom = layouts.reduce((maxValue, layout) => {
+      return Math.max(maxValue, Number(layout.top || 0) + Number(layout.height || 0) + 10);
+    }, railOffset + baseHeight);
+    return Math.max(baseHeight, maxBottom);
+  }
+
+  function renderStreamNow() {
     hideStreamHoverCard();
     renderLaneToggles();
+    visionRawCanvasStateById.clear();
+    turnRailCanvasStateById.clear();
 
     const visibleEvents = streamEvents.filter((event) => shouldRenderTimelineEvent(event));
     if (!visibleEvents.length) {
       streamEmpty.style.display = "";
       streamLanes.innerHTML = "";
       streamRuler.style.width = "";
-      streamRulerInner.innerHTML = "";
+      setRenderableEventTimelineIndex([]);
+      if (streamRulerCanvas) {
+        const ctx = streamRulerCanvas.getContext("2d");
+        ctx?.clearRect(0, 0, streamRulerCanvas.width, streamRulerCanvas.height);
+      }
+      renderedCardWindow = null;
+      clearTimelineSelectionDom();
       updateTimelinePlayhead();
       return;
     }
 
     streamEmpty.style.display = "none";
+    setRenderableEventTimelineIndex(visibleEvents);
     const maxRelative = Math.max(...visibleEvents.map((event) => relativeTime(event.timestamp)));
     const {baseWidth, scale} = renderRuler(maxRelative);
     const turnRails = renderTurnRails(scale);
+    const virtualizationWindow = cardVirtualizationWindow();
+    const renderWindow = cardRenderWindow();
     const lanes = {};
     laneOrder.forEach((lane) => { lanes[lane] = []; });
     visibleEvents.forEach((event) => {
@@ -8390,40 +9307,24 @@
         && (lanes.vision?.length || 0) > 0;
       if (!laneEvents.length && !shouldShowEmptyVisionRaw) return;
       const hidden = hiddenLanes.has(lane);
-      const trackEnds = [];
       const cards = [];
-      const rowStep = compactMode ? 28 : 144;
       let trackHeight = compactMode ? 34 : 96;
       const railOffset = lane === "chat" ? turnRails.offset : 0;
-      laneEvents.forEach((event) => {
-        const left = 20 + relativeTime(event.timestamp) * scale;
-        if (lane === "vision_raw") {
-          trackHeight = Math.max(trackHeight, 84);
-          cards.push(renderVisionRawDot(event, left));
-          return;
-        }
-        const width = cardWidth(event);
-        const height = cardHeight(event);
-        let row = 0;
-        while (row < trackEnds.length && left < trackEnds[row] + 8) row += 1;
-        if (row === trackEnds.length) trackEnds.push(0);
-        trackEnds[row] = left + width;
-        const top = (compactMode ? 6 : 8) + railOffset + row * rowStep;
-        trackHeight = Math.max(trackHeight, top + height + 10);
-        cards.push(
-          `<article class="stream-card type-${esc(typeClass(event.type))}${compactMode ? " compact" : ""}${event.superseded ? " superseded" : ""}" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" data-turn-id="${esc(event.turnId != null ? String(event.turnId) : "")}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;">
-            <div class="stream-card-head">
-              <span class="stream-card-type">${esc(displayEventType(event.type))}</span>
-              <span style="display:flex;align-items:center;gap:0.35em;">
-                ${renderStateBadges(event)}
-                ${renderAnnotationBadge(event)}
-                <span class="stream-card-time">+${relativeTime(event.timestamp).toFixed(2)}s</span>
-              </span>
-            </div>
-            ${renderCardBody(event)}
-          </article>`
-        );
-      });
+      let visionRawState = null;
+      if (lane === "vision_raw") {
+        if (laneEvents.length) trackHeight = Math.max(trackHeight, 84);
+      } else {
+        const {layouts, trackHeight: layoutHeight} = buildLaneCardLayouts(lane, laneEvents, scale, railOffset);
+        const visibleLayouts = laneUsesCardVirtualization(lane)
+          ? layouts.filter((layout) => (layout.left + layout.width) >= renderWindow.left && layout.left <= renderWindow.right)
+          : layouts;
+        trackHeight = laneUsesCardVirtualization(lane)
+          ? Math.max(trackHeight, trackHeightForLayouts(visibleLayouts, railOffset))
+          : Math.max(trackHeight, layoutHeight);
+        visibleLayouts.forEach((layout) => {
+          cards.push(renderLaneCard(layout.event, layout.left, layout.top, layout.width, layout.height));
+        });
+      }
       if (lane === "chat") {
         trackHeight = Math.max(trackHeight, railOffset + (compactMode ? 34 : 96));
       }
@@ -8439,7 +9340,11 @@
       }
 
       const innerHtml = lane === "vision_raw" && laneEvents.length
-        ? `<div class="vision-raw-track" style="width:${baseWidth}px;height:${trackHeight}px;">${renderVisionRawLegend(baseWidth)}${cards.join("")}</div>`
+        ? (() => {
+          const trackId = `vision-raw-${++visionRawCanvasSerial}`;
+          visionRawState = createVisionRawCanvasState(trackId, laneEvents, baseWidth, trackHeight, scale);
+          return `<div class="vision-raw-track" data-track-id="${esc(trackId)}" style="width:${baseWidth}px;height:${trackHeight}px;"><canvas class="vision-raw-canvas"></canvas>${renderVisionRawLegend(baseWidth)}</div>`;
+        })()
         : `${lane === "chat" ? turnRails.html : ""}${cards.join("")}`;
 
       laneHtml.push(
@@ -8450,18 +9355,35 @@
           </div>
         </section>`
       );
+      if (visionRawState) {
+        visionRawCanvasStateById.set(visionRawState.trackId, visionRawState);
+      }
+      if (lane === "chat" && turnRails.trackId) {
+        turnRailCanvasStateById.set(turnRails.trackId, {
+          trackId: turnRails.trackId,
+          width: baseWidth,
+          height: turnRails.height,
+          rails: turnRails.rails,
+          canvas: null,
+        });
+      }
     });
 
     streamLanes.innerHTML = laneHtml.join("");
-    streamLanes.querySelectorAll(".stream-card, .stream-dot").forEach((card) => {
-      card.addEventListener("click", () => selectEvent(card.dataset.eventKey));
+    renderedCardWindow = laneOrder.some((lane) => laneUsesCardVirtualization(lane) && (lanes[lane]?.length || 0) > 0)
+      ? renderWindow
+      : null;
+    visionRawCanvasStateById.forEach((state, trackId) => {
+      const canvas = streamLanes.querySelector(`.vision-raw-track[data-track-id="${cssEscape(trackId)}"] .vision-raw-canvas`);
+      if (!canvas) return;
+      state.canvas = canvas;
+      drawVisionRawCanvas(state);
     });
-    streamLanes.querySelectorAll(".stream-dot").forEach((dot) => {
-      const event = streamEventByKey.get(dot.dataset.eventKey);
-      if (!event) return;
-      dot.addEventListener("mouseenter", (pointerEvent) => showStreamHoverCard(event, pointerEvent));
-      dot.addEventListener("mousemove", (pointerEvent) => showStreamHoverCard(event, pointerEvent));
-      dot.addEventListener("mouseleave", hideStreamHoverCard);
+    turnRailCanvasStateById.forEach((state, trackId) => {
+      const canvas = streamLanes.querySelector(`.turn-rail-strip[data-track-id="${cssEscape(trackId)}"] .turn-rail-canvas`);
+      if (!canvas) return;
+      state.canvas = canvas;
+      drawTurnRailCanvas(state);
     });
     if (selectedStreamKey && streamEventByKey.has(selectedStreamKey)) {
       selectEvent(selectedStreamKey, {seekMedia: false, syncTimeline: false});
@@ -8474,6 +9396,15 @@
       scrollTimelineToEnd();
       updateTimelinePlayhead();
     }
+  }
+
+  function renderStream(options = {}) {
+    if (options?.immediate) {
+      cancelScheduledStreamRender();
+      renderStreamNow();
+      return;
+    }
+    scheduleStreamRender();
   }
 
   function recordEvent(type, data, rawEvent) {
@@ -9225,6 +10156,7 @@
         ...data,
         timestamp: Number(event.timestamp || Date.now() / 1000),
       });
+      if (!options.archive) trimLivePromptTraceEvents(Number(event.timestamp || Date.now() / 1000));
       return;
     }
     const handler = handlers[event.type];
@@ -9234,7 +10166,10 @@
   function refreshState() {
     if (fixtureMode) return;
     if (statePollingSuspended) return;
-    fetch("/state")
+    if (document.hidden || archiveBrowseRef) return;
+    if (refreshStateInFlight) return;
+    refreshStateInFlight = true;
+    fetch(`/state?since_seq=${encodeURIComponent(String(lastSeq || 0))}`)
       .then((r) => r.json())
       .then((events) => {
         statePollFailures = 0;
@@ -9250,6 +10185,9 @@
         }
         sseConnected = false;
         renderBootStatus();
+      })
+      .finally(() => {
+        refreshStateInFlight = false;
       });
   }
 
@@ -9283,6 +10221,7 @@
     if (event.button !== 0) return;
     if (event.target.closest("#stream-ruler")) return;
     if (event.target.closest(".stream-card") || event.target.closest(".stream-dot")) return;
+    if (visionRawEventAtPointer(event.target, event.clientX, event.clientY)) return;
     disableFollowLive();
     isTimelineDragging = true;
     dragStartX = event.clientX;
@@ -9324,6 +10263,75 @@
       document.getElementById("follow-live").checked = false;
     }
     updateTimelinePlayhead();
+    if (scrollNeedsVirtualizedRender()) renderStream();
+  });
+  laneToggleGrid.addEventListener("click", (event) => {
+    const button = event.target.closest(".lane-toggle");
+    if (!button) return;
+    const lane = button.dataset.laneToggle || "";
+    if (!lane) return;
+    if (hiddenLanes.has(lane)) hiddenLanes.delete(lane);
+    else hiddenLanes.add(lane);
+    renderStream();
+  });
+  streamLanes.addEventListener("click", (event) => {
+    const card = event.target.closest(".stream-card, .stream-dot");
+    if (card) {
+      const key = card.dataset.eventKey || "";
+      if (!key) return;
+      selectEvent(key);
+      return;
+    }
+    const rawEvent = visionRawEventAtPointer(event.target, event.clientX, event.clientY);
+    if (rawEvent?.key) selectEvent(rawEvent.key);
+  });
+  streamLanes.addEventListener("pointermove", (event) => {
+    const dot = event.target.closest(".stream-dot");
+    let streamEvent = null;
+    if (dot) {
+      const key = dot.dataset.eventKey || "";
+      streamEvent = key ? streamEventByKey.get(key) : null;
+    } else {
+      streamEvent = visionRawEventAtPointer(event.target, event.clientX, event.clientY);
+    }
+    if (!streamEvent) {
+      if (hoveredStreamDotKey) {
+        hoveredStreamDotKey = "";
+        hideStreamHoverCard();
+      }
+      return;
+    }
+    hoveredStreamDotKey = streamEvent.key || "";
+    showStreamHoverCard(streamEvent, event);
+  });
+  streamLanes.addEventListener("mousemove", (event) => {
+    const streamEvent = visionRawEventAtPointer(event.target, event.clientX, event.clientY);
+    if (!streamEvent) return;
+    hoveredStreamDotKey = streamEvent.key || "";
+    showStreamHoverCard(streamEvent, event);
+  });
+  streamLanes.addEventListener("mouseenter", (event) => {
+    const dot = event.target.closest(".stream-dot");
+    let streamEvent = null;
+    if (dot) {
+      const key = dot.dataset.eventKey || "";
+      streamEvent = key ? streamEventByKey.get(key) : null;
+    } else {
+      streamEvent = visionRawEventAtPointer(event.target, event.clientX, event.clientY);
+    }
+    if (!streamEvent) return;
+    hoveredStreamDotKey = streamEvent.key || "";
+    showStreamHoverCard(streamEvent, event);
+  }, true);
+  streamLanes.addEventListener("mouseover", (event) => {
+    const streamEvent = visionRawEventAtPointer(event.target, event.clientX, event.clientY);
+    if (!streamEvent) return;
+    hoveredStreamDotKey = streamEvent.key || "";
+    showStreamHoverCard(streamEvent, event);
+  }, true);
+  streamLanes.addEventListener("pointerleave", () => {
+    hoveredStreamDotKey = "";
+    hideStreamHoverCard();
   });
 
   function seekArchiveMediaFromPointer(clientX) {
@@ -9331,7 +10339,31 @@
     const bounds = streamRuler.getBoundingClientRect();
     const contentX = streamViewport.scrollLeft + (clientX - bounds.left);
     const timeS = Math.max(0, (contentX - 20) / Math.max(timelineRenderScale, 0.001));
-    seekArchiveMedia(timeS, {syncSelection: true});
+    queueArchiveScrubSeek(timeS);
+  }
+
+  function cancelQueuedArchiveScrubSeek() {
+    if (!pendingArchiveScrubSeekFrame) return;
+    window.cancelAnimationFrame(pendingArchiveScrubSeekFrame);
+    pendingArchiveScrubSeekFrame = 0;
+  }
+
+  function queueArchiveScrubSeek(timeS, options = {}) {
+    pendingArchiveScrubSeekTime = Number(timeS || 0);
+    if (options.immediate) {
+      cancelQueuedArchiveScrubSeek();
+      const targetTime = pendingArchiveScrubSeekTime;
+      pendingArchiveScrubSeekTime = null;
+      seekArchiveMedia(targetTime, {syncSelection: true});
+      return;
+    }
+    if (pendingArchiveScrubSeekFrame) return;
+    pendingArchiveScrubSeekFrame = window.requestAnimationFrame(() => {
+      pendingArchiveScrubSeekFrame = 0;
+      const targetTime = pendingArchiveScrubSeekTime;
+      pendingArchiveScrubSeekTime = null;
+      seekArchiveMedia(targetTime, {syncSelection: true});
+    });
   }
 
   archiveMediaPlayer.addEventListener("loadedmetadata", () => {
@@ -9392,6 +10424,7 @@
   });
   window.addEventListener("pointerup", () => {
     archiveMediaScrubbing = false;
+    if (pendingArchiveScrubSeekTime != null) queueArchiveScrubSeek(pendingArchiveScrubSeekTime, {immediate: true});
     hideStreamScrubCursor();
     renderArchiveTransport();
   });
@@ -9408,12 +10441,12 @@
   archiveTransportScrubber.addEventListener("input", (event) => {
     if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
     archiveMediaScrubbing = true;
-    seekArchiveMedia(Number(event.target.value || 0), {syncSelection: true});
+    queueArchiveScrubSeek(Number(event.target.value || 0), {immediate: event.isTrusted === false});
   });
   archiveTransportScrubber.addEventListener("change", (event) => {
     if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
     archiveMediaScrubbing = false;
-    seekArchiveMedia(Number(event.target.value || 0), {syncSelection: true});
+    queueArchiveScrubSeek(Number(event.target.value || 0), {immediate: true});
   });
 
   runtimeToggleButton.addEventListener("click", requestRuntimeToggle);
@@ -9709,11 +10742,37 @@
   refreshPromptAssets();
   pollVisionModelStatus();
   renderRuntimeControlButtons();
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      pendingStateRefreshBurst = 0;
+      if (pendingStateRefreshTimer) {
+        window.clearTimeout(pendingStateRefreshTimer);
+        pendingStateRefreshTimer = 0;
+      }
+      cancelScheduledStreamRender();
+      cancelQueuedArchiveScrubSeek();
+      pendingArchiveScrubSeekTime = null;
+      hoveredStreamDotKey = "";
+      hideStreamHoverCard();
+      hideStreamScrubCursor();
+      return;
+    }
+    renderStream();
+    renderBootStatus();
+    refreshHistoryArchives();
+    refreshState();
+    scheduleStateRefreshBurst(2, 100);
+    pollVisionModelStatus();
+    maybeInitLiveKitPanel();
+  });
   setInterval(refreshState, 1000);
   setInterval(refreshHistoryArchives, 4000);
   setInterval(pollVisionModelStatus, 4000);
   setInterval(checkPendingRuntimeActionHealth, 1000);
-  setInterval(renderBootStatus, 1000);
+  setInterval(() => {
+    if (document.hidden) return;
+    renderBootStatus();
+  }, 1000);
 
   bridgeConfig = window.__bridgeConfig || null;
   let bridgeControls = null;
@@ -10419,6 +11478,80 @@
     seekArchiveTime(timeS, options = {}) {
       seekArchiveMedia(Number(timeS || 0), {syncSelection: options.syncSelection !== false});
     },
+    timelineState() {
+      return {
+        streamEventCount: streamEvents.length,
+        liveEventCount: streamEvents.filter((event) => !event.archive).length,
+        compactedLiveEventCount: streamEvents.filter((event) => !event.archive && !!event.compacted).length,
+        promptTraceCount: promptTraceEvents.length,
+        lastSeq,
+        selectedStreamKey,
+        visibleCardCount: document.querySelectorAll(".stream-card, .stream-dot").length,
+      };
+    },
+    laneTrackHeights() {
+      return Array.from(document.querySelectorAll(".stream-lane")).map((lane) => {
+        const track = lane.querySelector(".lane-track-inner");
+        return {
+          lane: lane.getAttribute("data-stream-lane") || "",
+          height: Math.round(track?.getBoundingClientRect?.().height || 0),
+          visibleCardCount: lane.querySelectorAll(".stream-card, .stream-dot").length,
+        };
+      });
+    },
+    rulerState() {
+      const maxRelative = streamEvents.length
+        ? Math.max(...streamEvents.filter((event) => shouldRenderTimelineEvent(event)).map((event) => relativeTime(event.timestamp)))
+        : 0;
+      const roughTickTarget = timelineWindowSeconds / 6;
+      const step = roughTickTarget <= 2 ? 0.5
+        : roughTickTarget <= 5 ? 1
+        : roughTickTarget <= 12 ? 2
+        : roughTickTarget <= 24 ? 5
+        : roughTickTarget <= 60 ? 10
+        : roughTickTarget <= 120 ? 20
+        : 30;
+      const tickCount = Math.max(4, Math.ceil((maxRelative + 1.5) / step));
+      return {
+        labels: Array.from({length: tickCount + 1}, (_, index) => formatTimelineClock(index * step)),
+      };
+    },
+    turnRailsState() {
+      const rails = [];
+      turnRailCanvasStateById.forEach((state) => {
+        state.rails.forEach((rail) => {
+          rails.push({
+            turnId: rail.turnId,
+            startLabel: rail.startLabel,
+            endLabel: rail.endLabel,
+            selected: !!rail.selected,
+          });
+        });
+      });
+      return rails;
+    },
+    visionRawEventPoint(eventType, index = 0) {
+      const targetType = String(eventType || "");
+      const targetIndex = Math.max(0, Number(index || 0));
+      const matches = [];
+      visionRawCanvasStateById.forEach((state) => {
+        if (!state?.canvas) return;
+        state.points.forEach((point) => {
+          if (!targetType || point.event.type === targetType) {
+            matches.push({state, point});
+          }
+        });
+      });
+      const match = matches[targetIndex] || null;
+      if (!match?.state?.canvas) return null;
+      const rect = match.state.canvas.getBoundingClientRect();
+      return {
+        key: match.point.event.key,
+        eventType: match.point.event.type,
+        clientX: rect.left + match.point.left,
+        clientY: rect.top + match.point.top,
+      };
+    },
     archivePlaybackState() {
       return {
         playheadTime: currentArchiveTimelineTime(),
@@ -10444,6 +11577,7 @@
     maybeInitLiveKitPanel();
   });
   setInterval(() => {
+    if (document.hidden) return;
     maybeInitLiveKitPanel();
   }, 2000);
 

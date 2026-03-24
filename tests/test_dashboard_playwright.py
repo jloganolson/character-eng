@@ -231,6 +231,92 @@ def _seed_turn_summary_archive(history: HistoryService, session_id: str = "sess-
     return archive
 
 
+def _seed_dense_card_archive(
+    history: HistoryService,
+    session_id: str = "sess-archive-dense-cards",
+    *,
+    turn_count: int = 96,
+    span_s: float = 576.0,
+):
+    archive = history.start_session(session_id=session_id, character="greg", model="groq-llama-8b")
+    archive_start = archive._started_at
+    archive.record_event("session_start", {
+        "character": "greg",
+        "model": "groq-llama-8b",
+        "session_id": session_id,
+        "stage": "watching",
+    }, timestamp=archive_start + 0.0)
+
+    spacing_s = max(4.5, span_s / max(1, turn_count))
+    for idx in range(turn_count):
+        turn_offset = 0.4 + (idx * spacing_s)
+        archive.record_event("turn_start", {
+            "input_text": f"dense user turn {idx}",
+            "input_type": "send",
+            "trigger_source": "user",
+            "turn_kind": "dialogue",
+            "input_source": "voice",
+        }, timestamp=archive_start + turn_offset)
+        archive.record_event("response_done", {
+            "full_text": f"Dense reply turn {idx}",
+            "turn_kind": "dialogue",
+            "turn_outcome": "replied",
+            "input_source": "voice",
+            "ttft_ms": 160 + idx,
+        }, timestamp=archive_start + turn_offset + 0.7)
+        archive.record_event("eval", {
+            "script_status": "advance" if idx % 2 == 0 else "watching",
+            "thought": f"Dense planner thought {idx}",
+            "plan_request": f"Dense planner request {idx}",
+        }, timestamp=archive_start + turn_offset + 1.3)
+        archive.record_event("reconcile", {
+            "events": [f"Dense world event {idx}"],
+            "add_facts": [f"dense fact {idx}"],
+        }, timestamp=archive_start + turn_offset + 1.9)
+        archive.record_event("vision_pass", {
+            "latest_perception": f"Dense vision turn {idx}",
+            "perception_count": 1,
+            "vlm_answer_count": 1,
+            "object_count": 1,
+            "object_labels": [f"marker-{idx}"],
+        }, timestamp=archive_start + turn_offset + 2.5)
+
+    archive.capture_checkpoint(
+        label="dense-cards",
+        character="greg",
+        session_snapshot={"system_prompt": "system", "messages": [], "tagged_system_indices": {}},
+        world=WorldState(),
+        people=PeopleState(),
+        scenario=None,
+        script=Script(),
+        goals=Goals(),
+        log_entries=[],
+        context_version=0,
+        had_user_input=True,
+    )
+    history.finalize_current()
+    _write_test_video(archive.media_dir / "playback.mp4", duration_s=12.0)
+    frame_path = archive.media_dir / "video" / "000001.jpg"
+    frame_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_test_jpeg(frame_path)
+    (archive.media_dir / "video" / "frames.jsonl").write_text(
+        json.dumps({
+            "timestamp": archive_start + 0.7,
+            "path": frame_path.name,
+            "source": "vision",
+        }) + "\n",
+        encoding="utf-8",
+    )
+    archive_manifest = json.loads(archive.manifest_path.read_text())
+    archive_media = dict(archive_manifest.get("media", {}))
+    archive_media["playback_path"] = str(archive.media_dir / "playback.mp4")
+    archive_media["video_path"] = str(archive.media_dir / "playback.mp4")
+    archive_media["video_frames_path"] = str(archive.media_dir / "video" / "frames.jsonl")
+    archive_media["video_frame_count"] = 1
+    archive.update_manifest(title="Dense Card Archive", media=archive_media)
+    return archive
+
+
 class _VisionHandler(BaseHTTPRequestHandler):
     state = {
         "fail": False,
@@ -477,6 +563,7 @@ def dashboard_server():
             ),
         ],
     )
+    _seed_dense_card_archive(history)
     archive = history.start_session(session_id="sess-playwright", character="greg", model="groq-llama-8b")
     archive.record_event("session_start", {
         "character": "greg",
@@ -2056,12 +2143,261 @@ def test_vision_raw_lane_is_explicit_and_shows_placeholder_or_events(
         },
     )
 
-    raw_sam3_dot = page.locator("[data-stream-lane='vision_raw'] .stream-dot[data-event-type='sam3_detection']").first
-    expect(raw_sam3_dot).to_be_visible()
-    raw_sam3_dot.dispatch_event("mouseenter", {"clientX": 320, "clientY": 220})
+    page.wait_for_function("() => !!window.__dashboardTest.visionRawEventPoint('sam3_detection', 0)")
+    raw_sam3_point = page.evaluate("window.__dashboardTest.visionRawEventPoint('sam3_detection', 0)")
+    assert raw_sam3_point is not None
+    page.mouse.move(raw_sam3_point["clientX"], raw_sam3_point["clientY"])
     expect(page.locator("#stream-hover-card")).to_have_class(re.compile(r"\bactive\b"))
     expect(page.locator("#stream-hover-card")).to_contain_text("sam3_detection")
     expect(page.locator("[data-stream-lane='vision']")).to_contain_text("vision llm")
+
+
+def test_live_timeline_caps_dense_raw_vision_events(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-live-cap",
+            "stage": "watching",
+        },
+    )
+    collector.push(
+        "vision_focus",
+        {
+            "stage_goal": "Track dense scene motion.",
+            "constant_questions": ["What changed in the room?"],
+            "ephemeral_questions": ["Is the visitor still visible?"],
+            "constant_sam_targets": ["person"],
+            "ephemeral_sam_targets": ["visitor"],
+        },
+    )
+
+    for idx in range(1400):
+        collector.push(
+            "sam3_detection",
+            {
+                "persons": [],
+                "objects": [{"label": f"marker-{idx}", "bbox": [10, 20, 40, 50]}],
+            },
+        )
+
+    page.wait_for_function(
+        "() => { const state = window.__dashboardTest.timelineState(); return state.liveEventCount <= 1202 && state.visibleCardCount <= 1202; }",
+        timeout=10_000,
+    )
+    state = page.evaluate("window.__dashboardTest.timelineState()")
+    assert state["liveEventCount"] <= 1202
+    assert state["visibleCardCount"] <= 1202
+
+
+def test_live_prompt_trace_retention_is_bounded(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-live-prompt-cap",
+            "stage": "watching",
+        },
+    )
+
+    base_ts = time.time()
+    for idx in range(240):
+        _collector_push_at(
+            collector,
+            "prompt_trace",
+            {
+                "label": "chat",
+                "title": f"Chat prompt {idx}",
+                "messages": [
+                    {"role": "system", "content": "Keep it grounded."},
+                    {"role": "user", "content": f"Prompt trace sample {idx}"},
+                ],
+                "output": f"Output {idx}",
+                "started_at": base_ts + (idx * 0.02),
+                "finished_at": base_ts + (idx * 0.02) + 0.01,
+            },
+            base_ts + (idx * 0.02) + 0.01,
+        )
+
+    page.wait_for_function(
+        "() => { const state = window.__dashboardTest.timelineState(); return state.lastSeq >= 241; }",
+        timeout=10_000,
+    )
+    state = page.evaluate("window.__dashboardTest.timelineState()")
+    assert state["promptTraceCount"] <= 160
+
+
+def test_live_older_events_are_compacted_without_breaking_selection(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    base_ts = time.time() - 240
+    _collector_push_at(
+        collector,
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-live-compaction",
+            "stage": "watching",
+        },
+        base_ts,
+    )
+
+    def push_perception(idx: int, event_ts: float):
+        _collector_push_at(
+            collector,
+            "perception",
+            {
+                "source": "visual",
+                "description": f"Compaction perception {idx}",
+                "event_id": f"perception-{idx}",
+                "source_trace": {
+                    "event_id": f"trace-{idx}",
+                    "object_labels": [f"object-{idx}", "chair", "door", "shadow", "ladder"],
+                    "vlm_answers": [
+                        {
+                            "task_id": "world_state",
+                            "label": "World State",
+                            "question": "Describe the room.",
+                            "answer": f"Room state sample {idx}",
+                        },
+                        {
+                            "task_id": "person_description_static",
+                            "label": "Person",
+                            "question": "Describe the person.",
+                            "answer": f"No target person visible {idx}",
+                        },
+                    ],
+                    "focus": {
+                        "ephemeral_questions": ["Is there a phone visible?", "Is someone at the door?"],
+                        "ephemeral_sam_targets": ["phone", "door"],
+                    },
+                    "provenance": {
+                        "label": "Vision synthesis LLM",
+                        "primary": "vision_state_update_llm",
+                        "components": ["vlm_answers", "snapshot"],
+                    },
+                },
+            },
+            event_ts,
+        )
+
+    def push_state_update(idx: int, event_ts: float):
+        _collector_push_at(
+            collector,
+            "vision_state_update",
+            {
+                "source": "visual",
+                "description": f"Compaction state update {idx}",
+                "summary": f"Compaction state update {idx}",
+                "event_id": f"state-{idx}",
+                "task_answers": [
+                    {
+                        "task_id": "world_state",
+                        "label": "World State",
+                        "question": "Describe the room.",
+                        "answer": f"Updated room summary {idx}",
+                    },
+                ],
+                "add_facts": [f"fact-{idx}", f"secondary fact-{idx}"],
+                "events": [f"event-{idx}"],
+                "source_trace": {
+                    "event_id": f"state-trace-{idx}",
+                    "object_labels": [f"object-{idx}", "lamp", "door", "chair"],
+                    "vlm_answers": [
+                        {
+                            "task_id": "world_state",
+                            "label": "World State",
+                            "question": "Describe the room.",
+                            "answer": f"Updated room summary {idx}",
+                        },
+                    ],
+                    "provenance": {
+                        "label": "Vision state interpreter",
+                        "primary": "vision_state_update_llm",
+                        "components": ["vlm_answers"],
+                    },
+                },
+            },
+            event_ts,
+        )
+
+    def push_raw_detection(idx: int, event_ts: float):
+        _collector_push_at(
+            collector,
+            "sam3_detection",
+            {
+                "event_id": f"sam3-{idx}",
+                "vision_cycle_id": f"cycle-{idx}",
+                "persons": [{"identity": f"visitor-{idx}", "track_id": idx, "bbox": [10, 20, 30, 40]}],
+                "objects": [{"label": f"object-{idx}", "bbox": [20, 30, 40, 50]}],
+            },
+            event_ts,
+        )
+
+    for idx in range(240):
+        push_perception(idx, base_ts + (idx * 0.18))
+    for idx in range(241):
+        push_state_update(idx, base_ts + 45 + (idx * 0.18))
+        push_raw_detection(idx, base_ts + 90 + (idx * 0.18))
+
+    collector.push(
+        "vision_state_update",
+        {
+            "source": "visual",
+            "description": "Current live state update after many historical events.",
+            "summary": "Current live state update after many historical events.",
+            "task_answers": [
+                {
+                    "task_id": "world_state",
+                    "label": "World State",
+                    "question": "Describe the room.",
+                    "answer": "Current room state",
+                },
+            ],
+        },
+    )
+
+    page.wait_for_function(
+        """() => {
+            const state = window.__dashboardTest.timelineState();
+                return state.compactedLiveEventCount > 0 && state.liveEventCount >= 720;
+        }""",
+        timeout=10_000,
+    )
+    state = page.evaluate("window.__dashboardTest.timelineState()")
+    assert state["compactedLiveEventCount"] > 0
+
+    page.locator("#timeline-start").evaluate("(node) => node.click()")
+    page.wait_for_function(
+        """() => Array.from(document.querySelectorAll(".stream-card[data-event-type='perception'] .stream-card-label"))
+            .some((node) => (node.textContent || '').includes('Compaction perception 0'))""",
+        timeout=10_000,
+    )
+    page.locator(".stream-card[data-event-type='perception']").first.evaluate("(node) => node.click()")
+    expect(page.locator("#detail-warning")).to_contain_text("compacted")
+    expect(page.locator("#detail-payload")).to_contain_text("\"__compacted\": true")
 
 
 def test_sidebar_registry_layout_and_panel_collapse(
@@ -2261,9 +2597,10 @@ def test_archive_raw_event_shows_inspected_frame_in_inspector(
     page = browser_page
     page.goto(f"{dashboard_url}?archive=sess-archive-vision-raw-ui&boot=live")
 
-    raw_dot = page.locator("[data-stream-lane='vision_raw'] .stream-dot[data-event-type='vision_snapshot_read']").first
-    expect(raw_dot).to_be_visible()
-    raw_dot.click()
+    page.wait_for_function("() => !!window.__dashboardTest.visionRawEventPoint('vision_snapshot_read', 0)")
+    raw_point = page.evaluate("window.__dashboardTest.visionRawEventPoint('vision_snapshot_read', 0)")
+    assert raw_point is not None
+    page.mouse.click(raw_point["clientX"], raw_point["clientY"])
     expect(page.locator("#inspector-frame-panel")).to_be_visible()
     expect(page.locator("#detail-frame-image")).to_be_visible()
     expect(page.locator("#detail-frame-meta")).to_contain_text("Nearest archived frame")
@@ -2278,10 +2615,11 @@ def test_archive_turn_rail_and_context_show_turn_metadata(
     page = browser_page
     page.goto(f"{dashboard_url}?archive=sess-turn-summary&boot=live")
 
-    rail = page.locator(".turn-rail").first
-    expect(rail).to_be_visible()
-    expect(rail).to_contain_text("user / dialogue")
-    expect(rail).to_contain_text("replied")
+    page.wait_for_function("() => (window.__dashboardTest.turnRailsState() || []).length > 0")
+    rails = page.evaluate("window.__dashboardTest.turnRailsState()")
+    assert rails
+    assert any(rail["startLabel"] == "user / dialogue" for rail in rails)
+    assert any("replied" in (rail["endLabel"] or "") for rail in rails)
 
     reply_card = page.locator(".stream-card[data-event-type='assistant_reply']").first
     reply_card.click()
@@ -2289,7 +2627,8 @@ def test_archive_turn_rail_and_context_show_turn_metadata(
     expect(page.locator("#detail-turn-context")).to_have_class(re.compile(r"\bactive\b"))
     expect(page.locator("#detail-turn-badge")).to_contain_text("user / dialogue")
     expect(page.locator("#detail-turn-grid")).to_contain_text("replied")
-    expect(page.locator(".turn-rail.active")).to_have_count(1)
+    rails = page.evaluate("window.__dashboardTest.turnRailsState()")
+    assert sum(1 for rail in rails if rail["selected"]) == 1
     page.locator("#tab-prompts").evaluate("(node) => node.click()")
     expect(page.locator("#detail-prompts")).to_contain_text("Chat prompt")
     expect(page.locator("#detail-prompts")).to_contain_text("Free water. Want one?")
@@ -3187,7 +3526,7 @@ def test_archive_load_shows_timeline_and_scrubbable_media_player(
     expect(page.locator("#archive-transport-toggle")).to_have_text("Play")
     expect(page.locator("#archive-media-player")).to_have_class(re.compile(r"\bvisible\b"))
     expect(page.locator("#stream-ruler")).to_have_class(re.compile(r"\bscrubbable\b"))
-    expect(page.locator("#stream-ruler")).to_contain_text("00:00")
+    assert "00:00" in page.evaluate("window.__dashboardTest.rulerState().labels")
     expect(page.locator("#current-playhead-value")).to_have_text("00:00.0")
     expect(page.locator(".stream-card[data-event-type='session_start']")).to_have_count(0)
     expect(page.locator(".stream-card[data-event-type='user_transcript_final']")).to_have_count(1)
@@ -3403,6 +3742,94 @@ def test_archive_ruler_scrubbing_updates_playhead_across_longer_spans(
         assert abs(result["mediaTime"] - result["target"]) < 0.35, result
         assert result["selectedType"] == result["event_type"], result
     assert results[-1]["mediaTime"] > 8.0
+
+
+def test_archive_virtualizes_dense_card_lanes_across_long_spans(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+
+    page.locator("#archive-load-button").evaluate("(node) => node.click()")
+    page.locator(".archive-row").filter(has_text="sess-archive-dense-cards").locator(".archive-load-action").click()
+
+    page.wait_for_function(
+        """() => {
+            const state = window.__dashboardTest.timelineState();
+            return state.streamEventCount >= 470 && state.visibleCardCount > 0;
+        }""",
+        timeout=10_000,
+    )
+    state = page.evaluate("window.__dashboardTest.timelineState()")
+    assert state["streamEventCount"] >= 470
+    assert state["visibleCardCount"] < 120
+
+    page.locator("#timeline-start").evaluate("(node) => node.click()")
+    page.wait_for_function(
+        """() => {
+            const labels = Array.from(document.querySelectorAll(".stream-card[data-event-type='assistant_reply'] .stream-card-label"))
+                .map((node) => node.textContent || "");
+            return labels.some((text) => text.includes("Dense reply turn 0"))
+                && !labels.some((text) => text.includes("Dense reply turn 95"));
+        }""",
+        timeout=10_000,
+    )
+
+    page.locator("#timeline-end").evaluate("(node) => node.click()")
+    page.wait_for_function(
+        """() => {
+            const labels = Array.from(document.querySelectorAll(".stream-card[data-event-type='assistant_reply'] .stream-card-label"))
+                .map((node) => node.textContent || "");
+            return labels.some((text) => text.includes("Dense reply turn 95"))
+                && !labels.some((text) => text.includes("Dense reply turn 0"));
+        }""",
+        timeout=10_000,
+    )
+    end_state = page.evaluate("window.__dashboardTest.timelineState()")
+    assert end_state["visibleCardCount"] < 120
+    lane_heights = page.evaluate("window.__dashboardTest.laneTrackHeights()")
+    assert lane_heights
+    sparse_lanes = [item for item in lane_heights if item["visibleCardCount"] <= 1]
+    assert all(item["height"] <= 140 for item in sparse_lanes), lane_heights
 
 
 def test_archive_playhead_reports_media_cap_when_timeline_moves_past_video(
