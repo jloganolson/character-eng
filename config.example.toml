@@ -75,3 +75,13 @@
 
 # HTTP port for the dashboard server.
 # port = 7862
+
+[models]
+# Dialogue model for live character replies.
+# chat_model = "groq-llama-8b"
+
+# Structured microservice model for planner / eval / guard / world updates.
+# micro_model = "groq-llama-8b"
+
+# Larger fallback model used by a few compatibility paths and QA tools.
+# big_model = "groq-llama"

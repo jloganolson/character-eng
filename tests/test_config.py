@@ -29,6 +29,9 @@ def test_save_config_round_trip(tmp_path, monkeypatch):
     cfg.livekit.api_key = "devkey"
     cfg.livekit.api_secret = "secret"
     cfg.livekit.room_prefix = "ce"
+    cfg.models.chat_model = "gemini-3-flash-lite"
+    cfg.models.micro_model = "groq-llama-8b"
+    cfg.models.big_model = "groq-llama"
 
     save_config(cfg, path=path)
     monkeypatch.setenv("CHARACTER_ENG_CONFIG_PATH", str(path))
@@ -57,6 +60,9 @@ def test_save_config_round_trip(tmp_path, monkeypatch):
     assert loaded.livekit.api_key == "devkey"
     assert loaded.livekit.api_secret == "secret"
     assert loaded.livekit.room_prefix == "ce"
+    assert loaded.models.chat_model == "gemini-3-flash-lite"
+    assert loaded.models.micro_model == "groq-llama-8b"
+    assert loaded.models.big_model == "groq-llama"
 
 
 def test_load_config_env_overrides(tmp_path, monkeypatch):
@@ -77,6 +83,9 @@ def test_load_config_env_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv("CHARACTER_ENG_LIVEKIT_API_KEY", "envkey")
     monkeypatch.setenv("CHARACTER_ENG_LIVEKIT_API_SECRET", "envsecret")
     monkeypatch.setenv("CHARACTER_ENG_LIVEKIT_ROOM_PREFIX", "remote-hot")
+    monkeypatch.setenv("CHARACTER_ENG_CHAT_MODEL", "gemini-3-flash-lite")
+    monkeypatch.setenv("CHARACTER_ENG_MICRO_MODEL", "groq-llama-8b")
+    monkeypatch.setenv("CHARACTER_ENG_BIG_MODEL", "groq-llama")
 
     loaded = load_config()
 
@@ -94,3 +103,6 @@ def test_load_config_env_overrides(tmp_path, monkeypatch):
     assert loaded.livekit.api_key == "envkey"
     assert loaded.livekit.api_secret == "envsecret"
     assert loaded.livekit.room_prefix == "remote-hot"
+    assert loaded.models.chat_model == "gemini-3-flash-lite"
+    assert loaded.models.micro_model == "groq-llama-8b"
+    assert loaded.models.big_model == "groq-llama"

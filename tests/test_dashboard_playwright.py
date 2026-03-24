@@ -891,6 +891,11 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#vision-service-link")).to_have_attribute("href", vision_service_url)
     expect(page.locator("#time-window-value")).to_have_text("30s")
     expect(page.locator("#runtime-start")).to_have_text("Start New Session")
+    expect(page.locator("button[data-lane-toggle='behavior']")).to_contain_text("robot behavior")
+    expect(page.locator("button[data-lane-toggle='planner']")).to_have_text("planner")
+    expect(page.locator("button[data-lane-toggle='eval']")).to_have_count(0)
+    expect(page.locator("button[data-lane-toggle='director']")).to_have_count(0)
+    expect(page.locator("button[data-lane-toggle='script']")).to_have_count(0)
 
     page.locator("#runtime-start").evaluate("(node) => node.click()")
     expect(page.locator("#runtime-start")).to_have_text("Starting...")
@@ -1044,6 +1049,8 @@ def test_runtime_panel_interactions_in_browser(
         "audio_ms": 1090,
     })
     collector.push("eval", {"script_status": "advance", "thought": "Keep it tight."})
+    collector.push("response_guard", {"status": "pass", "issues": [], "rationale": "Stayed in character."})
+    collector.push("expression", {"expression": "curious", "gaze": "forward"})
     collector.push("vision_focus", {
         "stage_goal": "Notice props near the table.",
         "constant_questions": ["Who is here?"],
@@ -1078,6 +1085,9 @@ def test_runtime_panel_interactions_in_browser(
 
     expect(page.locator(".stream-card[data-event-type='user_speech_started']")).to_have_count(1)
     expect(page.locator(".stream-card[data-event-type='user_transcript_final']")).to_have_count(1)
+    expect(page.locator('.stream-lane[data-stream-lane="behavior"] .stream-card').filter(has_text="guard pass")).to_be_visible()
+    expect(page.locator('.stream-lane[data-stream-lane="behavior"] .stream-card').filter(has_text="curious")).to_be_visible()
+    expect(page.locator('.stream-lane[data-stream-lane="other"] .stream-card').filter(has_text="guard pass")).to_have_count(0)
     reply_card = page.locator(".stream-card[data-event-type='assistant_reply']").filter(has_text="Free water. Want one?").first
     expect(reply_card.locator(".stream-card-uid")).to_have_text(re.compile(r"#\d+"))
     reply_card.click()

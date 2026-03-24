@@ -76,6 +76,13 @@ class LiveKitConfig:
 
 
 @dataclass
+class ModelsConfig:
+    chat_model: str = "groq-llama-8b"
+    micro_model: str = "groq-llama-8b"
+    big_model: str = "groq-llama"
+
+
+@dataclass
 class AppConfig:
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
@@ -83,6 +90,7 @@ class AppConfig:
     bridge: BridgeConfig = field(default_factory=BridgeConfig)
     history: HistoryConfig = field(default_factory=HistoryConfig)
     livekit: LiveKitConfig = field(default_factory=LiveKitConfig)
+    models: ModelsConfig = field(default_factory=ModelsConfig)
 
 
 def _toml_string(value: str) -> str:
@@ -137,6 +145,11 @@ def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
         f"api_key = {_toml_string(config.livekit.api_key)}",
         f"api_secret = {_toml_string(config.livekit.api_secret)}",
         f"room_prefix = {_toml_string(config.livekit.room_prefix)}",
+        "",
+        "[models]",
+        f"chat_model = {_toml_string(config.models.chat_model)}",
+        f"micro_model = {_toml_string(config.models.micro_model)}",
+        f"big_model = {_toml_string(config.models.big_model)}",
         "",
     ]
 
@@ -219,7 +232,22 @@ def load_config() -> AppConfig:
         room_prefix=livekit_data.get("room_prefix", "character-eng"),
     )
 
-    config = AppConfig(voice=voice, vision=vision, dashboard=dashboard, bridge=bridge, history=history, livekit=livekit)
+    models_data = data.get("models", {})
+    models = ModelsConfig(
+        chat_model=str(models_data.get("chat_model", "groq-llama-8b")),
+        micro_model=str(models_data.get("micro_model", "groq-llama-8b")),
+        big_model=str(models_data.get("big_model", "groq-llama")),
+    )
+
+    config = AppConfig(
+        voice=voice,
+        vision=vision,
+        dashboard=dashboard,
+        bridge=bridge,
+        history=history,
+        livekit=livekit,
+        models=models,
+    )
 
     if (value := os.environ.get("CHARACTER_ENG_VOICE_ENABLED")) is not None:
         config.voice.enabled = value.strip().lower() in {"1", "true", "yes", "on"}
@@ -255,5 +283,11 @@ def load_config() -> AppConfig:
         config.livekit.api_secret = value.strip()
     if (value := os.environ.get("CHARACTER_ENG_LIVEKIT_ROOM_PREFIX")):
         config.livekit.room_prefix = value.strip()
+    if (value := os.environ.get("CHARACTER_ENG_CHAT_MODEL")):
+        config.models.chat_model = value.strip()
+    if (value := os.environ.get("CHARACTER_ENG_MICRO_MODEL")):
+        config.models.micro_model = value.strip()
+    if (value := os.environ.get("CHARACTER_ENG_BIG_MODEL")):
+        config.models.big_model = value.strip()
 
     return config

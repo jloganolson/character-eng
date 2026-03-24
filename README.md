@@ -38,7 +38,7 @@ DEEPGRAM_API_KEY=your_key_here
 ELEVENLABS_API_KEY=your_key_here
 ```
 
-If multiple keys are set, you'll choose a model at startup. If only one is set, it's auto-selected. Chat uses Kimi K2 (`CHAT_MODEL`), microservices use 8B (`MICRO_MODEL`) — both configured in `models.py`.
+If multiple keys are set, you'll choose a model at startup. If only one is set, it's auto-selected. Defaults live in `config.toml` under `[models]`, with `CHARACTER_ENG_CHAT_MODEL`, `CHARACTER_ENG_MICRO_MODEL`, and `CHARACTER_ENG_BIG_MODEL` still available as env overrides.
 
 ### Configuration (optional)
 
@@ -67,6 +67,11 @@ aec = true                   # WebRTC AEC3 echo cancellation (keeps mic live dur
 # tts_server_url = "http://localhost:8003"
 # ref_audio = "/path/to/reference.wav"
 # pocket_voice = "voices/greg.safetensors"  # default
+
+[models]
+chat_model = "groq-llama-8b"
+micro_model = "groq-llama-8b"
+big_model = "groq-llama"
 ```
 
 The app works without `config.toml` — all settings have defaults. The `--voice` flag still works as an override.

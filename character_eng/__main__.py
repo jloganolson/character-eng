@@ -1776,7 +1776,8 @@ def show_info(world, script, goals, scenario, people):
 
 def get_chat_model_config() -> dict | None:
     """Look up the chat model config, return None if API key not set."""
-    cfg = MODELS.get(CHAT_MODEL)
+    model_key = os.environ.get("CHARACTER_ENG_CHAT_MODEL", "").strip() or getattr(getattr(_app_config, "models", None), "chat_model", "") or CHAT_MODEL
+    cfg = MODELS.get(model_key)
     if cfg is None:
         return None
     api_key_env = cfg.get("api_key_env", "")
@@ -1825,7 +1826,8 @@ def pick_character() -> str | None:
 
 def get_big_model_config():
     """Look up the big model config, return None if API key not set."""
-    cfg = MODELS.get(BIG_MODEL)
+    model_key = os.environ.get("CHARACTER_ENG_BIG_MODEL", "").strip() or getattr(getattr(_app_config, "models", None), "big_model", "") or BIG_MODEL
+    cfg = MODELS.get(model_key)
     if cfg is None:
         return None
     api_key_env = cfg.get("api_key_env", "")
@@ -1836,13 +1838,18 @@ def get_big_model_config():
 
 def get_micro_model_config() -> dict | None:
     """Look up the microservice model config, return None if API key not set."""
-    cfg = MODELS.get(MICRO_MODEL)
+    model_key = os.environ.get("CHARACTER_ENG_MICRO_MODEL", "").strip() or getattr(getattr(_app_config, "models", None), "micro_model", "") or MICRO_MODEL
+    cfg = MODELS.get(model_key)
     if cfg is None:
         return None
     api_key_env = cfg.get("api_key_env", "")
     if api_key_env and not os.environ.get(api_key_env):
         return None
     return cfg
+
+
+def _selected_chat_model_key() -> str:
+    return os.environ.get("CHARACTER_ENG_CHAT_MODEL", "").strip() or getattr(getattr(_app_config, "models", None), "chat_model", "") or CHAT_MODEL
 
 
 def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voice_cfg=None,
@@ -4369,7 +4376,7 @@ def run_smoke():
     console.print(Panel("[bold]Smoke Test[/bold]", border_style="yellow"))
     model_config = get_chat_model_config()
     if model_config is None:
-        chat_cfg = MODELS.get(CHAT_MODEL, {})
+        chat_cfg = MODELS.get(_selected_chat_model_key(), {})
         console.print(f"[red]Smoke test failed: chat model unavailable — set {chat_cfg.get('api_key_env', 'API key')} in .env[/red]")
         return 1
 
@@ -4873,7 +4880,7 @@ def main():
     console.print(Panel("[bold]NPC Character Chat[/bold]", border_style="green"))
     model_config = get_chat_model_config()
     if model_config is None and not _archive_only_mode:
-        chat_cfg = MODELS.get(CHAT_MODEL, {})
+        chat_cfg = MODELS.get(_selected_chat_model_key(), {})
         console.print(f"[red]Chat model unavailable — set {chat_cfg.get('api_key_env', 'API key')} in .env[/red]")
         return
     if model_config is not None:

@@ -2376,7 +2376,7 @@
   });
 
   const DEFAULT_STREAM_SCHEMA = {
-    lane_order: ["vision", "vision_raw", "stt", "chat", "behavior", "eval", "director", "planner", "world", "session", "script", "other"],
+    lane_order: ["vision", "vision_raw", "stt", "chat", "behavior", "planner", "world", "session", "other"],
     event_lane_map: {
       session_start: "session",
       session_end: "session",
@@ -2410,6 +2410,11 @@
       assistant_reply: "chat",
       expression: "behavior",
       response_guard: "behavior",
+      eval: "planner",
+      director: "planner",
+      stage_change: "planner",
+      beat_advance: "planner",
+      plan: "planner",
       post_response: "planner",
       perception: "world"
     }

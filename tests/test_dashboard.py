@@ -225,8 +225,19 @@ class TestDashboardServer:
         resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/stream-schema.json")
         body = json.loads(resp.read())
         assert "lane_order" in body
+        assert "behavior" in body["lane_order"]
+        assert "planner" in body["lane_order"]
+        assert "expression" not in body["lane_order"]
+        assert "eval" not in body["lane_order"]
+        assert "director" not in body["lane_order"]
+        assert "script" not in body["lane_order"]
         assert body["event_lane_map"]["assistant_reply"] == "chat"
         assert body["event_lane_map"]["turn_summary"] == "chat"
+        assert body["event_lane_map"]["expression"] == "behavior"
+        assert body["event_lane_map"]["response_guard"] == "behavior"
+        assert body["event_lane_map"]["eval"] == "planner"
+        assert body["event_lane_map"]["director"] == "planner"
+        assert body["event_lane_map"]["beat_advance"] == "planner"
         assert resp.status == 200
 
     def test_send_injects_input(self, server):
