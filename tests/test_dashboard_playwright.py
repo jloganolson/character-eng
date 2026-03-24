@@ -602,6 +602,217 @@ def dashboard_server():
     collector.shutdown()
 
 
+def _seed_rendered_card_inventory_fixture(collector: DashboardEventCollector) -> dict[str, dict[str, object]]:
+    base = time.time()
+    step_s = 0.25
+    index = 0
+
+    def push(event_type: str, data: dict) -> None:
+        nonlocal index
+        _collector_push_at(collector, event_type, data, base + (index * step_s))
+        index += 1
+
+    push("session_start", {
+        "character": "greg",
+        "model": "groq-llama-8b",
+        "session_id": "sess-card-sweep",
+        "stage": "watching",
+    })
+    push("runtime_controls", {
+        "controls": {"reconcile": True, "vision": True, "auto_beat": True, "director": True},
+        "conversation_paused": False,
+        "session_stopped": False,
+        "startup_pause_pending": False,
+        "session_state": "live",
+        "voice_active": True,
+        "voice_status": {
+            "active": True,
+            "output_only": False,
+            "filler_enabled": False,
+            "tts_backend": "pocket",
+            "mic_ready": True,
+            "speaker_ready": True,
+            "stt": {"state": "ready", "detail": "Mic hot."},
+            "tts": {"state": "ready", "detail": "Speaker ready.", "backend": "pocket"},
+        },
+        "vision_active": True,
+        "reconcile_thread_alive": True,
+        "vision_service_url": "http://127.0.0.1:9",
+        "vision_service_health": True,
+        "vision_service_managed": False,
+        "vision_service_external": True,
+        "vision_service_state": "running",
+        "vision_service_autostart": False,
+        "vision_service_mode": "camera",
+        "vision_mock_replay": "",
+    })
+    push("resume", {})
+    push("user_speech_started", {"source": "mic"})
+    push("user_transcript_final", {"text": "hello there"})
+    push("turn_start", {
+        "input_type": "send",
+        "input_text": "hello there",
+        "trigger_source": "user",
+        "turn_kind": "dialogue",
+        "input_source": "voice",
+    })
+    push("response_done", {
+        "full_text": "Free water. Want one?",
+        "input_source": "voice",
+        "stt_text": "hello there",
+        "stt_ms": 120,
+        "ttft_ms": 190,
+        "llm_ms": 280,
+        "audio_ms": 640,
+        "first_audio_ms": 360,
+    })
+    push("expression", {"expression": "curious", "gaze": "forward"})
+    push("eval", {"script_status": "advance", "thought": "Keep it short.", "plan_request": "Offer water."})
+    push("director", {"status": "open", "thought": "Move to offer.", "new_stage": "offer"})
+    push("stage_change", {"new_stage": "offer", "new_goal": "Offer water and ask what they need."})
+    push("plan", {"beats": [{"intent": "offer_water"}, {"intent": "ask_need"}]})
+    push("beat_advance", {"next_intent": "offer_water", "script_complete": False})
+    push("reconcile", {
+        "add_facts": ["visitor present"],
+        "remove_facts": [],
+        "events": ["Greg notices the visitor."],
+    })
+    push("world_state", {
+        "static_facts": [{"id": "w1", "text": "Greg is indoors."}],
+        "dynamic_facts": [{"id": "w2", "text": "A visitor is present."}],
+        "pending": ["Ask what time it is."],
+    })
+    push("people_state", {
+        "people": [{"id": "p1", "name": "Visitor", "facts": [{"id": "p1f1", "text": "Holding a cup."}]}],
+    })
+    push("world_update", {
+        "facts": ["A visitor is present."],
+        "events": ["Greg notices the visitor."],
+        "people": ["p1"],
+        "fact_count": 2,
+        "people_count": 1,
+    })
+    push("perception", {
+        "source": "visual",
+        "description": "A person appeared in view.",
+        "source_trace": {
+            "kind": "presence_tracker",
+            "provenance": {
+                "label": "Presence tracker",
+                "primary": "face_tracker",
+                "components": ["face_tracker", "vlm_answers"],
+            },
+            "object_labels": ["clock", "cup"],
+            "supporting_answers": [{"question": "Who is visible?", "answer": "A visitor."}],
+        },
+    })
+    push("vision_focus", {
+        "summary": "Watch the visitor and the wall clock.",
+        "constant_questions": ["What time is it?"],
+        "ephemeral_questions": ["Is the visitor looking at Greg?"],
+        "constant_sam_targets": ["person"],
+        "ephemeral_sam_targets": ["clock"],
+    })
+    push("vision_snapshot", {
+        "faces": 1,
+        "persons": 1,
+        "objects": 2,
+        "object_labels": ["clock", "cup"],
+        "vlm_answers": [{"label": "room_state", "answer": "A visitor stands near a wall clock."}],
+    })
+    push("vision_pass", {
+        "latest_perception": "A person appeared in view.",
+        "latest_answer": "A visitor stands near a wall clock.",
+        "perception_count": 1,
+        "vlm_answer_count": 1,
+        "object_count": 2,
+    })
+    push("vision_snapshot_read", {
+        "vision_cycle_id": "cycle-1",
+        "faces": 1,
+        "persons": 1,
+        "objects": 2,
+        "vlm_answer_count": 1,
+        "object_labels": ["clock", "cup"],
+    })
+    push("face_tracking", {
+        "timing": {"total": 0.041},
+        "faces": [{"identity": "visitor", "confidence": 0.97, "bbox": [0.1, 0.1, 0.2, 0.2], "looking_at_camera": True}],
+    })
+    push("sam3_detection", {
+        "timing": {"sam3": 0.088, "prompts": 2},
+        "persons": [{"identity": "visitor", "confidence": 0.95, "bbox": [0.1, 0.1, 0.2, 0.2]}],
+        "objects": [{"label": "clock", "confidence": 0.91, "bbox": [0.4, 0.1, 0.15, 0.15]}],
+    })
+    push("reid_track", {
+        "track_id": 7,
+        "identity": "visitor",
+        "identity_source": "embedding",
+        "timing": {"reid": 0.012},
+    })
+    push("vision_trigger", {
+        "signal": "person_visible",
+        "description": "Person visible for three frames.",
+        "rule": {"source": "presence", "label": "person_visible", "frames": 3, "task_id": "watch"},
+        "streak": 3,
+        "evidence": {"tracks": ["visitor"]},
+    })
+    push("vision_state_update", {
+        "task_answers": [{"label": "world_state", "answer": "A visitor stands near a wall clock."}],
+        "add_facts": ["A wall clock is visible."],
+        "remove_facts": [],
+        "events": ["Visitor entered the room."],
+        "person_updates": [{"person_id": "p1", "add_facts": ["Standing near the doorway."], "set_presence": "visible"}],
+    })
+    push("vlm_answer", {
+        "label": "room_state",
+        "question": "What changed?",
+        "answer": "A visitor stands near a wall clock.",
+        "target": "person",
+        "target_identity": "visitor",
+        "vision_cycle_id": "cycle-1",
+    })
+    push("user_transcript_final", {"text": "wait actually never mind"})
+    push("turn_start", {
+        "input_type": "send",
+        "input_text": "wait actually never mind",
+        "trigger_source": "user",
+        "turn_kind": "dialogue",
+        "input_source": "voice",
+    })
+    push("response_chunk", {"text": "Okay, I can stop."})
+    push("response_interrupted", {
+        "reason": "barge_in",
+        "truncated_text": "Okay",
+        "raw_full_text": "Okay, I can stop.",
+    })
+
+    return {
+        "turn_start": {"card_text": "hello there", "payload_snippets": ['"input_text": "hello there"']},
+        "user_speech_started": {"card_text": "speech detected", "payload_snippets": ['"source": "mic"']},
+        "user_transcript_final": {"card_text": "hello there", "payload_snippets": ['"text": "hello there"']},
+        "assistant_reply": {"card_text": "Free water. Want one?", "payload_snippets": ['"full_text": "Free water. Want one?"']},
+        "response_interrupted": {"card_text": "Interrupted after: Okay", "payload_snippets": ['"reason": "barge_in"']},
+        "expression": {"card_text": "curious", "payload_snippets": ['"expression": "curious"']},
+        "post_response": {"card_text": None, "payload_snippets": ['"new_stage": "offer"', '"next_intent": "offer_water"']},
+        "reconcile": {"card_text": None, "payload_snippets": ['"add_facts": [', '"visitor present"']},
+        "world_state": {"card_text": None, "payload_snippets": ['"text": "A visitor is present."']},
+        "people_state": {"card_text": None, "payload_snippets": ['"name": "Visitor"']},
+        "world_update": {"card_text": None, "payload_snippets": ['"Greg notices the visitor."']},
+        "perception": {"card_text": "A person appeared in view.", "payload_snippets": ['"description": "A person appeared in view."']},
+        "vision_snapshot": {"card_text": None, "payload_snippets": ['"object_labels": [', '"clock"']},
+        "vision_pass": {"card_text": "A person appeared in view.", "payload_snippets": ['"latest_perception": "A person appeared in view."']},
+        "vision_focus": {"card_text": None, "payload_snippets": ['"summary": "Watch the visitor and the wall clock."']},
+        "vision_snapshot_read": {"card_text": None, "payload_snippets": ['"vision_cycle_id": "cycle-1"']},
+        "face_tracking": {"card_text": None, "payload_snippets": ['"identity": "visitor"']},
+        "sam3_detection": {"card_text": None, "payload_snippets": ['"label": "clock"']},
+        "reid_track": {"card_text": None, "payload_snippets": ['"identity_source": "embedding"']},
+        "vision_trigger": {"card_text": "Person visible for three frames.", "payload_snippets": ['"signal": "person_visible"']},
+        "vision_state_update": {"card_text": None, "payload_snippets": ['"A wall clock is visible."']},
+        "vlm_answer": {"card_text": "A visitor stands near a wall clock.", "payload_snippets": ['"answer": "A visitor stands near a wall clock."']},
+    }
+
+
 def test_runtime_panel_interactions_in_browser(
     browser_page: Page,
     dashboard_server,
@@ -869,7 +1080,14 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator(".stream-card[data-event-type='user_speech_started']")).to_have_count(1)
     expect(page.locator(".stream-card[data-event-type='user_transcript_final']")).to_have_count(1)
     reply_card = page.locator(".stream-card[data-event-type='assistant_reply']").filter(has_text="Free water. Want one?").first
+    expect(reply_card.locator(".stream-card-uid")).to_have_text(re.compile(r"#\d+"))
     reply_card.click()
+    expect(page.locator("#detail-seq")).to_have_text(re.compile(r"#\d+"))
+    expect(page.locator("#inspector-summary-title")).to_have_text(re.compile(r"assistant_reply #\d+"))
+    inventory = page.evaluate("window.__dashboardTest.eventInventory()")
+    assert "assistant_reply" in inventory["visible_cards"]
+    assert "post_response" in inventory["compound_cards"]
+    assert "history_playback_frame" in inventory["hidden_runtime_events"]
     page.locator("#report-ref-button").click()
     expect(page.locator("#report-ref-status")).to_contain_text("Copied archive ref:")
     expect(page.locator("#report-ref-status")).to_contain_text("sess-playwright")
@@ -939,21 +1157,15 @@ def test_runtime_panel_interactions_in_browser(
     perception_card = page.locator(".stream-card").filter(has_text="A person is now holding a flier").first
     perception_card.click()
     expect(page.locator("#detail-type")).to_have_text("perception")
-    expect(page.locator("#detail-trace")).to_have_class(re.compile(r"\bactive\b"))
-    expect(page.locator("#detail-structure")).to_have_class(re.compile(r"\bactive\b"))
-    expect(page.locator("#detail-structure")).to_contain_text("Vision Input")
-    expect(page.locator("#detail-structure")).to_contain_text("Vision Synthesis Inputs")
-    expect(page.locator("#detail-structure")).to_contain_text("Claim Provenance")
-    expect(page.locator("#detail-trace-summary")).to_contain_text("Vision synthesis LLM")
-    expect(page.locator("#detail-trace-summary")).to_contain_text("vision_synthesis_llm")
-    expect(page.locator("#detail-structure")).to_contain_text("Evidence")
-    expect(page.locator("#detail-structure")).to_contain_text("Is anyone holding a flier?")
-    expect(page.locator("#detail-structure")).to_contain_text("A flier.")
-    expect(page.locator("#detail-structure")).to_contain_text("supports")
-    expect(page.locator("#detail-trace-summary")).to_contain_text("source: visual")
-    expect(page.locator("#detail-trace-chips")).to_contain_text("object flier")
-    expect(page.locator("#detail-trace-chips")).to_contain_text("sam flier")
-    expect(page.locator("#detail-trace-chips")).to_contain_text("supports What is the person holding?")
+    expect(page.locator("#inspector-summary-title")).to_have_text(re.compile(r"perception #\d+"))
+    expect(page.locator("#detail-trace")).to_have_count(0)
+    expect(page.locator("#detail-structure")).to_have_count(0)
+    expect(page.locator("#detail-payload")).to_contain_text('"description": "A person is now holding a flier"')
+    expect(page.locator("#detail-payload")).to_contain_text('"primary": "vision_synthesis_llm"')
+    expect(page.locator("#detail-payload")).to_contain_text('"label": "Vision synthesis LLM"')
+    expect(page.locator("#detail-payload")).to_contain_text('"ephemeral_sam_targets": [')
+    expect(page.locator("#detail-payload")).to_contain_text('"flier"')
+    expect(page.locator("#detail-payload")).to_contain_text('"supporting_answers": [')
 
     page.locator("#detail-continue-from-event").click()
     replay_cmd = input_queue.get(timeout=2)
@@ -1289,6 +1501,85 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#vision-service-status")).to_contain_text("health: unreachable")
     expect(page.locator("#vision-service-status")).to_contain_text("service: error")
     expect(page.locator("body")).to_have_class(re.compile(r"\bbooting\b"))
+
+
+def test_rendered_card_inventory_inspector_sweep(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    specs = _seed_rendered_card_inventory_fixture(collector)
+    raw_types = {"vision_snapshot_read", "face_tracking", "sam3_detection", "reid_track", "vlm_answer"}
+    expected_rendered = set(specs) - raw_types
+
+    page.wait_for_function(
+        """(expectedCount) => {
+            const items = Array.from(document.querySelectorAll('.stream-card[data-event-type], .stream-dot[data-event-type]'));
+            return items.length >= expectedCount;
+        }""",
+        arg=len(expected_rendered),
+    )
+
+    inventory = page.evaluate("window.__dashboardTest.eventInventory()")
+    assert set(inventory["rendered_cards"]) == expected_rendered
+    assert set(inventory["visible_cards"]) == expected_rendered
+    assert set(inventory["raw_lane_events"]) == raw_types
+    assert set(inventory["folded_runtime_events"]) == {
+        "response_chunk",
+        "response_done",
+        "eval",
+        "director",
+        "plan",
+        "beat_advance",
+        "stage_change",
+    }
+
+    rendered_dom_types = set(
+        page.evaluate(
+            """() => Array.from(
+                new Set(
+                    Array.from(document.querySelectorAll('.stream-card[data-event-type], .stream-dot[data-event-type]'))
+                        .map((node) => node.getAttribute('data-event-type'))
+                        .filter(Boolean)
+                )
+            )"""
+        )
+    )
+    assert rendered_dom_types == expected_rendered
+    expect(page.locator(".stream-card[data-event-type='plan'], .stream-dot[data-event-type='plan']")).to_have_count(0)
+    expect(page.locator(".stream-card[data-event-type='beat_advance'], .stream-dot[data-event-type='beat_advance']")).to_have_count(0)
+    expect(page.locator(".stream-card[data-event-type='stage_change'], .stream-dot[data-event-type='stage_change']")).to_have_count(0)
+
+    for event_type in inventory["rendered_cards"]:
+        spec = specs[event_type]
+        has_card_text = bool(spec["card_text"])
+        locator = page.locator(f".stream-card[data-event-type='{event_type}'], .stream-dot[data-event-type='{event_type}']")
+        if has_card_text:
+            locator = locator.filter(has_text=str(spec["card_text"]))
+        expect(locator.first).to_be_visible()
+        locator.first.click()
+        expect(page.locator("#inspector-summary-title")).to_have_text(re.compile(rf"{re.escape(event_type)} #\d+"))
+        expect(page.locator("#detail-type")).to_have_text(event_type)
+        expect(page.locator("#detail-trace")).to_have_count(0)
+        expect(page.locator("#detail-structure")).to_have_count(0)
+        for snippet in spec["payload_snippets"]:
+            expect(page.locator("#detail-payload")).to_contain_text(str(snippet))
+
+    for event_type in inventory["raw_lane_events"]:
+        spec = specs[event_type]
+        page.wait_for_function(f"() => !!window.__dashboardTest.visionRawEventPoint('{event_type}', 0)")
+        raw_point = page.evaluate(f"window.__dashboardTest.visionRawEventPoint('{event_type}', 0)")
+        assert raw_point is not None
+        page.mouse.click(raw_point["clientX"], raw_point["clientY"])
+        expect(page.locator("#inspector-summary-title")).to_have_text(re.compile(rf"{re.escape(event_type)} #\d+"))
+        expect(page.locator("#detail-type")).to_have_text(event_type)
+        expect(page.locator("#detail-trace")).to_have_count(0)
+        expect(page.locator("#detail-structure")).to_have_count(0)
+        for snippet in spec["payload_snippets"]:
+            expect(page.locator("#detail-payload")).to_contain_text(str(snippet))
 
 
 def test_boot_overlay_ignores_optional_vision_when_runtime_not_active(
@@ -3061,12 +3352,12 @@ def test_visual_stage_exit_turn_start_inspector_shows_scenario_match(
 
     page.locator(".stream-card[data-event-type='turn_start']").first.click()
     expect(page.locator("#detail-turn-context")).not_to_have_class(re.compile(r"active"))
-    expect(page.locator("#detail-structure")).to_contain_text('[[stage]]')
-    expect(page.locator("#detail-structure")).to_contain_text('name = "watching"')
-    expect(page.locator("#detail-structure")).to_contain_text('condition = "Someone becomes visible nearby or appears to notice Greg"')
-    expect(page.locator("#detail-structure")).to_contain_text('visual_signals = ["person_visible", "person_visible_stable"]')
-    expect(page.locator("#detail-structure")).to_contain_text('goto = "spotted"')
-    expect(page.locator("#detail-structure")).to_contain_text('name = "spotted"')
+    expect(page.locator("#inspector-summary-title")).to_have_text(re.compile(r"turn_start #\d+"))
+    expect(page.locator("#detail-payload")).to_contain_text('"trigger_stage_from": "watching"')
+    expect(page.locator("#detail-payload")).to_contain_text('"trigger_stage_to": "spotted"')
+    expect(page.locator("#detail-payload")).to_contain_text('"trigger_stage_exit_condition": "Someone becomes visible nearby or appears to notice Greg"')
+    expect(page.locator("#detail-payload")).to_contain_text('"trigger_stage_exit_visual_signals": [')
+    expect(page.locator("#detail-payload")).to_contain_text('"person_visible_stable"')
 
 
 def test_vision_state_update_falls_back_from_no_updates_summary(
@@ -3140,10 +3431,11 @@ def test_vision_state_update_falls_back_from_no_updates_summary(
     expect(card).to_contain_text("The visible room has light-colored walls")
     expect(card).not_to_contain_text("No updates.")
     card.click()
-    expect(page.locator("#detail-structure")).to_contain_text("The visible room has light-colored walls and a stackable ladder in the back left.")
+    expect(page.locator("#inspector-summary-title")).to_have_text(re.compile(r"vision_state_update #\d+"))
+    expect(page.locator("#detail-payload")).to_contain_text("The visible room has light-colored walls and a stackable ladder in the back left.")
 
 
-def test_world_update_inspector_shows_facts_hides_prompt_tab_and_opens_json(
+def test_world_state_inspector_shows_raw_event_json_and_hides_prompt_tab(
     browser_page: Page,
     dashboard_server,
 ):
@@ -3208,14 +3500,14 @@ def test_world_update_inspector_shows_facts_hides_prompt_tab_and_opens_json(
         },
     )
 
-    world_card = page.locator(".stream-card[data-event-type='world_update']").first
+    world_card = page.locator(".stream-card[data-event-type='world_state']").first
     expect(world_card).to_be_visible()
     world_card.click()
 
     expect(page.locator("#detail-label")).to_contain_text("1 facts")
     expect(page.locator("#detail-detail")).to_contain_text("Greg is indoors in a room")
-    expect(page.locator("#detail-structure-grid")).to_contain_text("Greg is indoors in a room")
-    expect(page.locator("#detail-structure-grid")).to_contain_text("facts")
+    expect(page.locator("#detail-payload")).to_contain_text("\"static_facts\"")
+    expect(page.locator("#detail-payload")).to_contain_text("Greg is indoors in a room")
     expect(page.locator("#tab-prompts")).to_be_hidden()
 
     with page.expect_popup() as popup_info:
@@ -3223,7 +3515,8 @@ def test_world_update_inspector_shows_facts_hides_prompt_tab_and_opens_json(
     popup = popup_info.value
     popup.wait_for_load_state()
     expect(popup.locator("body")).to_contain_text("Greg is indoors in a room")
-    expect(popup.locator("body")).to_contain_text("\"facts\"")
+    expect(popup.locator("body")).to_contain_text("\"type\": \"world_state\"")
+    expect(popup.locator("body")).to_contain_text("\"static_facts\"")
 
 
 def test_dashboard_preserves_unfinished_reply_when_new_turn_starts(

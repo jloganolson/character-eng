@@ -932,8 +932,23 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
+  .stream-card-type-wrap {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.45em;
+    min-width: 0;
+  }
+  .stream-card-uid {
+    color: color-mix(in srgb, var(--text) 60%, var(--text-dim));
+    font-size: 0.66em;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: nowrap;
+  }
   .stream-card.compact .stream-card-type {
     font-size: 0.62em;
+  }
+  .stream-card.compact .stream-card-uid {
+    font-size: 0.6em;
   }
   .stream-card-time {
     color: var(--text-dim);
@@ -1373,28 +1388,6 @@
     font-size: 0.68em;
     color: var(--text-dim);
   }
-  #detail-trace {
-    display: none;
-    gap: 0.45em;
-    padding: 0.6em 0.7em;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--bg-alt);
-  }
-  #detail-trace.active {
-    display: grid;
-  }
-  #detail-structure {
-    display: none;
-    gap: 0.55em;
-    padding: 0.7em;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--bg-alt);
-  }
-  #detail-structure.active {
-    display: grid;
-  }
   .structure-title {
     font-size: 0.74em;
     text-transform: uppercase;
@@ -1455,22 +1448,6 @@
     line-height: 1.45;
     white-space: pre-wrap;
     word-break: break-word;
-  }
-  .trace-title {
-    font-size: 0.74em;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-dim);
-  }
-  .trace-line {
-    font-size: 0.78em;
-    line-height: 1.45;
-    white-space: pre-wrap;
-  }
-  .trace-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3em;
   }
   .trace-chip {
     border: 1px solid var(--border);
@@ -2083,21 +2060,12 @@
               </div>
               <div class="detail-actions">
                 <button class="detail-action primary" id="detail-continue-from-event" type="button" disabled>Continue From Here</button>
-                <button class="detail-action" id="detail-open-json" type="button" disabled>Open JSON</button>
+                <button class="detail-action" id="detail-open-json" type="button" disabled>Open Full Event JSON</button>
               </div>
               <div id="detail-loop">
                 <div class="loop-title">Loop Timing</div>
                 <div class="loop-track" id="detail-loop-track"></div>
                 <div class="loop-chips" id="detail-loop-chips"></div>
-              </div>
-              <div id="detail-trace">
-                <div class="trace-title">Source Trace</div>
-                <div class="trace-line" id="detail-trace-summary"></div>
-                <div class="trace-chips" id="detail-trace-chips"></div>
-              </div>
-              <div id="detail-structure">
-                <div class="structure-title">Event Breakdown</div>
-                <div class="structure-grid" id="detail-structure-grid"></div>
               </div>
               <div class="detail-section" id="inspector-frame-panel" data-panel-region="inspector" data-panel-id="inspected_frame" data-panel-scope="event" style="display:none;">
                 <label id="inspector-frame-label">Inspected Frame</label>
@@ -2154,13 +2122,13 @@
           <div class="detail-section fill" id="inspector-detail-tabs-panel" data-panel-region="inspector" data-panel-id="detail_tabs" data-panel-scope="event">
             <label id="inspector-detail-tabs-label">Inspector Pane</label>
             <div class="detail-tabs" id="inspector-detail-tabs">
-              <button class="detail-tab active" id="tab-prompts" type="button" data-detail-tab="prompts" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">Prompt Preview</button>
-              <button class="detail-tab" id="tab-payload" type="button" data-detail-tab="payload" data-panel-region="inspector" data-panel-id="payload" data-panel-scope="event">Debug Event JSON</button>
+              <button class="detail-tab" id="tab-prompts" type="button" data-detail-tab="prompts" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">Prompt Preview</button>
+              <button class="detail-tab active" id="tab-payload" type="button" data-detail-tab="payload" data-panel-region="inspector" data-panel-id="payload" data-panel-scope="event">Payload JSON</button>
             </div>
-            <div class="detail-pane active" id="detail-prompts-pane" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">
+            <div class="detail-pane" id="detail-prompts-pane" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">
               <div class="detail-prompts" id="detail-prompts"></div>
             </div>
-            <div class="detail-pane" id="detail-payload-pane" data-panel-region="inspector" data-panel-id="payload" data-panel-scope="event">
+            <div class="detail-pane active" id="detail-payload-pane" data-panel-region="inspector" data-panel-id="payload" data-panel-scope="event">
               <pre id="detail-payload">{}</pre>
             </div>
           </div>
@@ -2253,6 +2221,79 @@
 
 <script>
 (function() {
+  const RENDERED_CARD_TYPES = Object.freeze([
+      "turn_start",
+      "user_speech_started",
+      "user_transcript_final",
+      "assistant_reply",
+      "response_interrupted",
+      "expression",
+      "post_response",
+      "reconcile",
+      "world_state",
+      "people_state",
+      "world_update",
+      "perception",
+      "vision_snapshot",
+      "vision_pass",
+      "vision_focus",
+      "vision_trigger",
+      "vision_state_update",
+    ]);
+  const RAW_LANE_EVENT_TYPES = Object.freeze([
+      "vision_snapshot_read",
+      "face_tracking",
+      "sam3_detection",
+      "reid_track",
+      "vlm_answer",
+    ]);
+  const COMPOUND_CARD_TYPES = Object.freeze([
+      "assistant_reply",
+      "post_response",
+      "turn_summary",
+    ]);
+  const FOLDED_RUNTIME_EVENT_TYPES = Object.freeze([
+      "response_chunk",
+      "response_done",
+      "eval",
+      "director",
+      "plan",
+      "beat_advance",
+      "stage_change",
+    ]);
+  const HIDDEN_RUNTIME_EVENT_TYPES = Object.freeze([
+      "turn_summary",
+      "response_chunk",
+      "response_done",
+      "prompt_trace",
+      "history_playback_frame",
+      "session_start",
+      "session_end",
+      "pause",
+      "resume",
+      "history_status",
+      "history_restore",
+      "history_rewind",
+      "history_promoted",
+      "history_playback",
+      "prompt_reload",
+      "runtime_controls",
+    ]);
+  const LEGACY_SUPPORTED_CARD_TYPES = Object.freeze([
+      "world_update",
+      "vision_snapshot",
+      "vision_pass",
+    ]);
+  const DASHBOARD_EVENT_INVENTORY = Object.freeze({
+    rendered_cards: RENDERED_CARD_TYPES,
+    visible_cards: RENDERED_CARD_TYPES,
+    raw_lane_events: RAW_LANE_EVENT_TYPES,
+    compound_cards: COMPOUND_CARD_TYPES,
+    folded_runtime_events: FOLDED_RUNTIME_EVENT_TYPES,
+    hidden_runtime_events: HIDDEN_RUNTIME_EVENT_TYPES,
+    legacy_supported_cards: LEGACY_SUPPORTED_CARD_TYPES,
+  });
+
   const DEFAULT_STREAM_SCHEMA = {
     lane_order: ["vision", "vision_raw", "stt", "chat", "expression", "eval", "director", "planner", "world", "session", "script", "other"],
     event_lane_map: {
@@ -2277,6 +2318,9 @@
       vision_trigger: "vision",
       vlm_answer: "vision_raw",
       vision_state_update: "vision",
+      reconcile: "world",
+      world_state: "world",
+      people_state: "world",
       world_update: "world",
       user_speech_started: "stt",
       user_transcript_final: "stt",
@@ -2300,14 +2344,13 @@
   let activeTurnSummaryKey = null;
   let activeReplyKey = null;
   let activePostResponseKey = null;
-  let activeWorldUpdateKey = null;
   let streamKey = 0;
   const streamEventIdToKey = new Map();
   let selectedStreamKey = null;
   let compactMode = false;
   let timelineWindowSeconds = 30;
   let followLive = true;
-  let activeDetailTab = "prompts";
+  let activeDetailTab = "payload";
   const promptTraceEvents = [];
   let isTimelineDragging = false;
   let dragStartX = 0;
@@ -2384,7 +2427,7 @@
       scope: "event",
       tabs: [
         {id: "prompts", tabId: "tab-prompts", paneId: "detail-prompts-pane", title: "Prompt Preview", scope: "event"},
-        {id: "payload", tabId: "tab-payload", paneId: "detail-payload-pane", title: "Debug Event JSON", scope: "event"},
+        {id: "payload", tabId: "tab-payload", paneId: "detail-payload-pane", title: "Payload JSON", scope: "event"},
       ],
     },
   ];
@@ -3366,7 +3409,6 @@
       activeTurnSummaryKey,
       activeReplyKey,
       activePostResponseKey,
-      activeWorldUpdateKey,
       selectedStreamKey,
       streamKey,
       lastSeq,
@@ -3414,7 +3456,6 @@
     activeTurnSummaryKey = liveTimelineSnapshot.activeTurnSummaryKey || null;
     activeReplyKey = liveTimelineSnapshot.activeReplyKey || null;
     activePostResponseKey = liveTimelineSnapshot.activePostResponseKey || null;
-    activeWorldUpdateKey = liveTimelineSnapshot.activeWorldUpdateKey || null;
     selectedStreamKey = liveTimelineSnapshot.selectedStreamKey || null;
     streamKey = liveTimelineSnapshot.streamKey || 0;
     lastSeq = liveTimelineSnapshot.lastSeq || 0;
@@ -3887,7 +3928,6 @@
     if (activeTurnSummaryKey && !streamEventByKey.has(activeTurnSummaryKey)) activeTurnSummaryKey = null;
     if (activeReplyKey && !streamEventByKey.has(activeReplyKey)) activeReplyKey = null;
     if (activePostResponseKey && !streamEventByKey.has(activePostResponseKey)) activePostResponseKey = null;
-    if (activeWorldUpdateKey && !streamEventByKey.has(activeWorldUpdateKey)) activeWorldUpdateKey = null;
     if (selectedStreamKey && !streamEventByKey.has(selectedStreamKey)) selectedStreamKey = null;
   }
 
@@ -3906,7 +3946,6 @@
       if (activeTurnSummaryKey === event.key) activeTurnSummaryKey = null;
       if (activeReplyKey === event.key) activeReplyKey = null;
       if (activePostResponseKey === event.key) activePostResponseKey = null;
-      if (activeWorldUpdateKey === event.key) activeWorldUpdateKey = null;
       if (hoveredStreamDotKey === event.key) {
         hoveredStreamDotKey = "";
         hideStreamHoverCard();
@@ -4321,7 +4360,6 @@
       activeTurnSummaryKey || "",
       activeReplyKey || "",
       activePostResponseKey || "",
-      activeWorldUpdateKey || "",
       hoveredStreamDotKey || "",
     ].filter(Boolean));
     const compactLimit = Math.max(0, liveEvents.length - LIVE_EVENT_COMPACTION_HOT_COUNT);
@@ -5018,7 +5056,10 @@
   function promptTraceBlocksForEvent(event) {
     if (!event) return [];
     if (Array.isArray(event.data?.prompt_blocks) && event.data.prompt_blocks.length) {
-      return event.data.prompt_blocks;
+      return event.data.prompt_blocks.map((block) => ({
+        ...block,
+        trace_source: block.trace_source || "attached",
+      }));
     }
     const desired = {
       turn_summary: ["chat", "thought", "script_check", "director", "next_beat", "plan"],
@@ -5030,6 +5071,7 @@
       post_response: ["thought", "script_check", "director", "next_beat", "plan"],
       plan: ["next_beat", "plan"],
       vision_focus: ["visual_focus"],
+      reconcile: ["reconcile"],
       vision_snapshot: ["vision_synthesis"],
       world_update: ["reconcile"],
     }[event.type] || [];
@@ -5072,6 +5114,7 @@
       finished_at: trace.finished_at || null,
       rendered_prompt: trace.rendered_prompt || _renderMessagesText(trace.messages || []),
       output: trace.output || "",
+      trace_source: "inferred",
     }));
   }
 
@@ -5089,7 +5132,10 @@
   }
 
   function promptMetaText(block) {
-    const parts = [block.provider, block.model].filter(Boolean);
+    const traceSource = block.trace_source === "attached"
+      ? "attached trace"
+      : (block.trace_source === "inferred" ? "inferred nearby trace" : "");
+    const parts = [traceSource, block.provider, block.model].filter(Boolean);
     const startedAt = Number(block.started_at || 0);
     const finishedAt = Number(block.finished_at || startedAt);
     if (startedAt && finishedAt && finishedAt >= startedAt) {
@@ -5110,6 +5156,29 @@
     const cleaned = text.replace(/\s+\n/g, "\n").trim();
     if (!cleaned) return "No prompt text captured.";
     return cleaned.length > 360 ? `${cleaned.slice(0, 360).trimEnd()}...` : cleaned;
+  }
+
+  function fullEventEnvelopeForInspector(event) {
+    if (!event) return {};
+    return {
+      key: event.key,
+      type: event.type,
+      source_type: event.sourceType || event.type,
+      lane: event.lane,
+      timestamp_s: Number(relativeTime(event.timestamp).toFixed(3)),
+      seq: event.seq || 0,
+      turn_id: event.turnId || null,
+      superseded: !!event.superseded,
+      debug_only: !!event.debugOnly,
+      compacted: !!event.compacted,
+      label: event.label || "",
+      detail: event.detail || "",
+      data: event.data || {},
+    };
+  }
+
+  function payloadJsonForInspector(event) {
+    return event?.data || {};
   }
 
   function promptBlockDetailHtml(block) {
@@ -5233,25 +5302,6 @@
     setSidebarWidth(sidebar);
   }
 
-  function nearestVisualContext(event) {
-    if (!event) return {focus: null, snapshot: null};
-    let focus = null;
-    let snapshot = null;
-    for (let i = streamEvents.length - 1; i >= 0; i -= 1) {
-      const candidate = streamEvents[i];
-      if (candidate.timestamp > event.timestamp) continue;
-      const delta = event.timestamp - candidate.timestamp;
-      if (candidate.type === "vision_pass" && delta <= 12) {
-        if (!focus && candidate.data?.focus) focus = {data: candidate.data.focus, timestamp: candidate.timestamp};
-        if (!snapshot && candidate.data?.snapshot) snapshot = {data: candidate.data.snapshot, timestamp: candidate.timestamp};
-      }
-      if (!focus && candidate.type === "vision_focus" && delta <= 12) focus = candidate;
-      if (!snapshot && candidate.type === "vision_snapshot" && delta <= 12) snapshot = candidate;
-      if (focus && snapshot) break;
-    }
-    return {focus, snapshot};
-  }
-
   function visionPassFocus(event) {
     const base = event?.data?.focus || null;
     const traceFocus = event?.data?.source_trace?.focus || null;
@@ -5296,11 +5346,11 @@
       if (!candidate || candidate.key === event.key) return;
       let linked = false;
       if (eventTurn && candidate.turnId === eventTurn) linked = true;
-      if (!linked && !eventTurn && Math.abs(candidate.timestamp - event.timestamp) <= 1.5 && ["world_update", "assistant_reply", "post_response"].includes(candidate.type)) {
+      if (!linked && !eventTurn && Math.abs(candidate.timestamp - event.timestamp) <= 1.5 && ["reconcile", "world_state", "people_state", "world_update", "assistant_reply", "post_response"].includes(candidate.type)) {
         linked = true;
       }
       if (!linked) return;
-      if (!["world_update", "assistant_reply", "post_response"].includes(candidate.type)) return;
+      if (!["reconcile", "world_state", "people_state", "world_update", "assistant_reply", "post_response"].includes(candidate.type)) return;
       if (seen.has(candidate.key)) return;
       seen.add(candidate.key);
       results.push(candidate);
@@ -5615,128 +5665,6 @@
       sections.push(structureSection("World Impact", items));
     }
     return sections.filter(Boolean);
-  }
-
-  function renderStructuredDetail(event) {
-    const root = document.getElementById("detail-structure");
-    const grid = document.getElementById("detail-structure-grid");
-    root.classList.remove("active");
-    grid.innerHTML = "";
-    if (!event) return;
-
-    const html = structuredSectionsForEvent(event).join("");
-    if (!html) return;
-    grid.innerHTML = html;
-    root.classList.add("active");
-  }
-
-  function renderSourceTrace(event) {
-    const root = document.getElementById("detail-trace");
-    const summary = document.getElementById("detail-trace-summary");
-    const chips = document.getElementById("detail-trace-chips");
-    root.classList.remove("active");
-    summary.textContent = "";
-    chips.innerHTML = "";
-    if (!event) return;
-
-    const trace = event.data?.source_trace || null;
-    const visualContext = nearestVisualContext(event);
-    const chipList = [];
-    const lines = [];
-
-    if (event.type === "perception" || event.type === "vision_pass") {
-      const provenance = traceProvenance(trace);
-      lines.push(`source: ${event.data?.source || "unknown"}`);
-      if (event.type === "vision_pass") {
-        lines[0] = "source: visual";
-      }
-      if (trace?.kind) lines.push(`derived by: ${trace.kind}`);
-      if (event.type === "vision_pass" && !trace?.kind) lines.push("derived by: vision_synthesis");
-      if (provenance?.label) lines.push(`provenance: ${provenance.label}`);
-      if (provenance?.primary) lines.push(`primary: ${provenance.primary}`);
-      if (provenance?.components?.length) lines.push(`components: ${provenance.components.join(", ")}`);
-      if (trace?.identity) lines.push(`identity: ${trace.identity}`);
-      if (trace?.object_labels?.length) chipList.push(...trace.object_labels.slice(0, 5).map((item) => `object ${item}`));
-      if (provenance?.label) chipList.push(`prov ${provenance.label}`);
-      if (provenance?.primary) chipList.push(`via ${provenance.primary}`);
-      if (trace?.vlm_answers?.length) {
-        chipList.push(...trace.vlm_answers.slice(0, 3).map((item) => `${item.label || item.task_id || item.question || "vision"}: ${item.answer || ""}`));
-      }
-      if (trace?.supporting_answers?.length) {
-        chipList.push(...trace.supporting_answers.slice(0, 2).map((item) => `supports ${item.question || "vision"}`));
-      }
-      if (trace?.contradicting_answers?.length) {
-        chipList.push(...trace.contradicting_answers.slice(0, 2).map((item) => `contradicts ${item.question || "vision"}`));
-      }
-      if (trace?.focus?.ephemeral_questions?.length) {
-        chipList.push(...trace.focus.ephemeral_questions.slice(0, 3).map((item) => `q ${item}`));
-      }
-      if (trace?.focus?.ephemeral_sam_targets?.length) {
-        chipList.push(...trace.focus.ephemeral_sam_targets.slice(0, 3).map((item) => `sam ${item}`));
-      }
-      const passSnapshot = event.type === "vision_pass" ? visionPassSnapshot(event) : null;
-      const passFocus = event.type === "vision_pass" ? visionPassFocus(event) : null;
-      if (passSnapshot) {
-        lines.push(`snapshot: faces ${passSnapshot.faces ?? 0} · people ${passSnapshot.persons ?? 0} · objects ${passSnapshot.objects ?? event.data?.object_count ?? 0}`);
-        const answers = passSnapshot.vlm_answers || [];
-        const labels = passSnapshot.object_labels || [];
-        chipList.push(...labels.slice(0, 4).map((item) => `object ${item}`));
-        chipList.push(...answers.slice(0, 3).map((item) => typeof item === "string" ? item : `${item.label || item.task_id || item.question || "vision"}: ${item.answer || ""}`));
-      } else if ((!trace || event.type === "vision_pass") && visualContext.snapshot) {
-        lines.push(`nearest vision snapshot: +${relativeTime(visualContext.snapshot.timestamp).toFixed(2)}s`);
-        const answers = visualContext.snapshot.data?.vlm_answers || [];
-        const labels = visualContext.snapshot.data?.object_labels || [];
-        chipList.push(...labels.slice(0, 4).map((item) => `object ${item}`));
-        chipList.push(...answers.slice(0, 3).map((item) => {
-          if (typeof item === "string") return item;
-          return `${item.label || item.task_id || item.question || "vision"}: ${item.answer || ""}`;
-        }));
-      }
-      if (passFocus && !trace?.focus) {
-        chipList.push(...(passFocus.ephemeral_questions || []).slice(0, 3).map((item) => `q ${item}`));
-        chipList.push(...(passFocus.ephemeral_sam_targets || []).slice(0, 3).map((item) => `sam ${item}`));
-      } else if (visualContext.focus && !trace?.focus) {
-        const focusData = visualContext.focus.data || {};
-        chipList.push(...(focusData.ephemeral_questions || []).slice(0, 3).map((item) => `q ${item}`));
-        chipList.push(...(focusData.ephemeral_sam_targets || []).slice(0, 3).map((item) => `sam ${item}`));
-      }
-    } else if (event.type === "vision_snapshot") {
-      lines.push("source: live vision snapshot");
-      const focus = event.data?.focus || visualContext.focus?.data || null;
-      if (focus?.ephemeral_questions?.length) chipList.push(...focus.ephemeral_questions.slice(0, 3).map((item) => `q ${item}`));
-      if (focus?.ephemeral_sam_targets?.length) chipList.push(...focus.ephemeral_sam_targets.slice(0, 3).map((item) => `sam ${item}`));
-      const answers = event.data?.vlm_answers || [];
-      chipList.push(...answers.slice(0, 3).map((item) => typeof item === "string" ? item : `${item.label || item.task_id || item.question || "vision"}: ${item.answer || ""}`));
-    } else if (event.type === "vision_snapshot_read" || event.type === "face_tracking" || event.type === "sam3_detection" || event.type === "reid_track" || event.type === "vision_trigger" || event.type === "vision_state_update" || event.type === "vlm_answer") {
-      if (event.data?.vision_cycle_id) lines.push(`cycle: ${event.data.vision_cycle_id}`);
-      const upstream = inputEventIdsFor(event);
-      if (upstream.length) lines.push(`inputs: ${upstream.join(", ")}`);
-      if (event.type === "face_tracking") {
-        chipList.push(...(event.data?.faces || []).slice(0, 4).map((item) => `${item.identity || "unknown"}${formatBbox(item.bbox) ? ` · ${formatBbox(item.bbox)}` : ""}`));
-      } else if (event.type === "sam3_detection") {
-        chipList.push(...(event.data?.objects || []).slice(0, 4).map((item) => `object ${item.label || "unknown"}`));
-        chipList.push(...(event.data?.persons || []).slice(0, 3).map((item) => `person ${item.identity || item.track_id || "?"}`));
-      } else if (event.type === "vision_trigger") {
-        if (event.data?.signal) chipList.push(`signal ${event.data.signal}`);
-        if (event.data?.rule?.source) chipList.push(`via ${event.data.rule.source}`);
-      } else if (event.type === "vision_state_update") {
-        if (visionStateSummaryText(event.data)) chipList.push(visionStateSummaryText(event.data));
-        chipList.push(...(event.data?.task_answers || []).slice(0, 2).map((item) => `task ${item.label || item.task_id || "vision"}`));
-      } else if (event.type === "reid_track") {
-        if (event.data?.identity) chipList.push(`identity ${event.data.identity}`);
-        if (event.data?.identity_source) chipList.push(`via ${event.data.identity_source}`);
-      } else if (event.type === "vlm_answer") {
-        if (event.data?.label || event.data?.task_id) chipList.push(`task ${event.data.label || event.data.task_id}`);
-        if (event.data?.answer) chipList.push(event.data.answer);
-      } else if (event.type === "vision_snapshot_read") {
-        chipList.push(...(event.data?.object_labels || []).slice(0, 4).map((item) => `object ${item}`));
-      }
-    }
-
-    if (!lines.length && !chipList.length) return;
-    summary.textContent = lines.join(" · ");
-    chips.innerHTML = chipList.map((item) => `<span class="trace-chip">${esc(item)}</span>`).join("");
-    root.classList.add("active");
   }
 
   function bootChip(label, state, detail) {
@@ -6288,7 +6216,6 @@
     activeTurnSummaryKey = null;
     activeReplyKey = null;
     activePostResponseKey = null;
-    activeWorldUpdateKey = null;
     selectedStreamKey = null;
     streamKey = 0;
     lastSeq = 0;
@@ -6308,6 +6235,7 @@
     setArchiveMediaStatus("");
     clearAnnotationState();
     setPromptModalOpen(false);
+    document.getElementById("inspector-summary-title").textContent = "Debug Timeline Event";
     document.getElementById("h-session").textContent = "--";
     document.getElementById("h-stage").textContent = "--";
     resetSidebarPanelContentAll();
@@ -6316,17 +6244,12 @@
     detailTurnContext.classList.remove("active");
     detailTurnBadge.textContent = "turn";
     detailTurnGrid.innerHTML = "";
-    document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Raw event JSON appears here for the selected item.\"\n}";
+    document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Event payload JSON appears here for the selected item.\"\n}";
     document.getElementById("detail-prompts").innerHTML = '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-prompts-pane").classList.add("compact-empty");
     document.getElementById("detail-loop").classList.remove("active");
     document.getElementById("detail-loop-track").innerHTML = "";
     document.getElementById("detail-loop-chips").innerHTML = "";
-    document.getElementById("detail-trace").classList.remove("active");
-    document.getElementById("detail-trace-summary").textContent = "";
-    document.getElementById("detail-trace-chips").innerHTML = "";
-    document.getElementById("detail-structure").classList.remove("active");
-    document.getElementById("detail-structure-grid").innerHTML = "";
     detailContinueFromEventButton.disabled = true;
     detailOpenJsonButton.disabled = true;
     detailWarning.style.display = "none";
@@ -6372,7 +6295,6 @@
     activeTurnSummaryKey = null;
     activeReplyKey = null;
     activePostResponseKey = null;
-    activeWorldUpdateKey = null;
     selectedStreamKey = null;
     streamKey = 0;
     lastSeq = 0;
@@ -6392,6 +6314,7 @@
     setArchiveMediaStatus("");
     clearAnnotationState();
     setPromptModalOpen(false);
+    document.getElementById("inspector-summary-title").textContent = "Debug Timeline Event";
     conversationPaused = true;
     voiceActive = false;
     voiceStatus = {
@@ -6427,17 +6350,12 @@
     detailTurnContext.classList.remove("active");
     detailTurnBadge.textContent = "turn";
     detailTurnGrid.innerHTML = "";
-    document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Raw event JSON appears here for the selected item.\"\n}";
+    document.getElementById("detail-payload").textContent = "{\n  \"note\": \"Event payload JSON appears here for the selected item.\"\n}";
     document.getElementById("detail-prompts").innerHTML = '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-prompts-pane").classList.add("compact-empty");
     document.getElementById("detail-loop").classList.remove("active");
     document.getElementById("detail-loop-track").innerHTML = "";
     document.getElementById("detail-loop-chips").innerHTML = "";
-    document.getElementById("detail-trace").classList.remove("active");
-    document.getElementById("detail-trace-summary").textContent = "";
-    document.getElementById("detail-trace-chips").innerHTML = "";
-    document.getElementById("detail-structure").classList.remove("active");
-    document.getElementById("detail-structure-grid").innerHTML = "";
     detailContinueFromEventButton.disabled = true;
     detailOpenJsonButton.disabled = true;
     detailWarning.style.display = "none";
@@ -6713,10 +6631,6 @@
       const payload = await response.json();
       scenarioSourceCharacter = name;
       scenarioStageSourceByName = new Map(Object.entries(payload?.stages || {}).map(([stageName, item]) => [stageName, item]));
-      const selected = selectedEvent();
-      if (selected && isVisualStageAdvanceEvent(selected)) {
-        renderStructuredDetail(selected);
-      }
       return true;
     } catch (_) {
       return false;
@@ -7217,6 +7131,25 @@
           data.plan_request || "",
           data.director_thought || ""
         ].filter(Boolean).join(" · ");
+      case "reconcile":
+        return [
+          (data.events || [])[0] || "",
+          (data.add_facts || [])[0] || "",
+        ].filter(Boolean).join(" · ");
+      case "world_state": {
+        const latest = [
+          ...((data.static_facts || []).map((fact) => fact?.text || fact)),
+          ...((data.dynamic_facts || []).map((fact) => fact?.text || fact)),
+          ...(data.pending || []),
+        ].filter(Boolean);
+        return latest.length ? latest[latest.length - 1] : "";
+      }
+      case "people_state": {
+        const names = (data.people || [])
+          .map((person) => person?.name || person?.id || "")
+          .filter(Boolean);
+        return names.join(" · ");
+      }
       case "world_update":
         return [
           data.latest_event || "",
@@ -8456,13 +8389,12 @@
   function ensureCompoundEvent(type, rawEvent, seedData) {
     const activeKey = type === "turn_summary"
       ? activeTurnSummaryKey
-      : (type === "post_response" ? activePostResponseKey : activeWorldUpdateKey);
+      : activePostResponseKey;
     let event = activeKey ? streamEventByKey.get(activeKey) : null;
     if (!event || event.turnId !== (rawEvent.turnId || null)) {
       event = addStreamEvent(type, {...seedData}, rawEvent);
       if (type === "turn_summary") activeTurnSummaryKey = event.key;
-      else if (type === "post_response") activePostResponseKey = event.key;
-      else activeWorldUpdateKey = event.key;
+      else activePostResponseKey = event.key;
     }
     event.turnId = rawEvent.turnId || event.turnId;
     event.timestamp = Number(rawEvent.timestamp || event.timestamp);
@@ -8490,7 +8422,6 @@
     activeTurnSummaryKey = null;
     activeReplyKey = null;
     activePostResponseKey = null;
-    activeWorldUpdateKey = null;
   }
 
   function selectEvent(key, options = {}) {
@@ -8502,7 +8433,8 @@
     document.getElementById("detail-time").textContent = `+${relativeTime(event.timestamp).toFixed(2)}s`;
     document.getElementById("detail-type").textContent = event.type;
     document.getElementById("detail-lane").textContent = event.lane;
-    document.getElementById("detail-seq").textContent = `seq ${event.seq || 0}`;
+    document.getElementById("detail-seq").textContent = eventUidText(event) || "seq 0";
+    document.getElementById("inspector-summary-title").textContent = `${displayEventType(event.type)}${eventUidText(event) ? ` ${eventUidText(event)}` : ""}`;
     document.getElementById("detail-label").textContent = event.label || "";
     document.getElementById("detail-detail").textContent = event.detail || "No compact detail";
     const warnings = [];
@@ -8516,12 +8448,10 @@
       detailWarning.style.display = "none";
       detailWarning.textContent = "";
     }
-    document.getElementById("detail-payload").textContent = JSON.stringify(event.data || {}, null, 2);
+    document.getElementById("detail-payload").textContent = JSON.stringify(payloadJsonForInspector(event), null, 2);
     if (isVisualStageAdvanceEvent(event)) ensureScenarioSourceLoaded();
     renderPromptBlocks(promptTraceBlocksForEvent(event));
     renderLoopTiming(event);
-    renderSourceTrace(event);
-    renderStructuredDetail(event);
     renderTurnContext(event);
     renderSelectedEventAnnotations();
     renderInspectorFrame(event);
@@ -8539,20 +8469,9 @@
   function openSelectedEventJson() {
     const event = selectedEvent();
     if (!event) return;
-    const payload = selectedEventBundle(event) || {
-      event: {
-        key: event.key,
-        type: event.type,
-        lane: event.lane,
-        seq: event.seq || 0,
-        time_s: Number(relativeTime(event.timestamp).toFixed(2)),
-        label: event.label,
-        detail: event.detail,
-        data: event.data || {},
-      },
-    };
+    const payload = fullEventEnvelopeForInspector(event);
     const json = JSON.stringify(payload, null, 2);
-    const html = `<!doctype html><html><head><title>${esc(`${event.type || "event"} · JSON`)}</title><style>
+    const html = `<!doctype html><html><head><title>${esc(`${event.type || "event"}${eventUidText(event) ? ` · ${eventUidText(event)}` : ""} · JSON`)}</title><style>
       body{margin:0;padding:16px;background:#171717;color:#e6dfd0;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;}
       pre{white-space:pre-wrap;word-break:break-word;margin:0;}
     </style></head><body><pre>${esc(json)}</pre></body></html>`;
@@ -8560,7 +8479,7 @@
     const win = window.open(url, "_blank");
     if (!win) {
       setDetailTab("payload");
-      annotationStatus.textContent = "Popup blocked. Showing JSON in the inspector instead.";
+      annotationStatus.textContent = "Popup blocked. Showing event JSON in the inspector instead.";
       return;
     }
     window.setTimeout(() => URL.revokeObjectURL(url), 30000);
@@ -8585,7 +8504,7 @@
     if (["vision_snapshot_read", "face_tracking", "sam3_detection", "reid_track", "vision_trigger", "vision_state_update", "vlm_answer"].includes(event.type)) {
       return Math.max(180, Math.min(300, 150 + event.label.length * 2));
     }
-    if (event.type === "post_response" || event.type === "world_update") {
+    if (event.type === "post_response" || event.type === "world_update" || event.type === "reconcile" || event.type === "world_state" || event.type === "people_state") {
       return Math.max(220, Math.min(360, 180 + event.label.length * 2.4));
     }
     return Math.max(170, Math.min(320, 130 + event.label.length * 2.4));
@@ -8598,7 +8517,7 @@
     if (event.type === "response_interrupted") return 84;
     if (event.type === "vision_pass") return 132;
     if (["vision_snapshot_read", "face_tracking", "sam3_detection", "reid_track", "vision_trigger", "vision_state_update", "vlm_answer"].includes(event.type)) return 84;
-    if (event.type === "post_response" || event.type === "world_update") return 84;
+    if (event.type === "post_response" || event.type === "world_update" || event.type === "reconcile" || event.type === "world_state" || event.type === "people_state") return 84;
     if (event.detail) return 72;
     return 58;
   }
@@ -8760,7 +8679,7 @@
   function showStreamHoverCard(event, pointerEvent) {
     if (!streamHoverCard || !event || !pointerEvent) return;
     streamHoverCard.innerHTML = `
-      <div class="stream-dot-preview-type">${esc(event.type)}</div>
+      <div class="stream-dot-preview-type">${esc(event.type)}${eventUidText(event) ? ` · ${esc(eventUidText(event))}` : ""}</div>
       <div class="stream-dot-preview-label">${esc(event.label || event.type)}</div>
       ${event.detail ? `<div class="stream-dot-preview-detail">${esc(event.detail)}</div>` : ""}
     `;
@@ -8803,14 +8722,48 @@
     return `<div class="reply-markers">${markers.map((marker) => `<span class="reply-marker">${esc(marker)}</span>`).join("")}</div>`;
   }
 
+  function eventUidText(event) {
+    const seq = Number(event?.seq || 0);
+    if (Number.isFinite(seq) && seq > 0) return `#${seq}`;
+    const key = String(event?.key || "").trim();
+    return key ? key : "";
+  }
+
+  function compactCardText(value, max = 72) {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    if (!text) return "";
+    return text.length > max ? `${text.slice(0, max).trimEnd()}...` : text;
+  }
+
+  function normalizedCardItems(items, {max = 3, textMax = 56} = {}) {
+    const seen = new Set();
+    const normalized = [];
+    for (const item of items || []) {
+      const text = compactCardText(item, textMax);
+      if (!text) continue;
+      const key = text.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      normalized.push(text);
+      if (normalized.length >= max) break;
+    }
+    return normalized;
+  }
+
+  function renderCardChips(items, options = {}) {
+    const chips = normalizedCardItems(items, options);
+    if (!chips.length) return "";
+    return `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>`;
+  }
+
   function renderVisionAnswers(answers) {
     if (!answers || !answers.length) return "";
-    return `<div class="reply-markers">${answers.slice(0, 3).map((answer) => {
+    return renderCardChips(answers.slice(0, 3).map((answer) => {
       const label = typeof answer === "string"
         ? answer
         : `${answer.label || answer.task_id || answer.question || "vision"}: ${answer.answer || ""}`;
-      return `<span class="reply-marker">${esc(label)}</span>`;
-    }).join("")}</div>`;
+      return label;
+    }), {max: 3, textMax: 64});
   }
 
   function formatBbox(bbox) {
@@ -8871,7 +8824,42 @@
       return `
         <div class="stream-card-label">${esc(event.label)}</div>
         ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
-        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+        ${renderCardChips(chips, {max: 3, textMax: 30})}
+      `;
+    }
+    if (event.type === "reconcile") {
+      const chips = [
+        (event.data.add_facts || []).length ? `+${event.data.add_facts.length} fact${event.data.add_facts.length === 1 ? "" : "s"}` : "",
+        (event.data.remove_facts || []).length ? `-${event.data.remove_facts.length} fact${event.data.remove_facts.length === 1 ? "" : "s"}` : "",
+        (event.data.events || []).length ? `~${event.data.events.length} event${event.data.events.length === 1 ? "" : "s"}` : "",
+      ].filter(Boolean);
+      return `
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${renderCardChips(chips, {max: 3, textMax: 28})}
+      `;
+    }
+    if (event.type === "world_state") {
+      const factCount = (event.data.static_facts || []).length + (event.data.dynamic_facts || []).length;
+      const pendingCount = (event.data.pending || []).length;
+      const chips = [
+        factCount ? `${factCount} fact${factCount === 1 ? "" : "s"}` : "",
+        pendingCount ? `${pendingCount} pending` : "",
+      ].filter(Boolean);
+      return `
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${renderCardChips(chips, {max: 2, textMax: 24})}
+      `;
+    }
+    if (event.type === "people_state") {
+      const chips = (event.data.people || [])
+        .slice(0, 3)
+        .map((person) => person?.name || person?.id || "")
+        .filter(Boolean);
+      return `
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${renderCardChips(chips, {max: 3, textMax: 24})}
       `;
     }
     if (event.type === "world_update") {
@@ -8904,8 +8892,8 @@
       ];
       return `
         <div class="stream-card-label">${esc(event.label)}</div>
-        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
-        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+        ${event.data.stage_goal ? `<div class="stream-card-detail">${esc(compactCardText(event.data.stage_goal, 84))}</div>` : ""}
+        ${renderCardChips(chips, {max: 3, textMax: 34})}
       `;
     }
     if (event.type === "vision_snapshot_read") {
@@ -8916,8 +8904,7 @@
       return `
         <div class="stream-card-kicker">snapshot</div>
         <div class="stream-card-label">${esc(event.label)}</div>
-        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
-        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+        ${renderCardChips(chips, {max: 3, textMax: 24})}
       `;
     }
     if (event.type === "face_tracking") {
@@ -8925,8 +8912,7 @@
       return `
         <div class="stream-card-kicker">insight</div>
         <div class="stream-card-label">${esc(event.label)}</div>
-        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
-        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+        ${renderCardChips(chips, {max: 2, textMax: 40})}
       `;
     }
     if (event.type === "sam3_detection") {
@@ -8937,42 +8923,40 @@
       return `
         <div class="stream-card-kicker">sam3</div>
         <div class="stream-card-label">${esc(event.label)}</div>
-        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
-        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+        ${renderCardChips(chips, {max: 3, textMax: 26})}
       `;
     }
     if (event.type === "reid_track") {
       return `
         <div class="stream-card-kicker">reid</div>
         <div class="stream-card-label">${esc(event.label)}</div>
-        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
-        ${event.data.identity ? `<div class="stream-card-subdetail">${esc(event.data.identity)}</div>` : ""}
+        ${renderCardChips([event.data.identity || "", event.data.identity_source ? `via ${event.data.identity_source}` : ""], {max: 2, textMax: 26})}
       `;
     }
     if (event.type === "vision_trigger") {
       return `
         <div class="stream-card-kicker">trigger</div>
         <div class="stream-card-label">${esc(event.label)}</div>
-        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
-        ${event.data.signal ? `<div class="stream-card-subdetail">${esc(event.data.signal)}</div>` : ""}
+        ${renderCardChips([event.data.signal || "", event.data.rule?.source ? `via ${event.data.rule.source}` : ""], {max: 2, textMax: 26})}
       `;
     }
     if (event.type === "vision_state_update") {
-      const resolvedSummary = visionStateSummaryText(event.data);
-      const secondarySummary = String(event.data.summary || "").trim();
+      const writeChips = [
+        (event.data.add_facts || []).length ? `world +${event.data.add_facts.length}` : "",
+        (event.data.events || []).length ? `events ${event.data.events.length}` : "",
+        (event.data.person_updates || []).length ? `people ${event.data.person_updates.length}` : "",
+      ];
       return `
         <div class="stream-card-kicker">vision llm</div>
         <div class="stream-card-label">${esc(event.label)}</div>
-        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
-        ${secondarySummary && !isGenericVisionStateSummary(secondarySummary) && secondarySummary !== resolvedSummary ? `<div class="stream-card-subdetail">${esc(secondarySummary)}</div>` : ""}
+        ${renderCardChips(writeChips, {max: 3, textMax: 18})}
       `;
     }
     if (event.type === "vlm_answer") {
       return `
         <div class="stream-card-kicker">vlm</div>
         <div class="stream-card-label">${esc(event.label)}</div>
-        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
-        ${(event.data.label || event.data.task_id) ? `<div class="stream-card-subdetail">${esc(event.data.label || event.data.task_id)}</div>` : ""}
+        ${renderCardChips([event.data.label || event.data.task_id || "", event.data.target ? `target ${event.data.target}` : ""], {max: 2, textMax: 28})}
       `;
     }
     if (event.type === "vision_pass") {
@@ -8990,22 +8974,19 @@
       return `
         <div class="stream-card-kicker">vision pass</div>
         <div class="stream-card-label">${esc(event.label)}</div>
-        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
-        ${secondary ? `<div class="stream-card-subdetail">${esc(secondary)}</div>` : ""}
-        ${tertiary ? `<div class="stream-card-subdetail">objects: ${esc(tertiary)}</div>` : ""}
-        ${(metricChips.length || focusBits.length) ? `<div class="stream-card-metrics">${[...metricChips, ...focusBits].map((chip) => `<span class="stream-metric">${esc(chip)}</span>`).join("")}</div>` : ""}
+        ${secondary ? `<div class="stream-card-detail">${esc(compactCardText(secondary, 84))}</div>` : ""}
+        ${(metricChips.length || focusBits.length || tertiary) ? `<div class="stream-card-metrics">${normalizedCardItems([...metricChips, ...focusBits, tertiary ? `objects ${tertiary}` : ""], {max: 3, textMax: 28}).map((chip) => `<span class="stream-metric">${esc(chip)}</span>`).join("")}</div>` : ""}
       `;
     }
     if (event.type === "perception") {
       const chips = [
         event.data.source ? `source ${event.data.source}` : "",
         ...(event.data.source_trace?.object_labels || []).slice(0, 3).map((item) => `object ${item}`),
-        ...((event.data.source_trace?.vlm_answers || []).slice(0, 2).map((item) => `${item.label || item.task_id || item.question || "vision"}: ${item.answer || ""}`)),
+        ...((event.data.source_trace?.vlm_answers || []).slice(0, 1).map((item) => `${item.label || item.task_id || item.question || "vision"}: ${item.answer || ""}`)),
       ].filter(Boolean);
       return `
         <div class="stream-card-label">${esc(event.label)}</div>
-        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
-        ${chips.length ? `<div class="reply-markers">${chips.map((chip) => `<span class="reply-marker">${esc(chip)}</span>`).join("")}</div>` : ""}
+        ${renderCardChips(chips, {max: 3, textMax: 34})}
       `;
     }
     return `
@@ -9223,7 +9204,10 @@
   function renderLaneCard(event, left, top, width, height) {
     return `<article class="stream-card type-${esc(typeClass(event.type))}${compactMode ? " compact" : ""}${event.superseded ? " superseded" : ""}" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" data-turn-id="${esc(event.turnId != null ? String(event.turnId) : "")}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;">
       <div class="stream-card-head">
-        <span class="stream-card-type">${esc(displayEventType(event.type))}</span>
+        <span class="stream-card-type-wrap">
+          <span class="stream-card-type">${esc(displayEventType(event.type))}</span>
+          ${eventUidText(event) ? `<span class="stream-card-uid">${esc(eventUidText(event))}</span>` : ""}
+        </span>
         <span style="display:flex;align-items:center;gap:0.35em;">
           ${renderStateBadges(event)}
           ${renderAnnotationBadge(event)}
@@ -9638,28 +9622,7 @@
 
     reconcile(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
-      const event = ensureCompoundEvent("world_update", rawEvent, {
-        add_count: 0,
-        remove_count: 0,
-        event_count: 0,
-        fact_count: 0,
-        people_count: 0,
-        latest_event: "",
-        latest_fact: "",
-        facts: [],
-        events: [],
-        people: [],
-      });
-      event.data.add_count += (data.add_facts || []).length;
-      event.data.remove_count += (data.remove_facts || []).length;
-      event.data.event_count += (data.events || []).length;
-      event.data.facts.push(...(data.add_facts || []));
-      event.data.events.push(...(data.events || []));
-      if (data.events && data.events.length) event.data.latest_event = data.events[data.events.length - 1];
-      if (data.add_facts && data.add_facts.length) event.data.latest_fact = data.add_facts[data.add_facts.length - 1];
-      event.label = previewText("world_update", event.data);
-      event.detail = detailText("world_update", event.data);
-      renderStream();
+      recordEvent("reconcile", data, rawEvent);
     },
 
     world_state(data, rawEvent) {
@@ -9675,27 +9638,7 @@
       }
       renderSidebarPanelContent("world", html || '<span style="color:var(--text-dim)">Empty</span>', {status: html ? "ready" : "empty", visible: true});
       rawEvent.turnId = currentTurnId || null;
-      const event = ensureCompoundEvent("world_update", rawEvent, {
-        add_count: 0,
-        remove_count: 0,
-        event_count: 0,
-        fact_count: 0,
-        people_count: 0,
-        latest_event: "",
-        latest_fact: "",
-        facts: [],
-        events: [],
-        people: [],
-      });
-      const combinedFacts = [...(data.static_facts || []), ...(data.dynamic_facts || [])]
-        .map((fact) => fact?.text || fact)
-        .filter(Boolean);
-      event.data.fact_count = combinedFacts.length;
-      event.data.facts = combinedFacts;
-      if (combinedFacts.length) event.data.latest_fact = combinedFacts[combinedFacts.length - 1];
-      event.label = previewText("world_update", event.data);
-      event.detail = detailText("world_update", event.data);
-      renderStream();
+      recordEvent("world_state", data, rawEvent);
     },
 
     people_state(data, rawEvent) {
@@ -9708,23 +9651,12 @@
         }).join(""), {status: "ready", visible: true});
       }
       rawEvent.turnId = currentTurnId || null;
-      const event = ensureCompoundEvent("world_update", rawEvent, {
-        add_count: 0,
-        remove_count: 0,
-        event_count: 0,
-        fact_count: 0,
-        people_count: 0,
-        latest_event: "",
-        latest_fact: "",
-        facts: [],
-        events: [],
-        people: [],
-      });
-      event.data.people_count = (data.people || []).length;
-      event.data.people = (data.people || []).map((person) => person.name || person.id || "").filter(Boolean);
-      event.label = previewText("world_update", event.data);
-      event.detail = detailText("world_update", event.data);
-      renderStream();
+      recordEvent("people_state", data, rawEvent);
+    },
+
+    world_update(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      recordEvent("world_update", data, rawEvent);
     },
 
     stage_change(data, rawEvent) {
@@ -11475,6 +11407,9 @@
   }
 
   window.__dashboardTest = {
+    eventInventory() {
+      return cloneSnapshotPayload(DASHBOARD_EVENT_INVENTORY);
+    },
     seekArchiveTime(timeS, options = {}) {
       seekArchiveMedia(Number(timeS || 0), {syncSelection: options.syncSelection !== false});
     },
