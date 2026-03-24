@@ -41,6 +41,7 @@ from character_eng.world import (
     ExpressionResult,
     Goals,
     PlanResult,
+    ResponseGuardResult,
     Script,
     ScriptCheckResult,
     ThoughtResult,
@@ -56,6 +57,7 @@ from character_eng.world import (
     load_world_state,
     plan_call,
     reconcile_call,
+    response_guard_call,
     set_llm_trace_hook,
     script_check_call,
     thought_call,
@@ -1181,9 +1183,10 @@ def run_eval_sync(session, world, script, model_config, log, people=None, stage_
 # --- Parallel post-response microservices ---
 
 def run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal="", expression_line=None, vision_mgr=None):
-    """Run eval (script_check + thought) and director in parallel. Returns (needs_plan, plan_request, expr_result).
+    """Run post-response microservices in parallel.
 
-    When expression_line is provided, also runs expression_call in the parallel batch.
+    Returns (needs_plan, plan_request, expr_result, guard_result).
+    When expression_line is provided, also runs expression_call and response_guard_call.
     ~350ms total instead of ~1050ms sequential.
     """
     beat = script.current_beat if script else None
@@ -1191,7 +1194,7 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
     if not gaze_targets and scenario is not None and scenario.gaze_targets:
         gaze_targets = scenario.gaze_targets
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:
         # Fire all LLM calls concurrently
         fut_check = pool.submit(script_check_call, beat=beat, history=session.get_history(),
                                 model_config=model_config, world=world) if beat and _runtime_controls.get("beats", True) else None
@@ -1212,12 +1215,20 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
             model_config=model_config,
         ) if scenario and _runtime_controls.get("director", True) else None
         fut_expr = pool.submit(expression_call, expression_line, model_config, gaze_targets) if expression_line and _runtime_controls.get("expression", True) else None
+        fut_guard = pool.submit(
+            response_guard_call,
+            system_prompt=session.system_prompt,
+            history=session.get_history(),
+            reply=expression_line,
+            model_config=model_config,
+        ) if expression_line else None
 
         # Gather results
         check = None
         tresult = ThoughtResult()
         dir_result = None
         expr_result = None
+        guard_result = ResponseGuardResult()
 
         if fut_check:
             try:
@@ -1243,6 +1254,13 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
             except Exception as e:
                 console.print(f"[dim]  expression error: {e}[/dim]")
 
+        if fut_guard:
+            try:
+                guard_result = fut_guard.result()
+            except Exception as e:
+                console.print(f"[dim]  response_guard error: {e}[/dim]")
+                guard_result = ResponseGuardResult(status="warn", issues=["guard_check_error"], rationale=str(e))
+
     # Display + inject expression result
     if expr_result and (expr_result.gaze or expr_result.expression):
         gaze_label = expr_result.gaze
@@ -1254,9 +1272,24 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
             "expression": expr_result.expression,
             "prompt_blocks": _prompt_trace_blocks_for_labels(("expression",)),
         })
-        _apply_expression_runtime_context(session, expr_result)
-    elif not _runtime_controls.get("expression", True):
-        _set_runtime_context(session, "runtime_expression_tags", "")
+
+    if expression_line:
+        if guard_result.status == "fail":
+            console.print(f"[bold red]  {_ts()} guard:      fail[/bold red] [dim]{', '.join(guard_result.issues) or guard_result.rationale}[/dim]")
+        elif guard_result.status == "warn":
+            console.print(f"[yellow]  {_ts()} guard:      warn[/yellow] [dim]{', '.join(guard_result.issues) or guard_result.rationale}[/dim]")
+        _push("response_guard", {
+            "status": guard_result.status,
+            "issues": list(guard_result.issues),
+            "rationale": guard_result.rationale,
+            "prompt_blocks": _prompt_trace_blocks_for_labels(("response_guard",)),
+        })
+        log.append({
+            "type": "response_guard",
+            "status": guard_result.status,
+            "issues": list(guard_result.issues),
+            "rationale": guard_result.rationale,
+        })
 
     # Process eval result
     needs_plan = False
@@ -1339,7 +1372,7 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
             "prompt_blocks": [],
         })
 
-    return needs_plan, plan_request, expr_result
+    return needs_plan, plan_request, expr_result, guard_result
 
 
 # --- Sync director (8B microservice) ---
@@ -1416,13 +1449,13 @@ def save_chat_html(character: str, model_config: dict, log: list[dict], session_
     # Map log entries to turn divs
     turns_html = ""
     turn_num = 0
-    pending_extras: list[dict] = []  # eval/reconcile entries to attach to next turn
+    pending_extras: list[dict] = []  # post-response entries to attach to next turn
 
     for entry in log:
         etype = entry.get("type", "")
 
         # Accumulate eval/reconcile/plan entries as extras for the preceding turn
-        if etype in ("eval", "reconcile", "plan", "eval_stale", "plan_stale", "reload"):
+        if etype in ("eval", "reconcile", "plan", "response_guard", "eval_stale", "plan_stale", "reload"):
             pending_extras.append(entry)
             continue
 
@@ -1477,6 +1510,17 @@ def save_chat_html(character: str, model_config: dict, log: list[dict], session_
                 )
                 if ex.get("plan_request"):
                     extras_html += f'<div><b>plan_request:</b> {_esc(ex["plan_request"])}</div>'
+                extras_html += "</div></details>"
+            elif ex_type == "response_guard":
+                issues = ", ".join(ex.get("issues", []))
+                extras_html += (
+                    f'<details class="eval-details"><summary>guard: {_esc(ex.get("status", "pass"))}</summary>'
+                    f'<div class="eval-body">'
+                )
+                if issues:
+                    extras_html += f'<div><b>issues:</b> {_esc(issues)}</div>'
+                if ex.get("rationale"):
+                    extras_html += f'<div><b>why:</b> {_esc(ex.get("rationale", ""))}</div>'
                 extras_html += "</div></details>"
             elif ex_type == "reconcile":
                 removals = ", ".join(ex.get("remove_facts", []))
@@ -2560,7 +2604,8 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 return
             source_phase = _runtime_phase
             _review_return_phase = (
-                RuntimePhase.STARTUP_PAUSED if source_phase == RuntimePhase.STARTUP_PAUSED else RuntimePhase.PAUSED
+                RuntimePhase.LIVE if source_phase == RuntimePhase.LIVE
+                else (RuntimePhase.STARTUP_PAUSED if source_phase == RuntimePhase.STARTUP_PAUSED else RuntimePhase.PAUSED)
             )
             if announce:
                 console.print("[yellow]Reviewing session...[/yellow]")
@@ -2569,12 +2614,16 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
 
         def _cancel_review_mode() -> None:
-            restore_phase = (
-                RuntimePhase.STARTUP_PAUSED if _review_return_phase == RuntimePhase.STARTUP_PAUSED else RuntimePhase.PAUSED
-            )
+            nonlocal _arm_auto_beat
+            restore_phase = _review_return_phase
             console.print("[green]Review canceled[/green]")
             _set_runtime_phase(restore_phase)
-            if vision_mgr is not None:
+            if restore_phase == RuntimePhase.LIVE:
+                if vision_mgr is not None:
+                    vision_mgr.set_paused(False)
+                _push("resume", {"from_review": True})
+                _arm_auto_beat = True
+            elif vision_mgr is not None:
                 vision_mgr.set_paused(True)
             _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
 
@@ -2648,7 +2697,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     if cmd == "/restart":
                         return _restart_session()
                     if cmd in ("/play", "/resume", "/start"):
-                        console.print("[yellow]Review is open[/yellow] — use /cancel_review to return to the paused session first")
+                        console.print("[yellow]Review is open[/yellow] — use /cancel_review to return to the current session first")
                         continue
                 if cmd in ("/play", "/resume", "/start"):
                     is_fresh_session = _runtime_phase_is_startup_paused()
@@ -3292,7 +3341,10 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     entry["expression"] = expr.expression
                 log.append(entry)
                 _bump_version()
-                needs_plan, plan_request, _ = run_post_response(session, world, script, micro_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
+                needs_plan, plan_request, _, _ = run_post_response(
+                    session, world, script, micro_config, log, scenario, people, goals, stage_goal,
+                    expression_line=response, vision_mgr=vision_mgr,
+                )
                 # Always replan after first user input
                 if _runtime_controls.get("beats", True):
                     result = next_beat_call(
@@ -3361,7 +3413,10 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 entry["expression"] = expr.expression
             log.append(entry)
             _bump_version()
-            needs_plan, plan_request, _ = run_post_response(session, world, script, micro_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
+            needs_plan, plan_request, _, _ = run_post_response(
+                session, world, script, micro_config, log, scenario, people, goals, stage_goal,
+                expression_line=response, vision_mgr=vision_mgr,
+            )
             if needs_plan and _runtime_controls.get("beats", True):
                 result = next_beat_call(
                     system_prompt=session.system_prompt, world=world,
@@ -3469,15 +3524,8 @@ def _set_runtime_context(session, tag: str, content: str | None) -> None:
 
 
 def _apply_expression_runtime_context(session, expr_result) -> None:
-    parts = []
-    if expr_result.gaze:
-        if expr_result.gaze_type == "glance":
-            parts.append(f"[glance:{expr_result.gaze}]")
-        else:
-            parts.append(f"[gaze:{expr_result.gaze}]")
-    if expr_result.expression:
-        parts.append(f"[emote:{expr_result.expression}]")
-    _set_runtime_context(session, "runtime_expression_tags", " ".join(parts))
+    """Expression stays out of prompt history; it is runtime metadata only."""
+    return None
 
 
 def _apply_beat_guidance(session, beat) -> None:
@@ -3488,12 +3536,11 @@ def _apply_beat_guidance(session, beat) -> None:
 
 
 def run_expression(session, model_config, line=None):
-    """Run expression_call on a character line. Display + inject + return for logging.
+    """Run expression_call on a character line. Display + return for logging.
 
     If line is None, scans session history for the last assistant message.
     """
     if not _runtime_controls.get("expression", True):
-        _set_runtime_context(session, "runtime_expression_tags", "")
         return None
     if line is None:
         history = session.get_history()
@@ -3521,8 +3568,6 @@ def run_expression(session, model_config, line=None):
             "prompt_blocks": _prompt_trace_blocks_for_labels(("expression",)),
         })
 
-    _apply_expression_runtime_context(session, result)
-
     return result
 
 
@@ -3536,7 +3581,6 @@ def apply_listening_expression(session, expression: str = "focused"):
         "source": "continue_listening",
         "prompt_blocks": [],
     })
-    _apply_expression_runtime_context(session, result)
     return result
 
 
@@ -3750,7 +3794,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
 
     # 5. Parallel: expression + eval + director
     _bump_version()
-    needs_plan, plan_request, expr = run_post_response(
+    needs_plan, plan_request, expr, _ = run_post_response(
         session, world, script, model_config, log, scenario, people, goals, stage_goal,
         expression_line=response, vision_mgr=vision_mgr,
     )
@@ -3814,7 +3858,10 @@ def handle_world_change(session, world, goals, script, change_text, label, model
 
     # Parallel eval + director
     _bump_version()
-    needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
+    needs_plan, plan_request, _, _ = run_post_response(
+        session, world, script, model_config, log, scenario, people, goals, stage_goal,
+        expression_line=response, vision_mgr=vision_mgr,
+    )
     if needs_plan and _runtime_controls.get("beats", True):
         result = next_beat_call(
             system_prompt=session.system_prompt, world=world,
@@ -3863,7 +3910,10 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
     stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
     _start_reconcile(world, model_config, people=people)
     _bump_version()
-    needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
+    needs_plan, plan_request, _, _ = run_post_response(
+        session, world, script, model_config, log, scenario, people, goals, stage_goal,
+        expression_line=response, vision_mgr=vision_mgr,
+    )
     if needs_plan and _runtime_controls.get("beats", True):
         result = next_beat_call(
             system_prompt=session.system_prompt, world=world,
@@ -3926,7 +3976,10 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
                 entry["expression"] = expr.expression
             log.append(entry)
             _bump_version()
-            needs_plan, plan_request, _ = run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal, vision_mgr=vision_mgr)
+            needs_plan, plan_request, _, _ = run_post_response(
+                session, world, script, model_config, log, scenario, people, goals, stage_goal,
+                expression_line=response, vision_mgr=vision_mgr,
+            )
             if needs_plan and _runtime_controls.get("beats", True):
                 result = next_beat_call(
                     system_prompt=session.system_prompt, world=world,
@@ -3952,6 +4005,7 @@ def _inject_runtime_turn_guardrails(session, user_input: str = "", people=None, 
         "- Keep the spoken reply to one short sentence, or two short sentences max.",
         "- Prefer 8-16 words. Do not exceed about 22 words unless the user explicitly asks for detail.",
         "- Answer the user's most concrete question first.",
+        "- Never speak or repeat runtime/control text such as [gaze:...], [glance:...], [emote:...], or [Inner thought:...].",
     ]
     stripped = user_input.strip()
     if stripped and len(stripped) <= 40 and len(stripped.split()) <= 4:
@@ -4276,7 +4330,7 @@ def show_help(voice_active: bool = False):
         "/review         - Enter save/discard review without finalizing yet\n"
         "/save           - Save the current session from review mode\n"
         "/discard        - Discard this session and return to ready\n"
-        "/cancel_review  - Leave review mode and return to paused\n"
+        "/cancel_review  - Leave review mode and return to the current session\n"
         "/pause          - Pause the conversation loop\n"
         "/resume         - Alias for /play\n"
         "/history        - Show history storage + disk status\n"

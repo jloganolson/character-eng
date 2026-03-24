@@ -294,6 +294,25 @@ def test_turn_guardrails_add_short_fragment_reference_bias():
     assert "immediately previous line or question" in runtime_note
 
 
+def test_apply_expression_runtime_context_noops_for_prompt_history():
+    class DummySession:
+        def __init__(self):
+            self.messages = []
+
+        def upsert_system(self, tag, content):
+            self.messages.append((tag, content))
+
+        def remove_tagged_system(self, tag):
+            self.messages = [item for item in self.messages if item[0] != tag]
+
+    session = DummySession()
+    expr = app.ExpressionResult(gaze="Person 1", gaze_type="hold", expression="curious")
+
+    app._apply_expression_runtime_context(session, expr)
+
+    assert session.messages == []
+
+
 def test_voice_trace_is_suppressed_until_live(monkeypatch):
     pushed = []
     previous_phase = app._runtime_phase

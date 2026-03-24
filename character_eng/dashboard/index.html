@@ -248,6 +248,69 @@
     padding: 0.35em 0.7em;
     cursor: pointer;
   }
+  .save-complete-body {
+    display: grid;
+    gap: 0.85rem;
+  }
+  .save-complete-guidance {
+    padding: 0.8rem 0.95rem;
+    border-radius: 14px;
+    border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+    background: color-mix(in srgb, var(--panel-hover) 86%, transparent);
+    color: var(--text-dim);
+    line-height: 1.45;
+  }
+  .save-complete-guidance strong {
+    color: var(--text);
+  }
+  .save-complete-field {
+    display: grid;
+    gap: 0.35rem;
+  }
+  .save-complete-field-label {
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .save-complete-field-value {
+    padding: 0.7rem 0.8rem;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--panel-hover) 90%, black 10%);
+    word-break: break-all;
+  }
+  .save-complete-copy-row,
+  .save-complete-action-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    align-items: center;
+  }
+  .save-complete-copy-row button,
+  .save-complete-action-row button {
+    padding: 0.55rem 0.85rem;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    background: var(--panel-hover);
+    color: var(--text);
+  }
+  .save-complete-action-row {
+    justify-content: flex-end;
+  }
+  .save-complete-action-row #save-complete-discard {
+    background: var(--error);
+    color: var(--bg);
+  }
+  .save-complete-action-row #save-complete-save {
+    background: var(--advance);
+    color: var(--bg);
+  }
+  .save-complete-status {
+    margin-top: 0.1rem;
+    min-height: 1.2rem;
+  }
   .archive-picker-search {
     width: 100%;
     box-sizing: border-box;
@@ -455,6 +518,12 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 0.2em 0.4em;
+  }
+  .toolbar-button-row {
+    display: flex;
+    align-items: center;
+    gap: 0.45em;
+    flex-wrap: wrap;
   }
   .toolbar-readout {
     display: inline-flex;
@@ -1080,7 +1149,8 @@
   .lane-session .stream-card { border-left: 3px solid var(--stream-session); }
   .lane-input .stream-card { border-left: 3px solid var(--stream-input); }
   .lane-chat .stream-card { border-left: 3px solid var(--stream-chat); }
-  .lane-expression .stream-card { border-left: 3px solid var(--stream-expression); }
+  .lane-expression .stream-card,
+  .lane-behavior .stream-card { border-left: 3px solid var(--stream-expression); }
   .lane-eval .stream-card { border-left: 3px solid var(--stream-eval); }
   .lane-director .stream-card { border-left: 3px solid var(--stream-director); }
   .lane-planner .stream-card { border-left: 3px solid var(--stream-planner); }
@@ -1887,41 +1957,44 @@
   <div class="app-modal-card">
     <div class="app-modal-head">
       <div>
-        <div id="save-complete-heading" class="app-modal-title">Save Session</div>
-        <div id="save-complete-subtitle" class="app-modal-sub">Review the session name, then save it or discard it.</div>
+        <div id="save-complete-heading" class="app-modal-title">Stop Session</div>
+        <div id="save-complete-subtitle" class="app-modal-sub">Review the session name, then save it, discard it, or cancel.</div>
       </div>
-      <button id="save-complete-close" class="app-modal-close" type="button">Close</button>
+      <button id="save-complete-close" class="app-modal-close" type="button">Back to Session</button>
     </div>
-    <div style="display:grid;gap:0.75em;">
-      <label style="display:grid;gap:0.25em;">
-        <span style="color:var(--text-dim);font-size:0.8em;">Title</span>
+    <div class="save-complete-body">
+      <div id="save-complete-guidance" class="save-complete-guidance">
+        <strong>Back to Session</strong> returns to the current session.
+        <strong>Save</strong> or <strong>Discard</strong> ends this session and returns you to ready so you can start a new one.
+      </div>
+      <label class="save-complete-field">
+        <span class="save-complete-field-label">Title</span>
         <input id="save-complete-title" type="text" style="width:100%;box-sizing:border-box;">
       </label>
-      <div style="display:grid;gap:0.45em;">
-        <div style="color:var(--text-dim);font-size:0.8em;">Session ID</div>
-        <div id="save-complete-session-id" style="padding:0.45em 0.55em;border-radius:8px;border:1px solid var(--border);background:var(--panel-hover);word-break:break-all;">--</div>
+      <div class="save-complete-field">
+        <div class="save-complete-field-label">Session ID</div>
+        <div id="save-complete-session-id" class="save-complete-field-value">--</div>
       </div>
-      <div style="display:grid;gap:0.45em;">
-        <div style="color:var(--text-dim);font-size:0.8em;">Archive Path</div>
-        <div id="save-complete-session-path" style="padding:0.45em 0.55em;border-radius:8px;border:1px solid var(--border);background:var(--panel-hover);word-break:break-all;">--</div>
+      <div class="save-complete-field">
+        <div class="save-complete-field-label">Archive Path</div>
+        <div id="save-complete-session-path" class="save-complete-field-value">--</div>
       </div>
-      <div style="display:grid;gap:0.45em;">
-        <div style="color:var(--text-dim);font-size:0.8em;">Intermediate Report</div>
-        <div id="save-complete-report-path" style="padding:0.45em 0.55em;border-radius:8px;border:1px solid var(--border);background:var(--panel-hover);word-break:break-all;">--</div>
+      <div class="save-complete-field">
+        <div class="save-complete-field-label">Intermediate Report</div>
+        <div id="save-complete-report-path" class="save-complete-field-value">--</div>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:0.45em;">
+      <div class="save-complete-copy-row">
         <button id="save-complete-copy-ref" type="button">Copy Ref</button>
         <button id="save-complete-copy-path" type="button">Copy Archive Path</button>
         <button id="save-complete-copy-report" type="button">Copy Report Path</button>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:0.45em;justify-content:flex-end;">
-        <button id="save-complete-cancel" type="button">Cancel</button>
+      <div class="save-complete-action-row">
         <button id="save-complete-discard" type="button" style="background:var(--error);color:var(--bg);">Discard</button>
         <button id="save-complete-save" type="button" style="background:var(--advance);color:var(--bg);">Save</button>
         <button id="save-complete-load" type="button">Load Now</button>
         <button id="save-complete-okay" type="button">OK</button>
       </div>
-      <div id="save-complete-status" class="app-modal-sub"></div>
+      <div id="save-complete-status" class="app-modal-sub save-complete-status"></div>
     </div>
   </div>
 </div>
@@ -2021,7 +2094,16 @@
           <input id="follow-live" type="checkbox" checked>
         </div>
         <div class="toolbar-group">
-          <button id="timeline-start" type="button">Start</button>
+          <label>Session</label>
+          <div class="toolbar-button-row">
+            <button id="runtime-start" type="button">Start New Session</button>
+            <button id="runtime-toggle" type="button">Play</button>
+            <button id="runtime-stop" type="button">Stop Session</button>
+          </div>
+        </div>
+        <div class="toolbar-group">
+          <label>Timeline</label>
+          <button id="timeline-start" type="button">Oldest</button>
           <button id="timeline-end" type="button">Latest</button>
         </div>
         <div id="lane-toggle-grid"></div>
@@ -2151,9 +2233,7 @@
           <div id="boot-grid" class="boot-grid"></div>
         </div>
         <div id="runtime-summary-grid" class="runtime-summary-grid" style="margin-bottom:0.55em;"></div>
-        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0.45em;margin-top:0.55em;">
-          <button id="runtime-toggle" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--narrator);color:var(--bg);cursor:pointer;">Start</button>
-          <button id="runtime-stop" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--hold);color:var(--bg);cursor:pointer;">Stop Session</button>
+        <div style="display:grid;grid-template-columns:minmax(0,1fr);gap:0.45em;margin-top:0.55em;">
           <button id="runtime-restart" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--error);color:var(--bg);cursor:pointer;">Restart Session</button>
         </div>
         <details id="runtime-controls-fold" class="runtime-fold" style="margin-top:0.55em;">
@@ -2228,6 +2308,7 @@
       "assistant_reply",
       "response_interrupted",
       "expression",
+      "response_guard",
       "post_response",
       "reconcile",
       "world_state",
@@ -2295,7 +2376,7 @@
   });
 
   const DEFAULT_STREAM_SCHEMA = {
-    lane_order: ["vision", "vision_raw", "stt", "chat", "expression", "eval", "director", "planner", "world", "session", "script", "other"],
+    lane_order: ["vision", "vision_raw", "stt", "chat", "behavior", "eval", "director", "planner", "world", "session", "script", "other"],
     event_lane_map: {
       session_start: "session",
       session_end: "session",
@@ -2327,7 +2408,8 @@
       turn_summary: "chat",
       turn_start: "chat",
       assistant_reply: "chat",
-      expression: "expression",
+      expression: "behavior",
+      response_guard: "behavior",
       post_response: "planner",
       perception: "world"
     }
@@ -2426,6 +2508,7 @@
 
   function currentRuntimePhase() {
     if (runtimePhase !== "unknown") return runtimePhase;
+    if (!runtimeStateSeen) return "unknown";
     return deriveRuntimePhaseFromPayload({
       conversation_paused: conversationPaused,
       session_stopped: sessionStopped,
@@ -2528,6 +2611,7 @@
     session: 120,
     stt: 240,
     chat: 480,
+    behavior: 180,
     expression: 180,
     planner: 240,
     world: 240,
@@ -2563,8 +2647,9 @@
   const streamEmpty = document.getElementById("stream-empty");
   const laneToggleGrid = document.getElementById("lane-toggle-grid");
   const streamHoverCard = document.getElementById("stream-hover-card");
-  const runtimeToggleButton = document.getElementById("runtime-toggle");
+  const runtimeStartButton = document.getElementById("runtime-start");
   const runtimeStopButton = document.getElementById("runtime-stop");
+  const runtimeToggleButton = document.getElementById("runtime-toggle");
   const runtimeRestartButton = document.getElementById("runtime-restart");
   const runtimeControlGrid = document.getElementById("runtime-control-grid");
   const bootRuntimeToggleButton = document.getElementById("boot-runtime-toggle");
@@ -2610,6 +2695,7 @@
   const saveCompleteModal = document.getElementById("save-complete-modal");
   const saveCompleteHeadingEl = document.getElementById("save-complete-heading");
   const saveCompleteSubtitleEl = document.getElementById("save-complete-subtitle");
+  const saveCompleteGuidanceEl = document.getElementById("save-complete-guidance");
   const saveCompleteCloseButton = document.getElementById("save-complete-close");
   const saveCompleteTitleInput = document.getElementById("save-complete-title");
   const saveCompleteSessionIdEl = document.getElementById("save-complete-session-id");
@@ -2618,7 +2704,6 @@
   const saveCompleteCopyRefButton = document.getElementById("save-complete-copy-ref");
   const saveCompleteCopyPathButton = document.getElementById("save-complete-copy-path");
   const saveCompleteCopyReportButton = document.getElementById("save-complete-copy-report");
-  const saveCompleteCancelButton = document.getElementById("save-complete-cancel");
   const saveCompleteDiscardButton = document.getElementById("save-complete-discard");
   const saveCompleteSaveButton = document.getElementById("save-complete-save");
   const saveCompleteLoadButton = document.getElementById("save-complete-load");
@@ -3561,6 +3646,7 @@
     }
     renderUxSpoofBanner();
     renderRuntimeStatusPanel();
+    updateRuntimeButtons();
     renderOfflineLab();
     syncArchiveMediaPlayer();
     updateTimelinePlayhead();
@@ -4490,7 +4576,23 @@
   }
 
   function stopButtonLabel() {
-    return "Save + Stop";
+    return "Stop Session";
+  }
+
+  function setRuntimeTransportButton(button, {
+    label,
+    disabled = false,
+    background = "var(--bg-alt)",
+    color = "var(--text)",
+    opacity = null,
+    title = "",
+  } = {}) {
+    button.textContent = label;
+    button.disabled = !!disabled;
+    button.style.background = background;
+    button.style.color = color;
+    button.style.opacity = opacity == null ? (disabled ? "0.6" : "1") : String(opacity);
+    button.title = title;
   }
 
   function stopArchiveAudioPlayback() {
@@ -4797,7 +4899,7 @@
       closeSaveCompleteModal();
       return;
     }
-    saveCompleteStatusEl.textContent = "Returning to the paused session...";
+    saveCompleteStatusEl.textContent = "Returning to the current session...";
     try {
       await sendInput("/cancel_review");
       closeSaveCompleteModal();
@@ -4827,23 +4929,24 @@
     const savingMode = mode === "saving" || mode === "discarding" || preparingMode;
     const savedMode = mode === "saved" || mode === "discarded";
     saveCompleteHeadingEl.textContent =
-      mode === "preparing_review" ? "Pausing Session" :
+      mode === "preparing_review" ? "Opening Stop Review" :
       mode === "preparing_save" ? "Pausing Session" :
       mode === "preparing_discard" ? "Pausing Session" :
       mode === "saving" ? "Saving Session" :
       mode === "saved" ? "Session Saved" :
       mode === "discarding" ? "Discarding Session" :
       mode === "discarded" ? "Session Discarded" :
-      "Save Session";
+      "Stop Session";
     saveCompleteSubtitleEl.textContent =
-      mode === "preparing_review" ? "Pausing the live session before opening save/discard review." :
+      mode === "preparing_review" ? "Pausing the live session before opening Stop review." :
       mode === "preparing_save" ? "Pausing the live session before saving so the archive is consistent." :
       mode === "preparing_discard" ? "Pausing the live session before discarding it." :
       mode === "saving" ? "Saving the session now. This dialog will update when the archive is ready." :
       mode === "saved" ? "The session is saved. You can load it now or let this dialog hide automatically." :
       mode === "discarding" ? "Discarding this session now." :
       mode === "discarded" ? "The session was discarded. This dialog will hide automatically." :
-      "Review the session name, then save it or discard it.";
+      "Choose how to end this session. Back to Session returns to the current session. Save or Discard ends it and returns you to ready for a new one.";
+    saveCompleteGuidanceEl.hidden = !reviewMode;
     saveCompleteTitleInput.disabled = !reviewMode;
     saveCompleteCopyRefButton.hidden = !savedMode || mode === "discarded";
     saveCompleteCopyPathButton.hidden = !savedMode || mode === "discarded";
@@ -4851,11 +4954,10 @@
     saveCompleteCopyReportButton.disabled = !meta.reportPath;
     saveCompleteLoadButton.hidden = !savedMode || mode === "discarded";
     saveCompleteLoadButton.disabled = !meta.sessionId;
-    saveCompleteCancelButton.hidden = !reviewMode;
     saveCompleteDiscardButton.hidden = !reviewMode;
     saveCompleteSaveButton.hidden = !reviewMode;
     saveCompleteOkayButton.hidden = !savedMode;
-    saveCompleteCloseButton.textContent = reviewMode ? "Cancel" : "Close";
+    saveCompleteCloseButton.textContent = reviewMode ? "Back to Session" : "Close";
     if (savedMode && countdownSeconds) {
       const base = mode === "discarded" ? "Discarded successfully." : "Saved successfully.";
       saveCompleteStatusEl.textContent = `${base} Hiding in ${countdownSeconds}s.`;
@@ -5190,6 +5292,7 @@
       assistant_reply: ["chat"],
       response_done: ["chat"],
       expression: ["expression"],
+      response_guard: ["response_guard"],
       eval: ["thought", "script_check"],
       director: ["director"],
       post_response: ["thought", "script_check", "director", "next_beat", "plan"],
@@ -6185,18 +6288,34 @@
     const reviewActive = runtimePhaseIsReview(phase);
     const finalizingActive = runtimePhaseIsFinalizing(phase);
     const restartingActive = phase === "restarting";
+    const toggleLabel = pendingPauseState === "pausing"
+      ? "Pausing..."
+      : (pendingPauseState === "playing"
+        ? "Playing..."
+        : (phase === "live" ? "Pause" : "Play"));
+    const toggleBackground = toggleLabel.startsWith("Paus") ? "var(--narrator)" : "var(--advance)";
     const archiveBootOverride = activeArchiveBootOverride();
     if (archiveBootOverride) {
       const override = archiveBootOverrideState(archiveBootOverride);
-      runtimeToggleButton.textContent = override.bootToggleText;
-      runtimeToggleButton.disabled = override.bootToggleDisabled;
-      runtimeToggleButton.style.opacity = override.bootToggleDisabled ? "0.6" : "1";
-      runtimeToggleButton.style.background = override.bootToggleBackground;
-      runtimeToggleButton.style.color = "var(--bg)";
-      runtimeStopButton.textContent = stopButtonLabel();
-      runtimeStopButton.disabled = true;
-      runtimeStopButton.style.opacity = "0.6";
-      runtimeStopButton.title = "Archive UX mode is visual-only. Open the saved archive URL to keep reviewing the same state.";
+      setRuntimeTransportButton(runtimeStartButton, {
+        label: "Start New Session",
+        disabled: true,
+        background: "var(--advance)",
+        color: "var(--bg)",
+      });
+      setRuntimeTransportButton(runtimeStopButton, {
+        label: stopButtonLabel(),
+        disabled: true,
+        background: "var(--error)",
+        color: "var(--bg)",
+        title: "Archive UX mode is visual-only. Open the saved archive URL to keep reviewing the same state.",
+      });
+      setRuntimeTransportButton(runtimeToggleButton, {
+        label: archiveBootOverride === "live" ? "Pause" : "Play",
+        disabled: true,
+        background: archiveBootOverride === "live" ? "var(--narrator)" : "var(--advance)",
+        color: "var(--bg)",
+      });
       runtimeRestartButton.textContent = override.bootRestartText;
       runtimeRestartButton.disabled = override.bootRestartDisabled;
       runtimeRestartButton.style.opacity = override.bootRestartDisabled ? "0.6" : "1";
@@ -6210,78 +6329,135 @@
       bootRestartButton.style.opacity = override.bootRestartDisabled ? "0.6" : "1";
       return;
     }
-    if (reviewActive) {
-      runtimeToggleButton.textContent = "Reviewing...";
-      runtimeToggleButton.disabled = true;
-      runtimeToggleButton.style.opacity = "0.75";
-      runtimeToggleButton.style.background = "var(--hold)";
-    } else if (finalizingActive || restartingActive || sessionSavePending) {
-      runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Play" : "Pause");
-      runtimeToggleButton.disabled = true;
-      runtimeToggleButton.style.opacity = "0.75";
-      runtimeToggleButton.style.background = sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)");
-    } else if (archiveBrowseRef && pendingPauseState === "playing") {
-      runtimeToggleButton.textContent = "Replaying...";
-      runtimeToggleButton.style.background = "var(--hold)";
-      runtimeToggleButton.disabled = true;
-      runtimeToggleButton.style.opacity = "0.75";
-    } else if (pendingPauseState === "pausing") {
-      runtimeToggleButton.textContent = "Pausing...";
-      runtimeToggleButton.style.background = "var(--hold)";
-      runtimeToggleButton.disabled = true;
-      runtimeToggleButton.style.opacity = "0.75";
-    } else if (pendingPauseState === "stopping") {
-      runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Play" : "Pause");
-      runtimeToggleButton.disabled = true;
-      runtimeToggleButton.style.opacity = "0.75";
-      runtimeToggleButton.style.background = sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)");
-    } else if (pendingPauseState === "starting") {
-      runtimeToggleButton.textContent = "Starting...";
-      runtimeToggleButton.style.background = "var(--advance)";
-      runtimeToggleButton.disabled = true;
-      runtimeToggleButton.style.opacity = "0.75";
-    } else if (pendingPauseState === "playing") {
-      runtimeToggleButton.textContent = "Playing...";
-      runtimeToggleButton.style.background = "var(--hold)";
-      runtimeToggleButton.disabled = true;
-      runtimeToggleButton.style.opacity = "0.75";
-    } else if (archiveOnlyRuntime && !archiveBrowseRef) {
-      runtimeToggleButton.textContent = "Live Disabled";
-      runtimeToggleButton.style.background = "var(--hold)";
-      runtimeToggleButton.disabled = true;
-      runtimeToggleButton.style.opacity = "0.6";
-    } else if (archiveBrowseRef) {
-      const mediaActive = archivePlaybackMediaAvailable();
-      runtimeToggleButton.textContent = archiveOnlyRuntime
-        ? (mediaActive ? "Archive Loaded" : "Replay Disabled")
-        : (mediaActive ? "Archive Loaded" : "Replay");
-      runtimeToggleButton.style.background = "var(--advance)";
-      runtimeToggleButton.disabled = archiveOnlyRuntime || mediaActive;
-      runtimeToggleButton.style.opacity = (archiveOnlyRuntime || mediaActive) ? "0.6" : "1";
-    } else {
-      runtimeToggleButton.textContent = sessionStopped ? "Start" : (conversationPaused ? "Play" : "Pause");
-      runtimeToggleButton.style.background = sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)");
-      runtimeToggleButton.disabled = false;
-      runtimeToggleButton.style.opacity = "1";
+    if (!runtimeStateSeen || phase === "unknown") {
+      setRuntimeTransportButton(runtimeStartButton, {
+        label: "Start New Session",
+        disabled: true,
+        background: "var(--advance)",
+        color: "var(--bg)",
+      });
+      setRuntimeTransportButton(runtimeToggleButton, {
+        label: "Play",
+        disabled: true,
+        background: "var(--advance)",
+        color: "var(--bg)",
+      });
+      setRuntimeTransportButton(runtimeStopButton, {
+        label: stopButtonLabel(),
+        disabled: true,
+        background: "var(--error)",
+        color: "var(--bg)",
+        title: "Runtime controls will unlock once the app publishes its current session state.",
+      });
+      runtimeRestartButton.textContent = "Restart Session";
+      runtimeRestartButton.disabled = true;
+      runtimeRestartButton.style.opacity = "0.6";
+      bootRuntimeToggleButton.textContent = "Start";
+      bootRuntimeToggleButton.disabled = true;
+      bootRuntimeToggleButton.style.opacity = "0.6";
+      bootRuntimeToggleButton.style.background = "var(--advance)";
+      bootRuntimeToggleButton.style.color = "var(--bg)";
+      bootRestartButton.textContent = "Restart Session";
+      bootRestartButton.disabled = true;
+      bootRestartButton.style.opacity = "0.6";
+      return;
     }
-    runtimeToggleButton.style.color = "var(--bg)";
-    runtimeStopButton.textContent = (finalizingActive || sessionSavePending)
+    const stopLabel = (finalizingActive || sessionSavePending)
       ? (((phase === "finalizing_discard") || saveCompleteMode === "discarding") ? "Discarding..." : "Saving...")
-      : (pendingPauseState === "stopping" ? "Saving..." : stopButtonLabel());
-    runtimeStopButton.disabled = archiveOnlyRuntime || !!archiveBrowseRef || reviewActive || finalizingActive || sessionSavePending || pendingPauseState === "stopping" || restartPending || restartingActive || sessionStopped;
-    runtimeStopButton.style.opacity = runtimeStopButton.disabled ? "0.6" : "1";
-    runtimeStopButton.title = activeArchiveTitle() ? `Finalize archive: ${activeArchiveTitle()}` : "Finalize the current session archive and stop.";
+      : stopButtonLabel();
+    setRuntimeTransportButton(runtimeStartButton, {
+      label: pendingPauseState === "starting" ? "Starting..." : "Start New Session",
+      disabled: archiveOnlyRuntime || !!archiveBrowseRef || reviewActive || finalizingActive || restartingActive || !sessionStopped || !!pendingPauseState,
+      background: "var(--advance)",
+      color: "var(--bg)",
+    });
+    setRuntimeTransportButton(runtimeStopButton, {
+      label: stopLabel,
+      disabled: archiveOnlyRuntime || !!archiveBrowseRef || reviewActive || finalizingActive || sessionSavePending || pendingPauseState === "stopping" || restartPending || restartingActive || sessionStopped,
+      background: "var(--error)",
+      color: "var(--bg)",
+      title: activeArchiveTitle() ? `End session: ${activeArchiveTitle()}` : "Open the stop/save/discard review for the current session.",
+    });
+    if (archiveOnlyRuntime && !archiveBrowseRef) {
+      setRuntimeTransportButton(runtimeToggleButton, {
+        label: "Play",
+        disabled: true,
+        background: "var(--advance)",
+        color: "var(--bg)",
+      });
+    } else if (archiveBrowseRef) {
+      setRuntimeTransportButton(runtimeToggleButton, {
+        label: "Play",
+        disabled: true,
+        background: "var(--advance)",
+        color: "var(--bg)",
+      });
+    } else if (reviewActive || finalizingActive || restartingActive || pendingPauseState === "pausing") {
+      setRuntimeTransportButton(runtimeToggleButton, {
+        label: toggleLabel,
+        disabled: true,
+        background: toggleBackground,
+        color: "var(--bg)",
+      });
+    } else {
+      setRuntimeTransportButton(runtimeToggleButton, {
+        label: toggleLabel,
+        disabled: sessionStopped || pendingPauseState === "starting" || pendingPauseState === "playing" || pendingPauseState === "pausing",
+        background: toggleBackground,
+        color: "var(--bg)",
+      });
+    }
     runtimeRestartButton.textContent = "Restart Session";
     runtimeRestartButton.disabled = archiveOnlyRuntime || !!archiveBrowseRef || finalizingActive || restartingActive;
     runtimeRestartButton.style.opacity = runtimeRestartButton.disabled ? "0.6" : "1";
-    bootRuntimeToggleButton.textContent = runtimeToggleButton.textContent;
-    bootRuntimeToggleButton.disabled = runtimeToggleButton.disabled;
-    bootRuntimeToggleButton.style.opacity = runtimeToggleButton.disabled ? runtimeToggleButton.style.opacity : "1";
-    bootRuntimeToggleButton.style.background = runtimeToggleButton.style.background;
-    bootRuntimeToggleButton.style.color = runtimeToggleButton.style.color || "var(--bg)";
+    const bootToggleLabel = pendingPauseState === "starting"
+      ? "Starting..."
+      : (pendingPauseState === "playing"
+        ? "Playing..."
+        : (pendingPauseState === "pausing"
+          ? "Pausing..."
+          : (sessionStopped ? "Start" : (conversationPaused ? "Play" : "Pause"))));
+    bootRuntimeToggleButton.textContent = bootToggleLabel;
+    bootRuntimeToggleButton.disabled = reviewActive || finalizingActive || restartingActive || !!pendingPauseState || archiveOnlyRuntime;
+    bootRuntimeToggleButton.style.opacity = bootRuntimeToggleButton.disabled ? "0.6" : "1";
+    bootRuntimeToggleButton.style.background = pendingPauseState === "pausing"
+      ? "var(--narrator)"
+      : (sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)"));
+    bootRuntimeToggleButton.style.color = "var(--bg)";
     bootRestartButton.textContent = archiveOnlyRuntime ? "Live Disabled" : "Restart Session";
     bootRestartButton.disabled = archiveOnlyRuntime || !!archiveBrowseRef;
     bootRestartButton.style.opacity = bootRestartButton.disabled ? "0.6" : "1";
+  }
+
+  async function requestRuntimeStart() {
+    if (pendingPauseState) return;
+    if (archiveOnlyRuntime && !archiveBrowseRef) {
+      archiveLoadStatus.textContent = "Archive-only mode is active. Load an archive to inspect recordings.";
+      return;
+    }
+    if (archiveBrowseRef) {
+      archiveLoadStatus.textContent = "Archive replay is loaded. Clear the archive view before starting a fresh session.";
+      return;
+    }
+    const phase = currentRuntimePhase();
+    if (runtimePhaseIsReview(phase) || runtimePhaseIsFinalizing(phase) || phase === "restarting") {
+      archiveLoadStatus.textContent = "Finish the current review/finalize flow before starting a fresh session.";
+      return;
+    }
+    if (phase !== "ready") {
+      archiveLoadStatus.textContent = "A session already exists. Use Play/Pause, Stop Session, or Restart instead.";
+      return;
+    }
+    followLive = true;
+    document.getElementById("follow-live").checked = true;
+    scrollTimelineToEnd();
+    notePendingRuntimeAction("starting");
+    try {
+      if (bridgeEnabled()) await armBridgeAudio();
+      await sendInput("/start");
+    } catch (error) {
+      clearPendingRuntimeAction(`Runtime action failed: ${error.message || error}`);
+    }
   }
 
   async function requestRuntimeToggle() {
@@ -6319,22 +6495,45 @@
       archiveLoadStatus.textContent = "Finish the current review/finalize flow before changing runtime state.";
       return;
     }
-    const nextState = phase === "ready" ? "starting" : ((phase === "paused" || phase === "startup_paused") ? "playing" : "pausing");
-    const command = phase === "ready" ? "/start" : ((phase === "paused" || phase === "startup_paused") ? "/play" : "/pause");
-    if (phase === "ready" || phase === "paused" || phase === "startup_paused") {
-      followLive = true;
-      document.getElementById("follow-live").checked = true;
-      scrollTimelineToEnd();
-    }
-    notePendingRuntimeAction(nextState);
-    try {
-      if (bridgeEnabled() && (phase === "ready" || phase === "paused" || phase === "startup_paused")) {
-        await armBridgeAudio();
+    if (phase === "live") {
+      notePendingRuntimeAction("pausing");
+      try {
+        await sendInput("/pause");
+      } catch (error) {
+        clearPendingRuntimeAction(`Runtime action failed: ${error.message || error}`);
       }
-      await sendInput(command);
+      return;
+    }
+    if (phase !== "paused" && phase !== "startup_paused") {
+      archiveLoadStatus.textContent = phase === "ready"
+        ? "Use Start New Session before pressing Play."
+        : "Play/Pause is only available when a session is active.";
+      return;
+    }
+    followLive = true;
+    document.getElementById("follow-live").checked = true;
+    scrollTimelineToEnd();
+    notePendingRuntimeAction("playing");
+    try {
+      if (bridgeEnabled()) await armBridgeAudio();
+      await sendInput("/play");
     } catch (error) {
       clearPendingRuntimeAction(`Runtime action failed: ${error.message || error}`);
     }
+  }
+
+  async function requestBootRuntimeToggle() {
+    if (pendingPauseState) return;
+    const phase = currentRuntimePhase();
+    if (phase === "ready") {
+      await requestRuntimeStart();
+      return;
+    }
+    if (phase === "paused" || phase === "startup_paused") {
+      await requestRuntimeToggle();
+      return;
+    }
+    await requestRuntimeToggle();
   }
 
   async function requestRestart() {
@@ -7145,6 +7344,10 @@
       }
       case "expression":
         return `${data.expression || "expression"} · ${data.gaze || "gaze"}`;
+      case "response_guard": {
+        const issue = Array.isArray(data.issues) && data.issues.length ? data.issues[0] : "";
+        return [`guard ${data.status || "pass"}`, issue].filter(Boolean).join(" · ");
+      }
       case "eval":
         return `${data.script_status || "hold"}${data.plan_request ? ` · ${data.plan_request}` : ""}`;
       case "director":
@@ -7301,6 +7504,11 @@
           data.eval_thought || "",
           data.plan_request || "",
           data.director_thought || ""
+        ].filter(Boolean).join(" · ");
+      case "response_guard":
+        return [
+          Array.isArray(data.issues) && data.issues.length ? data.issues.join(", ") : "",
+          data.rationale || "",
         ].filter(Boolean).join(" · ");
       case "reconcile":
         return [
@@ -9029,6 +9237,17 @@
         ${renderCardChips(chips, {max: 3, textMax: 30})}
       `;
     }
+    if (event.type === "response_guard") {
+      const chips = [
+        ...(Array.isArray(event.data.issues) ? event.data.issues : []),
+      ].filter(Boolean);
+      return `
+        <div class="stream-card-kicker">guard</div>
+        <div class="stream-card-label">${esc(event.label)}</div>
+        ${event.detail ? `<div class="stream-card-detail">${esc(event.detail)}</div>` : ""}
+        ${renderCardChips(chips, {max: 3, textMax: 28})}
+      `;
+    }
     if (event.type === "reconcile") {
       const chips = [
         (event.data.add_facts || []).length ? `+${event.data.add_facts.length} fact${event.data.add_facts.length === 1 ? "" : "s"}` : "",
@@ -9200,6 +9419,7 @@
   function laneDisplayName(lane) {
     const key = String(lane || "").trim().toLowerCase();
     if (key === "vision_raw") return "vision raw";
+    if (key === "behavior" || key === "expression") return "robot behavior";
     return key.replace(/_/g, " ");
   }
 
@@ -9770,6 +9990,11 @@
     expression(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
       recordEvent("expression", data, rawEvent);
+    },
+
+    response_guard(data, rawEvent) {
+      rawEvent.turnId = currentTurnId || null;
+      recordEvent("response_guard", data, rawEvent);
     },
 
     eval(data, rawEvent) {
@@ -10579,8 +10804,9 @@
     queueArchiveScrubSeek(Number(event.target.value || 0), {immediate: true});
   });
 
+  runtimeStartButton.addEventListener("click", requestRuntimeStart);
   runtimeToggleButton.addEventListener("click", requestRuntimeToggle);
-  bootRuntimeToggleButton.addEventListener("click", requestRuntimeToggle);
+  bootRuntimeToggleButton.addEventListener("click", requestBootRuntimeToggle);
   runtimeStopButton.addEventListener("click", requestStop);
   runtimeRestartButton.addEventListener("click", requestRestart);
   bootLoadArchiveButton.addEventListener("click", async () => {
@@ -10660,11 +10886,6 @@
   archivePicker.addEventListener("click", (event) => {
     if (event.target === archivePicker) setArchivePickerOpen(false);
   });
-  saveCompleteModal.addEventListener("click", (event) => {
-    if (event.target === saveCompleteModal && saveCompleteMode !== "saving" && saveCompleteMode !== "discarding") {
-      cancelSaveCompleteReview().catch(() => {});
-    }
-  });
   saveCompleteCopyRefButton.addEventListener("click", async () => {
     const ref = saveCompleteMeta?.sessionId || "";
     if (!ref) return;
@@ -10687,9 +10908,6 @@
     cancelSaveCompleteAutoHide();
     const ok = await copyText(path);
     saveCompleteStatusEl.textContent = ok ? `Copied report path: ${path}` : "Copy report path failed.";
-  });
-  saveCompleteCancelButton.addEventListener("click", () => {
-    cancelSaveCompleteReview().catch(() => {});
   });
   saveCompleteDiscardButton.addEventListener("click", confirmDiscardSession);
   saveCompleteSaveButton.addEventListener("click", confirmSaveAndStop);

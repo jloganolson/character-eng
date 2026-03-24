@@ -664,6 +664,7 @@ def _seed_rendered_card_inventory_fixture(collector: DashboardEventCollector) ->
         "first_audio_ms": 360,
     })
     push("expression", {"expression": "curious", "gaze": "forward"})
+    push("response_guard", {"status": "pass", "issues": [], "rationale": "Stayed in character and avoided control text."})
     push("eval", {"script_status": "advance", "thought": "Keep it short.", "plan_request": "Offer water."})
     push("director", {"status": "open", "thought": "Move to offer.", "new_stage": "offer"})
     push("stage_change", {"new_stage": "offer", "new_goal": "Offer water and ask what they need."})
@@ -791,6 +792,7 @@ def _seed_rendered_card_inventory_fixture(collector: DashboardEventCollector) ->
         "assistant_reply": {"card_text": "Free water. Want one?", "payload_snippets": ['"full_text": "Free water. Want one?"']},
         "response_interrupted": {"card_text": "Interrupted after: Okay", "payload_snippets": ['"reason": "barge_in"']},
         "expression": {"card_text": "curious", "payload_snippets": ['"expression": "curious"']},
+        "response_guard": {"card_text": "guard pass", "payload_snippets": ['"status": "pass"']},
         "post_response": {"card_text": None, "payload_snippets": ['"new_stage": "offer"', '"next_intent": "offer_water"']},
         "reconcile": {"card_text": None, "payload_snippets": ['"add_facts": [', '"visitor present"']},
         "world_state": {"card_text": None, "payload_snippets": ['"text": "A visitor is present."']},
@@ -877,7 +879,7 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#runtime-status")).to_contain_text("auto-beat: off")
     expect(page.locator("#runtime-status")).to_contain_text("stt: ready")
     expect(page.locator("#runtime-status")).to_contain_text("tts: ready")
-    expect(page.locator("#runtime-toggle")).to_have_text("Start")
+    expect(page.locator("#runtime-start")).to_have_text("Start New Session")
     expect(page.locator("#runtime-stop")).to_be_disabled()
     expect(page.locator("#boot-grid")).to_contain_text("Deepgram socket open.")
     expect(page.locator("#boot-grid")).to_contain_text("Pocket-TTS reachable.")
@@ -888,10 +890,10 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#vision-model-status")).to_contain_text("GPU memory")
     expect(page.locator("#vision-service-link")).to_have_attribute("href", vision_service_url)
     expect(page.locator("#time-window-value")).to_have_text("30s")
-    expect(page.locator("#runtime-toggle")).to_have_text("Start")
+    expect(page.locator("#runtime-start")).to_have_text("Start New Session")
 
-    page.locator("#runtime-toggle").evaluate("(node) => node.click()")
-    expect(page.locator("#runtime-toggle")).to_have_text("Starting...")
+    page.locator("#runtime-start").evaluate("(node) => node.click()")
+    expect(page.locator("#runtime-start")).to_have_text("Starting...")
     assert input_queue.get(timeout=2) == "/start"
 
     collector.push(
@@ -1127,13 +1129,11 @@ def test_runtime_panel_interactions_in_browser(
     page.locator(".archive-row").filter(has=page.locator(".archive-kind", has_text="session")).locator(".archive-load-action").first.click()
     expect(page.locator("#archive-load-button")).to_have_text("Return To Live")
     expect(page.locator("#archive-load-status")).to_contain_text("Browsing archive:")
-    expect(page.locator("#runtime-toggle")).to_have_text("Replay")
+    expect(page.locator("#runtime-toggle")).to_have_text("Play")
+    expect(page.locator("#runtime-toggle")).to_be_disabled()
     expect(page.locator("#runtime-stop")).to_be_disabled()
     expect(page.locator(".stream-card[data-event-type='session_start']")).to_have_count(0)
-    page.locator("#runtime-toggle").click()
-    assert input_queue.get(timeout=2) == "/replay sess-playwright"
     expect(page.locator("#archive-load-button")).to_have_text("Return To Live")
-    expect(page.locator("#archive-load-status")).to_contain_text("sess-playwright")
     page.locator("#archive-load-button").click()
     expect(page.locator("#archive-load-button")).to_have_text("Load Archive...")
     page.locator("#archive-load-button").click()
@@ -1211,7 +1211,7 @@ def test_runtime_panel_interactions_in_browser(
 
     page.locator("#runtime-stop").click()
     expect(page.locator("#save-complete-modal")).to_have_class(re.compile(r"\bopen\b"))
-    expect(page.locator("#save-complete-heading")).to_contain_text("Pausing Session")
+    expect(page.locator("#save-complete-heading")).to_contain_text("Opening Stop Review")
     expect(page.locator("#save-complete-status")).to_contain_text("Pausing before review")
     assert input_queue.get(timeout=2) == "/review"
     collector.push(
@@ -1251,10 +1251,10 @@ def test_runtime_panel_interactions_in_browser(
             "vision_mock_replay": "",
         },
     )
-    expect(page.locator("#save-complete-heading")).to_contain_text("Save Session")
+    expect(page.locator("#save-complete-heading")).to_contain_text("Stop Session")
     expect(page.locator("#save-complete-status")).to_contain_text("Paused. Save or discard this session.")
     expect(page.locator("#save-complete-title")).not_to_have_value("")
-    expect(page.locator("#runtime-stop")).to_have_text("Save + Stop")
+    expect(page.locator("#runtime-stop")).to_have_text("Stop Session")
     page.locator("#save-complete-title").fill("Greg stop flow")
     page.locator("#save-complete-save").click()
     expect(page.locator("#save-complete-status")).to_contain_text("Saving...")
@@ -1302,7 +1302,7 @@ def test_runtime_panel_interactions_in_browser(
         },
     )
     expect(page.locator("#runtime-status")).to_contain_text("state: ready")
-    expect(page.locator("#runtime-toggle")).to_have_text("Start")
+    expect(page.locator("#runtime-start")).to_have_text("Start New Session")
     expect(page.locator("#runtime-stop")).to_be_disabled()
     expect(page.locator("#boot-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
     expect(page.locator("#report-ref-status")).to_contain_text("Last stopped session: intermediate session log:")
@@ -1318,7 +1318,8 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#save-complete-modal")).not_to_have_class(re.compile(r"\bopen\b"))
     expect(page.locator("#archive-load-button")).to_have_text("Return To Live")
     expect(page.locator("#archive-load-status")).to_contain_text("Greg stop flow")
-    expect(page.locator("#runtime-toggle")).to_have_text("Replay")
+    expect(page.locator("#runtime-toggle")).to_have_text("Play")
+    expect(page.locator("#runtime-toggle")).to_be_disabled()
     page.locator("#archive-load-button").click()
     expect(page.locator("#archive-load-button")).to_have_text("Load Archive...")
 
@@ -1326,8 +1327,9 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#report-ref-status")).to_contain_text("Copied archive ref:")
     expect(page.locator("#report-ref-status")).to_contain_text("sess-playwright")
 
-    page.locator("#runtime-toggle").click()
-    expect(page.locator("#runtime-toggle")).to_have_text("Starting...")
+    expect(page.locator("#runtime-start")).to_be_enabled()
+    page.locator("#runtime-start").click()
+    expect(page.locator("#runtime-start")).to_have_text("Starting...")
     assert input_queue.get(timeout=2) == "/start"
 
     collector.push(
@@ -1630,7 +1632,7 @@ def test_boot_overlay_ignores_optional_vision_when_runtime_not_active(
     expect(page.locator("#boot-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
     expect(page.locator("#boot-grid")).to_contain_text("Vision runtime is inactive for this session.")
     expect(page.locator("#boot-grid")).to_contain_text("Vision models are inactive for this session.")
-    expect(page.locator("#runtime-toggle")).to_have_text("Start")
+    expect(page.locator("#runtime-start")).to_have_text("Start New Session")
 
 
 def test_bridge_vision_feed_src_keeps_session_token(
@@ -1829,7 +1831,7 @@ def test_offline_fixture_ready_renders_start_frame(
     expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
     expect(page.locator("#boot-overlay")).not_to_be_visible()
     expect(page.locator("#boot-summary")).to_contain_text("Everything is warm. Start when you want to begin a fresh session.")
-    expect(page.locator("#runtime-toggle")).to_have_text("Start")
+    expect(page.locator("#runtime-start")).to_have_text("Start New Session")
     expect(page.locator("#runtime-status")).to_contain_text("state: ready")
     expect(page.locator("#runtime-status")).to_contain_text("voice: on")
 
@@ -1884,7 +1886,9 @@ def test_archive_only_runtime_disables_live_controls(
     expect(page.locator("body")).not_to_have_class(re.compile(r"\bbooting\b"))
     expect(page.locator("#boot-summary")).to_contain_text("Archive-only mode is ready.")
     expect(page.locator("#runtime-status")).to_contain_text("mode: archive only")
-    expect(page.locator("#runtime-toggle")).to_have_text("Live Disabled")
+    expect(page.locator("#runtime-start")).to_have_text("Start New Session")
+    expect(page.locator("#runtime-start")).to_be_disabled()
+    expect(page.locator("#runtime-toggle")).to_have_text("Play")
     expect(page.locator("#runtime-toggle")).to_be_disabled()
     expect(page.locator("#runtime-restart")).to_be_disabled()
     expect(page.locator("#boot-restart")).to_have_text("Live Disabled")
@@ -2833,7 +2837,7 @@ def test_archive_boot_live_runtime_actions_match_spoof_state(
     expect(page.locator("#ux-spoof-copy-url")).to_be_visible()
     expect(page.locator("#runtime-toggle")).to_have_text("Pause")
     expect(page.locator("#runtime-toggle")).to_be_disabled()
-    expect(page.locator("#runtime-stop")).to_have_text("Save + Stop")
+    expect(page.locator("#runtime-stop")).to_have_text("Stop Session")
     expect(page.locator("#runtime-stop")).to_be_disabled()
     expect(page.locator("#runtime-restart")).to_have_text("Restart Session")
     expect(page.locator("#runtime-restart")).to_be_disabled()
@@ -3811,7 +3815,8 @@ def test_archive_load_shows_timeline_and_scrubbable_media_player(
     page.locator(".archive-row").filter(has_text="sess-archive-playback").locator(".archive-load-action").click()
 
     expect(page.locator("#archive-load-status")).to_contain_text("Browsing archive:")
-    expect(page.locator("#runtime-toggle")).to_have_text("Archive Loaded")
+    expect(page.locator("#runtime-toggle")).to_have_text("Play")
+    expect(page.locator("#runtime-toggle")).to_be_disabled()
     expect(page.locator("#archive-transport")).to_have_class(re.compile(r"\bvisible\b"))
     expect(page.locator("#archive-transport-toggle")).to_have_text("Play")
     expect(page.locator("#archive-media-player")).to_have_class(re.compile(r"\bvisible\b"))
@@ -4486,7 +4491,7 @@ def test_save_stop_fallback_opens_modal_without_session_end(
 
     page.locator("#runtime-stop").click()
     expect(page.locator("#save-complete-modal")).to_have_class(re.compile(r"\bopen\b"))
-    expect(page.locator("#save-complete-heading")).to_contain_text("Pausing Session")
+    expect(page.locator("#save-complete-heading")).to_contain_text("Opening Stop Review")
     expect(page.locator("#save-complete-status")).to_contain_text("Pausing before review")
     assert input_queue.get(timeout=2) == "/review"
     collector.push(
@@ -4654,7 +4659,7 @@ def test_discard_session_stays_in_discard_flow(
     collector.push("response_done", {"full_text": "Discard me"})
 
     page.locator("#runtime-stop").click()
-    expect(page.locator("#save-complete-heading")).to_contain_text("Pausing Session")
+    expect(page.locator("#save-complete-heading")).to_contain_text("Opening Stop Review")
     expect(page.locator("#save-complete-status")).to_contain_text("Pausing before review")
     assert input_queue.get(timeout=2) == "/review"
     collector.push(
@@ -4694,7 +4699,7 @@ def test_discard_session_stays_in_discard_flow(
             "vision_mock_replay": "",
         },
     )
-    expect(page.locator("#save-complete-heading")).to_contain_text("Save Session")
+    expect(page.locator("#save-complete-heading")).to_contain_text("Stop Session")
     page.locator("#save-complete-discard").click()
     expect(page.locator("#save-complete-status")).to_contain_text("Discarding...")
     expect(page.locator("#runtime-stop")).to_have_text("Discarding...")
@@ -4752,7 +4757,7 @@ def test_discard_session_stays_in_discard_flow(
 
     expect(page.locator("#save-complete-heading")).to_contain_text("Session Discarded")
     expect(page.locator("#save-complete-heading")).not_to_contain_text("Session Saved")
-    expect(page.locator("#save-complete-heading")).not_to_contain_text("Save Session")
+    expect(page.locator("#save-complete-heading")).not_to_contain_text("Stop Session")
 
 
 def test_discard_session_resolves_without_session_end_event(
