@@ -216,6 +216,10 @@ def _push(event_type: str, data: dict) -> None:
         _collector.push(event_type, data)
 
 
+_last_world_state_payload: dict | None = None
+_last_people_state_payload: dict | None = None
+
+
 def _set_pending_turn_meta(
     *,
     trigger_source: str = "",
@@ -1020,27 +1024,44 @@ def _check_reconcile(world, log, people=None):
         "add_facts": result.add_facts,
         "events": result.events,
     })
-    _push_world_people_state(world, people)
+    _push_world_people_state(world, people, dedupe=True)
     return True
 
 
-def _push_world_people_state(world, people=None):
-    if world is not None:
-        _push("world_state", {
-            "static_facts": [{"id": "", "text": s} for s in (world.static or [])],
-            "dynamic_facts": [{"id": k, "text": v} for k, v in (world.dynamic or {}).items()],
-            "pending": list(world.pending),
-        })
-    if people is not None:
-        _push("people_state", {"people": [
+def _world_state_payload(world) -> dict:
+    return {
+        "static_facts": [{"id": "", "text": s} for s in (world.static or [])],
+        "dynamic_facts": [{"id": k, "text": v} for k, v in (world.dynamic or {}).items()],
+        "pending": list(world.pending),
+    }
+
+
+def _people_state_payload(people) -> dict:
+    return {
+        "people": [
             {
                 "id": p.person_id,
                 "name": p.name,
                 "presence": p.presence,
-                "facts": [{"id": k, "text": v} for k, v in p.facts.items()],
+                "facts": [{"id": k, "text": v, "scope": p.fact_scope(k)} for k, v in p.facts.items()],
             }
             for p in people.people.values()
-        ]})
+        ]
+    }
+
+
+def _push_world_people_state(world, people=None, *, dedupe: bool = False, force: bool = False):
+    global _last_world_state_payload, _last_people_state_payload
+    if world is not None:
+        payload = _world_state_payload(world)
+        if force or not dedupe or payload != _last_world_state_payload:
+            _push("world_state", payload)
+            _last_world_state_payload = payload
+    if people is not None:
+        payload = _people_state_payload(people)
+        if force or not dedupe or payload != _last_people_state_payload:
+            _push("people_state", payload)
+            _last_people_state_payload = payload
 
 
 def _sync_runtime_prompt_context(session, world, people=None, scenario=None, vision_mgr=None) -> None:
@@ -1173,7 +1194,7 @@ def _consume_vision_updates(session, world, people, vision_mgr, scenario, script
                 "payload": payload,
                 "source_trace": getattr(event, "trace", {}) or {},
             })
-        _push_world_people_state(world, people)
+        _push_world_people_state(world, people, dedupe=True)
         _start_reconcile(world, model_config, people=people)
         exit_index = match_visual_exit(scenario, vision_events)
         if exit_index >= 0:
@@ -2423,7 +2444,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 "debug_only_reason": str(debug_status.get("debug_only_reason", "")),
                 "replay_mode": replay_mode,
             })
-            _push_world_people_state(world, people)
+            _push_world_people_state(world, people, force=True)
             if scenario and scenario.active_stage:
                 _push("stage_change", {
                     "old_stage": "",
@@ -4803,7 +4824,14 @@ def _ensure_vision_manager(
             raw_poll_interval=vision_cfg.raw_poll_interval,
             min_interval=vision_cfg.synthesis_min_interval,
         )
-    vision_mgr.start(model_config, world=world, people=people, collector=_collector, emitter=_push)
+    vision_mgr.start(
+        model_config,
+        world=world,
+        people=people,
+        collector=_collector,
+        emitter=_push,
+        state_commit_callback=lambda cur_world, cur_people: _push_world_people_state(cur_world, cur_people, dedupe=True),
+    )
     vision_mgr.update_context(world=world, people=people, stage_goal=stage_goal, scenario=scenario)
     try:
         vision_mgr.update_focus(

@@ -131,6 +131,32 @@ def test_process_perception_filters_generic_presence_events_from_vision_state_up
     assert world.events == ["The visitor is checking a phone"]
 
 
+def test_process_perception_does_not_reapply_already_committed_vision_update():
+    world = WorldState()
+    people = PeopleState()
+    person = people.add_person(name="Visitor", presence="present")
+    person.add_fact("Wearing a blue jacket")
+    event = PerceptionEvent(
+        description="Visitor is wearing a blue jacket",
+        source="visual",
+        kind="vision_state_update",
+        payload={
+            "already_applied": True,
+            "person_updates": [
+                {
+                    "person_id": person.person_id,
+                    "add_facts": ["Wearing a blue jacket"],
+                }
+            ],
+        },
+    )
+
+    _, narrator = process_perception(event, people, world)
+
+    assert narrator == "[Visitor is wearing a blue jacket]"
+    assert list(person.facts.values()) == ["Wearing a blue jacket"]
+
+
 # --- SimScript loading ---
 
 

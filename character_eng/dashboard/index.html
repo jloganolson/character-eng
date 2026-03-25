@@ -1951,6 +1951,12 @@
     display: grid;
     gap: 0.5em;
   }
+  .inspector-frame-subtitle {
+    font-size: 0.72em;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
   .inspector-frame img {
     width: 100%;
     min-height: 180px;
@@ -2298,6 +2304,11 @@
                   <img id="detail-frame-image" alt="Inspected frame" style="display:none;">
                   <div id="detail-frame-empty" class="detail-inline-empty">Select an archived vision event to inspect its nearest captured frame.</div>
                   <div id="detail-frame-meta" class="inspector-frame-meta"></div>
+                  <div id="detail-target-crop-wrap" style="display:none;">
+                    <div class="inspector-frame-subtitle">Target Crop</div>
+                    <img id="detail-target-crop-image" alt="Target crop" style="display:none;">
+                    <div id="detail-target-crop-meta" class="inspector-frame-meta"></div>
+                  </div>
                   <div class="inspector-frame-actions">
                     <a id="detail-frame-open" href="#" target="_blank" style="display:none;">Open Full Size</a>
                   </div>
@@ -2930,6 +2941,9 @@
   const detailFrameImage = document.getElementById("detail-frame-image");
   const detailFrameEmpty = document.getElementById("detail-frame-empty");
   const detailFrameMeta = document.getElementById("detail-frame-meta");
+  const detailTargetCropWrap = document.getElementById("detail-target-crop-wrap");
+  const detailTargetCropImage = document.getElementById("detail-target-crop-image");
+  const detailTargetCropMeta = document.getElementById("detail-target-crop-meta");
   const detailFrameOpen = document.getElementById("detail-frame-open");
   const streamScrubCursorEl = document.getElementById("stream-scrub-cursor");
   const streamPlayheadEl = document.getElementById("stream-playhead");
@@ -7053,6 +7067,7 @@
     detailFramePanel.style.display = "none";
     detailFrameImage.style.display = "none";
     detailFrameImage.removeAttribute("src");
+    resetInspectorTargetCrop();
     detailFrameMeta.textContent = "";
     detailFrameOpen.style.display = "none";
     detailFrameOpen.href = "#";
@@ -7170,6 +7185,7 @@
     detailFramePanel.style.display = "none";
     detailFrameImage.style.display = "none";
     detailFrameImage.removeAttribute("src");
+    resetInspectorTargetCrop();
     detailFrameMeta.textContent = "";
     detailFrameOpen.style.display = "none";
     detailFrameOpen.href = "#";
@@ -8968,12 +8984,100 @@
     return !!event && ["vision_snapshot_read", "face_tracking", "sam3_detection", "reid_track", "vlm_answer", "vision_trigger", "vision_state_update"].includes(event.type);
   }
 
+  function resetInspectorTargetCrop() {
+    detailTargetCropWrap.style.display = "none";
+    detailTargetCropImage.style.display = "none";
+    detailTargetCropImage.removeAttribute("src");
+    detailTargetCropMeta.textContent = "";
+  }
+
+  function isPersonDescriptionInterpret(interpretAs) {
+    return ["person_description_static", "person_description_dynamic"].includes(String(interpretAs || ""));
+  }
+
+  function inspectorTargetCropSpec(event) {
+    if (!event) return null;
+    if (
+      event.type === "vlm_answer"
+      && isPersonDescriptionInterpret(event.data?.interpret_as)
+      && Array.isArray(event.data?.target_bbox)
+      && event.data.target_bbox.length === 4
+    ) {
+      return {
+        bbox: event.data.target_bbox.slice(0, 4),
+        label: event.data.label || event.data.task_id || "person",
+        identity: event.data.target_identity || "",
+      };
+    }
+    if (event.type !== "vision_state_update") return null;
+    const taskAnswers = (event.data?.task_answers || []).filter((item) => isPersonDescriptionInterpret(item?.interpret_as));
+    if (!taskAnswers.length) return null;
+    const causal = causalEventsForBundle(event);
+    const nearby = [...(causal.upstream || []), ...(causal.downstream || [])]
+      .filter((item) => item.type === "vlm_answer" && Array.isArray(item.data?.target_bbox) && item.data.target_bbox.length === 4);
+    for (const task of taskAnswers) {
+      const match = nearby.find((item) => {
+        if (!isPersonDescriptionInterpret(item.data?.interpret_as)) return false;
+        if ((item.data?.task_id || "") !== (task.task_id || "")) return false;
+        const leftIdentity = String(item.data?.target_identity || "").trim();
+        const rightIdentity = String(task.target_identity || "").trim();
+        return !rightIdentity || !leftIdentity || leftIdentity === rightIdentity;
+      });
+      if (match) {
+        return {
+          bbox: match.data.target_bbox.slice(0, 4),
+          label: match.data.label || match.data.task_id || task.label || task.task_id || "person",
+          identity: match.data.target_identity || task.target_identity || "",
+        };
+      }
+    }
+    return null;
+  }
+
+  function renderInspectorTargetCrop(frameImageUrl, cropSpec, requestId) {
+    resetInspectorTargetCrop();
+    if (!cropSpec || !Array.isArray(cropSpec.bbox) || cropSpec.bbox.length !== 4) return;
+    const img = new Image();
+    img.onload = () => {
+      if (requestId !== inspectorFrameRequestId) return;
+      const [x, y, w, h] = cropSpec.bbox.map((value) => Math.max(0, Number(value || 0)));
+      const cropX = Math.min(img.naturalWidth, Math.round(x));
+      const cropY = Math.min(img.naturalHeight, Math.round(y));
+      const cropW = Math.max(1, Math.min(img.naturalWidth - cropX, Math.round(w)));
+      const cropH = Math.max(1, Math.min(img.naturalHeight - cropY, Math.round(h)));
+      if (!(cropW > 0 && cropH > 0)) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = cropW;
+      canvas.height = cropH;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+      const metaBits = [];
+      if (cropSpec.identity) metaBits.push(cropSpec.identity);
+      metaBits.push(formatBbox(cropSpec.bbox));
+      if (cropSpec.label) metaBits.push(cropSpec.label);
+      detailTargetCropImage.onload = () => {
+        if (requestId !== inspectorFrameRequestId) return;
+        detailTargetCropImage.style.display = "";
+        detailTargetCropWrap.style.display = "";
+        detailTargetCropMeta.textContent = metaBits.filter(Boolean).join(" · ");
+      };
+      detailTargetCropImage.src = canvas.toDataURL("image/jpeg", 0.92);
+    };
+    img.onerror = () => {
+      if (requestId !== inspectorFrameRequestId) return;
+      resetInspectorTargetCrop();
+    };
+    img.src = frameImageUrl;
+  }
+
   async function renderInspectorFrame(event) {
     inspectorFrameRequestId += 1;
     const requestId = inspectorFrameRequestId;
     detailFramePanel.style.display = "none";
     detailFrameImage.style.display = "none";
     detailFrameImage.removeAttribute("src");
+    resetInspectorTargetCrop();
     detailFrameEmpty.style.display = "";
     detailFrameMeta.textContent = "";
     detailFrameOpen.style.display = "none";
@@ -9000,6 +9104,7 @@
       detailFrameMeta.textContent = `Nearest archived frame at +${nearestTime.toFixed(2)}s${frame.timestamp_iso ? ` · ${frame.timestamp_iso}` : ""}`;
       detailFrameOpen.href = imageUrl;
       detailFrameOpen.style.display = "";
+      renderInspectorTargetCrop(imageUrl, inspectorTargetCropSpec(event), requestId);
     } catch (_) {
       if (requestId !== inspectorFrameRequestId) return;
       detailFrameEmpty.textContent = "Nearest archived frame lookup failed.";
@@ -9860,7 +9965,11 @@
       return;
     }
     renderSidebarPanelContent("people", data.people.map((person) => {
-      const facts = (person.facts || []).map((fact) => `<div class="fact" style="padding-left:1em"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}</div>`).join("");
+      const facts = (person.facts || []).map((fact) => {
+        const scope = String(fact.scope || "").trim().toLowerCase();
+        const scopeTag = scope === "ephemeral" ? ' <span style="color:var(--text-dim)">[ephemeral]</span>' : "";
+        return `<div class="fact" style="padding-left:1em"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}${scopeTag}</div>`;
+      }).join("");
       return `<div class="person-entry"><span class="person-name">${esc(person.name || person.id)}</span> <span style="color:var(--text-dim)">${esc(person.id)}</span>${facts}</div>`;
     }).join(""), {status: "ready", visible: true});
   }

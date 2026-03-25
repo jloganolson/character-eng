@@ -540,6 +540,20 @@ def dashboard_server(tmp_path):
                 0.65,
             ),
             (
+                "vlm_answer",
+                {
+                    "task_id": "person_description_static_visitor",
+                    "label": "Person Description Static [Visitor]",
+                    "question": "Describe this visible person's appearance.",
+                    "answer": "The visitor is wearing glasses.",
+                    "target": "person_identity",
+                    "target_identity": "Visitor",
+                    "target_bbox": [40, 50, 120, 140],
+                    "interpret_as": "person_description_static",
+                },
+                0.66,
+            ),
+            (
                 "sam3_detection",
                 {
                     "objects": [
@@ -3006,6 +3020,63 @@ def test_archive_raw_event_shows_inspected_frame_in_inspector(
     expect(page.locator("#detail-frame-image")).to_be_visible()
     expect(page.locator("#detail-frame-meta")).to_contain_text("Nearest archived frame")
     expect(page.locator("#detail-frame-open")).to_have_attribute("href", re.compile(r"session_id=sess-archive-vision-raw-ui"))
+
+
+def test_archive_vlm_answer_shows_target_crop_in_inspector(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": True,
+            "session_stopped": True,
+            "startup_pause_pending": False,
+            "session_state": "ready",
+            "voice_active": False,
+            "voice_status": {
+                "active": False,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "",
+                "mic_ready": False,
+                "speaker_ready": False,
+                "stt": {"state": "off", "detail": "Voice inactive."},
+                "tts": {"state": "off", "detail": "Voice inactive.", "backend": ""},
+            },
+            "vision_active": False,
+            "reconcile_thread_alive": False,
+            "vision_service_url": "",
+            "vision_service_health": False,
+            "vision_service_managed": False,
+            "vision_service_external": False,
+            "vision_service_state": "stopped",
+            "vision_service_autostart": False,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+            "archive_only": True,
+            "archive_only_reason": "Archive-only mode is active. Load archives to inspect them; live conversation is disabled.",
+        },
+    )
+    page = browser_page
+    page.goto(f"{dashboard_url}?archive=sess-archive-vision-raw-ui&boot=live")
+
+    page.wait_for_function("() => !!window.__dashboardTest.visionRawEventPoint('vlm_answer', 0)")
+    raw_point = page.evaluate("window.__dashboardTest.visionRawEventPoint('vlm_answer', 0)")
+    assert raw_point is not None
+    page.mouse.click(raw_point["clientX"], raw_point["clientY"])
+    expect(page.locator("#detail-frame-image")).to_be_visible()
+    expect(page.locator("#detail-target-crop-wrap")).to_be_visible()
+    expect(page.locator("#detail-target-crop-image")).to_be_visible()
+    expect(page.locator("#detail-target-crop-meta")).to_contain_text("Visitor")
+    expect(page.locator("#detail-target-crop-meta")).to_contain_text("x 40 y 50 w 120 h 140")
 
 
 def test_archive_turn_rail_and_context_show_turn_metadata(

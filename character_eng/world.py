@@ -51,6 +51,7 @@ class PersonUpdate:
     person_id: str
     remove_facts: list[str] = field(default_factory=list)
     add_facts: list[str] = field(default_factory=list)
+    fact_scope: str | None = None
     set_name: str | None = None
     set_presence: str | None = None
     invalid_presence: str | None = None
@@ -584,6 +585,7 @@ def reconcile_call(world: WorldState, pending_changes: list[str], model_config: 
                 person_id=pu["person_id"],
                 remove_facts=_clean_id_list(pu.get("remove_facts", []), _PERSON_FACT_ID_RE),
                 add_facts=_clean_string_list(pu.get("add_facts", []), fact_text=True),
+                fact_scope=str(pu.get("fact_scope", "")).strip() or None,
                 set_name=pu.get("set_name"),
                 set_presence=set_presence,
                 invalid_presence=invalid_presence,

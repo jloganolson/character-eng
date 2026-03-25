@@ -8,7 +8,7 @@ from character_eng.vision.vlm import VLMTaskSpec, generic_task_specs
 CORE_CONSTANT_QUESTIONS = [
     "Describe the visible room, objects, and any state changes that matter right now.",
     "Describe the nearest visible person's appearance, clothing, and accessories.",
-    "Describe what the nearest visible person is doing right now with their body, hands, and nearby objects.",
+    "Describe what the nearest visible person is doing right now with their body, posture, and orientation. Avoid inferring held objects unless they are visually obvious.",
 ]
 CORE_CONSTANT_SAM_TARGETS = ["person"]
 CORE_CONSTANT_VLM_SPECS = [

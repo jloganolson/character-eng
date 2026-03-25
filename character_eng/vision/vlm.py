@@ -17,7 +17,7 @@ class VLMTaskSpec:
     task_id: str
     question: str
     label: str = ""
-    target: str = "scene"  # "scene" | "nearest_person"
+    target: str = "scene"  # "scene" | "nearest_person" | "person_identity"
     cadence_s: float = 0.0
     interpret_as: str = "general"
     system_role: str = ""
@@ -50,7 +50,7 @@ class VLMTaskSpec:
         label = str(payload.get("label", "")).strip()
         task_id = str(payload.get("task_id", "")).strip() or _slugify(label or question, fallback=default_id)
         target = str(payload.get("target", "scene")).strip().lower() or "scene"
-        if target not in {"scene", "nearest_person"}:
+        if target not in {"scene", "nearest_person", "person_identity"}:
             target = "scene"
         try:
             cadence_s = float(payload.get("cadence_s", 0.0) or 0.0)

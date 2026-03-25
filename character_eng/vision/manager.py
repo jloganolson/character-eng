@@ -68,13 +68,16 @@ class VisionManager:
         self._trigger_streaks: dict[str, int] = {}
         self._active_trigger_signals: set[str] = set()
         self._system_task_signatures: dict[str, dict[str, str]] = {}
+        self._static_identity_answers: set[str] = set()
+        self._state_commit_callback = None
+        self._focus_refresh_in_progress = False
         self._latest_snapshot: RawVisualSnapshot | None = None
         self._latest_cycle_event_ids: list[str] = []
         self._latest_snapshot_seq = 0
         self._last_synthesis_at = 0.0
         self._last_synth_snapshot_seq = 0
 
-    def start(self, model_config: dict, world=None, people=None, collector=None, emitter=None) -> None:
+    def start(self, model_config: dict, world=None, people=None, collector=None, emitter=None, state_commit_callback=None) -> None:
         if self._running:
             return
         self._model_config = model_config
@@ -84,6 +87,8 @@ class VisionManager:
             self._collector = collector
         if emitter is not None:
             self._emitter = emitter
+        if state_commit_callback is not None:
+            self._state_commit_callback = state_commit_callback
         self._running = True
         self._raw_thread = threading.Thread(target=self._raw_loop, daemon=True)
         self._synthesis_thread = threading.Thread(target=self._synthesis_loop, daemon=True)
@@ -123,6 +128,125 @@ class VisionManager:
         if scenario is not None:
             self._scenario = scenario
 
+    def _visible_person_identities(self) -> list[str]:
+        identities: list[str] = []
+        snapshot = self._context.snapshot
+        if snapshot is not None:
+            for person in snapshot.persons:
+                identity = str(person.identity or "").strip()
+                if identity and identity not in identities:
+                    identities.append(identity)
+        if self._people is not None:
+            for person in self._people.present_people():
+                identity = str(person.name or "").strip()
+                if identity and identity not in identities:
+                    identities.append(identity)
+        return identities
+
+    def _person_specific_spec(self, spec: VLMTaskSpec, identity: str, *, mode: str) -> VLMTaskSpec:
+        payload = spec.to_payload()
+        metadata = dict(payload.get("metadata", {}) or {})
+        metadata["target_identity"] = identity
+        prompt = str(spec.question or "").strip()
+        if mode == "static":
+            prompt = (
+                f"Focus only on {identity}. Describe this visible person's appearance, clothing, and accessories. "
+                "Do not describe actions or other people."
+            )
+        elif mode == "dynamic":
+            prompt = (
+                f"Focus only on {identity}. Describe this visible person's posture, body orientation, and obvious movement right now. "
+                "Avoid inferring held objects or object interactions unless they are visually obvious. Do not describe other people."
+            )
+        payload.update({
+            "task_id": f"{spec.task_id}_{self._slug_identity(identity)}",
+            "label": f"{spec.label or spec.task_id} [{identity}]",
+            "question": prompt,
+            "target": "person_identity",
+            "metadata": metadata,
+        })
+        return VLMTaskSpec.from_payload(payload, default_id=spec.task_id)
+
+    @staticmethod
+    def _slug_identity(identity: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "_", str(identity or "").strip().lower()).strip("_") or "person"
+
+    def _personalize_focus_result(self, result: VisualFocusResult) -> VisualFocusResult:
+        identities = self._visible_person_identities()
+        if not result.constant_vlm_specs:
+            return result
+
+        constant_specs: list[VLMTaskSpec] = []
+        for spec in result.constant_vlm_specs:
+            if spec.interpret_as == "person_description_static" and spec.target == "nearest_person":
+                if not identities:
+                    constant_specs.append(spec)
+                    continue
+                for identity in identities:
+                    if identity in self._static_identity_answers:
+                        continue
+                    constant_specs.append(self._person_specific_spec(spec, identity, mode="static"))
+                continue
+            if spec.interpret_as == "person_description_dynamic" and spec.target == "nearest_person" and len(identities) == 1:
+                constant_specs.append(self._person_specific_spec(spec, identities[0], mode="dynamic"))
+                continue
+            constant_specs.append(spec)
+
+        return VisualFocusResult(
+            constant_questions=list(result.constant_questions),
+            ephemeral_questions=list(result.ephemeral_questions),
+            constant_sam_targets=list(result.constant_sam_targets),
+            ephemeral_sam_targets=list(result.ephemeral_sam_targets),
+            constant_vlm_specs=constant_specs,
+            ephemeral_vlm_specs=list(result.ephemeral_vlm_specs),
+            scenario_questions=list(result.scenario_questions),
+            stage_questions=list(result.stage_questions),
+            manual_questions=list(result.manual_questions),
+            scenario_sam_targets=list(result.scenario_sam_targets),
+            stage_sam_targets=list(result.stage_sam_targets),
+            manual_sam_targets=list(result.manual_sam_targets),
+        )
+
+    def _refresh_focus_for_people(self) -> None:
+        if self._focus_refresh_in_progress or self._model_config is None:
+            return
+        self._focus_refresh_in_progress = True
+        try:
+            self.update_focus(
+                beat=self._beat,
+                stage_goal=self._stage_goal,
+                thought="",
+                world=self._world,
+                people=self._people,
+                model_config=self._model_config,
+                scenario=self._scenario,
+            )
+        finally:
+            self._focus_refresh_in_progress = False
+
+    def _emit_committed_state(self) -> None:
+        if self._state_commit_callback is not None:
+            self._state_commit_callback(self._world, self._people)
+            return
+        if self._world is not None:
+            self._emit_runtime_event("world_state", {
+                "static_facts": [{"id": "", "text": s} for s in (self._world.static or [])],
+                "dynamic_facts": [{"id": k, "text": v} for k, v in (self._world.dynamic or {}).items()],
+                "pending": list(self._world.pending),
+            })
+        if self._people is not None:
+            self._emit_runtime_event("people_state", {
+                "people": [
+                    {
+                        "id": p.person_id,
+                        "name": p.name,
+                        "presence": p.presence,
+                        "facts": [{"id": k, "text": v, "scope": p.fact_scope(k)} for k, v in p.facts.items()],
+                    }
+                    for p in self._people.people.values()
+                ]
+            })
+
     def set_paused(self, paused: bool) -> None:
         self._paused = paused
 
@@ -143,6 +267,7 @@ class VisionManager:
                 manual_questions=manual_questions,
                 manual_sam_targets=manual_sam_targets,
             )
+            result = self._personalize_focus_result(result)
         except Exception:
             return
         with self._focus_lock:
@@ -465,8 +590,10 @@ class VisionManager:
 
     def _resolve_people(self, snapshot: RawVisualSnapshot) -> None:
         """Map visual presence to PeopleState, emit stable presence-change events."""
+        previous_ids = set(self._known_persons)
         current_ids = self._visible_identity_candidates(snapshot)
         visible_now = self._has_human_presence(snapshot)
+        people_changed = False
 
         if self._people is not None and visible_now:
             present_people = self._people.present_people()
@@ -479,14 +606,21 @@ class VisionManager:
                     else:
                         person_id = self._people.get_or_create(vid)
                     self._visual_to_person[vid] = person_id
+                    people_changed = True
                 person = self._people.people.get(person_id)
                 if person is not None:
+                    if person.presence != "present":
+                        people_changed = True
                     person.presence = "present"
-                    if not person.name:
+                    if not person.name or person.name != vid:
+                        if person.name != vid:
+                            people_changed = True
                         person.name = vid
 
         if self._people is not None and not visible_now:
             for person in self._people.present_people():
+                if person.presence != "gone":
+                    people_changed = True
                 person.presence = "gone"
 
         self._known_persons = set(current_ids)
@@ -540,6 +674,10 @@ class VisionManager:
             ))
 
         self._presence_visible = visible_now
+        if people_changed:
+            self._emit_committed_state()
+        if previous_ids != self._known_persons:
+            self._refresh_focus_for_people()
 
     def _trace_payload(self, snapshot: RawVisualSnapshot, **extra) -> dict:
         payload = {
@@ -784,6 +922,7 @@ class VisionManager:
 
         changed: list[dict] = []
         active_keys: set[str] = set()
+        static_identities_updated = False
         for answer in snapshot.vlm_answers:
             interpret_as = str(answer.interpret_as or "").strip()
             if interpret_as not in {"world_state", "person_description_static", "person_description_dynamic"}:
@@ -812,6 +951,12 @@ class VisionManager:
                 self._system_task_signatures[signature_key] = signature
                 continue
             self._system_task_signatures[signature_key] = signature
+            if interpret_as == "person_description_static":
+                identity = str(answer.target_identity or "").strip()
+                if identity:
+                    if identity not in self._static_identity_answers:
+                        static_identities_updated = True
+                    self._static_identity_answers.add(identity)
             changed.append({
                 "task_id": answer.task_id,
                 "label": answer.label or answer.task_id,
@@ -843,6 +988,8 @@ class VisionManager:
             if self._should_emit_visual_claim(item, None)
         ]
         if not (update.remove_facts or update.add_facts or update.events or update.person_updates):
+            if static_identities_updated:
+                self._refresh_focus_for_people()
             return
 
         snapshot_id = self._snapshot_id(snapshot)
@@ -853,17 +1000,24 @@ class VisionManager:
             "remove_facts": list(update.remove_facts),
             "add_facts": list(update.add_facts),
             "events": list(update.events),
+            "already_applied": True,
             "person_updates": [
                 {
                     "person_id": item.person_id,
                     "remove_facts": list(item.remove_facts),
                     "add_facts": list(item.add_facts),
+                    "fact_scope": item.fact_scope,
                     "set_name": item.set_name,
                     "set_presence": item.set_presence,
                 }
                 for item in update.person_updates
             ],
         }
+        if self._world is not None:
+            self._world.apply_update(update)
+        if self._people is not None and update.person_updates:
+            self._people.apply_updates(update.person_updates)
+        self._emit_committed_state()
         summary = result.summary or self._summarize_world_update(update)
         trace = self._trace_payload(
             snapshot,
@@ -900,8 +1054,11 @@ class VisionManager:
                 "remove_facts": list(update.remove_facts),
                 "add_facts": list(update.add_facts),
                 "events": list(update.events),
+                "already_applied": True,
                 "person_updates": payload["person_updates"],
             })
+        if static_identities_updated:
+            self._refresh_focus_for_people()
 
     def _resolve_target_person_id(self, answer) -> str:
         identity = str(answer.target_identity or "").strip()

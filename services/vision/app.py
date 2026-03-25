@@ -838,14 +838,36 @@ def _crop_frame_to_bbox(frame_rgb: np.ndarray, bbox: tuple[int, int, int, int], 
 
 def _prepare_vlm_frame(frame_rgb: np.ndarray, spec: dict) -> tuple[np.ndarray | None, dict]:
     target = str(spec.get("target", "scene") or "scene").strip().lower()
-    if target != "nearest_person":
+    if target not in {"nearest_person", "person_identity"}:
         return frame_rgb, {"target": "scene", "target_bbox": None, "target_identity": ""}
 
     people = _current_person_targets()
     if not people:
-        return None, {"target": "nearest_person", "target_bbox": None, "target_identity": ""}
+        return None, {"target": target, "target_bbox": None, "target_identity": ""}
 
-    person = people[0]
+    if target == "person_identity":
+        metadata = dict(spec.get("metadata", {}) or {})
+        desired_identity = str(
+            metadata.get("target_identity")
+            or spec.get("target_identity")
+            or ""
+        ).strip()
+        person = next(
+            (
+                item
+                for item in people
+                if str(item.get("identity", "")).strip() == desired_identity
+            ),
+            None,
+        )
+        if person is None:
+            return None, {
+                "target": "person_identity",
+                "target_bbox": None,
+                "target_identity": desired_identity,
+            }
+    else:
+        person = people[0]
     bbox = person.get("bbox")
     bbox_tuple = tuple(bbox) if bbox else None
     if bbox_tuple and len(bbox_tuple) == 4:
@@ -853,7 +875,7 @@ def _prepare_vlm_frame(frame_rgb: np.ndarray, spec: dict) -> tuple[np.ndarray | 
     else:
         crop = frame_rgb
     return crop, {
-        "target": "nearest_person",
+        "target": target,
         "target_bbox": list(bbox_tuple) if bbox_tuple else None,
         "target_identity": str(person.get("identity", "")).strip(),
     }
@@ -1030,7 +1052,7 @@ def _managed_question_worker():
                     }
                 continue
             question = str(spec.get("question", "")).strip()
-            if target_meta.get("target") == "nearest_person":
+            if target_meta.get("target") in {"nearest_person", "person_identity"}:
                 question = "Answer about the visible person in this crop only. " + question
             full_q = _build_question(question, inject_context=True)
             try:

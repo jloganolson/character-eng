@@ -445,6 +445,67 @@ def test_vision_manager_update_focus_pushes_dashboard_event(monkeypatch):
     assert event["data"]["ephemeral_sam_targets"] == ["bottle"]
 
 
+def test_vision_manager_update_focus_personalizes_person_specs(monkeypatch):
+    from character_eng.person import PeopleState
+    from character_eng.vision.context import RawVisualSnapshot, PersonObservation
+    from character_eng.vision.focus import VisualFocusResult
+    from character_eng.vision.manager import VisionManager
+    from character_eng.vision.vlm import VLMTaskSpec
+
+    mgr = VisionManager()
+    people = PeopleState()
+    people.add_person(name="Visitor", presence="present")
+    mgr.update_context(people=people)
+    mgr.context.update(RawVisualSnapshot(
+        persons=[PersonObservation(identity="Visitor", bbox=(0, 0, 100, 200))],
+    ))
+
+    pushed_questions = {}
+    monkeypatch.setattr(
+        "character_eng.vision.manager.visual_focus_call",
+        lambda *args, **kwargs: VisualFocusResult(
+            constant_vlm_specs=[
+                VLMTaskSpec(
+                    task_id="person_description_static",
+                    label="Person Description Static",
+                    question="Describe the nearest visible person's appearance.",
+                    target="nearest_person",
+                    cadence_s=6.0,
+                    interpret_as="person_description_static",
+                ),
+                VLMTaskSpec(
+                    task_id="person_description_dynamic",
+                    label="Person Description Dynamic",
+                    question="Describe what the nearest visible person is doing right now.",
+                    target="nearest_person",
+                    cadence_s=2.0,
+                    interpret_as="person_description_dynamic",
+                ),
+            ],
+        ),
+    )
+    monkeypatch.setattr(mgr._client, "set_questions", lambda constant, ephemeral: pushed_questions.update({
+        "constant": list(constant),
+        "ephemeral": list(ephemeral),
+    }))
+    monkeypatch.setattr(mgr._client, "set_sam_targets", lambda constant, ephemeral: None)
+
+    mgr.update_focus(
+        beat=None,
+        stage_goal="Notice who is here.",
+        thought="",
+        world=None,
+        people=people,
+        model_config={},
+    )
+
+    constant_specs = pushed_questions["constant"]
+    assert [spec.target for spec in constant_specs] == ["person_identity", "person_identity"]
+    assert constant_specs[0].metadata["target_identity"] == "Visitor"
+    assert constant_specs[1].metadata["target_identity"] == "Visitor"
+    assert constant_specs[0].task_id.endswith("visitor")
+
+
 def test_visual_focus_call_keeps_person_constants():
     from character_eng.vision.focus import CORE_CONSTANT_QUESTIONS, CORE_CONSTANT_SAM_TARGETS, CORE_CONSTANT_VLM_SPECS, visual_focus_call
 
@@ -900,8 +961,12 @@ def test_vision_manager_emits_direct_state_updates_from_system_tasks(monkeypatch
     update_event = next(event for event in drained if event.kind == "vision_state_update")
     assert update_event.payload["person_updates"][0]["person_id"] == person.person_id
     assert update_event.payload["task_answers"][0]["target_person_id"] == person.person_id
+    assert update_event.payload["already_applied"] is True
+    assert "Wearing a blue jacket" in person.facts.values()
     raw_event = next(event for event in collector.get_all() if event["type"] == "vision_state_update")
     assert raw_event["data"]["summary"] == "Visitor is wearing a blue jacket"
+    people_state_event = [event for event in collector.get_all() if event["type"] == "people_state"][-1]
+    assert people_state_event["data"]["people"][0]["facts"][0]["text"] == "Wearing a blue jacket"
 
 
 def test_vision_manager_only_adds_synthesis_history_on_drain(monkeypatch):

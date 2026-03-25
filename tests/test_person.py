@@ -201,6 +201,33 @@ def test_people_state_apply_updates_invalid_fact_id_ignored():
     assert list(p.facts.values()) == ["A fact"]
 
 
+def test_people_state_apply_updates_replaces_ephemeral_facts():
+    ps = PeopleState()
+    p = ps.add_person(name="Alice")
+    ps.apply_updates([PersonUpdate(person_id="p1", add_facts=["Looking left"], fact_scope="ephemeral")])
+    first_id = next(iter(p.facts))
+
+    ps.apply_updates([PersonUpdate(person_id="p1", add_facts=["Looking right"], fact_scope="ephemeral")])
+
+    assert list(p.facts.values()) == ["Looking right"]
+    assert first_id not in p.facts
+    only_id = next(iter(p.facts))
+    assert p.fact_scope(only_id) == "ephemeral"
+
+
+def test_people_state_apply_updates_upgrades_matching_fact_to_static():
+    ps = PeopleState()
+    p = ps.add_person(name="Alice")
+    ps.apply_updates([PersonUpdate(person_id="p1", add_facts=["Wearing glasses"], fact_scope="ephemeral")])
+    fact_id = next(iter(p.facts))
+
+    ps.apply_updates([PersonUpdate(person_id="p1", add_facts=["Wearing glasses"], fact_scope="static")])
+
+    assert list(p.facts.values()) == ["Wearing glasses"]
+    assert next(iter(p.facts)) == fact_id
+    assert p.fact_scope(fact_id) == "static"
+
+
 def test_people_state_show_panel():
     ps = PeopleState()
     ps.add_person(name="Alice", presence="present")

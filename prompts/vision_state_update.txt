@@ -11,8 +11,8 @@ Your job:
 - use `add_facts` and `remove_facts` for stable scene facts
 - use `person_updates` for person-specific facts
 - use `events` for transient actions or short-lived state changes
-- for `person_description_static`, prefer durable appearance facts on the target person
-- for `person_description_dynamic`, prefer `events`, and only add person facts when the state is likely to persist
+- for `person_description_static`, prefer durable appearance facts on the target person and set `fact_scope` to `static`
+- for `person_description_dynamic`, prefer `events`, and only add person facts when the state is likely to persist; when you do add short-lived person facts, set `fact_scope` to `ephemeral`
 - for `world_state`, update scene/world facts and events
 - only reference a `person_id` that is explicitly provided in the input
 - when replacing stale facts, remove the old fact IDs rather than duplicating them
@@ -29,6 +29,7 @@ Return JSON:
       "person_id": "p1",
       "remove_facts": [],
       "add_facts": [],
+      "fact_scope": "static",
       "set_name": "",
       "set_presence": ""
     }
@@ -39,5 +40,7 @@ Rules:
 - `summary` should be a short plain-language description of the update, suitable for a debug UI
 - `remove_facts` must contain only existing world fact IDs like `f3`
 - `person_updates.remove_facts` must contain only existing person fact IDs like `p1f2`
+- `person_updates.fact_scope` must be either `static` or `ephemeral` when `add_facts` is non-empty
 - `add_facts` and `person_updates.add_facts` must be plain fact text only, never fact IDs
 - omit empty strings and omit person updates with no actual changes
+- do not turn uncertain held-object claims into person facts; prefer omission or an `event` unless the object interaction is visually obvious

@@ -69,6 +69,7 @@ def _payload_world_update(event: PerceptionEvent) -> WorldUpdate:
             person_id=str(raw.get("person_id", "")).strip(),
             remove_facts=list(raw.get("remove_facts", []) or []),
             add_facts=list(raw.get("add_facts", []) or []),
+            fact_scope=str(raw.get("fact_scope", "")).strip() or None,
             set_name=str(raw.get("set_name", "")).strip() or None,
             set_presence=str(raw.get("set_presence", "")).strip() or None,
         ))
@@ -122,10 +123,11 @@ def process_perception(event: PerceptionEvent, people, world) -> tuple[None, str
         return (None, "")
     elif event.kind == "vision_state_update":
         update = _filtered_world_update(event)
-        if world is not None:
-            world.apply_update(update)
-        if people is not None and update.person_updates:
-            people.apply_updates(update.person_updates)
+        if not bool((event.payload or {}).get("already_applied")):
+            if world is not None:
+                world.apply_update(update)
+            if people is not None and update.person_updates:
+                people.apply_updates(update.person_updates)
         narrator_msg = format_pending_narrator(event.description or format_narrator_message(update))
         return (None, narrator_msg)
     else:

@@ -101,6 +101,7 @@ def vision_state_update_call(
             person_id=str(raw.get("person_id", "")).strip(),
             remove_facts=_clean_id_list(raw.get("remove_facts", []), _PERSON_FACT_ID_RE),
             add_facts=_clean_string_list(raw.get("add_facts", []), fact_text=True),
+            fact_scope=str(raw.get("fact_scope", "")).strip() or None,
             set_name=str(raw.get("set_name", "")).strip() or None,
             set_presence=set_presence,
             invalid_presence=invalid_presence,
