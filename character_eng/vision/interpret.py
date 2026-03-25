@@ -11,8 +11,10 @@ from character_eng.world import (
     _PERSON_FACT_ID_RE,
     _VALID_PRESENCE,
     _WORLD_FACT_ID_RE,
+    _clean_optional_text,
     _clean_id_list,
     _clean_string_list,
+    _fact_text_match,
 )
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
@@ -27,6 +29,75 @@ class VisionStateUpdateResult:
 
 def _load_prompt() -> str:
     return load_prompt_asset("vision_state_update", prompts_dir=PROMPTS_DIR, default_filename="vision_state_update.txt")
+
+
+def _looks_person_fact(text: str, *, target_identity: str = "") -> bool:
+    cleaned = " ".join(str(text or "").strip().lower().split())
+    if not cleaned:
+        return False
+    if target_identity and cleaned.startswith(target_identity.strip().lower()):
+        return True
+    return cleaned.startswith((
+        "person ",
+        "the person ",
+        "the person is",
+        "the visible person",
+        "visible person",
+        "his ",
+        "her ",
+        "their ",
+        "he ",
+        "she ",
+        "they ",
+    ))
+
+
+def _normalize_person_fact_updates(update: WorldUpdate, task_answers: list[dict]) -> WorldUpdate:
+    target_ids = {
+        str(item.get("target_person_id", "")).strip()
+        for item in task_answers
+        if str(item.get("target_person_id", "")).strip()
+    }
+    target_identity = next((
+        str(item.get("target_identity", "")).strip()
+        for item in task_answers
+        if str(item.get("target_identity", "")).strip()
+    ), "")
+
+    person_updates_by_id = {item.person_id: item for item in update.person_updates}
+    normalized_world_facts: list[str] = []
+
+    for fact in update.add_facts:
+        if any(_fact_text_match(fact, existing) for item in update.person_updates for existing in item.add_facts):
+            continue
+        if len(target_ids) == 1 and _looks_person_fact(fact, target_identity=target_identity):
+            target_id = next(iter(target_ids))
+            person_update = person_updates_by_id.get(target_id)
+            if person_update is None:
+                is_dynamic = any(
+                    str(item.get("interpret_as", "")).strip() == "person_description_dynamic"
+                    and str(item.get("target_person_id", "")).strip() == target_id
+                    for item in task_answers
+                )
+                person_update = PersonUpdate(
+                    person_id=target_id,
+                    fact_scope="ephemeral" if is_dynamic else "static",
+                )
+                update.person_updates.append(person_update)
+                person_updates_by_id[target_id] = person_update
+            if not any(_fact_text_match(fact, existing) for existing in person_update.add_facts):
+                person_update.add_facts.append(fact)
+            person_update.fact_scope = person_update.fact_scope or "static"
+            continue
+        normalized_world_facts.append(fact)
+
+    update.add_facts = normalized_world_facts
+    update.person_updates = [
+        item
+        for item in update.person_updates
+        if item.remove_facts or item.add_facts or item.set_name is not None or item.set_presence is not None
+    ]
+    return update
 
 
 def vision_state_update_call(
@@ -101,8 +172,8 @@ def vision_state_update_call(
             person_id=str(raw.get("person_id", "")).strip(),
             remove_facts=_clean_id_list(raw.get("remove_facts", []), _PERSON_FACT_ID_RE),
             add_facts=_clean_string_list(raw.get("add_facts", []), fact_text=True),
-            fact_scope=str(raw.get("fact_scope", "")).strip() or None,
-            set_name=str(raw.get("set_name", "")).strip() or None,
+            fact_scope=_clean_optional_text(raw.get("fact_scope")),
+            set_name=_clean_optional_text(raw.get("set_name")),
             set_presence=set_presence,
             invalid_presence=invalid_presence,
         ))
@@ -113,6 +184,7 @@ def vision_state_update_call(
         events=_clean_string_list(data.get("events", [])),
         person_updates=person_updates,
     )
+    update = _normalize_person_fact_updates(update, task_answers)
     return VisionStateUpdateResult(
         update=update,
         thought=str(data.get("thought", "")).strip(),

@@ -56,6 +56,7 @@ _ECHO_MIN_WORDS = 2
 _ECHO_RATIO_THRESHOLD = 0.92
 _ECHO_CONTAINMENT_THRESHOLD = 0.82
 _ECHO_GRACE_S = 1.25
+_RECENT_TRANSCRIPT_SPEECHSTART_GRACE_S = 0.35
 
 
 def _normalize_echo_text(text: str) -> str:
@@ -1571,6 +1572,11 @@ class VoiceIO:
         Without AEC: triggers barge-in during playback (legacy behavior).
         """
         started_at = time.time()
+        if (
+            self._last_transcript_final_at is not None
+            and 0.0 <= (started_at - self._last_transcript_final_at) <= _RECENT_TRANSCRIPT_SPEECHSTART_GRACE_S
+        ):
+            return
         self._last_speech_started_at = started_at
         self._trace("user_speech_started", {"speech_started_ts": started_at})
         if self._is_speaking:

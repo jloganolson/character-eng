@@ -3524,7 +3524,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     scenario=scenario,
                     vision_mgr=vision_mgr,
                 )
-                if stream_response._continue_listening:
+                if stream_response._continue_listening or stream_response._cancelled_reply:
                     continue
                 expr = stream_response._last_expr
                 entry = {"type": "send", "input": user_input, "response": response}
@@ -3596,7 +3596,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     scenario=scenario,
                     vision_mgr=vision_mgr,
                 )
-            if stream_response._continue_listening:
+            if stream_response._continue_listening or stream_response._cancelled_reply:
                 continue
             expr = stream_response._last_expr
             entry = {"type": "send", "input": user_input, "response": response}
@@ -3721,11 +3721,34 @@ def _apply_expression_runtime_context(session, expr_result) -> None:
     return None
 
 
-def _apply_beat_guidance(session, beat) -> None:
+def _current_turn_cue() -> str:
+    meta = dict(_active_turn_meta or {})
+    source = str(meta.get("trigger_source") or "").strip()
+    reason = str(meta.get("trigger_reason") or "").strip()
+    if source == "vision":
+        parts = ["A vision-triggered moment says it is time to speak."]
+        stage_goal = str(meta.get("trigger_stage_to_goal") or meta.get("trigger_stage_from_goal") or "").strip()
+        if stage_goal:
+            parts.append(f"Current stage cue: {stage_goal}")
+        exit_label = str(meta.get("trigger_stage_exit_label") or "").strip()
+        if exit_label:
+            parts.append(f"Visual transition: {exit_label}")
+        signals = [str(item).strip() for item in (meta.get("trigger_signals") or []) if str(item).strip()]
+        if signals:
+            parts.append(f"Visual signals: {', '.join(signals)}")
+        return "\n".join(parts)
+    if source == "timer":
+        return "No new user turn arrived. Continue naturally from the latest conversation."
+    if source == "manual" and reason == "auto_beat":
+        return "No new user turn arrived. Continue naturally from the latest conversation."
+    return "Continue naturally from the latest conversation and current moment."
+
+
+def _apply_beat_guidance(session, beat, *, cue: str = "") -> None:
     if not _runtime_controls.get("beat_guidance", True):
         _set_runtime_context(session, "runtime_beat_guidance", "")
         return
-    _set_runtime_context(session, "runtime_beat_guidance", load_beat_guide(beat.intent, beat.line))
+    _set_runtime_context(session, "runtime_beat_guidance", load_beat_guide(beat.intent, beat.line, cue=cue))
 
 
 def run_expression(session, model_config, line=None):
@@ -3822,7 +3845,7 @@ def deliver_beat(session, beat, label, voice_io=None):
         beat.line,
         turn_kind=str((_active_turn_meta or {}).get("turn_kind") or "scripted"),
         turn_outcome="beat_delivered",
-        prompt_blocks=[],
+        prompt_blocks=_prompt_trace_blocks_for_labels(("next_beat", "plan")),
     )
     if voice_io is not None:
         voice_io.speak_text(beat.line)
@@ -3853,13 +3876,30 @@ def stream_guided_beat(session, beat, label, user_input, voice_io=None, expr_mod
     acknowledges what the user said. Returns the full response text.
     """
     # Inject beat guidance so the LLM knows the intent
-    _apply_beat_guidance(session, beat)
+    _apply_beat_guidance(session, beat, cue=f"Latest user message: {user_input}")
 
     # Stream a real LLM response guided by the beat intent
     return stream_response(
         session,
         label,
         user_input,
+        voice_io=voice_io,
+        expr_model_config=expr_model_config,
+        keep_beat_guidance=True,
+        world=world,
+        people=people,
+        scenario=scenario,
+        vision_mgr=vision_mgr,
+    )
+
+
+def stream_autonomous_guided_beat(session, beat, label, voice_io=None, expr_model_config=None, world=None, people=None, scenario=None, vision_mgr=None) -> str:
+    """Generate a fresh beat-guided reply from live history without injecting a fake user turn."""
+    _apply_beat_guidance(session, beat, cue=_current_turn_cue())
+    return stream_response(
+        session,
+        label,
+        None,
         voice_io=voice_io,
         expr_model_config=expr_model_config,
         keep_beat_guidance=True,
@@ -3906,6 +3946,8 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
                     scenario=scenario,
                     vision_mgr=vision_mgr,
                 )
+                if stream_response._continue_listening or stream_response._cancelled_reply:
+                    return
                 entry["response"] = response
                 log.append(entry)
                 return
@@ -3945,7 +3987,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
                     idle_text,
                     turn_kind="idle",
                     turn_outcome="idle_hold",
-                    prompt_blocks=[],
+                    prompt_blocks=_prompt_trace_blocks_for_labels(("condition",)),
                 )
                 if voice_io is not None:
                     voice_io.speak_text(idle_text)
@@ -3973,8 +4015,20 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
             log.append(entry)
             return
 
-    # 3. Deliver the beat
-    response = deliver_beat(session, beat, label, voice_io=voice_io)
+    # 3. Generate the beat response against the latest live history
+    response = stream_autonomous_guided_beat(
+        session,
+        beat,
+        label,
+        voice_io=voice_io,
+        expr_model_config=model_config,
+        world=world,
+        people=people,
+        scenario=scenario,
+        vision_mgr=vision_mgr,
+    )
+    if stream_response._continue_listening or stream_response._cancelled_reply:
+        return
     entry["response"] = response
 
     # 4. Advance
@@ -4031,6 +4085,8 @@ def handle_world_change(session, world, goals, script, change_text, label, model
         scenario=scenario,
         vision_mgr=vision_mgr,
     )
+    if stream_response._continue_listening or stream_response._cancelled_reply:
+        return
     expr = stream_response._last_expr
 
     entry = {
@@ -4085,6 +4141,8 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
         scenario=scenario,
         vision_mgr=vision_mgr,
     )
+    if stream_response._continue_listening or stream_response._cancelled_reply:
+        return
     expr = stream_response._last_expr
 
     entry = {
@@ -4161,6 +4219,8 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
                 scenario=scenario,
                 vision_mgr=vision_mgr,
             )
+            if stream_response._continue_listening or stream_response._cancelled_reply:
+                continue
             expr = stream_response._last_expr
             entry = {"type": "send", "input": text, "response": response}
             if expr:
@@ -4237,7 +4297,7 @@ def _consume_live_input_metadata(voice_io, user_input: str) -> dict:
 
 
 def stream_response(session, label, message, voice_io=None, expr_model_config=None, input_timing: dict | None = None, keep_beat_guidance: bool = False, world=None, people=None, scenario=None, vision_mgr=None) -> str:
-    """Send a message and stream the response. Returns full response text.
+    """Stream a response from the current session, optionally after appending a user message.
 
     When voice_io is provided, also feeds chunks to TTS and checks for barge-in.
     When expr_model_config is provided, fires expression_call as soon as LLM
@@ -4246,10 +4306,13 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
     """
     stream_response._last_expr = None
     stream_response._continue_listening = False
+    stream_response._cancelled_reply = False
+    stream_response._turn_outcome = "replied"
     if not keep_beat_guidance:
         _set_runtime_context(session, "runtime_beat_guidance", "")
     _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
-    _inject_runtime_turn_guardrails(session, message, people=people, scenario=scenario, vision_mgr=vision_mgr)
+    message_text = str(message) if message is not None else ""
+    _inject_runtime_turn_guardrails(session, message_text, people=people, scenario=scenario, vision_mgr=vision_mgr)
     npc_name = Text(f"{_ts()} {label}: ", style="bold magenta")
     console.print(npc_name, end="")
     full_response = []
@@ -4259,7 +4322,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
     t_tts_request = None
     t_tts_synth_done = None
     t_first_audio = None
-    gen = session.send(message)
+    gen = session.send(message_text) if message is not None else session.respond()
 
     if voice_io is not None:
         # Voice mode: feed chunks to TTS, check for barge-in
@@ -4269,7 +4332,11 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
         if voice_io._speaker is not None:
             voice_io._speaker.reset_counters()
             voice_io._speaker._audio_started.clear()
-        should_gate_listening = (input_timing or {}).get("input_source") == "voice" and not message.startswith("/")
+        should_gate_listening = (
+            message is not None
+            and (input_timing or {}).get("input_source") == "voice"
+            and not message_text.startswith("/")
+        )
         listening_future = None
         listening_pool = None
         listening_result: ContinueListeningResult | None = None
@@ -4281,7 +4348,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
             listening_pool = ThreadPoolExecutor(max_workers=1)
             listening_future = listening_pool.submit(
                 continue_listening_call,
-                transcript=message,
+                transcript=message_text,
                 system_prompt=session.system_prompt,
                 history=session.get_history(),
                 model_config=expr_model_config or CHAT_MODEL,
@@ -4319,7 +4386,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
             except Exception:
                 listening_result = ContinueListeningResult()
             if listening_result.should_wait and not voice_io.audio_started:
-                voice_io.defer_next_user_turn(message)
+                voice_io.defer_next_user_turn(message_text)
                 voice_io.cancel_speech()
                 session.rollback_last_turn()
                 stream_response._continue_listening = True
@@ -4440,6 +4507,18 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
 
     response_text = "".join(full_response)
 
+    # If STT/VAD cancelled the turn before any audio ever started, scrub any
+    # partial assistant text that chat.py may have recorded in its finally block.
+    if (
+        voice_io is not None
+        and voice_io._cancelled.is_set()
+        and t_first_audio is None
+        and not response_text
+    ):
+        session.replace_last_assistant("")
+        stream_response._cancelled_reply = True
+        stream_response._turn_outcome = "cancelled"
+
     # Truncate history to approximate what was actually spoken on barge-in
     if voice_io is not None and voice_io._barged_in and response_text:
         ratio = voice_io.speaker_playback_ratio
@@ -4475,7 +4554,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
         first_audio_ts=t_first_audio,
         spoken_done_ts=t_end,
         prompt_blocks=_prompt_trace_blocks_for_labels(("chat",)),
-        turn_outcome="replied",
+        turn_outcome=stream_response._turn_outcome,
     )
     if input_timing:
         response_payload.update(input_timing)

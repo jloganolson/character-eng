@@ -5,7 +5,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from character_eng.person import PersonUpdate
-from character_eng.world import WorldUpdate, format_narrator_message, format_pending_narrator
+from character_eng.world import (
+    WorldUpdate,
+    _clean_optional_text,
+    format_narrator_message,
+    format_pending_narrator,
+)
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 CHARACTERS_DIR = PROMPTS_DIR / "characters"
@@ -69,9 +74,9 @@ def _payload_world_update(event: PerceptionEvent) -> WorldUpdate:
             person_id=str(raw.get("person_id", "")).strip(),
             remove_facts=list(raw.get("remove_facts", []) or []),
             add_facts=list(raw.get("add_facts", []) or []),
-            fact_scope=str(raw.get("fact_scope", "")).strip() or None,
-            set_name=str(raw.get("set_name", "")).strip() or None,
-            set_presence=str(raw.get("set_presence", "")).strip() or None,
+            fact_scope=_clean_optional_text(raw.get("fact_scope")),
+            set_name=_clean_optional_text(raw.get("set_name")),
+            set_presence=_clean_optional_text(raw.get("set_presence")),
         ))
     return WorldUpdate(
         remove_facts=list(payload.get("remove_facts", []) or []),

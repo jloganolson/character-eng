@@ -1242,6 +1242,31 @@
   .stream-dot.type-vlm-answer {
     background: #60a5fa;
   }
+  .stream-dot.type-vision-snapshot,
+  .stream-dot.type-vision-pass,
+  .stream-dot.type-vision-focus,
+  .stream-dot.type-vision-trigger,
+  .stream-dot.type-vision-state-update {
+    background: color-mix(in srgb, var(--stream-vision) 84%, white 16%);
+  }
+  .stream-dot.type-vision-focus {
+    background: color-mix(in srgb, var(--stream-vision) 66%, #7dd3fc 34%);
+  }
+  .stream-dot.type-vision-trigger {
+    background: color-mix(in srgb, var(--stream-vision) 62%, #f59e0b 38%);
+  }
+  .stream-dot.type-world-state,
+  .stream-dot.type-people-state,
+  .stream-dot.type-world-update,
+  .stream-dot.type-reconcile {
+    background: color-mix(in srgb, var(--stream-world) 82%, white 18%);
+  }
+  .stream-dot.type-people-state {
+    background: color-mix(in srgb, var(--stream-world) 62%, #7dd3fc 38%);
+  }
+  .stream-dot.type-reconcile {
+    background: color-mix(in srgb, var(--stream-world) 72%, #f59e0b 28%);
+  }
   .stream-dot.type-perception {
     background: color-mix(in srgb, var(--stream-vision) 82%, #f59e0b 18%);
   }
@@ -2508,6 +2533,15 @@
     ]);
   const DOT_RENDER_EVENT_TYPES = new Set([
       "perception",
+      "vision_snapshot",
+      "vision_pass",
+      "vision_focus",
+      "vision_trigger",
+      "vision_state_update",
+      "reconcile",
+      "world_state",
+      "people_state",
+      "world_update",
     ]);
   const HIDDEN_RUNTIME_EVENT_TYPES = Object.freeze([
       "turn_summary",
@@ -5744,21 +5778,26 @@
         trace_source: block.trace_source || "attached",
       }));
     }
-    const desired = {
-      turn_summary: ["chat", "thought", "script_check", "director", "next_beat", "plan"],
-      assistant_reply: ["chat"],
-      response_done: ["chat"],
-      expression: ["expression"],
-      response_guard: ["response_guard"],
-      eval: ["thought", "script_check"],
-      director: ["director"],
-      post_response: ["thought", "script_check", "director", "next_beat", "plan"],
-      plan: ["next_beat", "plan"],
-      vision_focus: ["visual_focus"],
-      reconcile: ["reconcile"],
-      vision_snapshot: ["vision_synthesis"],
-      world_update: ["reconcile"],
-    }[event.type] || [];
+    let desired = [];
+    if (event.type === "assistant_reply" || event.type === "response_done") {
+      desired = event.data?.turn_outcome === "beat_delivered"
+        ? ["next_beat", "plan"]
+        : ["chat"];
+    } else {
+      desired = {
+        turn_summary: ["chat", "thought", "script_check", "director", "next_beat", "plan"],
+        expression: ["expression"],
+        response_guard: ["response_guard"],
+        eval: ["thought", "script_check"],
+        director: ["director"],
+        post_response: ["thought", "script_check", "director", "next_beat", "plan"],
+        plan: ["next_beat", "plan"],
+        vision_focus: ["visual_focus"],
+        reconcile: ["reconcile"],
+        vision_snapshot: ["vision_synthesis"],
+        world_update: ["reconcile"],
+      }[event.type] || [];
+    }
     if (!desired.length) return [];
     const anchorTs = Number(event.timestamp || 0);
     const selected = [];
@@ -8022,8 +8061,8 @@
         return data.full_text || data.text || (data.partial ? "(partial reply)" : "(streaming reply)");
       case "response_interrupted":
         return data.truncated_text
-          ? `Interrupted after: ${data.truncated_text}`
-          : "Reply interrupted";
+          ? `Assistant cut off after: ${data.truncated_text}`
+          : "Assistant reply cut off";
       case "post_response": {
         const bits = [];
         if (data.script_status) bits.push(`eval ${data.script_status}`);
@@ -8034,6 +8073,13 @@
         return bits.length ? bits.join(" · ") : "Post-response update";
       }
       case "world_update": {
+        const summary = [
+          data.latest_event || "",
+          data.latest_fact || "",
+          ...(Array.isArray(data.events) ? data.events : []),
+          ...(Array.isArray(data.facts) ? data.facts : []),
+        ].find((item) => String(item || "").trim());
+        if (summary) return summary;
         const bits = [];
         if (data.add_count || data.remove_count || data.event_count) bits.push(`+${data.add_count || 0} -${data.remove_count || 0} ~${data.event_count || 0}`);
         if (data.fact_count) bits.push(`${data.fact_count} facts`);
@@ -8041,12 +8087,13 @@
         return bits.length ? bits.join(" · ") : "World update";
       }
       case "vision_focus": {
-        const bits = [];
-        if (data.constant_questions && data.constant_questions.length) bits.push(`${data.constant_questions.length} constant q`);
-        if (data.ephemeral_questions && data.ephemeral_questions.length) bits.push(`${data.ephemeral_questions.length} ephemeral q`);
-        if (data.constant_sam_targets && data.constant_sam_targets.length) bits.push(`${data.constant_sam_targets.length} constant sam`);
-        if (data.ephemeral_sam_targets && data.ephemeral_sam_targets.length) bits.push(`${data.ephemeral_sam_targets.length} ephemeral sam`);
-        return bits.length ? bits.join(" · ") : "Vision focus";
+        return data.summary
+          || data.stage_goal
+          || (data.ephemeral_questions && data.ephemeral_questions[0])
+          || (data.constant_questions && data.constant_questions[0])
+          || (data.ephemeral_sam_targets && `track ${data.ephemeral_sam_targets[0]}`)
+          || (data.constant_sam_targets && `track ${data.constant_sam_targets[0]}`)
+          || "Vision focus";
       }
       case "vision_snapshot_read":
         return `faces ${data.faces || 0} · people ${data.persons || 0} · objects ${data.objects || 0}`;
@@ -8088,12 +8135,26 @@
         return `${data.script_status || "hold"}${data.plan_request ? ` · ${data.plan_request}` : ""}`;
       case "director":
         return `${data.status || "hold"}${data.new_stage ? ` -> ${data.new_stage}` : ""}`;
-      case "reconcile":
-        return `+${(data.add_facts || []).length} -${(data.remove_facts || []).length} ~${(data.events || []).length}`;
+      case "reconcile": {
+        const removed = (data.remove_facts || []).find((item) => String(item || "").trim());
+        return (data.events || []).find((item) => String(item || "").trim())
+          || (data.add_facts || []).find((item) => String(item || "").trim())
+          || (removed ? `remove ${removed}` : "")
+          || `+${(data.add_facts || []).length} -${(data.remove_facts || []).length} ~${(data.events || []).length}`;
+      }
       case "world_state":
-        return `${(data.static_facts || []).length + (data.dynamic_facts || []).length} facts`;
+        return [
+          ...((data.dynamic_facts || []).map((fact) => fact?.text || fact)),
+          ...((data.static_facts || []).map((fact) => fact?.text || fact)),
+          ...(data.pending || []),
+        ].find((item) => String(item || "").trim()) || `${(data.static_facts || []).length + (data.dynamic_facts || []).length} facts`;
       case "people_state":
-        return `${(data.people || []).length} tracked people`;
+        return (data.people || [])
+          .flatMap((person) => [
+            person?.name || person?.id || "",
+            ...((person?.facts || []).map((fact) => fact?.text || fact)),
+          ])
+          .find((item) => String(item || "").trim()) || `${(data.people || []).length} tracked people`;
       case "perception":
         return data.description || "Perception update";
       case "plan":
@@ -8157,6 +8218,7 @@
           data.reason || "interruption",
           data.raw_full_text ? "full text captured" : "",
           data.truncated_text ? `spoken ${data.truncated_text}` : "",
+          data.interruption_text ? `cut off by ${data.interruption_text}` : "",
         ].filter(Boolean).join(" · ");
       case "user_transcript_final":
         return [
@@ -9522,6 +9584,7 @@
       pendingFinalizeAction = "";
       notePendingRuntimeAction("stopping");
       await sendInput("/discard");
+      scheduleDiscardCompletionProbe(250);
       if (ref) setLastStoppedArchive(ref, "");
     } catch (error) {
       pendingFinalizeAction = "";
@@ -9857,6 +9920,8 @@
     if (!event) {
       event = addStreamEvent("assistant_reply", {
         full_text: "",
+        turn_kind: "",
+        turn_outcome: "",
         input_source: "",
         stt_ms: null,
         speech_started_ts: null,
@@ -9886,6 +9951,27 @@
     }
     event.turnId = rawEvent.turnId || event.turnId;
     return event;
+  }
+
+  function inferInterruptionText(rawEvent) {
+    const anchorTs = Number(rawEvent?.timestamp || 0);
+    const recent = [...streamEvents].reverse().filter((candidate) => {
+      if (!candidate || candidate.type === "response_interrupted") return false;
+      if (anchorTs > 0 && Math.abs(Number(candidate.timestamp || 0) - anchorTs) > 1.5) return false;
+      return true;
+    });
+    for (const candidate of recent) {
+      if (candidate.type !== "user_transcript_final") continue;
+      const text = String(candidate.data?.text || candidate.data?.stt_text || "").trim();
+      if (text) return text;
+    }
+    for (const candidate of recent) {
+      if (candidate.type !== "turn_start") continue;
+      const inputType = String(candidate.data?.input_type || "").trim().toLowerCase();
+      const text = String(candidate.data?.input_text || candidate.data?.stt_text || "").trim();
+      if (inputType === "send" && text) return text;
+    }
+    return "";
   }
 
   function mergeVoiceTimingIntoTranscriptEvent(turnId, data) {
@@ -10457,10 +10543,11 @@
     }
     if (event.type === "response_interrupted") {
       return `
-        <div class="stream-card-kicker">interrupt</div>
+        <div class="stream-card-kicker">assistant interrupted</div>
         <div class="stream-card-label">${esc(event.label)}</div>
         ${event.data.raw_full_text ? `<div class="stream-card-subdetail">generated: ${esc(event.data.raw_full_text)}</div>` : ""}
         ${event.data.truncated_text ? `<div class="stream-card-subdetail">spoken: ${esc(event.data.truncated_text)}</div>` : ""}
+        ${event.data.interruption_text ? `<div class="stream-card-subdetail">cut off by: ${esc(event.data.interruption_text)}</div>` : ""}
       `;
     }
     if (event.type === "post_response") {
@@ -11191,6 +11278,8 @@
       event.timestamp = Number(rawEvent.timestamp || event.timestamp);
       event.seq = rawEvent.seq || event.seq;
       event.data.full_text = data.full_text || event.data.full_text || "";
+      event.data.turn_kind = data.turn_kind || event.data.turn_kind || "";
+      event.data.turn_outcome = data.turn_outcome || event.data.turn_outcome || "";
       event.data.input_source = data.input_source || event.data.input_source || "";
       event.data.stt_ms = data.stt_ms ?? event.data.stt_ms;
       event.data.speech_started_ts = data.speech_started_ts ?? event.data.speech_started_ts;
@@ -11257,8 +11346,10 @@
       summary.data.interrupted_reason = data.reason || summary.data.interrupted_reason || "barge_in";
       summary.data.spoken_text = data.truncated_text || summary.data.spoken_text || summary.data.response_text;
       refreshTurnSummary(summary);
+      const interruptionText = inferInterruptionText(rawEvent);
       recordEvent("response_interrupted", {
         ...data,
+        interruption_text: interruptionText,
         reply_key: target.key,
         reply_label: target.label || "",
       }, rawEvent);
