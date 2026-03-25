@@ -764,6 +764,29 @@ def test_voice_io_consume_input_timing_captures_latest_speech_window():
     assert voice.consume_input_timing() == {}
 
 
+def test_voice_io_trace_hook_reports_stt_timing():
+    events = []
+    voice = VoiceIO(trace_hook=lambda event_type, data: events.append((event_type, data)))
+    voice._stt = MagicMock()
+    voice._stt._last_is_final_at = 10.35
+
+    with patch("character_eng.voice.time.time", side_effect=[10.0, 10.42]):
+        voice._on_turn_start()
+        voice._on_transcript("hello there")
+
+    assert events == [
+        ("user_speech_started", {"speech_started_ts": 10.0}),
+        ("user_transcript_final", {
+            "text": "hello there",
+            "transcript_final_ts": 10.42,
+            "speech_started_ts": 10.0,
+            "stt_ms": 420,
+            "speech_ended_ts": 10.35,
+            "endpointing_ms": 70,
+        }),
+    ]
+
+
 def test_voice_io_merge_deferred_input_prefix():
     voice = VoiceIO(trace_hook=MagicMock())
     voice.defer_next_user_turn("well hm")

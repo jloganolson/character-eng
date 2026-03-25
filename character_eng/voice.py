@@ -1436,10 +1436,22 @@ class VoiceIO:
         With AEC, barge-in triggers here (on real transcript) instead of on
         SpeechStarted, since AEC residual can cause false VAD triggers.
         """
-        self._last_transcript_final_at = time.time()
-        self._last_speech_ended_at = self._stt._last_is_final_at if self._stt is not None else None
+        final_at = time.time()
+        speech_ended_at = self._stt._last_is_final_at if self._stt is not None else None
+        self._last_transcript_final_at = final_at
+        self._last_speech_ended_at = speech_ended_at
         self._last_transcript_text = text
-        self._trace("user_transcript_final", {"text": text})
+        trace_payload = {
+            "text": text,
+            "transcript_final_ts": final_at,
+        }
+        if self._last_speech_started_at is not None:
+            trace_payload["speech_started_ts"] = self._last_speech_started_at
+            trace_payload["stt_ms"] = round(max(0.0, final_at - self._last_speech_started_at) * 1000)
+        if speech_ended_at is not None:
+            trace_payload["speech_ended_ts"] = speech_ended_at
+            trace_payload["endpointing_ms"] = round(max(0.0, final_at - speech_ended_at) * 1000)
+        self._trace("user_transcript_final", trace_payload)
         if self._is_speaking and not self.audio_started:
             self._cancel_auto_beat()
             self.cancel_speech()
@@ -1455,8 +1467,9 @@ class VoiceIO:
         Barge-in is handled in _on_transcript() instead.
         Without AEC: triggers barge-in during playback (legacy behavior).
         """
-        self._last_speech_started_at = time.time()
-        self._trace("user_speech_started", {})
+        started_at = time.time()
+        self._last_speech_started_at = started_at
+        self._trace("user_speech_started", {"speech_started_ts": started_at})
         if self._is_speaking:
             if not self.audio_started:
                 self._cancel_auto_beat()
