@@ -6,6 +6,8 @@ import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 from character_eng.history import (
     AudioTrackWriter,
     HistoryService,
@@ -641,6 +643,9 @@ def test_prepare_playback_for_moment_uses_clipped_media(tmp_path):
         context_version=0,
         had_user_input=False,
     )
+    archive.record_event("vision_snapshot_read", {"frame": 1}, timestamp=archive._started_at + 0.25)
+    archive.record_event("vision_state_update", {"summary": "person visible"}, timestamp=archive._started_at + 1.0)
+    archive.record_event("assistant_reply", {"text": "hello"}, timestamp=archive._started_at + 1.8)
     archive.record_user_audio(b"\x00\x00" * 32000)
     archive.record_video_frame(b"\xff\xd8\xff\xd9", timestamp=archive._started_at + 1.0, source="vision")
     service.finalize_current()
@@ -657,9 +662,16 @@ def test_prepare_playback_for_moment_uses_clipped_media(tmp_path):
 
     plan = service.prepare_playback(str(moment_dir))
     assert plan.source_kind == "snippet"
+    assert plan.session_id == moment_dir.name
     assert plan.audio_path == moment_dir / "media" / "audio" / "user_input_clip.wav"
     assert plan.audio_start_s == 0.0
     assert len(plan.video_frames) == 1
+    assert round(plan.video_frames[0]["relative_s"], 3) == 0.5
+
+    payload = service.list_events(str(moment_dir))
+    assert payload["session_id"] == moment_dir.name
+    assert payload["started_at"] == pytest.approx(archive._started_at + 0.5)
+    assert [event["type"] for event in payload["events"]] == ["vision_state_update"]
 
 
 def test_debug_only_mode_stops_new_replay_capture_after_rewind(tmp_path):

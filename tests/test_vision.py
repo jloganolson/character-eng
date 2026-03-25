@@ -56,9 +56,9 @@ def test_raw_visual_snapshot_from_json():
                 "answer_id": "vlm-1",
             }
         ],
-        "cycle_id": "vision-cycle-1",
+        "snapshot_id": "vision-snapshot-1",
         "timestamp": 1234567890.0,
-        "trace": {"cycle_id": "vision-cycle-1"},
+        "trace": {"snapshot_id": "vision-snapshot-1"},
     }
 
     snap = RawVisualSnapshot.from_json(data)
@@ -73,8 +73,8 @@ def test_raw_visual_snapshot_from_json():
     assert len(snap.vlm_answers) == 1
     assert snap.vlm_answers[0].answer == "One person"
     assert snap.vlm_answers[0].answer_id == "vlm-1"
-    assert snap.cycle_id == "vision-cycle-1"
-    assert snap.trace["cycle_id"] == "vision-cycle-1"
+    assert snap.snapshot_id == "vision-snapshot-1"
+    assert snap.trace["snapshot_id"] == "vision-snapshot-1"
 
 
 def test_raw_visual_snapshot_from_empty_json():
@@ -83,6 +83,15 @@ def test_raw_visual_snapshot_from_empty_json():
     assert snap.persons == []
     assert snap.objects == []
     assert snap.vlm_answers == []
+
+
+def test_raw_visual_snapshot_accepts_legacy_cycle_id():
+    snap = RawVisualSnapshot.from_json({
+        "cycle_id": "vision-cycle-legacy",
+        "trace": {"cycle_id": "vision-cycle-legacy"},
+    })
+    assert snap.snapshot_id == "vision-cycle-legacy"
+    assert snap.trace["cycle_id"] == "vision-cycle-legacy"
 
 
 def test_visual_context_render_for_prompt():
@@ -351,7 +360,7 @@ def test_vision_manager_suppresses_generic_presence_synthesis_claims(monkeypatch
     mgr._model_config = {"name": "test"}
     snapshot = RawVisualSnapshot(
         persons=[PersonObservation(identity="Person 1", bbox=(0, 0, 100, 200))],
-        cycle_id="vision-cycle-presence",
+        snapshot_id="vision-snapshot-presence",
     )
 
     monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)
@@ -592,7 +601,7 @@ def test_vision_manager_carries_structured_synthesis_signals(monkeypatch):
                 answer_id="vlm-2",
             ),
         ],
-        cycle_id="vision-cycle-9",
+        snapshot_id="vision-snapshot-9",
     )
 
     monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)
@@ -611,7 +620,7 @@ def test_vision_manager_carries_structured_synthesis_signals(monkeypatch):
     assert synthesis_event.trace["provenance"]["primary"] == "vision_synthesis_llm"
     assert "person_tracker" in synthesis_event.trace["provenance"]["components"]
     assert "vlm_answers" in synthesis_event.trace["provenance"]["components"]
-    assert synthesis_event.payload["input_event_ids"] == ["vision-cycle-9:snapshot", "vision-cycle-9:sam3", "vlm-2"]
+    assert synthesis_event.payload["input_event_ids"] == ["vision-snapshot-9:snapshot", "vision-snapshot-9:sam3", "vlm-2"]
 
 
 def test_vision_manager_emits_raw_dashboard_stage_events(monkeypatch):
@@ -636,7 +645,7 @@ def test_vision_manager_emits_raw_dashboard_stage_events(monkeypatch):
                 answer_id="vlm-3",
             ),
         ],
-        cycle_id="vision-cycle-42",
+        snapshot_id="vision-snapshot-42",
         trace={
             "face_tracking": {
                 "timing": {"total": 0.11, "fps": 9.1},
@@ -670,14 +679,14 @@ def test_vision_manager_emits_raw_dashboard_stage_events(monkeypatch):
     assert "reid_track" in event_types
     assert "vlm_answer" in event_types
     reid_event = next(event for event in events if event["type"] == "reid_track")
-    assert reid_event["data"]["input_event_ids"] == ["vision-cycle-42:snapshot", "vision-cycle-42:sam3"]
+    assert reid_event["data"]["input_event_ids"] == ["vision-snapshot-42:snapshot", "vision-snapshot-42:sam3"]
     drained = mgr.drain_events()
     claim = next(event for event in drained if event.kind == "visual_claim")
     assert claim.payload["input_event_ids"] == [
-        "vision-cycle-42:snapshot",
-        "vision-cycle-42:face",
-        "vision-cycle-42:sam3",
-        "vision-cycle-42:reid:7",
+        "vision-snapshot-42:snapshot",
+        "vision-snapshot-42:face",
+        "vision-snapshot-42:sam3",
+        "vision-snapshot-42:reid:7",
         "vlm-3",
     ]
 
@@ -712,7 +721,7 @@ def test_vision_manager_emits_raw_events_to_history_when_runtime_emitter_is_pres
                 answer_id="vlm-3",
             ),
         ],
-        cycle_id="vision-cycle-history",
+        snapshot_id="vision-snapshot-history",
         trace={
             "face_tracking": {
                 "timing": {"total": 0.11, "fps": 9.1},
@@ -760,11 +769,11 @@ def test_vision_manager_raw_poll_is_faster_than_synthesis(monkeypatch):
     snapshots = iter([
         RawVisualSnapshot(
             persons=[PersonObservation(identity="Visitor", bbox=(0, 0, 100, 200), confidence=0.8)],
-            cycle_id="vision-cycle-fast-1",
+            snapshot_id="vision-snapshot-fast-1",
         ),
         RawVisualSnapshot(
             persons=[PersonObservation(identity="Visitor", bbox=(0, 0, 100, 200), confidence=0.8)],
-            cycle_id="vision-cycle-fast-2",
+            snapshot_id="vision-snapshot-fast-2",
         ),
     ])
     synth_calls: list[str] = []
@@ -772,7 +781,7 @@ def test_vision_manager_raw_poll_is_faster_than_synthesis(monkeypatch):
     monkeypatch.setattr(mgr._client, "snapshot", lambda: next(snapshots))
     monkeypatch.setattr(
         "character_eng.vision.manager.vision_synthesis_call",
-        lambda **kwargs: synth_calls.append(kwargs["visual_context"].snapshot.cycle_id) or type("Synth", (), {"events": [], "signals": []})(),
+        lambda **kwargs: synth_calls.append(kwargs["visual_context"].snapshot.snapshot_id) or type("Synth", (), {"events": [], "signals": []})(),
     )
 
     mgr._tick()
@@ -781,9 +790,9 @@ def test_vision_manager_raw_poll_is_faster_than_synthesis(monkeypatch):
     events = collector.get_all()
     snapshot_reads = [event for event in events if event["type"] == "vision_snapshot_read"]
     sam3_events = [event for event in events if event["type"] == "sam3_detection"]
-    assert [event["data"]["vision_cycle_id"] for event in snapshot_reads] == ["vision-cycle-fast-1", "vision-cycle-fast-2"]
-    assert [event["data"]["vision_cycle_id"] for event in sam3_events] == ["vision-cycle-fast-1", "vision-cycle-fast-2"]
-    assert synth_calls == ["vision-cycle-fast-1"]
+    assert [event["data"]["event_id"] for event in snapshot_reads] == ["vision-snapshot-fast-1:snapshot", "vision-snapshot-fast-2:snapshot"]
+    assert [event["data"]["event_id"] for event in sam3_events] == ["vision-snapshot-fast-1:sam3", "vision-snapshot-fast-2:sam3"]
+    assert synth_calls == ["vision-snapshot-fast-1"]
 
 
 def test_vision_manager_emits_stage_trigger_events(monkeypatch):
@@ -813,7 +822,7 @@ def test_vision_manager_emits_stage_trigger_events(monkeypatch):
     )
     snapshot = RawVisualSnapshot(
         objects=[ObjectDetection(label="clock", bbox=(10, 20, 30, 40), confidence=0.9)],
-        cycle_id="vision-cycle-77",
+        snapshot_id="vision-snapshot-77",
     )
 
     monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)
@@ -862,7 +871,7 @@ def test_vision_manager_emits_direct_state_updates_from_system_tasks(monkeypatch
                 answer_id="vlm-77",
             ),
         ],
-        cycle_id="vision-cycle-88",
+        snapshot_id="vision-snapshot-88",
     )
 
     monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)

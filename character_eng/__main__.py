@@ -106,6 +106,10 @@ _dashboard_vision_runtime = {
 }
 
 
+class AudioInputRequiredError(RuntimeError):
+    """Raised when a live runtime loses or cannot initialize audio input."""
+
+
 def _set_dashboard_vision_runtime(**updates) -> None:
     _dashboard_vision_runtime.update(updates)
 
@@ -2023,13 +2027,11 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 console.print(f"[dim]Room: {livekit_session.room_name}[/dim]")
                 console.print(f"[dim]TTS: {_tts_label}[/dim]")
             except Exception as e:
-                console.print(f"[red]LiveKit voice init failed: {e}[/red]")
-                console.print("[dim]Falling back to text mode[/dim]")
                 voice_io = None
                 media_bridge.stop()
+                raise AudioInputRequiredError(f"LiveKit voice init failed: {e}") from e
         else:
-            console.print(f"[red]Voice unavailable: {reason}[/red]")
-            console.print("[dim]Falling back to text mode[/dim]")
+            raise AudioInputRequiredError(f"LiveKit voice unavailable: {reason}")
     elif bridge is not None:
         # Browser mode: use BrowserVoiceIO + bridge WebSocket
         from character_eng.browser_voice import BrowserVoiceIO
@@ -2060,13 +2062,10 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 console.print(f"[green]Browser voice active[/green] — mic/camera via WebSocket bridge")
                 console.print(f"[dim]TTS: {_tts_label}[/dim]")
             except Exception as e:
-                console.print(f"[red]Browser voice init failed: {e}[/red]")
-                console.print("[dim]Falling back to text mode[/dim]")
                 voice_io = None
+                raise AudioInputRequiredError(f"Browser voice init failed: {e}") from e
         else:
-            console.print(f"[red]Voice unavailable: {reason}[/red]")
-            console.print("[dim]Falling back to text mode (bridge still running for dashboard)[/dim]")
-            bridge.start(on_audio=lambda b: None, on_video_frame=on_video_frame)
+            raise AudioInputRequiredError(f"Browser voice unavailable: {reason}")
     elif voice_mode:
         from character_eng.voice import VoiceIO, check_voice_available, get_default_devices, list_audio_devices, VOICE_OFF, EXIT, VOICE_ERROR
         available, reason = check_voice_available(tts_backend=voice_cfg.tts_backend if voice_cfg else "elevenlabs")
@@ -2081,12 +2080,13 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 console.print(f"[dim]TTS: {_tts_label}[/dim]")
                 _show_voice_devices(_voice_dev_kw(voice_cfg), get_default_devices, list_audio_devices)
             except Exception as e:
-                console.print(f"[red]Voice init failed: {e}[/red]")
-                console.print("[dim]Falling back to text mode[/dim]")
                 voice_io = None
+                raise AudioInputRequiredError(f"Voice init failed: {e}") from e
         else:
-            console.print(f"[red]Voice unavailable: {reason}[/red]")
-            console.print("[dim]Falling back to text mode[/dim]")
+            raise AudioInputRequiredError(f"Voice unavailable: {reason}")
+
+    if not auto_sim and voice_io is None:
+        raise AudioInputRequiredError("Live runtime requires active audio input; text-only mode is disabled.")
 
     next_session_mode = "ready" if start_paused else "live"
     pending_history_action = None
@@ -2694,7 +2694,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             elif action["type"] == "replay":
                 _start_history_playback(str(action["ref"]), action.get("checkpoint"))
 
-        # Auto-sim: run sim script then exit
+        # Auto-sim: run scripted sim events then exit
         if auto_sim:
             run_sim(auto_sim, character, session, world, goals, script, people, scenario, label,
                     micro_config, big_model_config, eval_model_config, log,
@@ -3005,17 +3005,15 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     console.print("Goodbye!")
                     sys.exit(0)
                 elif user_input == VOICE_OFF:
-                    console.print("\n[yellow]Voice off — text mode[/yellow]")
                     voice_io.stop()
                     voice_io = None
                     _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
-                    continue
+                    raise AudioInputRequiredError("Voice input was disabled during a live session.")
                 elif user_input == VOICE_ERROR:
-                    console.print("\n[red]Voice error — switching to text mode[/red]")
                     voice_io.stop()
                     voice_io = None
                     _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
-                    continue
+                    raise AudioInputRequiredError("Voice input failed during a live session.")
 
             else:
                 try:
@@ -3324,10 +3322,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 continue
             elif cmd == "/voice":
                 if voice_io is not None:
-                    console.print("[yellow]Voice off — text mode[/yellow]")
-                    voice_io.stop()
-                    voice_io = None
-                    _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
+                    console.print("[red]Voice cannot be disabled in a live session.[/red]")
                 else:
                     from character_eng.voice import VoiceIO, check_voice_available, get_default_devices, list_audio_devices
                     available, reason = check_voice_available(tts_backend=voice_cfg.tts_backend if voice_cfg else "elevenlabs")
@@ -3344,10 +3339,10 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                             voice_io.set_filler_enabled(_runtime_controls["filler"])
                             _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
                         except Exception as e:
-                            console.print(f"[red]Voice init failed: {e}[/red]")
                             voice_io = None
+                            raise AudioInputRequiredError(f"Voice init failed: {e}") from e
                     else:
-                        console.print(f"[red]Voice unavailable: {reason}[/red]")
+                        raise AudioInputRequiredError(f"Voice unavailable: {reason}")
                 continue
             elif cmd == "/vision":
                 if vision_mgr is not None:
@@ -4082,7 +4077,7 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
 
 
 def run_sim(sim_name, character, session, world, goals, script, people, scenario, label, model_config, big_model_config, eval_model_config, log, voice_io=None, vision_mgr=None, sim_speed: float = 1.0):
-    """Run a sim script — replay perception events and dialogue with timing."""
+    """Run a scripted sim of timed perception events and dialogue."""
     try:
         sim = load_sim_script(character, sim_name)
     except FileNotFoundError:
@@ -4493,7 +4488,7 @@ def show_help(voice_active: bool = False):
         "/world <text>   - Describe a change to the world\n"
         "/beat           - Deliver next scripted beat (time passes)\n"
         "/see <text>     - Describe what the character sees (perception event)\n"
-        "/sim <name>     - Run a sim script (timed perception events)\n"
+        "/sim <name>     - Run a scripted sim (timed perception events)\n"
         "1-4             - Trigger a stage exit (shown in HUD)\n"
         "/vision         - Show current visual context and gaze targets\n"
         "/vision-service - Show vision service status\n"
@@ -4893,7 +4888,7 @@ def main():
     parser.add_argument("--start-paused", action="store_true",
         help="Warm the runtime, then wait in the ready state until you create a session with /start")
     parser.add_argument("--character", metavar="NAME", help="Auto-select character (skip menu)")
-    parser.add_argument("--sim", metavar="NAME", help="Run a sim script non-interactively then exit")
+    parser.add_argument("--sim", metavar="NAME", help="Run a scripted sim non-interactively then exit")
     parser.add_argument("--sim-speed", type=float, default=1.0,
         help="Speed multiplier for sim playback (default: 1.0)")
     parser.add_argument("--smoke", action="store_true", help="Run smoke test (auto greg, scripted inputs, exit)")
@@ -4992,7 +4987,7 @@ def main():
         return response
 
     # --voice flag overrides config; config.voice.enabled is the default
-    # --sim forces text mode (voice doesn't make sense for non-interactive runs)
+    # --sim is non-interactive, so live voice input is not required there.
     # --browser implies voice mode (audio comes from browser)
     voice_mode = False if (args.sim or _archive_only_mode) else (args.voice or cfg.voice.enabled or browser_mode)
     # --vision or --vision-mock overrides config; config.vision.enabled is the default
@@ -5107,11 +5102,15 @@ def main():
             if character is None:
                 console.print("Goodbye!")
                 break
-            result = chat_loop(character, model_config, voice_mode=voice_mode, voice_cfg=cfg.voice,
-                       vision_mode=vision_mode, vision_cfg=cfg.vision,
-                       auto_sim=args.sim, bridge=bridge, livekit_session=livekit_session,
-                       sim_speed=args.sim_speed,
-                       start_paused=args.start_paused)
+            try:
+                result = chat_loop(character, model_config, voice_mode=voice_mode, voice_cfg=cfg.voice,
+                           vision_mode=vision_mode, vision_cfg=cfg.vision,
+                           auto_sim=args.sim, bridge=bridge, livekit_session=livekit_session,
+                           sim_speed=args.sim_speed,
+                           start_paused=args.start_paused)
+            except AudioInputRequiredError as exc:
+                console.print(f"[red]{exc}[/red]")
+                raise SystemExit(1) from exc
             if result == "restart":
                 continue  # re-enter chat_loop with same character
             if args.sim or args.character:

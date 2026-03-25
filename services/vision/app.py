@@ -1211,16 +1211,16 @@ def snapshot():
             })
 
     _snapshot_seq += 1
-    cycle_id = f"vision-cycle-{_snapshot_seq}"
+    snapshot_id = f"vision-snapshot-{int(time.time() * 1000)}-{_snapshot_seq}"
     return json.dumps({
         "faces": faces,
         "persons": persons,
         "objects": objects,
         "vlm_answers": vlm_answers,
-        "cycle_id": cycle_id,
+        "snapshot_id": snapshot_id,
         "timestamp": time.time(),
         "trace": {
-            "cycle_id": cycle_id,
+            "snapshot_id": snapshot_id,
             "face_tracking": {
                 "timing": face_timing,
                 "faces": faces,

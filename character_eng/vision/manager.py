@@ -401,9 +401,8 @@ class VisionManager:
                     kind="visual_claim",
                     payload={
                         "signals": list(result.signals),
-                        "event_id": f"{snapshot.cycle_id}:claim:{len(self._events)}",
+                        "event_id": f"{self._snapshot_id(snapshot)}:claim:{len(self._events)}",
                         "input_event_ids": list(cycle_event_ids),
-                        "vision_cycle_id": snapshot.cycle_id,
                     },
                 ))
 
@@ -493,7 +492,7 @@ class VisionManager:
         self._known_persons = set(current_ids)
 
         if visible_now and not self._presence_visible:
-            cycle_id = snapshot.cycle_id or "vision-cycle"
+            snapshot_id = self._snapshot_id(snapshot)
             identity = current_ids[0] if current_ids else ""
             person_id = self._visual_to_person.get(identity) if identity else None
             self._queue_event(PerceptionEvent(
@@ -513,13 +512,12 @@ class VisionManager:
                     "presence": "present",
                     "change": "appeared",
                     "signals": ["person_visible"],
-                    "event_id": f"{cycle_id}:presence:appeared",
+                    "event_id": f"{snapshot_id}:presence:appeared",
                     "input_event_ids": self._snapshot_input_event_ids(snapshot),
-                    "vision_cycle_id": cycle_id,
                 },
             ))
         elif not visible_now and self._presence_visible:
-            cycle_id = snapshot.cycle_id or "vision-cycle"
+            snapshot_id = self._snapshot_id(snapshot)
             self._queue_event(PerceptionEvent(
                 description="A person is no longer visible",
                 source="visual",
@@ -536,9 +534,8 @@ class VisionManager:
                     "presence": "gone",
                     "change": "disappeared",
                     "signals": ["person_departed"],
-                    "event_id": f"{cycle_id}:presence:disappeared",
+                    "event_id": f"{snapshot_id}:presence:disappeared",
                     "input_event_ids": self._snapshot_input_event_ids(snapshot),
-                    "vision_cycle_id": cycle_id,
                 },
             ))
 
@@ -546,7 +543,6 @@ class VisionManager:
 
     def _trace_payload(self, snapshot: RawVisualSnapshot, **extra) -> dict:
         payload = {
-            "vision_cycle_id": snapshot.cycle_id,
             "faces": len(snapshot.faces),
             "persons": len(snapshot.persons),
             "objects": len(snapshot.objects),
@@ -580,17 +576,17 @@ class VisionManager:
         return payload
 
     def _snapshot_input_event_ids(self, snapshot: RawVisualSnapshot) -> list[str]:
-        cycle_id = snapshot.cycle_id or "vision-cycle"
-        event_ids = [f"{cycle_id}:snapshot"]
+        snapshot_id = self._snapshot_id(snapshot)
+        event_ids = [f"{snapshot_id}:snapshot"]
         if snapshot.faces:
-            event_ids.append(f"{cycle_id}:face")
+            event_ids.append(f"{snapshot_id}:face")
         if snapshot.objects or snapshot.persons:
-            event_ids.append(f"{cycle_id}:sam3")
+            event_ids.append(f"{snapshot_id}:sam3")
         if snapshot.persons:
             for person in snapshot.persons:
                 track_id = getattr(person, "track_id", None)
                 if track_id is not None:
-                    event_ids.append(f"{cycle_id}:reid:{track_id}")
+                    event_ids.append(f"{snapshot_id}:reid:{track_id}")
         for answer in snapshot.vlm_answers:
             answer_id = str(answer.answer_id or "").strip()
             if answer_id:
@@ -601,15 +597,14 @@ class VisionManager:
         if self._collector is None and self._emitter is None:
             return self._snapshot_input_event_ids(snapshot)
 
-        cycle_id = snapshot.cycle_id or f"vision-cycle-{int(time.time() * 1000)}"
+        snapshot_id = self._snapshot_id(snapshot)
         trace = dict(snapshot.trace or {})
         event_ids: list[str] = []
 
-        snapshot_event_id = f"{cycle_id}:snapshot"
+        snapshot_event_id = f"{snapshot_id}:snapshot"
         event_ids.append(snapshot_event_id)
         self._emit_runtime_event("vision_snapshot_read", {
             "event_id": snapshot_event_id,
-            "vision_cycle_id": cycle_id,
             "faces": len(snapshot.faces),
             "persons": len(snapshot.persons),
             "objects": len(snapshot.objects),
@@ -620,11 +615,10 @@ class VisionManager:
 
         face_trace = dict(trace.get("face_tracking", {}) or {})
         if snapshot.faces or face_trace.get("timing"):
-            face_event_id = f"{cycle_id}:face"
+            face_event_id = f"{snapshot_id}:face"
             event_ids.append(face_event_id)
             self._emit_runtime_event("face_tracking", {
                 "event_id": face_event_id,
-                "vision_cycle_id": cycle_id,
                 "input_event_ids": [snapshot_event_id],
                 "faces": [
                     {
@@ -642,11 +636,10 @@ class VisionManager:
 
         sam3_trace = dict(trace.get("sam3_detection", {}) or {})
         if snapshot.persons or snapshot.objects or sam3_trace.get("timing"):
-            sam3_event_id = f"{cycle_id}:sam3"
+            sam3_event_id = f"{snapshot_id}:sam3"
             event_ids.append(sam3_event_id)
             self._emit_runtime_event("sam3_detection", {
                 "event_id": sam3_event_id,
-                "vision_cycle_id": cycle_id,
                 "input_event_ids": [snapshot_event_id],
                 "persons": [
                     {
@@ -671,14 +664,13 @@ class VisionManager:
         reid_trace = dict(trace.get("reid_tracking", {}) or {})
         reid_input_ids = [snapshot_event_id]
         if snapshot.persons or sam3_trace.get("persons") or sam3_trace.get("objects"):
-            reid_input_ids.append(f"{cycle_id}:sam3")
+            reid_input_ids.append(f"{snapshot_id}:sam3")
         for person in reid_trace.get("persons", []) or []:
             track_id = person.get("track_id")
-            event_id = f"{cycle_id}:reid:{track_id if track_id is not None else len(event_ids)}"
+            event_id = f"{snapshot_id}:reid:{track_id if track_id is not None else len(event_ids)}"
             event_ids.append(event_id)
             self._emit_runtime_event("reid_track", {
                 "event_id": event_id,
-                "vision_cycle_id": cycle_id,
                 "input_event_ids": list(reid_input_ids),
                 "track_id": track_id,
                 "identity": person.get("identity", ""),
@@ -696,7 +688,6 @@ class VisionManager:
             event_ids.append(answer_id)
             self._emit_runtime_event("vlm_answer", {
                 "event_id": answer_id,
-                "vision_cycle_id": cycle_id,
                 "input_event_ids": [snapshot_event_id],
                 "task_id": answer.task_id,
                 "label": answer.label,
@@ -713,6 +704,14 @@ class VisionManager:
             })
 
         return event_ids
+
+    @staticmethod
+    def _snapshot_id(snapshot: RawVisualSnapshot) -> str:
+        snapshot_id = str(getattr(snapshot, "snapshot_id", "") or "").strip()
+        if snapshot_id:
+            return snapshot_id
+        timestamp_ms = int(float(getattr(snapshot, "timestamp", 0.0) or 0.0) * 1000)
+        return f"vision-snapshot-{timestamp_ms or int(time.time() * 1000)}"
 
     @staticmethod
     def _component_sources(snapshot: RawVisualSnapshot) -> list[str]:
@@ -846,11 +845,10 @@ class VisionManager:
         if not (update.remove_facts or update.add_facts or update.events or update.person_updates):
             return
 
-        cycle_id = snapshot.cycle_id or "vision-cycle"
+        snapshot_id = self._snapshot_id(snapshot)
         payload = {
-            "event_id": f"{cycle_id}:vision_state_update",
+            "event_id": f"{snapshot_id}:vision_state_update",
             "input_event_ids": list(input_event_ids),
-            "vision_cycle_id": cycle_id,
             "task_answers": list(changed),
             "remove_facts": list(update.remove_facts),
             "add_facts": list(update.add_facts),
@@ -896,7 +894,6 @@ class VisionManager:
         if self._collector is not None or self._emitter is not None:
             self._emit_runtime_event("vision_state_update", {
                 "event_id": payload["event_id"],
-                "vision_cycle_id": cycle_id,
                 "input_event_ids": list(input_event_ids),
                 "summary": summary,
                 "task_answers": list(changed),
@@ -964,14 +961,13 @@ class VisionManager:
             if streak < max(1, trigger.frames) or signal in self._active_trigger_signals:
                 continue
             self._active_trigger_signals.add(signal)
-            cycle_id = snapshot.cycle_id or "vision-cycle"
+            snapshot_id = self._snapshot_id(snapshot)
             description = trigger.description or self._describe_trigger(trigger, evidence)
             payload = {
                 "signals": [signal],
                 "trigger_signal": signal,
-                "event_id": f"{cycle_id}:trigger:{signal}",
+                "event_id": f"{snapshot_id}:trigger:{signal}",
                 "input_event_ids": list(input_event_ids),
-                "vision_cycle_id": cycle_id,
                 "frames": max(1, trigger.frames),
                 "streak": streak,
                 "rule": {
@@ -1006,7 +1002,6 @@ class VisionManager:
             if self._collector is not None or self._emitter is not None:
                 self._emit_runtime_event("vision_trigger", {
                     "event_id": payload["event_id"],
-                    "vision_cycle_id": cycle_id,
                     "input_event_ids": list(input_event_ids),
                     "signal": signal,
                     "description": description,

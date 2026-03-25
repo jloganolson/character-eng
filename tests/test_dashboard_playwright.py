@@ -531,7 +531,6 @@ def dashboard_server(tmp_path):
                 "vision_snapshot_read",
                 {
                     "event_id": "vision-cycle-test:snapshot",
-                    "vision_cycle_id": "vision-cycle-test",
                     "faces": 0,
                     "persons": 0,
                     "objects": 2,
@@ -543,7 +542,6 @@ def dashboard_server(tmp_path):
             (
                 "sam3_detection",
                 {
-                    "vision_cycle_id": "vision-cycle-test",
                     "objects": [
                         {"label": "clock", "confidence": 0.92, "bbox": [0.1, 0.1, 0.4, 0.4]},
                         {"label": "table", "confidence": 0.88, "bbox": [0.2, 0.45, 0.9, 0.9]},
@@ -726,7 +724,6 @@ def _seed_rendered_card_inventory_fixture(collector: DashboardEventCollector) ->
         "object_count": 2,
     })
     push("vision_snapshot_read", {
-        "vision_cycle_id": "cycle-1",
         "faces": 1,
         "persons": 1,
         "objects": 2,
@@ -768,7 +765,6 @@ def _seed_rendered_card_inventory_fixture(collector: DashboardEventCollector) ->
         "answer": "A visitor stands near a wall clock.",
         "target": "person",
         "target_identity": "visitor",
-        "vision_cycle_id": "cycle-1",
     })
     push("user_transcript_final", {"text": "wait actually never mind"})
     push("turn_start", {
@@ -798,11 +794,11 @@ def _seed_rendered_card_inventory_fixture(collector: DashboardEventCollector) ->
         "world_state": {"card_text": None, "payload_snippets": ['"text": "A visitor is present."']},
         "people_state": {"card_text": None, "payload_snippets": ['"name": "Visitor"']},
         "world_update": {"card_text": None, "payload_snippets": ['"Greg notices the visitor."']},
-        "perception": {"card_text": "A person appeared in view.", "payload_snippets": ['"description": "A person appeared in view."']},
+        "perception": {"card_text": None, "payload_snippets": ['"description": "A person appeared in view."']},
         "vision_snapshot": {"card_text": None, "payload_snippets": ['"object_labels": [', '"clock"']},
         "vision_pass": {"card_text": "A person appeared in view.", "payload_snippets": ['"latest_perception": "A person appeared in view."']},
         "vision_focus": {"card_text": None, "payload_snippets": ['"summary": "Watch the visitor and the wall clock."']},
-        "vision_snapshot_read": {"card_text": None, "payload_snippets": ['"vision_cycle_id": "cycle-1"']},
+        "vision_snapshot_read": {"card_text": None, "payload_snippets": ['"vlm_answer_count": 1']},
         "face_tracking": {"card_text": None, "payload_snippets": ['"identity": "visitor"']},
         "sam3_detection": {"card_text": None, "payload_snippets": ['"label": "clock"']},
         "reid_track": {"card_text": None, "payload_snippets": ['"identity_source": "embedding"']},
@@ -1161,8 +1157,9 @@ def test_runtime_panel_interactions_in_browser(
     reply_card.click()
     expect(page.locator("#detail-type")).to_have_text("assistant_reply")
 
-    perception_card = page.locator(".stream-card").filter(has_text="A person is now holding a flier").first
-    perception_card.click()
+    perception_dot = page.locator(".stream-dot[data-event-type='perception']").first
+    expect(perception_dot).to_be_visible()
+    perception_dot.click()
     expect(page.locator("#detail-type")).to_have_text("perception")
     expect(page.locator("#inspector-summary-title")).to_have_text(re.compile(r"perception #\d+"))
     expect(page.locator("#detail-trace")).to_have_count(0)
@@ -2296,6 +2293,56 @@ def test_vision_state_event_defaults_snippet_mode_in_browser(
     expect(page.locator("#annotation-status")).to_contain_text("Captured snippet:")
 
 
+def test_vision_state_update_inspector_groups_derived_perception_and_hides_cycle_metadata(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "vision_state_update",
+        {
+            "event_id": "vision-cycle-77:vision_state_update",
+            "vision_cycle_id": "vision-cycle-77",
+            "summary": "A wall clock is visible.",
+            "task_answers": [
+                {
+                    "task_id": "world_state",
+                    "label": "World State",
+                    "question": "Describe the room.",
+                    "answer": "A wall clock is visible.",
+                }
+            ],
+            "add_facts": ["A wall clock is visible."],
+            "remove_facts": [],
+            "events": [],
+            "person_updates": [],
+        },
+    )
+    collector.push(
+        "perception",
+        {
+            "event_id": "perception-77",
+            "input_event_ids": ["vision-cycle-77:vision_state_update"],
+            "kind": "vision_state_update",
+            "source": "visual",
+            "description": "A wall clock is visible.",
+        },
+    )
+
+    card = page.locator(".stream-card[data-event-type='vision_state_update']").first
+    expect(card).to_be_visible()
+    card.evaluate("(node) => node.click()")
+    page.locator("#tab-prompts").evaluate("(node) => node.click()")
+    expect(page.locator("#detail-prompts")).to_contain_text("Derived Perception Updates")
+    expect(page.locator("#detail-prompts")).to_contain_text("A wall clock is visible.")
+    expect(page.locator("#detail-payload")).not_to_contain_text("vision_cycle_id")
+    expect(page.locator("#detail-payload")).not_to_contain_text("vision-cycle-77")
+    expect(page.locator("#detail-payload")).to_contain_text("vision-snapshot-77:vision_state_update")
+
+
 def test_vision_panel_stays_visible_without_source(
     browser_page: Page,
     dashboard_server,
@@ -2652,7 +2699,6 @@ def test_live_older_events_are_compacted_without_breaking_selection(
             "sam3_detection",
             {
                 "event_id": f"sam3-{idx}",
-                "vision_cycle_id": f"cycle-{idx}",
                 "persons": [{"identity": f"visitor-{idx}", "track_id": idx, "bbox": [10, 20, 30, 40]}],
                 "objects": [{"label": f"object-{idx}", "bbox": [20, 30, 40, 50]}],
             },
@@ -2694,11 +2740,10 @@ def test_live_older_events_are_compacted_without_breaking_selection(
 
     page.locator("#timeline-start").evaluate("(node) => node.click()")
     page.wait_for_function(
-        """() => Array.from(document.querySelectorAll(".stream-card[data-event-type='perception'] .stream-card-label"))
-            .some((node) => (node.textContent || '').includes('Compaction perception 0'))""",
+        """() => document.querySelectorAll(".stream-dot[data-event-type='perception']").length > 0""",
         timeout=10_000,
     )
-    page.locator(".stream-card[data-event-type='perception']").first.evaluate("(node) => node.click()")
+    page.locator(".stream-dot[data-event-type='perception']").first.evaluate("(node) => node.click()")
     expect(page.locator("#detail-warning")).to_contain_text("compacted")
     expect(page.locator("#detail-payload")).to_contain_text("\"__compacted\": true")
 

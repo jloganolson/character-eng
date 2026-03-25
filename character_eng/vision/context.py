@@ -56,7 +56,7 @@ class RawVisualSnapshot:
     objects: list[ObjectDetection] = field(default_factory=list)
     vlm_answers: list[VLMAnswer] = field(default_factory=list)
     timestamp: float = 0.0
-    cycle_id: str = ""
+    snapshot_id: str = ""
     trace: dict = field(default_factory=dict)
 
     @classmethod
@@ -113,7 +113,7 @@ class RawVisualSnapshot:
             objects=objects,
             vlm_answers=vlm_answers,
             timestamp=data.get("timestamp", 0.0),
-            cycle_id=str(data.get("cycle_id", "") or ""),
+            snapshot_id=str(data.get("snapshot_id", data.get("cycle_id", "")) or ""),
             trace=dict(data.get("trace", {}) or {}),
         )
 

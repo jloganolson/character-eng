@@ -1454,7 +1454,8 @@ class SessionArchive:
         window_before_s: float = 10.0,
         window_after_s: float = 10.0,
     ) -> Path:
-        started_at = float(self._manifest().get("started_at", self._started_at))
+        source_manifest = self._manifest()
+        started_at = float(source_manifest.get("started_at", self._started_at))
         has_explicit_window = window_start_s is not None and window_end_s is not None
         if has_explicit_window:
             clip_start_s = max(0.0, float(window_start_s or 0.0))
@@ -1470,7 +1471,9 @@ class SessionArchive:
             capture_end_ts = started_at + clip_end_s
         moment_dir = moments_root / f"{self.session_id}_{_slug(title, 'moment')}_{int(_now_ts())}"
         moment_dir.mkdir(parents=True, exist_ok=True)
+        snippet_session_id = moment_dir.name
         checkpoint = None
+        checkpoint_payload = None
         checkpoints = list_checkpoints(self.path)
         if checkpoints:
             checkpoint = checkpoints[-1]
@@ -1479,7 +1482,13 @@ class SessionArchive:
                 if float(candidate_payload.get("timestamp", 0.0)) <= capture_start_ts:
                     checkpoint = candidate
         if checkpoint is not None:
-            shutil.copy2(checkpoint, moment_dir / "checkpoint.json")
+            checkpoint_payload = _json_load(checkpoint)
+            checkpoint_payload["session_id"] = snippet_session_id
+            checkpoint_payload["checkpoint_index"] = 0
+            checkpoint_payload["label"] = str(checkpoint_payload.get("label") or "snippet-start")
+            checkpoint_payload["timestamp"] = capture_start_ts
+            checkpoint_payload["timestamp_iso"] = _iso(capture_start_ts)
+            _json_dump(moment_dir / "checkpoint.json", checkpoint_payload)
         if self.annotations_path.exists():
             shutil.copy2(self.annotations_path, moment_dir / "annotations.jsonl")
 
@@ -1536,12 +1545,47 @@ class SessionArchive:
         if frame_entries:
             _append_jsonl(moment_dir / "media" / "video" / "frames.jsonl", {"frames": frame_entries})
 
+        source_events = _parse_events_jsonl(self.events_path)
+        snippet_events = [
+            event
+            for event in source_events
+            if capture_start_ts <= float(event.get("timestamp", 0.0) or 0.0) <= capture_end_ts
+        ]
+        if snippet_events:
+            for event in snippet_events:
+                _append_jsonl(moment_dir / "events.jsonl", event)
+
+        media = {
+            "user_audio_path": str(moment_dir / "media" / "audio" / "user_input_clip.wav"),
+            "assistant_audio_path": str(moment_dir / "media" / "audio" / "assistant_output_clip.wav"),
+            "conversation_audio_path": str(moment_dir / "media" / "audio" / "conversation_mix.wav"),
+            "video_path": "",
+            "playback_path": "",
+            "user_audio_start_s": 0.0,
+            "assistant_audio_start_s": 0.0,
+            "video_start_s": 0.0,
+            "playback_origin_s": 0.0,
+            "video_frames_path": str(moment_dir / "media" / "video" / "frames.jsonl"),
+            "video_frame_count": len(frame_entries),
+        }
+        for key in ("user_audio_path", "assistant_audio_path", "conversation_audio_path", "video_frames_path"):
+            if not Path(str(media[key])).exists():
+                media[key] = ""
+
         metadata = {
-            "version": 1,
+            "version": 2,
             "type": "snippet",
+            "session_id": snippet_session_id,
+            "source_session_id": self.session_id,
             "title": title,
-            "session_id": self.session_id,
+            "character": str(source_manifest.get("character", self.character) or self.character),
+            "model": str(source_manifest.get("model", self.model) or self.model),
+            "model_name": str(source_manifest.get("model_name", self.model_name) or self.model_name),
             "source_session_path": str(self.path),
+            "started_at": capture_start_ts,
+            "started_at_iso": _iso(capture_start_ts),
+            "ended_at": capture_end_ts,
+            "ended_at_iso": _iso(capture_end_ts),
             "captured_at": _iso(),
             "event_time_s": event_time_s,
             "window_start_s": clip_start_s if has_explicit_window else None,
@@ -1552,6 +1596,11 @@ class SessionArchive:
             "tags": [str(item).strip() for item in (tags or []) if str(item).strip()],
             "capture_mode": str((bundle or {}).get("capture_mode", "turn_context")),
             "vision_inputs": dict((bundle or {}).get("vision_inputs", {}) or {}),
+            "checkpoint_count": 1 if checkpoint_payload is not None else 0,
+            "event_count": len(snippet_events),
+            "annotation_count": int(source_manifest.get("annotation_count", 0) or 0),
+            "moment_count": 0,
+            "media": media,
         }
         _json_dump(moment_dir / "manifest.json", metadata)
         manifest = self._manifest()
@@ -1876,6 +1925,10 @@ class HistoryService:
         session_path = resolve_session_path(self.root, session_ref)
         if session_path is None:
             raise FileNotFoundError(f"unknown session: {session_ref}")
+        active_current = self.current is not None and self.current.path.resolve() == session_path.resolve()
+        if active_current:
+            repaired = self._ensure_playback_media(session_path)
+            return repaired if repaired and _video_is_valid(repaired) else None
         manifest = _json_load(session_path / "manifest.json")
         media = manifest.get("media", {}) or {}
         candidates = []
@@ -1901,6 +1954,8 @@ class HistoryService:
             "title": str(manifest.get("title") or session_path.name),
             "character": str(manifest.get("character") or ""),
             "source_kind": str(manifest.get("type") or session_path.parent.name.rstrip("s") or "session"),
+            "started_at": float(manifest.get("started_at", 0.0) or 0.0),
+            "started_at_iso": str(manifest.get("started_at_iso") or ""),
             "media": {
                 **media,
                 "playback_available": bool(playback_path is not None),
@@ -1930,7 +1985,40 @@ class HistoryService:
         ])
         audio_source = next((path for path in mixed_audio_candidates if path.exists()), None)
         temp_audio_path = session_path / "media" / "audio" / ".conversation_mix_for_mux.wav"
+        raw_user_audio = next(
+            (
+                path
+                for path in (
+                    session_path / "media" / "audio" / "user_input.wav",
+                    session_path / "media" / "audio" / "user_input.wav.gz",
+                    session_path / "media" / "audio" / "user_input_clip.wav",
+                    session_path / "media" / "audio" / "user_input_clip.wav.gz",
+                )
+                if path.exists()
+            ),
+            None,
+        )
+        raw_assistant_audio = next(
+            (
+                path
+                for path in (
+                    session_path / "media" / "audio" / "assistant_output.wav",
+                    session_path / "media" / "audio" / "assistant_output.wav.gz",
+                    session_path / "media" / "audio" / "assistant_output_clip.wav",
+                    session_path / "media" / "audio" / "assistant_output_clip.wav.gz",
+                )
+                if path.exists()
+            ),
+            None,
+        )
         audio_path = _materialize_wav_for_ffmpeg(audio_source, temp_path=temp_audio_path)
+        if audio_path is None:
+            mixed_raw_audio = _mix_conversation_audio(
+                user_audio_path=raw_user_audio,
+                assistant_audio_path=raw_assistant_audio,
+                output_path=temp_audio_path,
+            )
+            audio_path = mixed_raw_audio if mixed_raw_audio and mixed_raw_audio.exists() else None
 
         raw_video_candidates = []
         stored_video = str(media.get("video_path", "")).strip()
@@ -1984,6 +2072,7 @@ class HistoryService:
         audio_path = None
         audio_start_s = 0.0
         video_frames: list[dict] = []
+        snippet_started_at = float(manifest.get("started_at", 0.0) or 0.0)
 
         if source_kind in {"moment", "snippet"}:
             candidate_audio_paths = (
@@ -1991,27 +2080,13 @@ class HistoryService:
                 media_dir / "audio" / "user_input_clip.wav.gz",
             )
             audio_path = next((path for path in candidate_audio_paths if path.exists()), None)
-            source_session_path = Path(str(manifest.get("source_session_path", ""))) if manifest.get("source_session_path") else None
-            media_start_ts = None
-            if source_session_path is not None and (source_session_path / "manifest.json").exists():
-                source_manifest = _json_load(source_session_path / "manifest.json")
-                if manifest.get("window_start_s") is not None:
-                    media_start_ts = float(source_manifest.get("started_at", 0.0)) + float(manifest.get("window_start_s", 0.0) or 0.0)
-                else:
-                    media_start_ts = (
-                        float(source_manifest.get("started_at", 0.0))
-                        + float(manifest.get("event_time_s", 0.0) or 0.0)
-                        - float(manifest.get("window_before_s", 0.0) or 0.0)
-                    )
             frame_entries = _parse_frames_jsonl(media_dir / "video" / "frames.jsonl")
             for index, entry in enumerate(frame_entries):
                 frame_path = session_path / str(entry.get("path", ""))
                 if not frame_path.exists():
                     continue
-                if media_start_ts is not None:
-                    relative_s = max(0.0, float(entry.get("timestamp", media_start_ts)) - media_start_ts)
-                else:
-                    relative_s = float(index) * 0.1
+                frame_ts = float(entry.get("timestamp", snippet_started_at) or snippet_started_at)
+                relative_s = max(0.0, frame_ts - snippet_started_at) if snippet_started_at else float(index) * 0.1
                 video_frames.append({
                     **entry,
                     "relative_s": relative_s,

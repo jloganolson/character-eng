@@ -383,6 +383,41 @@
   .archive-transport-time.capped {
     color: color-mix(in srgb, var(--warn) 78%, var(--text) 22%);
   }
+  .archive-export-controls {
+    display: none;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: min(44vw, 620px);
+    padding: 0.25rem 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--panel-hover) 70%, transparent);
+  }
+  .archive-export-controls.visible {
+    display: inline-flex;
+  }
+  .archive-export-controls button {
+    padding: 0.35rem 0.7rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-alt);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .archive-export-controls button.primary {
+    background: var(--advance);
+    color: var(--bg);
+  }
+  .archive-export-controls button:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .archive-export-status {
+    min-width: 11em;
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
   #report-ref-button,
   #archive-load-button {
     background: var(--bg-alt);
@@ -1206,6 +1241,9 @@
   }
   .stream-dot.type-vlm-answer {
     background: #60a5fa;
+  }
+  .stream-dot.type-perception {
+    background: color-mix(in srgb, var(--stream-vision) 82%, #f59e0b 18%);
   }
   .stream-dot-preview {
     position: fixed;
@@ -2129,6 +2167,13 @@
     <input id="archive-transport-scrubber" type="range" min="0" max="0" step="0.01" value="0">
     <span id="archive-transport-time" class="archive-transport-time">0:00 / 0:00</span>
   </div>
+  <div id="archive-export-controls" class="archive-export-controls" aria-label="Session review export controls">
+    <button id="archive-export-mark-in" type="button">Mark In</button>
+    <button id="archive-export-mark-out" type="button">Mark Out</button>
+    <button id="archive-export-clear" type="button">Clear In/Out</button>
+    <button id="archive-export-button" class="primary" type="button">Export Archive</button>
+    <span id="archive-export-status" class="archive-export-status">Pause a live session to review and export a trimmed archive.</span>
+  </div>
   <span id="report-ref-status"></span>
   <span id="archive-load-status"></span>
   <span><span class="label">stage:</span> <span class="value stage" id="h-stage">--</span></span>
@@ -2314,7 +2359,7 @@
           <div class="detail-section fill" id="inspector-detail-tabs-panel" data-panel-region="inspector" data-panel-id="detail_tabs" data-panel-scope="event">
             <label id="inspector-detail-tabs-label">Inspector Pane</label>
             <div class="detail-tabs" id="inspector-detail-tabs">
-              <button class="detail-tab" id="tab-prompts" type="button" data-detail-tab="prompts" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">Prompt Preview</button>
+              <button class="detail-tab" id="tab-prompts" type="button" data-detail-tab="prompts" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">Inspector</button>
               <button class="detail-tab active" id="tab-payload" type="button" data-detail-tab="payload" data-panel-region="inspector" data-panel-id="payload" data-panel-scope="event">Payload JSON</button>
             </div>
             <div class="detail-pane" id="detail-prompts-pane" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">
@@ -2455,6 +2500,9 @@
       "beat_advance",
       "stage_change",
     ]);
+  const DOT_RENDER_EVENT_TYPES = new Set([
+      "perception",
+    ]);
   const HIDDEN_RUNTIME_EVENT_TYPES = Object.freeze([
       "turn_summary",
       "response_chunk",
@@ -2529,7 +2577,7 @@
       beat_advance: "planner",
       plan: "planner",
       post_response: "planner",
-      perception: "world"
+      perception: "vision"
     }
   };
   let laneOrder = [...DEFAULT_STREAM_SCHEMA.lane_order];
@@ -2681,7 +2729,7 @@
       title: "Inspector Pane",
       scope: "event",
       tabs: [
-        {id: "prompts", tabId: "tab-prompts", paneId: "detail-prompts-pane", title: "Prompt Preview", scope: "event"},
+        {id: "prompts", tabId: "tab-prompts", paneId: "detail-prompts-pane", title: "Inspector", scope: "event"},
         {id: "payload", tabId: "tab-payload", paneId: "detail-payload-pane", title: "Payload JSON", scope: "event"},
       ],
     },
@@ -2806,6 +2854,12 @@
   const archiveTransportToggleButton = document.getElementById("archive-transport-toggle");
   const archiveTransportScrubber = document.getElementById("archive-transport-scrubber");
   const archiveTransportTime = document.getElementById("archive-transport-time");
+  const archiveExportControls = document.getElementById("archive-export-controls");
+  const archiveExportMarkInButton = document.getElementById("archive-export-mark-in");
+  const archiveExportMarkOutButton = document.getElementById("archive-export-mark-out");
+  const archiveExportClearButton = document.getElementById("archive-export-clear");
+  const archiveExportButton = document.getElementById("archive-export-button");
+  const archiveExportStatus = document.getElementById("archive-export-status");
   const archiveLoadStatus = document.getElementById("archive-load-status");
   const archivePicker = document.getElementById("archive-picker");
   const archivePickerCloseButton = document.getElementById("archive-picker-close");
@@ -2919,6 +2973,7 @@
   const bootFixtureName = bootArchiveRef ? "" : String(rawFixtureName).trim().toLowerCase();
   let archiveBrowseRef = "";
   let archiveBrowseMeta = null;
+  let archiveBrowseMode = "";
   let archiveBrowseSeqFloor = 0;
   let bootArchiveLoadAttempted = false;
   let offlineDefaultArchiveAttempted = false;
@@ -2940,6 +2995,9 @@
   let archiveMediaSeekLock = false;
   let archiveMediaScrubbing = false;
   let archiveMediaDuration = 0;
+  let reviewWindowStartS = null;
+  let reviewWindowEndS = null;
+  let reviewBrowsePending = false;
   let pendingArchiveScrubSeekTime = null;
   let pendingArchiveScrubSeekFrame = 0;
   let archiveTimelineCursorTime = null;
@@ -3809,6 +3867,18 @@
     return JSON.parse(JSON.stringify(value));
   }
 
+  function stripVisionCycleMetadata(value) {
+    if (typeof value === "string") return value.replaceAll("vision-cycle-", "vision-snapshot-");
+    if (Array.isArray(value)) return value.map((item) => stripVisionCycleMetadata(item));
+    if (!value || typeof value !== "object") return value;
+    const cleaned = {};
+    Object.entries(value).forEach(([key, nested]) => {
+      if (key === "vision_cycle_id" || key === "cycle_id" || key === "snapshot_id") return;
+      cleaned[key] = stripVisionCycleMetadata(nested);
+    });
+    return cleaned;
+  }
+
   function captureLiveTimelineSnapshot() {
     liveTimelineSnapshot = {
       streamEvents: cloneSnapshotPayload(streamEvents),
@@ -3905,9 +3975,14 @@
   function renderArchiveBrowseState() {
     buildSidebarLayout();
     if (archiveBrowseRef) {
-      archiveLoadButton.textContent = "Return To Live";
       const title = archiveBrowseMeta?.title || archiveBrowseRef;
-      archiveLoadStatus.textContent = activeArchiveBootOverride() ? "" : `Browsing archive: ${title}`;
+      if (browseIsLiveSessionReview()) {
+        archiveLoadButton.textContent = "Return To Session";
+        archiveLoadStatus.textContent = activeArchiveBootOverride() ? "" : `Reviewing paused session: ${title}`;
+      } else {
+        archiveLoadButton.textContent = "Return To Live";
+        archiveLoadStatus.textContent = activeArchiveBootOverride() ? "" : `Browsing archive: ${title}`;
+      }
     } else {
       archiveLoadButton.textContent = "Load Archive...";
       archiveLoadStatus.textContent = "";
@@ -3920,15 +3995,21 @@
     updateTimelinePlayhead();
   }
 
-  async function loadArchiveTimeline(sessionRef) {
+  async function loadArchiveTimeline(sessionRef, {mode = "archive"} = {}) {
     const response = await fetch(`/history/events?session_id=${encodeURIComponent(sessionRef)}`);
     const payload = await response.json();
     if (!response.ok || payload.ok === false) throw new Error(payload.error || `history events ${response.status}`);
     if (!archiveBrowseRef) captureLiveTimelineSnapshot();
     archiveBrowseSeqFloor = lastSeq;
     archiveBrowseRef = sessionRef;
+    archiveBrowseMode = mode;
     archiveBrowseMeta = payload;
-    clearConversationState(`Browsing archive: ${payload.title || sessionRef}`);
+    clearConversationState(
+      mode === "live-session-review"
+        ? `Reviewing paused session: ${payload.title || sessionRef}`
+        : `Browsing archive: ${payload.title || sessionRef}`
+    );
+    sessionStart = payload.started_at != null ? Number(payload.started_at) : null;
     lastSeq = archiveBrowseSeqFloor;
     archiveHydrating = true;
     try {
@@ -3936,6 +4017,7 @@
     } finally {
       archiveHydrating = false;
     }
+    applyBrowseStateAtTime(0);
     renderStream({immediate: true});
     await refreshAnnotations(sessionRef);
     renderArchiveBrowseState();
@@ -3948,9 +4030,12 @@
     pendingArchiveScrubSeekTime = null;
     archiveBrowseRef = "";
     archiveBrowseMeta = null;
+    archiveBrowseMode = "";
     archiveBrowseSeqFloor = 0;
     archiveMediaSeekLock = false;
     archiveMediaScrubbing = false;
+    reviewWindowStartS = null;
+    reviewWindowEndS = null;
     renderArchiveBrowseState();
     if (restoreLiveTimelineSnapshot()) {
       refreshAnnotations(activeArchiveSessionId());
@@ -3963,6 +4048,23 @@
     refreshState();
     refreshHistoryState();
     updateVisionFeedUrl();
+  }
+
+  async function maybeEnterCurrentSessionReview() {
+    if (archiveBrowseRef || reviewBrowsePending || archiveOnlyRuntime) return;
+    if (currentRuntimePhase() !== "paused") return;
+    const current = historyState.current_session || {};
+    const sessionRef = String(current.session_id || currentSessionId || "").trim();
+    if (!sessionRef) return;
+    reviewBrowsePending = true;
+    try {
+      await loadArchiveTimeline(sessionRef, {mode: "live-session-review"});
+      archiveExportStatus.textContent = "Mark an in/out range or export the paused session as-is.";
+    } catch (error) {
+      archiveLoadStatus.textContent = `Paused review load failed: ${error.message || error}`;
+    } finally {
+      reviewBrowsePending = false;
+    }
   }
 
   async function maybeLoadBootArchive(sessionRef = bootArchiveRef) {
@@ -4637,7 +4739,6 @@
           objects: data.objects ?? 0,
           vlm_answer_count: data.vlm_answer_count ?? 0,
           object_labels: truncateList(data.object_labels, 4, (item) => truncateString(item, 80)),
-          vision_cycle_id: data.vision_cycle_id || "",
         };
       case "face_tracking":
         return {
@@ -4650,7 +4751,6 @@
             looking_at_camera: !!face?.looking_at_camera,
           })),
           timing: data.timing || {},
-          vision_cycle_id: data.vision_cycle_id || "",
         };
       case "sam3_detection":
         return {
@@ -4669,7 +4769,6 @@
           timing: data.timing || {},
           prompts: truncateList(data.prompts, 4, (item) => truncateString(item, 120)),
           tracking: data.tracking || "",
-          vision_cycle_id: data.vision_cycle_id || "",
         };
       case "reid_track":
         return {
@@ -4678,7 +4777,6 @@
           identity_source: data.identity_source || "",
           track_id: data.track_id ?? null,
           timing: data.timing || {},
-          vision_cycle_id: data.vision_cycle_id || "",
         };
       case "vision_trigger":
         return {
@@ -4704,7 +4802,6 @@
           payload: data.payload ? {
             event_id: data.payload.event_id || "",
             input_event_ids: mergeUniqueEventIds(data.payload.input_event_ids).slice(0, 16),
-            vision_cycle_id: data.payload.vision_cycle_id || "",
             task_answers: truncateList(data.payload.task_answers, 3, compactVlmAnswer),
             ...compactWorldEffects(data.payload),
           } : null,
@@ -4726,7 +4823,6 @@
           interpret_as: data.interpret_as || "",
           cadence_s: data.cadence_s ?? null,
           elapsed: data.elapsed ?? null,
-          vision_cycle_id: data.vision_cycle_id || "",
         };
       case "vision_pass":
         return {
@@ -4832,6 +4928,22 @@
     return lastStoppedArchiveRef || "";
   }
 
+  function browseRef() {
+    return archiveBrowseRef || "";
+  }
+
+  function browseMeta() {
+    return archiveBrowseMeta || null;
+  }
+
+  function browseIsActive() {
+    return !!browseRef();
+  }
+
+  function browseIsLiveSessionReview() {
+    return archiveBrowseMode === "live-session-review";
+  }
+
   function activeArchiveTitle() {
     if (archiveBrowseRef) return archiveBrowseMeta?.title || archiveBrowseRef;
     if (historyState.current_session?.title) return historyState.current_session.title;
@@ -4892,7 +5004,7 @@
   }
 
   function archivePlaybackMediaAvailable() {
-    return !!(archiveBrowseMeta?.media?.playback_available);
+    return !!(browseMeta()?.media?.playback_available);
   }
 
   function archivePlaybackMediaUrl(sessionId) {
@@ -4918,7 +5030,7 @@
   }
 
   function updateStreamScrubCursor(clientX, {active = false} = {}) {
-    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) {
+    if (!browseIsActive() || !archivePlaybackMediaAvailable()) {
       hideStreamScrubCursor();
       return;
     }
@@ -4931,8 +5043,10 @@
   }
 
   function renderArchiveTransport() {
-    const active = !!(archiveBrowseRef && archivePlaybackMediaAvailable());
+    const active = !!(browseIsActive() && archivePlaybackMediaAvailable());
+    const exportActive = browseIsLiveSessionReview();
     archiveTransportEl.classList.toggle("visible", active);
+    archiveExportControls.classList.toggle("visible", exportActive);
     streamRuler.classList.toggle("scrubbable", active);
     currentPlayheadReadout.classList.toggle("inactive", !active);
     currentMediaReadout.classList.toggle("inactive", !active);
@@ -4951,31 +5065,45 @@
       archiveTransportTime.classList.remove("capped");
       archiveTimelineGapNote.classList.remove("visible");
       archiveTimelineGapNote.textContent = "";
+    } else {
+      const current = Math.max(0, Number(currentArchiveTimelineTime() ?? archiveMediaPlayer.currentTime ?? 0));
+      const mediaCurrent = Math.max(0, Number(archiveMediaCurrentTime() ?? 0));
+      const duration = Math.max(0, Number(archiveMediaDuration || archiveMediaPlayer.duration || 0));
+      const capped = archiveMediaIsCappedAtTimeline();
+      archiveTransportToggleButton.textContent = archiveMediaPlayer.paused ? "Play" : "Pause";
+      archiveTransportToggleButton.disabled = duration <= 0 && archiveMediaPlayer.readyState < 1;
+      archiveTransportScrubber.max = String(duration > 0 ? duration : 0);
+      archiveTransportScrubber.value = String(Math.min(current, duration || current));
+      archiveTransportScrubber.disabled = duration <= 0;
+      archiveTransportTime.textContent = `${formatMediaClock(mediaCurrent)} / ${formatMediaClock(duration)}`;
+      archiveTransportTime.classList.toggle("capped", capped);
+      currentPlayheadValue.textContent = formatTimelineClock(current, {fractional: true});
+      currentMediaValue.textContent = formatTimelineClock(mediaCurrent, {fractional: true});
+      currentPlayheadReadout.classList.toggle("warn", capped);
+      currentMediaReadout.classList.toggle("warn", capped);
+      archiveTimelineGapNote.classList.toggle("visible", capped);
+      archiveTimelineGapNote.textContent = capped
+        ? `Media capped at ${formatTimelineClock(duration, {fractional: true})}`
+        : "";
+    }
+    if (!exportActive) {
+      archiveExportStatus.textContent = "Pause a live session to review and export a trimmed archive.";
       return;
     }
-    const current = Math.max(0, Number(currentArchiveTimelineTime() ?? archiveMediaPlayer.currentTime ?? 0));
-    const mediaCurrent = Math.max(0, Number(archiveMediaCurrentTime() ?? 0));
-    const duration = Math.max(0, Number(archiveMediaDuration || archiveMediaPlayer.duration || 0));
-    const capped = archiveMediaIsCappedAtTimeline();
-    archiveTransportToggleButton.textContent = archiveMediaPlayer.paused ? "Play" : "Pause";
-    archiveTransportToggleButton.disabled = duration <= 0 && archiveMediaPlayer.readyState < 1;
-    archiveTransportScrubber.max = String(duration > 0 ? duration : 0);
-    archiveTransportScrubber.value = String(Math.min(current, duration || current));
-    archiveTransportScrubber.disabled = duration <= 0;
-    archiveTransportTime.textContent = `${formatMediaClock(mediaCurrent)} / ${formatMediaClock(duration)}`;
-    archiveTransportTime.classList.toggle("capped", capped);
-    currentPlayheadValue.textContent = formatTimelineClock(current, {fractional: true});
-    currentMediaValue.textContent = formatTimelineClock(mediaCurrent, {fractional: true});
-    currentPlayheadReadout.classList.toggle("warn", capped);
-    currentMediaReadout.classList.toggle("warn", capped);
-    archiveTimelineGapNote.classList.toggle("visible", capped);
-    archiveTimelineGapNote.textContent = capped
-      ? `Media capped at ${formatTimelineClock(duration, {fractional: true})}`
-      : "";
+    const bounds = reviewExportWindowBounds();
+    archiveExportClearButton.disabled = !bounds && reviewWindowStartS == null && reviewWindowEndS == null;
+    archiveExportButton.disabled = !browseRef();
+    archiveExportStatus.textContent = bounds
+      ? `Export window: +${bounds.start.toFixed(2)}s → +${bounds.end.toFixed(2)}s`
+      : (reviewWindowStartS != null
+        ? `Export start: +${Number(reviewWindowStartS).toFixed(2)}s`
+        : (reviewWindowEndS != null
+          ? `Export end: +${Number(reviewWindowEndS).toFixed(2)}s`
+          : "Mark an in/out range or export the full paused session."));
   }
 
   function syncArchiveMediaPlayer() {
-    const active = !!(archiveBrowseRef && archivePlaybackMediaAvailable());
+    const active = !!(browseIsActive() && archivePlaybackMediaAvailable());
     if (!active) {
       archiveMediaPlayer.pause();
       archiveMediaPlayer.classList.remove("visible");
@@ -4986,19 +5114,19 @@
       renderArchiveTransport();
       return;
     }
-    const nextSrc = archivePlaybackMediaUrl(archiveBrowseRef);
+    const nextSrc = archivePlaybackMediaUrl(browseRef());
     if (archiveMediaPlayer.getAttribute("src") !== nextSrc) {
       archiveMediaPlayer.src = nextSrc;
       archiveMediaPlayer.load();
     }
     archiveMediaPlayer.classList.add("visible");
-    const title = archiveBrowseMeta?.title || archiveBrowseRef;
-    setArchiveMediaStatus(`Loaded archive media: ${title}`);
+    const title = browseMeta()?.title || browseRef();
+    setArchiveMediaStatus(`${browseIsLiveSessionReview() ? "Loaded paused session media" : "Loaded archive media"}: ${title}`);
     renderArchiveTransport();
   }
 
   function archiveMediaCurrentTime() {
-    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return null;
+    if (!browseIsActive() || !archivePlaybackMediaAvailable()) return null;
     if (!Number.isFinite(archiveMediaPlayer.currentTime)) return null;
     return Math.max(0, Number(archiveMediaPlayer.currentTime || 0));
   }
@@ -5010,7 +5138,7 @@
   }
 
   function currentArchiveTimelineTime() {
-    if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return null;
+    if (!browseIsActive() || !archivePlaybackMediaAvailable()) return null;
     if (Number.isFinite(archiveTimelineCursorTime)) return Math.max(0, Number(archiveTimelineCursorTime || 0));
     return archiveMediaCurrentTime();
   }
@@ -5027,6 +5155,7 @@
       return;
     }
     archiveTimelineCursorTime = Math.max(0, Number(timeS || 0));
+    applyBrowseStateAtTime(archiveTimelineCursorTime);
   }
 
   function updateTimelinePlayhead() {
@@ -5668,12 +5797,12 @@
       compacted: !!event.compacted,
       label: event.label || "",
       detail: event.detail || "",
-      data: event.data || {},
+      data: stripVisionCycleMetadata(event.data || {}),
     };
   }
 
   function payloadJsonForInspector(event) {
-    return event?.data || {};
+    return stripVisionCycleMetadata(event?.data || {});
   }
 
   function promptBlockDetailHtml(block) {
@@ -5722,13 +5851,17 @@
     promptModalBody.innerHTML = promptBlockDetailHtml(block);
   }
 
-  function renderPromptBlocks(blocks) {
+  function renderPromptBlocks(blocks, event = null) {
     const root = document.getElementById("detail-prompts");
     const promptTab = document.getElementById("tab-prompts");
     const promptPane = document.getElementById("detail-prompts-pane");
+    const structureSections = event ? structuredSectionsForEvent(event) : [];
+    const structureHtml = structureSections.length
+      ? `<section class="prompt-preview-structure">${structureSections.join("")}</section>`
+      : "";
     root.innerHTML = "";
     promptPreviewBlocks = Array.isArray(blocks) ? blocks.slice() : [];
-    if (!blocks || !blocks.length) {
+    if ((!blocks || !blocks.length) && !structureHtml) {
       promptTab.style.display = "none";
       promptPane.style.display = "none";
       root.innerHTML = '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>';
@@ -5739,7 +5872,9 @@
     promptTab.style.display = "";
     promptPane.style.display = "";
     root.parentElement?.classList.remove("compact-empty");
-    root.innerHTML = blocks.map((block, index) => `
+    const promptHtml = (!blocks || !blocks.length)
+      ? '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>'
+      : blocks.map((block, index) => `
       <section class="prompt-preview-card">
         <div class="prompt-head">
           <div class="prompt-title">${esc(block.title || "Prompt")}</div>
@@ -5751,6 +5886,7 @@
         </div>
       </section>
     `).join("");
+    root.innerHTML = `${structureHtml}${promptHtml}`;
     return true;
   }
 
@@ -6014,7 +6150,6 @@
       sections.push(structureSection("Evidence", evidenceItems));
     } else if (event.type === "vision_snapshot_read") {
       sections.push(structureSection("Snapshot", [
-        {kind: "meta", key: "cycle", value: event.data?.vision_cycle_id || ""},
         {kind: "meta", key: "faces", value: String(event.data?.faces ?? 0)},
         {kind: "meta", key: "people", value: String(event.data?.persons ?? 0)},
         {kind: "meta", key: "objects", value: String(event.data?.objects ?? 0)},
@@ -6082,6 +6217,8 @@
         value: Array.isArray(value) ? value.join(", ") : String(value),
       }))));
     } else if (event.type === "vision_state_update") {
+      const causal = causalEventsForBundle(event);
+      const derivedPerception = [...causal.upstream, ...causal.downstream].filter((item) => item.type === "perception");
       sections.push(structureSection("Summary", [{
         kind: "claim",
         key: "update",
@@ -6103,6 +6240,11 @@
           item.set_name ? {kind: "effect", key: `${item.person_id} name`, value: item.set_name} : null,
         ].filter(Boolean))),
       ]));
+      sections.push(structureSection("Derived Perception Updates", derivedPerception.map((item) => ({
+        kind: "effect",
+        key: `${item.data?.kind || item.data?.source || "perception"} · +${Number(item.time_s || 0).toFixed(2)}s`,
+        value: item.data?.description || item.label || item.detail || "Perception update",
+      })), `${derivedPerception.length} linked`));
     } else if (event.type === "vlm_answer") {
       sections.push(structureSection("Question", [{
         kind: "input",
@@ -6123,7 +6265,6 @@
       sections.push(structureSection("Timing", [
         event.data?.elapsed != null ? {kind: "meta", key: "elapsed", value: `${Math.round(Number(event.data.elapsed) * 1000)}ms`} : null,
         event.data?.cadence_s != null ? {kind: "meta", key: "cadence", value: `${Number(event.data.cadence_s).toFixed(1)}s`} : null,
-        event.data?.vision_cycle_id ? {kind: "meta", key: "cycle", value: event.data.vision_cycle_id} : null,
       ].filter(Boolean)));
     } else if (event.type === "assistant_reply") {
       const inputItems = [];
@@ -6634,15 +6775,17 @@
     const stopLabel = (finalizingActive || sessionSavePending)
       ? (((phase === "finalizing_discard") || saveCompleteMode === "discarding") ? "Discarding..." : "Saving...")
       : stopButtonLabel();
+    const archiveReplayLoaded = !!archiveBrowseRef && !browseIsLiveSessionReview();
+    const liveSessionReviewLoaded = !!archiveBrowseRef && browseIsLiveSessionReview();
     setRuntimeTransportButton(runtimeStartButton, {
       label: pendingPauseState === "starting" ? "Starting..." : "Start New Session",
-      disabled: archiveOnlyRuntime || !!archiveBrowseRef || reviewActive || finalizingActive || restartingActive || !sessionStopped || !!pendingPauseState,
+      disabled: archiveOnlyRuntime || archiveReplayLoaded || liveSessionReviewLoaded || reviewActive || finalizingActive || restartingActive || !sessionStopped || !!pendingPauseState,
       background: "var(--advance)",
       color: "var(--bg)",
     });
     setRuntimeTransportButton(runtimeStopButton, {
       label: stopLabel,
-      disabled: archiveOnlyRuntime || !!archiveBrowseRef || reviewActive || finalizingActive || sessionSavePending || pendingPauseState === "stopping" || restartPending || restartingActive || sessionStopped,
+      disabled: archiveOnlyRuntime || archiveReplayLoaded || reviewActive || finalizingActive || sessionSavePending || pendingPauseState === "stopping" || restartPending || restartingActive || sessionStopped,
       background: "var(--error)",
       color: "var(--bg)",
       title: activeArchiveTitle() ? `End session: ${activeArchiveTitle()}` : "Open the stop/save/discard review for the current session.",
@@ -6654,10 +6797,17 @@
         background: "var(--advance)",
         color: "var(--bg)",
       });
-    } else if (archiveBrowseRef) {
+    } else if (archiveReplayLoaded) {
       setRuntimeTransportButton(runtimeToggleButton, {
         label: "Play",
         disabled: true,
+        background: "var(--advance)",
+        color: "var(--bg)",
+      });
+    } else if (liveSessionReviewLoaded) {
+      setRuntimeTransportButton(runtimeToggleButton, {
+        label: "Play",
+        disabled: sessionStopped || pendingPauseState === "starting" || pendingPauseState === "playing" || pendingPauseState === "pausing",
         background: "var(--advance)",
         color: "var(--bg)",
       });
@@ -6677,7 +6827,7 @@
       });
     }
     runtimeRestartButton.textContent = "Restart Session";
-    runtimeRestartButton.disabled = archiveOnlyRuntime || !!archiveBrowseRef || finalizingActive || restartingActive;
+    runtimeRestartButton.disabled = archiveOnlyRuntime || archiveReplayLoaded || finalizingActive || restartingActive;
     runtimeRestartButton.style.opacity = runtimeRestartButton.disabled ? "0.6" : "1";
     const bootToggleLabel = pendingPauseState === "starting"
       ? "Starting..."
@@ -6694,7 +6844,7 @@
       : (sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)"));
     bootRuntimeToggleButton.style.color = "var(--bg)";
     bootRestartButton.textContent = archiveOnlyRuntime ? "Live Disabled" : "Restart Session";
-    bootRestartButton.disabled = archiveOnlyRuntime || !!archiveBrowseRef;
+    bootRestartButton.disabled = archiveOnlyRuntime || archiveReplayLoaded;
     bootRestartButton.style.opacity = bootRestartButton.disabled ? "0.6" : "1";
   }
 
@@ -6705,7 +6855,9 @@
       return;
     }
     if (archiveBrowseRef) {
-      archiveLoadStatus.textContent = "Archive replay is loaded. Clear the archive view before starting a fresh session.";
+      archiveLoadStatus.textContent = browseIsLiveSessionReview()
+        ? "The current paused session review is open. Return to the session or resume it before starting a new one."
+        : "Archive replay is loaded. Clear the archive view before starting a fresh session.";
       return;
     }
     const phase = currentRuntimePhase();
@@ -6736,28 +6888,33 @@
       return;
     }
     if (archiveBrowseRef) {
-      if (archivePlaybackMediaAvailable()) {
+      if (browseIsLiveSessionReview()) {
+        exitArchiveBrowseMode();
+        archiveLoadStatus.textContent = "Returning to the paused session...";
+      } else {
+        if (archivePlaybackMediaAvailable()) {
+          return;
+        }
+        if (archiveOnlyRuntime) {
+          archiveLoadStatus.textContent = "Replay is unavailable in archive-only mode. Load the archive media or restart the live runtime.";
+          return;
+        }
+        const target = archiveBrowseRef;
+        pendingReplayArchiveRef = target;
+        pendingReplayEventTime = 0;
+        notePendingRuntimeAction("playing");
+        try {
+          updateVisionFeedUrl();
+          await sendInput(`/replay ${target}`);
+          archiveLoadStatus.textContent = `Replaying archive: ${target}`;
+          annotationStatus.textContent = `Requested replay: ${target}`;
+        } catch (error) {
+          pendingReplayArchiveRef = "";
+          pendingReplayEventTime = null;
+          clearPendingRuntimeAction(`Replay failed: ${error.message || error}`);
+        }
         return;
       }
-      if (archiveOnlyRuntime) {
-        archiveLoadStatus.textContent = "Replay is unavailable in archive-only mode. Load the archive media or restart the live runtime.";
-        return;
-      }
-      const target = archiveBrowseRef;
-      pendingReplayArchiveRef = target;
-      pendingReplayEventTime = 0;
-      notePendingRuntimeAction("playing");
-      try {
-        updateVisionFeedUrl();
-        await sendInput(`/replay ${target}`);
-        archiveLoadStatus.textContent = `Replaying archive: ${target}`;
-        annotationStatus.textContent = `Requested replay: ${target}`;
-      } catch (error) {
-        pendingReplayArchiveRef = "";
-        pendingReplayEventTime = null;
-        clearPendingRuntimeAction(`Replay failed: ${error.message || error}`);
-      }
-      return;
     }
     const phase = currentRuntimePhase();
     if (runtimePhaseIsReview(phase) || runtimePhaseIsFinalizing(phase) || phase === "restarting") {
@@ -6810,6 +6967,7 @@
       archiveLoadStatus.textContent = "Archive-only mode is active. Restart the full hot path for live sessions.";
       return;
     }
+    if (browseIsLiveSessionReview()) exitArchiveBrowseMode();
     runtimeRestartButton.textContent = "Restarting...";
     runtimeRestartButton.disabled = true;
     runtimeRestartButton.style.opacity = "0.6";
@@ -7039,7 +7197,7 @@
 
   function currentVisionSourceKind() {
     if (archiveBrowseRef && archivePlaybackMediaAvailable()) return "archive media";
-    if (historyState.playback?.active && playbackVisionFrame?.sessionId) return "archive playback";
+    if (historyState.playback?.active && playbackVisionFrame?.sessionId) return "a/v replay";
     if (archiveBrowseRef) return "archive frame";
     if (archiveOnlyRuntime) return "archive-only";
     if (visionService.url && visionService.managed) return "managed by app";
@@ -7788,7 +7946,10 @@
   }
 
   function shouldRenderTimelineEvent(event) {
-    return !!event && event.type !== "turn_summary";
+    if (!event) return false;
+    if (HIDDEN_RUNTIME_EVENT_TYPES.includes(event.type)) return false;
+    if (FOLDED_RUNTIME_EVENT_TYPES.includes(event.type)) return false;
+    return true;
   }
 
   function previewText(type, data) {
@@ -8138,6 +8299,14 @@
     if (!ownIds.length) return related;
     streamEvents.forEach((candidate) => {
       if (!candidate || candidate.key === event.key) return;
+      const candidateOwnIds = eventIdsFor(candidate);
+      if (candidateOwnIds.length && ownIds.some((eventId) => candidateOwnIds.includes(eventId))) {
+        if (!seen.has(candidate.key)) {
+          seen.add(candidate.key);
+          related.push(candidate.key);
+        }
+        return;
+      }
       const candidateInputs = inputEventIdsFor(candidate);
       if (!candidateInputs.length) return;
       if (!ownIds.some((eventId) => candidateInputs.includes(eventId))) return;
@@ -8200,15 +8369,15 @@
         time_s: Number(relativeTime(event.timestamp).toFixed(2)),
         label: event.label,
         detail: event.detail,
-        data: event.data || {},
+        data: stripVisionCycleMetadata(event.data || {}),
         compacted: !!event.compacted,
         superseded: !!event.superseded,
         debug_only: !!event.debugOnly,
       },
       prompt_blocks: promptBlocks,
       structure_sections: structuredSectionsForEvent(event),
-      upstream_events: causal.upstream,
-      downstream_events: causal.downstream,
+      upstream_events: stripVisionCycleMetadata(causal.upstream),
+      downstream_events: stripVisionCycleMetadata(causal.downstream),
     };
   }
 
@@ -8391,6 +8560,72 @@
     const event = selectedEvent();
     if (event) return Number(relativeTime(event.timestamp).toFixed(3));
     return null;
+  }
+
+  function currentBrowseWindowEnd() {
+    const mediaDuration = Math.max(0, Number(archiveMediaDuration || archiveMediaPlayer.duration || 0));
+    if (mediaDuration > 0) return Number(mediaDuration.toFixed(3));
+    if (!streamEvents.length) return 0;
+    return Number(
+      Math.max(
+        0,
+        ...streamEvents
+          .filter((event) => !!event?.archive)
+          .map((event) => relativeTime(event.timestamp))
+      ).toFixed(3)
+    );
+  }
+
+  function reviewExportWindowBounds() {
+    if (reviewWindowStartS == null && reviewWindowEndS == null) return null;
+    const endCap = currentBrowseWindowEnd();
+    const start = reviewWindowStartS == null ? 0 : Number(reviewWindowStartS);
+    const end = reviewWindowEndS == null ? endCap : Number(reviewWindowEndS);
+    const lo = Math.max(0, Math.min(start, end));
+    const hi = Math.max(lo, Math.max(start, end));
+    return {start: lo, end: hi, duration: Math.max(0, hi - lo)};
+  }
+
+  function defaultReviewExportTitle() {
+    const title = browseMeta()?.title || historyState.current_session?.title || browseRef() || "session";
+    const bounds = reviewExportWindowBounds();
+    if (!bounds) return `${title} export`;
+    return `${title} ${bounds.start.toFixed(1)}-${bounds.end.toFixed(1)}s`;
+  }
+
+  async function exportPausedSessionArchive() {
+    if (!browseIsLiveSessionReview()) return;
+    const sessionRef = browseRef();
+    if (!sessionRef) return;
+    const bounds = reviewExportWindowBounds();
+    const start = bounds ? bounds.start : 0;
+    const end = bounds ? bounds.end : currentBrowseWindowEnd();
+    archiveExportButton.disabled = true;
+    archiveExportStatus.textContent = "Exporting archive...";
+    try {
+      const result = await postJson("/history/snippet", {
+        session_id: sessionRef,
+        title: defaultReviewExportTitle(),
+        tags: ["paused-review", bounds ? "trimmed" : "full-session"],
+        capture_mode: "session_review_window",
+        event_time_s: Number(currentArchiveTimelineTime() ?? end ?? 0),
+        window_start_s: Number(start.toFixed(3)),
+        window_end_s: Number(Math.max(start, end).toFixed(3)),
+        bundle: {
+          capture_mode: "session_review_window",
+          source_event_type: "pause",
+          source: "live_session_review",
+        },
+      });
+      await refreshHistoryArchives();
+      archiveExportStatus.textContent = `Exported: ${result.path || "archive"}`;
+      annotationStatus.textContent = `Exported archive: ${result.path || ""}`;
+    } catch (error) {
+      archiveExportStatus.textContent = `Export failed: ${error.message || error}`;
+    } finally {
+      archiveExportButton.disabled = false;
+      renderArchiveTransport();
+    }
   }
 
   function snippetWindowBounds() {
@@ -9336,6 +9571,7 @@
       lane: laneForType(type),
       timestamp,
       seq: rawEvent.seq || 0,
+      archive: !!rawEvent.archive,
       data: data,
       label: previewText(type, data),
       detail: detailText(type, data),
@@ -9486,6 +9722,74 @@
     return event;
   }
 
+  function renderWorldStatePanel(data = {}) {
+    let html = "";
+    if (data.static_facts && data.static_facts.length) {
+      html += data.static_facts.map((fact) => `<div class="fact"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}</div>`).join("");
+    }
+    if (data.dynamic_facts && data.dynamic_facts.length) {
+      html += data.dynamic_facts.map((fact) => `<div class="fact"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}</div>`).join("");
+    }
+    if (data.pending && data.pending.length) {
+      html += data.pending.map((fact) => `<div class="fact fact-add">~ ${esc(fact)}</div>`).join("");
+    }
+    renderSidebarPanelContent("world", html || '<span style="color:var(--text-dim)">Empty</span>', {status: html ? "ready" : "empty", visible: true});
+  }
+
+  function renderPeopleStatePanel(data = {}) {
+    if (!data.people || !data.people.length) {
+      renderSidebarPanelContent("people", '<span style="color:var(--text-dim)">No people tracked</span>', {status: "empty", visible: true});
+      return;
+    }
+    renderSidebarPanelContent("people", data.people.map((person) => {
+      const facts = (person.facts || []).map((fact) => `<div class="fact" style="padding-left:1em"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}</div>`).join("");
+      return `<div class="person-entry"><span class="person-name">${esc(person.name || person.id)}</span> <span style="color:var(--text-dim)">${esc(person.id)}</span>${facts}</div>`;
+    }).join(""), {status: "ready", visible: true});
+  }
+
+  function renderStagePanel(data = {}) {
+    document.getElementById("h-stage").textContent = data.new_stage || "--";
+    let html = `<div><b>${esc(data.new_stage || "--")}</b></div>`;
+    if (data.new_goal) html += `<div style="color:var(--text-dim)">${esc(data.new_goal)}</div>`;
+    renderSidebarPanelContent("stage", html, {status: data.new_stage || data.new_goal ? "ready" : "empty", visible: true});
+  }
+
+  function renderPlanPanel(data = {}) {
+    if (!data.beats || !data.beats.length) {
+      renderSidebarPanelContent("plan", '<span style="color:var(--text-dim)">No active script plan yet</span>', {status: "empty", visible: true});
+      return;
+    }
+    renderSidebarPanelContent("plan", '<div class="beat-list">' + data.beats.map((beat, index) => {
+      const cls = index === 0 ? "beat-item current" : "beat-item";
+      return `<div class="${cls}">${index}. [${esc(beat.intent)}]</div>`;
+    }).join("") + "</div>", {status: "ready", visible: true});
+  }
+
+  function latestBrowseEventOfType(type, timeS) {
+    if (!archiveBrowseRef) return null;
+    const limit = Math.max(0, Number(timeS || 0));
+    const toleranceS = 0.05;
+    let latest = null;
+    let earliest = null;
+    for (const event of streamEvents) {
+      if (!event || event.type !== type) continue;
+      if (event.debugOnly || event.superseded) continue;
+      if (!earliest) earliest = event;
+      if (relativeTime(event.timestamp) > limit + toleranceS) continue;
+      latest = event;
+    }
+    if (!latest && limit <= toleranceS) return earliest;
+    return latest;
+  }
+
+  function applyBrowseStateAtTime(timeS) {
+    if (!archiveBrowseRef) return;
+    renderWorldStatePanel(latestBrowseEventOfType("world_state", timeS)?.data || {});
+    renderPeopleStatePanel(latestBrowseEventOfType("people_state", timeS)?.data || {});
+    renderStagePanel(latestBrowseEventOfType("stage_change", timeS)?.data || {});
+    renderPlanPanel(latestBrowseEventOfType("plan", timeS)?.data || {});
+  }
+
   function selectEvent(key, options = {}) {
     const event = streamEventByKey.get(key);
     if (!event) return;
@@ -9512,7 +9816,7 @@
     }
     document.getElementById("detail-payload").textContent = JSON.stringify(payloadJsonForInspector(event), null, 2);
     if (isVisualStageAdvanceEvent(event)) ensureScenarioSourceLoaded();
-    renderPromptBlocks(promptTraceBlocksForEvent(event));
+    renderPromptBlocks(promptTraceBlocksForEvent(event), event);
     renderLoopTiming(event);
     renderTurnContext(event);
     renderSelectedEventAnnotations();
@@ -9550,6 +9854,7 @@
   }
 
   function cardWidth(event) {
+    if (DOT_RENDER_EVENT_TYPES.has(event.type)) return 12;
     if (compactMode) {
       return Math.max(110, Math.min(220, 90 + event.label.length * 4));
     }
@@ -9575,6 +9880,7 @@
   }
 
   function cardHeight(event) {
+    if (DOT_RENDER_EVENT_TYPES.has(event.type)) return 12;
     if (compactMode) return 24;
     if (event.type === "turn_summary") return 108;
     if (event.type === "assistant_reply") return 92;
@@ -10294,20 +10600,25 @@
     </article>`;
   }
 
-  function buildLaneCardLayouts(lane, laneEvents, scale, railOffset) {
+  function renderLaneDot(event, centerLeft, centerTop) {
+    return `<button class="stream-dot type-${esc(typeClass(event.type))}${event.superseded ? " superseded" : ""}" type="button" data-event-key="${esc(event.key)}" data-event-type="${esc(event.type)}" data-turn-id="${esc(event.turnId != null ? String(event.turnId) : "")}" style="left:${centerLeft}px;top:${centerTop}px;" aria-label="${esc(event.label || event.type)}"></button>`;
+  }
+
+  function buildLaneCardLayouts(lane, laneEvents, scale, baseTop, rowStep) {
     const layouts = [];
     const trackEnds = [];
-    const rowStep = compactMode ? 28 : 144;
     let trackHeight = compactMode ? 34 : 96;
     laneEvents.forEach((event) => {
-      const left = 20 + relativeTime(event.timestamp) * scale;
       const width = cardWidth(event);
       const height = cardHeight(event);
+      const left = DOT_RENDER_EVENT_TYPES.has(event.type)
+        ? (20 + relativeTime(event.timestamp) * scale - (width / 2))
+        : (20 + relativeTime(event.timestamp) * scale);
       let row = 0;
       while (row < trackEnds.length && left < trackEnds[row] + 8) row += 1;
       if (row === trackEnds.length) trackEnds.push(0);
       trackEnds[row] = left + width;
-      const top = (compactMode ? 6 : 8) + railOffset + row * rowStep;
+      const top = baseTop + row * rowStep;
       trackHeight = Math.max(trackHeight, top + height + 10);
       layouts.push({event, left, width, height, top});
     });
@@ -10374,7 +10685,17 @@
       if (lane === "vision_raw") {
         if (laneEvents.length) trackHeight = Math.max(trackHeight, 84);
       } else {
-        const {layouts, trackHeight: layoutHeight} = buildLaneCardLayouts(lane, laneEvents, scale, railOffset);
+        const dotEvents = laneEvents.filter((event) => DOT_RENDER_EVENT_TYPES.has(event.type));
+        const cardEvents = laneEvents.filter((event) => !DOT_RENDER_EVENT_TYPES.has(event.type));
+        const dotBaseTop = (compactMode ? 8 : 12) + railOffset;
+        const dotRowStep = compactMode ? 18 : 24;
+        const dotReserve = dotEvents.length ? (compactMode ? 18 : 26) : 0;
+        const cardBaseTop = (compactMode ? 6 : 8) + railOffset + dotReserve;
+        const cardRowStep = compactMode ? 28 : 144;
+        const dotLayoutsResult = buildLaneCardLayouts(lane, dotEvents, scale, dotBaseTop, dotRowStep);
+        const cardLayoutsResult = buildLaneCardLayouts(lane, cardEvents, scale, cardBaseTop, cardRowStep);
+        const layouts = [...dotLayoutsResult.layouts, ...cardLayoutsResult.layouts];
+        const layoutHeight = Math.max(dotLayoutsResult.trackHeight, cardLayoutsResult.trackHeight);
         const visibleLayouts = laneUsesCardVirtualization(lane)
           ? layouts.filter((layout) => (layout.left + layout.width) >= renderWindow.left && layout.left <= renderWindow.right)
           : layouts;
@@ -10382,7 +10703,11 @@
           ? Math.max(trackHeight, trackHeightForLayouts(visibleLayouts, railOffset))
           : Math.max(trackHeight, layoutHeight);
         visibleLayouts.forEach((layout) => {
-          cards.push(renderLaneCard(layout.event, layout.left, layout.top, layout.width, layout.height));
+          if (DOT_RENDER_EVENT_TYPES.has(layout.event.type)) {
+            cards.push(renderLaneDot(layout.event, layout.left + (layout.width / 2), layout.top + (layout.height / 2)));
+          } else {
+            cards.push(renderLaneCard(layout.event, layout.left, layout.top, layout.width, layout.height));
+          }
         });
       }
       if (lane === "chat") {
@@ -10724,30 +11049,13 @@
     },
 
     world_state(data, rawEvent) {
-      let html = "";
-      if (data.static_facts && data.static_facts.length) {
-        html += data.static_facts.map((fact) => `<div class="fact"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}</div>`).join("");
-      }
-      if (data.dynamic_facts && data.dynamic_facts.length) {
-        html += data.dynamic_facts.map((fact) => `<div class="fact"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}</div>`).join("");
-      }
-      if (data.pending && data.pending.length) {
-        html += data.pending.map((fact) => `<div class="fact fact-add">~ ${esc(fact)}</div>`).join("");
-      }
-      renderSidebarPanelContent("world", html || '<span style="color:var(--text-dim)">Empty</span>', {status: html ? "ready" : "empty", visible: true});
+      renderWorldStatePanel(data);
       rawEvent.turnId = currentTurnId || null;
       recordEvent("world_state", data, rawEvent);
     },
 
     people_state(data, rawEvent) {
-      if (!data.people || !data.people.length) {
-        renderSidebarPanelContent("people", '<span style="color:var(--text-dim)">No people tracked</span>', {status: "empty", visible: true});
-      } else {
-        renderSidebarPanelContent("people", data.people.map((person) => {
-          const facts = (person.facts || []).map((fact) => `<div class="fact" style="padding-left:1em"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}</div>`).join("");
-          return `<div class="person-entry"><span class="person-name">${esc(person.name || person.id)}</span> <span style="color:var(--text-dim)">${esc(person.id)}</span>${facts}</div>`;
-        }).join(""), {status: "ready", visible: true});
-      }
+      renderPeopleStatePanel(data);
       rawEvent.turnId = currentTurnId || null;
       recordEvent("people_state", data, rawEvent);
     },
@@ -10759,11 +11067,9 @@
     },
 
     stage_change(data, rawEvent) {
-      document.getElementById("h-stage").textContent = data.new_stage || "--";
-      let html = `<div><b>${esc(data.new_stage || "--")}</b></div>`;
-      if (data.new_goal) html += `<div style="color:var(--text-dim)">${esc(data.new_goal)}</div>`;
-      renderSidebarPanelContent("stage", html, {status: data.new_stage || data.new_goal ? "ready" : "empty", visible: true});
+      renderStagePanel(data);
       rawEvent.turnId = currentTurnId || null;
+      recordEvent("stage_change", data, rawEvent);
       const event = ensureCompoundEvent("post_response", rawEvent, {
         script_status: "",
         eval_thought: "",
@@ -10785,15 +11091,9 @@
     },
 
     plan(data, rawEvent) {
-      if (!data.beats || !data.beats.length) {
-        renderSidebarPanelContent("plan", '<span style="color:var(--text-dim)">No active script plan yet</span>', {status: "empty", visible: true});
-      } else {
-        renderSidebarPanelContent("plan", '<div class="beat-list">' + data.beats.map((beat, index) => {
-          const cls = index === 0 ? "beat-item current" : "beat-item";
-          return `<div class="${cls}">${index}. [${esc(beat.intent)}]</div>`;
-        }).join("") + "</div>", {status: "ready", visible: true});
-      }
+      renderPlanPanel(data);
       rawEvent.turnId = currentTurnId || null;
+      recordEvent("plan", data, rawEvent);
       const event = ensureCompoundEvent("post_response", rawEvent, {
         script_status: "",
         eval_thought: "",
@@ -11036,6 +11336,7 @@
       renderBootStatus();
       syncSaveCompleteModalWithRuntimePhase().catch(() => {});
       flushPendingFinalizeAction().catch(() => {});
+      if (!data?.startup && !sessionStopped) maybeEnterCurrentSessionReview().catch(() => {});
     },
 
     resume(data, rawEvent) {
@@ -11043,6 +11344,7 @@
         recordEvent("resume", data, rawEvent);
         return;
       }
+      if (browseIsLiveSessionReview()) exitArchiveBrowseMode();
       applyRuntimePhase("live");
       pendingPauseState = null;
       pendingPauseSince = 0;
@@ -11504,6 +11806,32 @@
     if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
     archiveMediaScrubbing = false;
     queueArchiveScrubSeek(Number(event.target.value || 0), {immediate: true});
+  });
+  archiveExportMarkInButton.addEventListener("click", () => {
+    const when = currentSnippetMarkTime();
+    if (when == null) {
+      archiveExportStatus.textContent = "No scrub position is available for the export start.";
+      return;
+    }
+    reviewWindowStartS = Number(when.toFixed(3));
+    renderArchiveTransport();
+  });
+  archiveExportMarkOutButton.addEventListener("click", () => {
+    const when = currentSnippetMarkTime();
+    if (when == null) {
+      archiveExportStatus.textContent = "No scrub position is available for the export end.";
+      return;
+    }
+    reviewWindowEndS = Number(when.toFixed(3));
+    renderArchiveTransport();
+  });
+  archiveExportClearButton.addEventListener("click", () => {
+    reviewWindowStartS = null;
+    reviewWindowEndS = null;
+    renderArchiveTransport();
+  });
+  archiveExportButton.addEventListener("click", () => {
+    exportPausedSessionArchive().catch(() => {});
   });
 
   runtimeStartButton.addEventListener("click", requestRuntimeStart);
