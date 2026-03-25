@@ -778,7 +778,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             data = self._read_json_body()
             path = history_api.capture_snippet(data)
-            self._respond_json(HTTPStatus.OK, {"ok": True, "path": str(path), "status": history_api.status()})
+            self._respond_json(HTTPStatus.OK, {"ok": True, "path": str(path), "session_id": Path(path).name, "status": history_api.status()})
         except Exception as e:
             self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
 

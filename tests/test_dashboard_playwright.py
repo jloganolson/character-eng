@@ -1449,10 +1449,7 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#boot-summary")).to_contain_text("Voice needs attention before the runtime is ready.")
     expect(page.locator("body")).to_have_class(re.compile(r"\bbooting\b"))
 
-    page.locator("#boot-restart").click()
-    assert input_queue.get(timeout=2) == "/restart"
-    expect(page.locator("#boot-summary")).to_contain_text("Restarting conversation...")
-    expect(page.locator(".stream-card")).to_have_count(0)
+    expect(page.locator("#boot-overlay")).not_to_contain_text("Restart Session")
 
     collector.push(
         "session_start",
@@ -1897,8 +1894,8 @@ def test_archive_only_runtime_disables_live_controls(
     expect(page.locator("#runtime-start")).to_be_disabled()
     expect(page.locator("#runtime-toggle")).to_have_text("Play")
     expect(page.locator("#runtime-toggle")).to_be_disabled()
-    expect(page.locator("#runtime-restart")).to_be_disabled()
-    expect(page.locator("#boot-restart")).to_have_text("Live Disabled")
+    expect(page.locator("#runtime-panel")).not_to_contain_text("Restart Session")
+    expect(page.locator("#boot-overlay")).not_to_contain_text("Restart Session")
     expect(page.locator("#vision-service-status")).to_contain_text("source: archive-only")
 
     page.locator("#archive-load-button").click()
@@ -2895,8 +2892,7 @@ def test_archive_boot_live_runtime_actions_match_spoof_state(
     expect(page.locator("#runtime-toggle")).to_be_disabled()
     expect(page.locator("#runtime-stop")).to_have_text("Stop Session")
     expect(page.locator("#runtime-stop")).to_be_disabled()
-    expect(page.locator("#runtime-restart")).to_have_text("Restart Session")
-    expect(page.locator("#runtime-restart")).to_be_disabled()
+    expect(page.locator("#runtime-panel")).not_to_contain_text("Restart Session")
 
 
 def test_loaded_archive_exports_full_window_without_marks(
@@ -2945,7 +2941,15 @@ def test_loaded_archive_exports_full_window_without_marks(
 
     expect(page.locator("#archive-export-status")).to_contain_text("export the full loaded archive")
     page.locator("#archive-export-button").evaluate("(node) => node.click()")
-    expect(page.locator("#archive-export-status")).to_contain_text("Exported:")
+    expect(page.locator("#save-complete-modal")).to_have_class(re.compile(r"\bopen\b"))
+    expect(page.locator("#save-complete-heading")).to_contain_text("Export Archive")
+    expect(page.locator("#save-complete-title")).not_to_have_value("")
+    page.locator("#save-complete-title").fill("Loaded archive export")
+    page.locator("#save-complete-save").click()
+    expect(page.locator("#save-complete-heading")).to_contain_text("Archive Exported")
+    expect(page.locator("#save-complete-session-id")).to_contain_text("sess-archive-playback")
+    expect(page.locator("#save-complete-copy-ref")).to_be_visible()
+    expect(page.locator("#save-complete-load")).to_be_visible()
 
 
 def test_archive_raw_event_shows_inspected_frame_in_inspector(
@@ -4781,7 +4785,16 @@ def test_paused_session_review_exports_full_window_without_marks(
     expect(page.locator("#archive-load-button")).to_have_text("Return To Session")
     expect(page.locator("#archive-export-status")).to_contain_text("export the full paused session")
     page.locator("#archive-export-button").evaluate("(node) => node.click()")
-    expect(page.locator("#archive-export-status")).to_contain_text("Exported:")
+    expect(page.locator("#save-complete-modal")).to_have_class(re.compile(r"\bopen\b"))
+    expect(page.locator("#save-complete-heading")).to_contain_text("Export Archive")
+    page.locator("#save-complete-close").click()
+    expect(page.locator("#save-complete-modal")).not_to_have_class(re.compile(r"\bopen\b"))
+    page.locator("#archive-export-button").evaluate("(node) => node.click()")
+    expect(page.locator("#save-complete-heading")).to_contain_text("Export Archive")
+    page.locator("#save-complete-title").fill("Paused review export")
+    page.locator("#save-complete-save").click()
+    expect(page.locator("#save-complete-heading")).to_contain_text("Archive Exported")
+    expect(page.locator("#save-complete-session-id")).to_contain_text("sess-playwright")
     expect(page.locator("#archive-load-button")).to_have_text("Return To Session")
 
 

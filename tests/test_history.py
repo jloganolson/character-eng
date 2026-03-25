@@ -292,6 +292,42 @@ def test_capture_moment_writes_audio_and_video_context(tmp_path):
     assert manifest["tags"] == ["barge-in", "false-barge-in"]
 
 
+def test_capture_moment_reads_plain_wav_from_active_session(tmp_path):
+    service = HistoryService(root=tmp_path, free_warning_gib=0.0)
+    archive = service.start_session(session_id="sess-active", character="greg", model="test")
+    archive.record_event("session_start", {"session_id": "sess-active"})
+    archive.capture_checkpoint(
+        label="start",
+        character="greg",
+        session_snapshot=_session_snapshot(),
+        world=WorldState(),
+        people=PeopleState(),
+        scenario=None,
+        script=Script(),
+        goals=Goals(),
+        log_entries=[],
+        context_version=0,
+        had_user_input=False,
+    )
+    archive.record_user_audio(b"\x00\x00" * 16000)
+    archive.record_assistant_audio(b"\x00\x00" * 24000)
+    archive.record_video_frame(b"\xff\xd8\xff\xd9", timestamp=archive._started_at + 0.5, source="vision")
+
+    moment_dir = service.capture_moment(
+        {
+            "session_id": "sess-active",
+            "title": "active wav moment",
+            "event_time_s": 0.5,
+            "bundle": {"event": {"type": "vision_pass"}},
+            "window_before_s": 0.25,
+            "window_after_s": 0.25,
+        }
+    )
+
+    assert (moment_dir / "media" / "audio" / "user_input_clip.wav").exists()
+    assert (moment_dir / "media" / "audio" / "assistant_output_clip.wav").exists()
+
+
 def test_finalize_creates_playback_media_and_mixed_audio(tmp_path):
     service = HistoryService(root=tmp_path, free_warning_gib=0.0)
     archive = service.start_session(session_id="sess-media", character="greg", model="test")

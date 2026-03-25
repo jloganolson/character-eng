@@ -357,7 +357,7 @@ def _read_wav_bytes(path: Path) -> tuple[dict, bytes]:
         raw = gzip.open(path, "rb").read()
         handle: io.BytesIO | Path = io.BytesIO(raw)
     else:
-        handle = path
+        handle = str(path)
     with wave.open(handle, "rb") as wav:
         params = {
             "channels": wav.getnchannels(),

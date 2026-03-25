@@ -2060,7 +2060,6 @@
     <div class="boot-overlay-actions">
       <button id="boot-runtime-toggle">Start</button>
       <button id="boot-load-archive">Load Archive...</button>
-      <button id="boot-restart">Restart Session</button>
     </div>
   </div>
 </div>
@@ -2095,19 +2094,19 @@
         <strong>Save</strong> or <strong>Discard</strong> ends this session and returns you to ready so you can start a new one.
       </div>
       <label class="save-complete-field">
-        <span class="save-complete-field-label">Title</span>
+        <span id="save-complete-title-label" class="save-complete-field-label">Title</span>
         <input id="save-complete-title" type="text" style="width:100%;box-sizing:border-box;">
       </label>
-      <div class="save-complete-field">
-        <div class="save-complete-field-label">Session ID</div>
+      <div id="save-complete-session-field" class="save-complete-field">
+        <div id="save-complete-session-label" class="save-complete-field-label">Session ID</div>
         <div id="save-complete-session-id" class="save-complete-field-value">--</div>
       </div>
-      <div class="save-complete-field">
-        <div class="save-complete-field-label">Archive Path</div>
+      <div id="save-complete-path-field" class="save-complete-field">
+        <div id="save-complete-path-label" class="save-complete-field-label">Archive Path</div>
         <div id="save-complete-session-path" class="save-complete-field-value">--</div>
       </div>
-      <div class="save-complete-field">
-        <div class="save-complete-field-label">Intermediate Report</div>
+      <div id="save-complete-report-field" class="save-complete-field">
+        <div id="save-complete-report-label" class="save-complete-field-label">Intermediate Report</div>
         <div id="save-complete-report-path" class="save-complete-field-value">--</div>
       </div>
       <div class="save-complete-copy-row">
@@ -2386,9 +2385,6 @@
           <div id="boot-grid" class="boot-grid"></div>
         </div>
         <div id="runtime-summary-grid" class="runtime-summary-grid" style="margin-bottom:0.55em;"></div>
-        <div style="display:grid;grid-template-columns:minmax(0,1fr);gap:0.45em;margin-top:0.55em;">
-          <button id="runtime-restart" style="padding:0.45em 0.7em;border-radius:8px;border:1px solid var(--border);background:var(--error);color:var(--bg);cursor:pointer;">Restart Session</button>
-        </div>
         <details id="runtime-controls-fold" class="runtime-fold" style="margin-top:0.55em;">
           <summary>Controls</summary>
           <div class="runtime-fold-body">
@@ -2816,11 +2812,9 @@
   const runtimeStartButton = document.getElementById("runtime-start");
   const runtimeStopButton = document.getElementById("runtime-stop");
   const runtimeToggleButton = document.getElementById("runtime-toggle");
-  const runtimeRestartButton = document.getElementById("runtime-restart");
   const runtimeControlGrid = document.getElementById("runtime-control-grid");
   const bootRuntimeToggleButton = document.getElementById("boot-runtime-toggle");
   const bootLoadArchiveButton = document.getElementById("boot-load-archive");
-  const bootRestartButton = document.getElementById("boot-restart");
   const timeWindowSlider = document.getElementById("time-window");
   const timeWindowValue = document.getElementById("time-window-value");
   const currentPlayheadReadout = document.getElementById("current-playhead-readout");
@@ -2869,9 +2863,16 @@
   const saveCompleteSubtitleEl = document.getElementById("save-complete-subtitle");
   const saveCompleteGuidanceEl = document.getElementById("save-complete-guidance");
   const saveCompleteCloseButton = document.getElementById("save-complete-close");
+  const saveCompleteTitleLabelEl = document.getElementById("save-complete-title-label");
   const saveCompleteTitleInput = document.getElementById("save-complete-title");
+  const saveCompleteSessionFieldEl = document.getElementById("save-complete-session-field");
+  const saveCompleteSessionLabelEl = document.getElementById("save-complete-session-label");
   const saveCompleteSessionIdEl = document.getElementById("save-complete-session-id");
+  const saveCompletePathFieldEl = document.getElementById("save-complete-path-field");
+  const saveCompletePathLabelEl = document.getElementById("save-complete-path-label");
   const saveCompleteSessionPathEl = document.getElementById("save-complete-session-path");
+  const saveCompleteReportFieldEl = document.getElementById("save-complete-report-field");
+  const saveCompleteReportLabelEl = document.getElementById("save-complete-report-label");
   const saveCompleteReportPathEl = document.getElementById("save-complete-report-path");
   const saveCompleteCopyRefButton = document.getElementById("save-complete-copy-ref");
   const saveCompleteCopyPathButton = document.getElementById("save-complete-copy-path");
@@ -5291,6 +5292,10 @@
     renderBootStatus();
   }
 
+  function saveCompleteIsExportMode(mode = saveCompleteMode) {
+    return mode === "export_review" || mode === "exporting" || mode === "exported";
+  }
+
   async function cancelSaveCompleteReview() {
     if (saveCompleteMode !== "review" || !runtimePhaseIsReview()) {
       closeSaveCompleteModal();
@@ -5307,28 +5312,44 @@
 
   function renderSaveCompleteModal() {
     const meta = saveCompleteMeta || {};
-    const item = archiveItemByRef(meta.sessionId || "");
+    const mode = saveCompleteMode;
+    const exportMode = saveCompleteIsExportMode(mode);
+    const savedArchiveRef = exportMode && mode !== "exported"
+      ? ""
+      : String(meta.sessionId || "").trim();
+    const item = archiveItemByRef(savedArchiveRef);
     const title = saveCompleteTitleInput === document.activeElement
       ? saveCompleteTitleInput.value
       : (item?.title || meta.title || meta.sessionId || "--");
-    const sessionPath = item?.path || meta.sessionPath || "--";
+    const sourceSessionId = String(meta.sourceSessionId || meta.sessionId || "").trim();
+    const sourceSessionPath = String(meta.sourceSessionPath || meta.sessionPath || "").trim();
+    const sessionId = exportMode && mode !== "exported"
+      ? (sourceSessionId || "--")
+      : (savedArchiveRef || "--");
+    const sessionPath = exportMode && mode !== "exported"
+      ? (sourceSessionPath || "--")
+      : (item?.path || meta.sessionPath || "--");
     const reportPath = meta.reportPath || "--";
     const countdownSeconds = saveCompleteAutoHideDeadline
       ? Math.max(1, Math.ceil((saveCompleteAutoHideDeadline - Date.now()) / 1000))
       : 0;
-    const mode = saveCompleteMode;
     saveCompleteTitleInput.value = title;
-    saveCompleteSessionIdEl.textContent = meta.sessionId || "--";
+    saveCompleteSessionIdEl.textContent = sessionId;
     saveCompleteSessionPathEl.textContent = sessionPath;
     saveCompleteReportPathEl.textContent = reportPath;
     const reviewMode = mode === "review";
+    const exportReviewMode = mode === "export_review";
     const preparingMode = mode === "preparing_review" || mode === "preparing_save" || mode === "preparing_discard";
-    const savingMode = mode === "saving" || mode === "discarding" || preparingMode;
+    const savingMode = mode === "saving" || mode === "discarding" || preparingMode || mode === "exporting";
     const savedMode = mode === "saved" || mode === "discarded";
+    const exportedMode = mode === "exported";
     saveCompleteHeadingEl.textContent =
       mode === "preparing_review" ? "Opening Stop Review" :
       mode === "preparing_save" ? "Pausing Session" :
       mode === "preparing_discard" ? "Pausing Session" :
+      mode === "export_review" ? "Export Archive" :
+      mode === "exporting" ? "Exporting Archive" :
+      mode === "exported" ? "Archive Exported" :
       mode === "saving" ? "Saving Session" :
       mode === "saved" ? "Session Saved" :
       mode === "discarding" ? "Discarding Session" :
@@ -5338,23 +5359,41 @@
       mode === "preparing_review" ? "Pausing the live session before opening Stop review." :
       mode === "preparing_save" ? "Pausing the live session before saving so the archive is consistent." :
       mode === "preparing_discard" ? "Pausing the live session before discarding it." :
+      mode === "export_review" ? "Review the export name, then export the current archive window or cancel." :
+      mode === "exporting" ? "Exporting the current archive window now." :
+      mode === "exported" ? "The archive export is ready. Copy the ref, load it now, or close this dialog." :
       mode === "saving" ? "Saving the session now. This dialog will update when the archive is ready." :
       mode === "saved" ? "The session is saved. You can load it now or let this dialog hide automatically." :
       mode === "discarding" ? "Discarding this session now." :
       mode === "discarded" ? "The session was discarded. This dialog will hide automatically." :
       "Choose how to end this session. Back to Session returns to the current session. Save or Discard ends it and returns you to ready for a new one.";
-    saveCompleteGuidanceEl.hidden = !reviewMode;
-    saveCompleteTitleInput.disabled = !reviewMode;
-    saveCompleteCopyRefButton.hidden = !savedMode || mode === "discarded";
-    saveCompleteCopyPathButton.hidden = !savedMode || mode === "discarded";
+    saveCompleteGuidanceEl.hidden = !(reviewMode || exportReviewMode);
+    saveCompleteGuidanceEl.innerHTML = reviewMode
+      ? "<strong>Back to Session</strong> returns to the current session. <strong>Save</strong> or <strong>Discard</strong> ends this session and returns you to ready so you can start a new one."
+      : "<strong>Cancel</strong> leaves the current archive or paused review untouched. <strong>Export</strong> creates a saved archive for the current scrub window. Exported refs use the source session id as the prefix so multiple exports stay traceable.";
+    saveCompleteTitleLabelEl.textContent = exportMode ? "Export Title" : "Title";
+    saveCompleteSessionLabelEl.textContent = exportMode && mode !== "exported" ? "Source Session ID" : "Session ID";
+    saveCompletePathLabelEl.textContent = exportMode && mode !== "exported" ? "Source Archive Path" : "Archive Path";
+    saveCompleteReportLabelEl.textContent = "Intermediate Report";
+    saveCompleteTitleInput.disabled = !(reviewMode || exportReviewMode);
+    saveCompleteSessionFieldEl.hidden = false;
+    saveCompletePathFieldEl.hidden = false;
+    saveCompleteReportFieldEl.hidden = exportMode;
+    saveCompleteSessionFieldEl.style.display = saveCompleteSessionFieldEl.hidden ? "none" : "";
+    saveCompletePathFieldEl.style.display = saveCompletePathFieldEl.hidden ? "none" : "";
+    saveCompleteReportFieldEl.style.display = saveCompleteReportFieldEl.hidden ? "none" : "";
+    saveCompleteCopyRefButton.hidden = (!savedMode && !exportedMode) || mode === "discarded";
+    saveCompleteCopyPathButton.hidden = (!savedMode && !exportedMode) || mode === "discarded";
     saveCompleteCopyReportButton.hidden = !savedMode || mode === "discarded";
     saveCompleteCopyReportButton.disabled = !meta.reportPath;
-    saveCompleteLoadButton.hidden = !savedMode || mode === "discarded";
-    saveCompleteLoadButton.disabled = !meta.sessionId;
+    saveCompleteLoadButton.hidden = !(savedMode || exportedMode) || mode === "discarded";
+    saveCompleteLoadButton.disabled = !(savedArchiveRef || meta.sessionId);
     saveCompleteDiscardButton.hidden = !reviewMode;
-    saveCompleteSaveButton.hidden = !reviewMode;
-    saveCompleteOkayButton.hidden = !savedMode;
-    saveCompleteCloseButton.textContent = reviewMode ? "Back to Session" : "Close";
+    saveCompleteSaveButton.hidden = !(reviewMode || exportReviewMode);
+    saveCompleteSaveButton.textContent = exportReviewMode ? "Export" : "Save";
+    saveCompleteOkayButton.hidden = !(savedMode || exportedMode);
+    saveCompleteCloseButton.textContent = reviewMode ? "Back to Session" : (exportReviewMode ? "Cancel" : "Close");
+    saveCompleteCloseButton.disabled = mode === "saving" || mode === "discarding" || mode === "exporting";
     if (savedMode && countdownSeconds) {
       const base = mode === "discarded" ? "Discarded successfully." : "Saved successfully.";
       saveCompleteStatusEl.textContent = `${base} Hiding in ${countdownSeconds}s.`;
@@ -5365,17 +5404,22 @@
         mode === "preparing_discard" ? "Pausing before discard..." :
         "Pausing before save...";
     } else if (savingMode) {
-      saveCompleteStatusEl.textContent = mode === "discarding" ? "Discarding..." : "Saving...";
+      saveCompleteStatusEl.textContent =
+        mode === "discarding" ? "Discarding..." :
+        mode === "exporting" ? "Exporting..." :
+        "Saving...";
     }
   }
 
-  async function openSaveCompleteModal({sessionId = "", title = "", reportPath = "", sessionPath = "", mode = "saved"} = {}) {
-    if (mode === "saved") await refreshHistoryArchives();
+  async function openSaveCompleteModal({sessionId = "", sourceSessionId = "", title = "", reportPath = "", sessionPath = "", sourceSessionPath = "", mode = "saved"} = {}) {
+    if (mode === "saved" || mode === "exported") await refreshHistoryArchives();
     saveCompleteMeta = {
       sessionId: sessionId || "",
+      sourceSessionId: sourceSessionId || "",
       title: title || "",
       reportPath: reportPath || "",
       sessionPath: sessionPath || "",
+      sourceSessionPath: sourceSessionPath || "",
     };
     saveCompleteMode = mode;
     renderSaveCompleteModal();
@@ -6726,17 +6770,11 @@
         background: archiveBootOverride === "live" ? "var(--narrator)" : "var(--advance)",
         color: "var(--bg)",
       });
-      runtimeRestartButton.textContent = override.bootRestartText;
-      runtimeRestartButton.disabled = override.bootRestartDisabled;
-      runtimeRestartButton.style.opacity = override.bootRestartDisabled ? "0.6" : "1";
       bootRuntimeToggleButton.textContent = override.bootToggleText;
       bootRuntimeToggleButton.disabled = override.bootToggleDisabled;
       bootRuntimeToggleButton.style.opacity = override.bootToggleDisabled ? "0.6" : "1";
       bootRuntimeToggleButton.style.background = override.bootToggleBackground;
       bootRuntimeToggleButton.style.color = "var(--bg)";
-      bootRestartButton.textContent = override.bootRestartText;
-      bootRestartButton.disabled = override.bootRestartDisabled;
-      bootRestartButton.style.opacity = override.bootRestartDisabled ? "0.6" : "1";
       return;
     }
     if (!runtimeStateSeen || phase === "unknown") {
@@ -6759,17 +6797,11 @@
         color: "var(--bg)",
         title: "Runtime controls will unlock once the app publishes its current session state.",
       });
-      runtimeRestartButton.textContent = "Restart Session";
-      runtimeRestartButton.disabled = true;
-      runtimeRestartButton.style.opacity = "0.6";
       bootRuntimeToggleButton.textContent = "Start";
       bootRuntimeToggleButton.disabled = true;
       bootRuntimeToggleButton.style.opacity = "0.6";
       bootRuntimeToggleButton.style.background = "var(--advance)";
       bootRuntimeToggleButton.style.color = "var(--bg)";
-      bootRestartButton.textContent = "Restart Session";
-      bootRestartButton.disabled = true;
-      bootRestartButton.style.opacity = "0.6";
       return;
     }
     const stopLabel = (finalizingActive || sessionSavePending)
@@ -6826,9 +6858,6 @@
         color: "var(--bg)",
       });
     }
-    runtimeRestartButton.textContent = "Restart Session";
-    runtimeRestartButton.disabled = archiveOnlyRuntime || archiveReplayLoaded || finalizingActive || restartingActive;
-    runtimeRestartButton.style.opacity = runtimeRestartButton.disabled ? "0.6" : "1";
     const bootToggleLabel = pendingPauseState === "starting"
       ? "Starting..."
       : (pendingPauseState === "playing"
@@ -6843,9 +6872,6 @@
       ? "var(--narrator)"
       : (sessionStopped ? "var(--advance)" : (conversationPaused ? "var(--advance)" : "var(--narrator)"));
     bootRuntimeToggleButton.style.color = "var(--bg)";
-    bootRestartButton.textContent = archiveOnlyRuntime ? "Live Disabled" : "Restart Session";
-    bootRestartButton.disabled = archiveOnlyRuntime || archiveReplayLoaded;
-    bootRestartButton.style.opacity = bootRestartButton.disabled ? "0.6" : "1";
   }
 
   async function requestRuntimeStart() {
@@ -6960,30 +6986,6 @@
       return;
     }
     await requestRuntimeToggle();
-  }
-
-  async function requestRestart() {
-    if (archiveOnlyRuntime) {
-      archiveLoadStatus.textContent = "Archive-only mode is active. Restart the full hot path for live sessions.";
-      return;
-    }
-    if (browseIsLiveSessionReview()) exitArchiveBrowseMode();
-    runtimeRestartButton.textContent = "Restarting...";
-    runtimeRestartButton.disabled = true;
-    runtimeRestartButton.style.opacity = "0.6";
-    bootRestartButton.textContent = "Restarting...";
-    bootRestartButton.disabled = true;
-    bootRestartButton.style.opacity = "0.6";
-    restartPending = true;
-    currentSessionId = "";
-    clearConversationState("Restarting conversation...");
-    try {
-      await sendInput("/restart");
-    } catch (error) {
-      restartPending = false;
-      annotationStatus.textContent = `Restart failed: ${error.message || error}`;
-      updateRuntimeButtons();
-    }
   }
 
   async function requestStop() {
@@ -8593,7 +8595,43 @@
     return `${title} ${bounds.start.toFixed(1)}-${bounds.end.toFixed(1)}s`;
   }
 
-  async function exportCurrentBrowseArchive() {
+  function exportedArchiveRefFromResult(result) {
+    const explicit = String(result?.session_id || "").trim();
+    if (explicit) return explicit;
+    const path = String(result?.path || "").trim();
+    if (!path) return "";
+    const parts = path.split("/").filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : "";
+  }
+
+  async function openExportArchiveModal() {
+    if (!browseIsActive()) {
+      archiveExportStatus.textContent = "Load an archive or pause a live session before exporting.";
+      return;
+    }
+    const sourceSessionId = browseRef();
+    if (!sourceSessionId) return;
+    const sourcePath = String(
+      browseMeta()?.path
+      || archiveItemByRef(sourceSessionId)?.path
+      || historyState.current_session?.session_path
+      || ""
+    ).trim();
+    await openSaveCompleteModal({
+      sessionId: "",
+      sourceSessionId,
+      title: defaultBrowseExportTitle(),
+      reportPath: "",
+      sessionPath: "",
+      sourceSessionPath: sourcePath,
+      mode: "export_review",
+    });
+    saveCompleteStatusEl.textContent = reviewExportWindowBounds()
+      ? "Export the marked in/out window."
+      : "No in/out set. Export will use the full current archive window.";
+  }
+
+  async function exportCurrentBrowseArchive({title: requestedTitle = ""} = {}) {
     if (!browseIsActive()) {
       archiveExportStatus.textContent = "Load an archive or pause a live session before exporting.";
       return;
@@ -8603,12 +8641,41 @@
     const bounds = reviewExportWindowBounds();
     const start = bounds ? bounds.start : 0;
     const end = bounds ? bounds.end : currentBrowseWindowEnd();
+    const exportTitle = String(requestedTitle || defaultBrowseExportTitle()).trim() || defaultBrowseExportTitle();
     archiveExportButton.disabled = true;
     archiveExportStatus.textContent = "Exporting archive...";
     try {
+      saveCompleteMeta = {
+        ...(saveCompleteMeta || {}),
+        sessionId: "",
+        sourceSessionId: sessionRef,
+        title: exportTitle,
+        reportPath: "",
+        sessionPath: "",
+        sourceSessionPath: String(
+          browseMeta()?.path
+          || archiveItemByRef(sessionRef)?.path
+          || saveCompleteMeta?.sourceSessionPath
+          || ""
+        ).trim(),
+      };
+      saveCompleteMode = "exporting";
+      if (!saveCompleteModalOpen) {
+        await openSaveCompleteModal({
+          sessionId: "",
+          sourceSessionId: sessionRef,
+          title: exportTitle,
+          reportPath: "",
+          sessionPath: "",
+          sourceSessionPath: saveCompleteMeta.sourceSessionPath,
+          mode: "exporting",
+        });
+      } else {
+        renderSaveCompleteModal();
+      }
       const result = await postJson("/history/snippet", {
         session_id: sessionRef,
-        title: defaultBrowseExportTitle(),
+        title: exportTitle,
         tags: [
           browseIsLiveSessionReview() ? "paused-review" : "archive-browse",
           bounds ? "trimmed" : "full-session",
@@ -8624,10 +8691,35 @@
         },
       });
       await refreshHistoryArchives();
-      archiveExportStatus.textContent = `Exported: ${result.path || "archive"}`;
+      const exportedRef = exportedArchiveRefFromResult(result);
+      const exportedItem = archiveItemByRef(exportedRef);
+      saveCompleteMeta = {
+        sessionId: exportedRef,
+        sourceSessionId: sessionRef,
+        title: exportedItem?.title || exportTitle,
+        reportPath: "",
+        sessionPath: exportedItem?.path || String(result.path || ""),
+        sourceSessionPath: String(
+          browseMeta()?.path
+          || archiveItemByRef(sessionRef)?.path
+          || ""
+        ).trim(),
+      };
+      saveCompleteMode = "exported";
+      renderSaveCompleteModal();
+      saveCompleteModalOpen = true;
+      saveCompleteModal.classList.add("open");
+      saveCompleteModal.setAttribute("aria-hidden", "false");
+      archiveExportStatus.textContent = `Exported: ${exportedRef || result.path || "archive"}`;
       annotationStatus.textContent = `Exported archive: ${result.path || ""}`;
     } catch (error) {
-      archiveExportStatus.textContent = `Export failed: ${error.message || error}`;
+      const message = error.message || error;
+      archiveExportStatus.textContent = `Export failed: ${message}`;
+      if (saveCompleteModalOpen) {
+        saveCompleteMode = "export_review";
+        renderSaveCompleteModal();
+        saveCompleteStatusEl.textContent = `Export failed: ${message}`;
+      }
     } finally {
       archiveExportButton.disabled = false;
       archiveExportClearButton.disabled = !reviewExportWindowBounds() && reviewWindowStartS == null && reviewWindowEndS == null;
@@ -9228,6 +9320,18 @@
     }
   }
 
+  async function confirmArchiveExport() {
+    const fallbackTitle = defaultBrowseExportTitle();
+    const title = saveCompleteTitleInput.value.trim() || fallbackTitle;
+    try {
+      await exportCurrentBrowseArchive({title});
+    } catch (error) {
+      saveCompleteMode = "export_review";
+      renderSaveCompleteModal();
+      saveCompleteStatusEl.textContent = `Export failed: ${error.message || error}`;
+    }
+  }
+
   async function confirmSaveAndStop() {
     const ref = saveCompleteMeta?.sessionId || currentSessionId || "";
     const fallbackTitle = archiveItemByRef(ref)?.title || saveCompleteMeta?.title || ref;
@@ -9289,6 +9393,14 @@
       renderSaveCompleteModal();
       saveCompleteStatusEl.textContent = `Discard failed: ${error.message || error}`;
     }
+  }
+
+  async function confirmSaveCompleteAction() {
+    if (saveCompleteMode === "export_review") {
+      await confirmArchiveExport();
+      return;
+    }
+    await confirmSaveAndStop();
   }
 
   function bundleToHtml(bundle) {
@@ -11827,19 +11939,17 @@
     renderArchiveTransport();
   });
   archiveExportButton.addEventListener("click", () => {
-    exportCurrentBrowseArchive().catch(() => {});
+    openExportArchiveModal().catch(() => {});
   });
 
   runtimeStartButton.addEventListener("click", requestRuntimeStart);
   runtimeToggleButton.addEventListener("click", requestRuntimeToggle);
   bootRuntimeToggleButton.addEventListener("click", requestBootRuntimeToggle);
   runtimeStopButton.addEventListener("click", requestStop);
-  runtimeRestartButton.addEventListener("click", requestRestart);
   bootLoadArchiveButton.addEventListener("click", async () => {
     await refreshHistoryArchives();
     setArchivePickerOpen(true);
   });
-  bootRestartButton.addEventListener("click", requestRestart);
   reportRefButton.addEventListener("click", saveReportReference);
   archiveRenameButton.addEventListener("click", renameActiveArchive);
   annotationToggleButton.addEventListener("click", () => {
@@ -11964,7 +12074,7 @@
     saveCompleteStatusEl.textContent = ok ? `Copied report path: ${path}` : "Copy report path failed.";
   });
   saveCompleteDiscardButton.addEventListener("click", confirmDiscardSession);
-  saveCompleteSaveButton.addEventListener("click", confirmSaveAndStop);
+  saveCompleteSaveButton.addEventListener("click", confirmSaveCompleteAction);
   saveCompleteLoadButton.addEventListener("click", async () => {
     const ref = saveCompleteMeta?.sessionId || "";
     if (!ref) return;
