@@ -2291,6 +2291,7 @@
               </div>
               <div class="detail-actions">
                 <button class="detail-action primary" id="detail-continue-from-event" type="button" disabled>Continue From Here</button>
+                <button class="detail-action" id="detail-open-reply-chat" type="button" style="display:none;" disabled>Open Formatted Chat</button>
                 <button class="detail-action" id="detail-open-json" type="button" disabled>Open Full Event JSON</button>
               </div>
               <div id="detail-loop">
@@ -2836,6 +2837,7 @@
   const inspectorResizer = document.getElementById("inspector-resizer");
   const sidebarResizer = document.getElementById("sidebar-resizer");
   const detailContinueFromEventButton = document.getElementById("detail-continue-from-event");
+  const detailOpenReplyChatButton = document.getElementById("detail-open-reply-chat");
   const detailOpenJsonButton = document.getElementById("detail-open-json");
   const detailWarning = document.getElementById("detail-warning");
   const detailTurnContext = document.getElementById("detail-turn-context");
@@ -5798,6 +5800,16 @@
       output: trace.output || "",
       trace_source: "inferred",
     }));
+  }
+
+  function replyChatPromptBlockForEvent(event) {
+    if (!event || event.type !== "assistant_reply") return null;
+    const blocks = promptTraceBlocksForEvent(event);
+    if (!blocks.length) return null;
+    return blocks.find((block) => String(block.label || "").toLowerCase() === "chat")
+      || blocks.find((block) => Array.isArray(block.messages) && block.messages.length)
+      || blocks[0]
+      || null;
   }
 
   function _renderMessagesText(messages) {
@@ -10023,6 +10035,9 @@
     selectedStreamKey = key;
     detailContinueFromEventButton.disabled = false;
     detailOpenJsonButton.disabled = false;
+    const replyChatBlock = replyChatPromptBlockForEvent(event);
+    detailOpenReplyChatButton.style.display = replyChatBlock ? "" : "none";
+    detailOpenReplyChatButton.disabled = !replyChatBlock;
     document.getElementById("detail-time").textContent = `+${relativeTime(event.timestamp).toFixed(2)}s`;
     document.getElementById("detail-type").textContent = event.type;
     document.getElementById("detail-lane").textContent = event.lane;
@@ -10078,6 +10093,19 @@
       return;
     }
     window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
+  function openSelectedReplyChat() {
+    const event = selectedEvent();
+    const block = replyChatPromptBlockForEvent(event);
+    if (!block) {
+      annotationStatus.textContent = "No formatted chat transcript was captured for this character reply.";
+      return;
+    }
+    setPromptModalOpen(true, {
+      ...block,
+      title: block.title || "Character Reply Chat",
+    });
   }
 
   function cardWidth(event) {
@@ -12070,6 +12098,7 @@
   });
   annotationSaveButton.addEventListener("click", saveSelectedAnnotation);
   annotationCancelButton.addEventListener("click", () => setAnnotationFormOpen(false));
+  detailOpenReplyChatButton.addEventListener("click", openSelectedReplyChat);
   document.getElementById("detail-prompts").addEventListener("click", (event) => {
     const button = event.target.closest("[data-prompt-open]");
     if (!button) return;
