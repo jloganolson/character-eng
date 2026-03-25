@@ -6336,13 +6336,26 @@
         event.data?.elapsed != null ? {kind: "meta", key: "elapsed", value: `${Math.round(Number(event.data.elapsed) * 1000)}ms`} : null,
         event.data?.cadence_s != null ? {kind: "meta", key: "cadence", value: `${Number(event.data.cadence_s).toFixed(1)}s`} : null,
       ].filter(Boolean)));
+    } else if (event.type === "user_transcript_final") {
+      const turnStart = eventForTurnType(event, "turn_start");
+      const replyEvent = eventForTurnType(event, "assistant_reply");
+      const sttMs = event.data?.stt_ms ?? turnStart?.data?.stt_ms ?? replyEvent?.data?.stt_ms;
+      const endpointingMs = event.data?.endpointing_ms ?? turnStart?.data?.endpointing_ms ?? replyEvent?.data?.endpointing_ms;
+      const transcriptText = event.data?.text || event.data?.stt_text || turnStart?.data?.stt_text || replyEvent?.data?.stt_text || event.label || "";
+      sections.push(structureSection("Input", [
+        transcriptText ? {kind: "input", key: "transcript", value: transcriptText} : null,
+      ].filter(Boolean)));
+      sections.push(structureSection("Timing", [
+        sttMs != null ? {kind: "meta", key: "stt", value: `${sttMs}ms`} : null,
+        endpointingMs != null && endpointingMs > 0 ? {kind: "meta", key: "endpointing", value: `${endpointingMs}ms`} : null,
+      ].filter(Boolean)));
     } else if (event.type === "assistant_reply") {
       const inputItems = [];
       if (event.data?.stt_text) inputItems.push({kind: "input", key: "heard", value: event.data.stt_text});
       if (event.data?.input_source) inputItems.push({kind: "meta", key: "source", value: event.data.input_source});
       const timingItems = [
-        event.data?.endpointing_ms != null ? {kind: "meta", key: "endpointing", value: `${event.data.endpointing_ms}ms`} : null,
-        event.data?.endpointing_ms == null && event.data?.stt_ms != null ? {kind: "meta", key: "stt", value: `${event.data.stt_ms}ms`} : null,
+        event.data?.stt_ms != null ? {kind: "meta", key: "stt", value: `${event.data.stt_ms}ms`} : null,
+        event.data?.endpointing_ms != null && event.data.endpointing_ms > 0 ? {kind: "meta", key: "endpointing", value: `${event.data.endpointing_ms}ms`} : null,
         event.data?.ttft_ms != null ? {kind: "meta", key: "ttft", value: `${event.data.ttft_ms}ms`} : null,
         event.data?.llm_ms != null ? {kind: "meta", key: "llm", value: `${event.data.llm_ms}ms`} : null,
         event.data?.first_audio_ms != null ? {kind: "meta", key: "first audio", value: `${event.data.first_audio_ms}ms`} : null,
@@ -8127,8 +8140,8 @@
       }
       case "assistant_reply": {
         const bits = [];
-        if (data.endpointing_ms != null) bits.push(`endpointing ${data.endpointing_ms}ms`);
-        else if (data.stt_ms != null) bits.push(`STT ${data.stt_ms}ms`);
+        if (data.stt_ms != null) bits.push(`STT ${data.stt_ms}ms`);
+        if (data.endpointing_ms != null && data.endpointing_ms > 0) bits.push(`endpointing ${data.endpointing_ms}ms`);
         if (data.ttft_ms != null) bits.push(`TTFT ${data.ttft_ms}ms`);
         if (data.llm_ms != null) bits.push(`LLM ${data.llm_ms}ms`);
         if (data.first_audio_ms != null) bits.push(`first audio ${data.first_audio_ms}ms`);
@@ -8144,7 +8157,11 @@
           data.truncated_text ? `spoken ${data.truncated_text}` : "",
         ].filter(Boolean).join(" · ");
       case "user_transcript_final":
-        return data.text ? `final transcript` : "";
+        return [
+          data.text ? "final transcript" : "",
+          data.stt_ms != null ? `STT ${data.stt_ms}ms` : "",
+          data.endpointing_ms != null && data.endpointing_ms > 0 ? `endpointing ${data.endpointing_ms}ms` : "",
+        ].filter(Boolean).join(" · ");
       case "turn_start":
         return [
           isVisualStageAdvanceEvent({type: "turn_start", data})
@@ -9653,7 +9670,6 @@
     const id = inputEvent?.data || {};
 
     // Resolve absolute timestamps (prefer event data, fall back to input event)
-    const speechEndedTs = Number(d.speech_ended_ts || id.speech_ended_ts || 0);
     const transcriptTs = Number(d.transcript_final_ts || id.transcript_final_ts || 0);
     const llmStartTs = Number(d.llm_start_ts || 0);
     const ttftTs = Number(d.response_ttft_ts || 0);
@@ -9663,12 +9679,11 @@
     const firstAudioTs = Number(d.first_audio_ts || 0);
     const spokenEndTs = Number(d.spoken_done_ts || 0);
 
-    // Anchor the timeline at the point the system starts working.
-    // For voice: anchor at speech_ended (last is_final) or transcript_final.
-    // For text: anchor at llm_start.
-    const anchorCandidates = [speechEndedTs, transcriptTs, llmStartTs].filter((v) => v > 0);
-    if (!anchorCandidates.length) return;
-    const baseTs = Math.min(...anchorCandidates);
+    // Anchor the reply loop at the point input is done.
+    // For voice: start once the transcript is finalized.
+    // For text: start at llm_start.
+    const baseTs = transcriptTs > 0 ? transcriptTs : (llmStartTs > 0 ? llmStartTs : 0);
+    if (!(baseTs > 0)) return;
 
     const ms = (ts) => ts > 0 ? Math.round((ts - baseTs) * 1000) : null;
 
@@ -9680,7 +9695,6 @@
       }
     };
 
-    const endpointStart = ms(speechEndedTs);
     const endpointEnd = ms(transcriptTs);
     const llmStart = ms(llmStartTs);
     const ttft = ms(ttftTs);
@@ -9689,8 +9703,6 @@
     const firstAudio = ms(firstAudioTs);
     const spokenEnd = ms(spokenEndTs);
 
-    // Endpointing: speech_ended → transcript_final (voice only)
-    addSeg("endpointing", "endpointing", endpointStart, endpointEnd);
     // TTFT: llm_start → first token
     addSeg("TTFT", "ttft", llmStart, ttft);
     // LLM generation: first token → text done
@@ -9717,7 +9729,6 @@
     const pushMilestone = (label, offsetMs) => {
       if (offsetMs != null && offsetMs >= 0) milestones.push({label, offsetMs});
     };
-    if (endpointStart != null) pushMilestone("speech ended", endpointStart);
     if (endpointEnd != null) pushMilestone("transcript", endpointEnd);
     if (ttft != null) pushMilestone("ttft", ttft);
     if (textDone != null) pushMilestone("text done", textDone);
@@ -9735,14 +9746,13 @@
     });
 
     // Chips: actionable summary metrics
-    const endpointingMs = d.endpointing_ms ?? (endpointEnd != null && endpointStart != null ? endpointEnd - endpointStart : null);
     const ttftMs = d.ttft_ms ?? (ttft != null ? ttft - (llmStart ?? 0) : null);
     const llmMs = d.llm_ms ?? (textDone != null && llmStart != null ? textDone - llmStart : null);
     const firstAudioMs = d.first_audio_ms ?? firstAudio;
     const totalMsFinal = d.total_ms ?? spokenEnd;
 
     const chipEntries = [];
-    if (endpointingMs != null) chipEntries.push({label: "endpointing", ms: endpointingMs, color: "rgba(77,163,255,0.7)"});
+    if (d.stt_ms != null) chipEntries.push({label: "STT", ms: d.stt_ms, color: "rgba(77,163,255,0.7)"});
     if (ttftMs != null) chipEntries.push({label: "TTFT", ms: ttftMs, color: "rgba(249,190,109,0.7)"});
     if (llmMs != null) chipEntries.push({label: "LLM", ms: llmMs, color: "rgba(249,190,109,0.7)"});
     if (firstAudioMs != null && firstAudioMs > 0) chipEntries.push({label: "first audio", ms: firstAudioMs, color: "rgba(136,209,134,0.7)"});
@@ -9872,6 +9882,17 @@
     }
     event.turnId = rawEvent.turnId || event.turnId;
     return event;
+  }
+
+  function mergeVoiceTimingIntoTranscriptEvent(turnId, data) {
+    if (turnId == null || !data) return;
+    const event = [...streamEvents].reverse().find((candidate) => candidate.turnId === turnId && candidate.type === "user_transcript_final");
+    if (!event) return;
+    for (const key of ["speech_started_ts", "speech_ended_ts", "transcript_final_ts", "endpointing_ms", "stt_ms"]) {
+      if (data[key] != null) event.data[key] = data[key];
+    }
+    if (data.stt_text && !event.data.stt_text) event.data.stt_text = data.stt_text;
+    event.detail = detailText("user_transcript_final", event.data);
   }
 
   function ensureCompoundEvent(type, rawEvent, seedData) {
@@ -11112,6 +11133,7 @@
       turnCount += 1;
       resetReplyStream();
       recordEvent("turn_start", data, rawEvent);
+      mergeVoiceTimingIntoTranscriptEvent(currentTurnId, data);
       const summary = ensureTurnSummaryEvent(rawEvent);
       summary.data.trigger_source = data.trigger_source || summary.data.trigger_source;
       summary.data.turn_kind = data.turn_kind || summary.data.turn_kind;
@@ -11145,6 +11167,7 @@
 
     response_progress(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
+      mergeVoiceTimingIntoTranscriptEvent(rawEvent.turnId, data);
       const event = ensureReplyEvent(rawEvent);
       // Merge timing fields progressively
       for (const key of ["ttft_ms", "llm_ms", "total_ms", "llm_start_ts", "response_ttft_ts",
@@ -11159,6 +11182,7 @@
 
     response_done(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
+      mergeVoiceTimingIntoTranscriptEvent(rawEvent.turnId, data);
       const event = ensureReplyEvent(rawEvent);
       event.timestamp = Number(rawEvent.timestamp || event.timestamp);
       event.seq = rawEvent.seq || event.seq;
