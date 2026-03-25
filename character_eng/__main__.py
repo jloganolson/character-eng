@@ -1143,7 +1143,7 @@ def _advance_scenario_from_visual(session, scenario, script, world, people, goal
             result = next_beat_call(
                 system_prompt=session.system_prompt,
                 world=world,
-                history=session.get_history(),
+                history=_history_for_model(session),
                 goals=goals,
                 model_config=model_config,
                 people=people,
@@ -1182,11 +1182,7 @@ def _consume_vision_updates(session, world, people, vision_mgr, scenario, script
                 token = str(item).strip()
                 if token:
                     signals.add(token)
-            _, narrator_msg = process_perception(event, people, world)
-            if not narrator_msg:
-                continue
-            console.print(f"[dim]{narrator_msg}[/dim]")
-            session.inject_system(narrator_msg)
+            process_perception(event, people, world)
             _push("perception", {
                 "source": event.source,
                 "description": event.description,
@@ -1289,7 +1285,7 @@ def run_eval_sync(session, world, script, model_config, log, people=None, stage_
     try:
         check = script_check_call(
             beat=beat,
-            history=session.get_history(),
+            history=_history_for_model(session),
             model_config=model_config,
             world=world,
         )
@@ -1302,7 +1298,7 @@ def run_eval_sync(session, world, script, model_config, log, people=None, stage_
         if _runtime_controls.get("thinker", True):
             tresult = thought_call(
                 system_prompt=session.system_prompt,
-                history=session.get_history(),
+                history=_history_for_model(session),
                 model_config=model_config,
                 world=world,
             )
@@ -1352,12 +1348,12 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
 
     with ThreadPoolExecutor(max_workers=5) as pool:
         # Fire all LLM calls concurrently
-        fut_check = pool.submit(script_check_call, beat=beat, history=session.get_history(),
+        fut_check = pool.submit(script_check_call, beat=beat, history=_history_for_model(session),
                                 model_config=model_config, world=world) if beat and _runtime_controls.get("beats", True) else None
         fut_thought = pool.submit(
             thought_call,
             system_prompt=session.system_prompt,
-            history=session.get_history(),
+            history=_history_for_model(session),
             model_config=model_config,
             world=world,
             goals=goals,
@@ -1367,14 +1363,14 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
             scenario=scenario,
             world=world,
             people=people,
-            history=session.get_history(),
+            history=_history_for_model(session),
             model_config=model_config,
         ) if scenario and _runtime_controls.get("director", True) else None
         fut_expr = pool.submit(expression_call, expression_line, model_config, gaze_targets) if expression_line and _runtime_controls.get("expression", True) else None
         fut_guard = pool.submit(
             response_guard_call,
             system_prompt=session.system_prompt,
-            history=session.get_history(),
+            history=_history_for_model(session),
             reply=expression_line,
             model_config=model_config,
         ) if expression_line else None
@@ -1504,7 +1500,7 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
                             if _runtime_controls.get("beats", True):
                                 result = next_beat_call(
                                     system_prompt=session.system_prompt, world=world,
-                                    history=session.get_history(), goals=goals, model_config=model_config,
+                                    history=_history_for_model(session), goals=goals, model_config=model_config,
                                     people=people, stage_goal=new_stage.goal,
                                     vision_context_text=_current_vision_text(vision_mgr),
                                 )
@@ -1538,7 +1534,7 @@ def run_director_sync(scenario, world, people, session, model_config, script, go
     if scenario is None:
         return False
     try:
-        result = director_call(scenario, world, people, session.get_history(), model_config)
+        result = director_call(scenario, world, people, _history_for_model(session), model_config)
     except Exception as e:
         console.print(f"[dim]  director error: {e}[/dim]")
         return False
@@ -1555,7 +1551,7 @@ def run_director_sync(scenario, world, people, session, model_config, script, go
                     if _runtime_controls.get("beats", True):
                         plan_result = next_beat_call(
                             system_prompt=session.system_prompt, world=world,
-                            history=session.get_history(), goals=goals, model_config=model_config,
+                            history=_history_for_model(session), goals=goals, model_config=model_config,
                             people=people, stage_goal=new_stage.goal,
                             vision_context_text="",
                         )
@@ -3542,7 +3538,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 if _runtime_controls.get("beats", True):
                     result = next_beat_call(
                         system_prompt=session.system_prompt, world=world,
-                        history=session.get_history(), goals=goals, model_config=micro_config,
+                        history=_history_for_model(session), goals=goals, model_config=micro_config,
                         plan_request=plan_request, people=people, stage_goal=stage_goal,
                         vision_context_text=_current_vision_text(vision_mgr),
                     )
@@ -3566,7 +3562,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             if script.is_empty() and _runtime_controls.get("beats", True):
                 result = next_beat_call(
                     system_prompt=session.system_prompt, world=world,
-                    history=session.get_history(), goals=goals, model_config=micro_config,
+                    history=_history_for_model(session), goals=goals, model_config=micro_config,
                     people=people, stage_goal=stage_goal,
                     vision_context_text=_current_vision_text(vision_mgr),
                 )
@@ -3613,7 +3609,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             if needs_plan and _runtime_controls.get("beats", True):
                 result = next_beat_call(
                     system_prompt=session.system_prompt, world=world,
-                    history=session.get_history(), goals=goals, model_config=micro_config,
+                    history=_history_for_model(session), goals=goals, model_config=micro_config,
                     plan_request=plan_request, people=people, stage_goal=stage_goal,
                     vision_context_text=_current_vision_text(vision_mgr),
                 )
@@ -3643,7 +3639,7 @@ def run_eval(session, world, goals, script, model_config):
         return eval_call(
             system_prompt=session.system_prompt,
             world=world,
-            history=session.get_history(),
+            history=_history_for_model(session),
             model_config=model_config,
             goals=goals,
             script=script,
@@ -3665,7 +3661,7 @@ def run_plan(session, world, goals, plan_request, model_config, people=None, sta
         return next_beat_call(
             system_prompt=session.system_prompt,
             world=world,
-            history=session.get_history(),
+            history=_history_for_model(session),
             goals=goals,
             model_config=model_config,
             plan_request=plan_request,
@@ -3714,6 +3710,13 @@ def _set_runtime_context(session, tag: str, content: str | None) -> None:
         session.upsert_system(tag, text)
     else:
         session.remove_tagged_system(tag)
+
+
+def _history_for_model(session) -> list[dict]:
+    try:
+        return session.get_history(for_model=True)
+    except TypeError:
+        return session.get_history()
 
 
 def _apply_expression_runtime_context(session, expr_result) -> None:
@@ -3965,7 +3968,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
                 condition=beat.condition,
                 system_prompt=session.system_prompt,
                 world=world,
-                history=session.get_history(),
+                history=_history_for_model(session),
                 model_config=model_config,
             )
         except Exception as e:
@@ -4054,7 +4057,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
     if (needs_plan or not script.current_beat) and _runtime_controls.get("beats", True):
         result = next_beat_call(
             system_prompt=session.system_prompt, world=world,
-            history=session.get_history(), goals=goals, model_config=model_config,
+            history=_history_for_model(session), goals=goals, model_config=model_config,
             plan_request=plan_request, people=people, stage_goal=stage_goal,
             vision_context_text=_current_vision_text(vision_mgr),
         )
@@ -4114,7 +4117,7 @@ def handle_world_change(session, world, goals, script, change_text, label, model
     if needs_plan and _runtime_controls.get("beats", True):
         result = next_beat_call(
             system_prompt=session.system_prompt, world=world,
-            history=session.get_history(), goals=goals, model_config=model_config,
+            history=_history_for_model(session), goals=goals, model_config=model_config,
             plan_request=plan_request, people=people, stage_goal=stage_goal,
             vision_context_text=_current_vision_text(vision_mgr),
         )
@@ -4168,7 +4171,7 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
     if needs_plan and _runtime_controls.get("beats", True):
         result = next_beat_call(
             system_prompt=session.system_prompt, world=world,
-            history=session.get_history(), goals=goals, model_config=model_config,
+            history=_history_for_model(session), goals=goals, model_config=model_config,
             plan_request=plan_request, people=people, stage_goal=stage_goal,
             vision_context_text=_current_vision_text(vision_mgr),
         )
@@ -4236,7 +4239,7 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
             if needs_plan and _runtime_controls.get("beats", True):
                 result = next_beat_call(
                     system_prompt=session.system_prompt, world=world,
-                    history=session.get_history(), goals=goals, model_config=model_config,
+                    history=_history_for_model(session), goals=goals, model_config=model_config,
                     plan_request=plan_request, people=people, stage_goal=stage_goal,
                     vision_context_text=_current_vision_text(vision_mgr),
                 )
@@ -4350,7 +4353,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
                 continue_listening_call,
                 transcript=message_text,
                 system_prompt=session.system_prompt,
-                history=session.get_history(),
+                history=_history_for_model(session),
                 model_config=expr_model_config or CHAT_MODEL,
                 world=world,
                 people=people,

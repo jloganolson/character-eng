@@ -55,13 +55,30 @@ def test_process_perception_applies_structured_person_presence():
         payload={"identity": "Person 1", "presence": "present", "change": "appeared", "signals": ["person_visible"]},
     )
     _, narrator = process_perception(event, people, world)
-    assert narrator == "[Person 1 appeared in view]"
+    assert narrator == ""
     assert world.pending == []
     present = people.present_people()
     assert len(present) == 1
     assert present[0].name == "Person 1"
     assert present[0].presence == "present"
-    assert world.events[-1] == "Person 1 appeared in view"
+    assert world.events == []
+
+
+def test_process_perception_ignores_visual_trigger_narration():
+    world = WorldState()
+    people = PeopleState()
+    event = PerceptionEvent(
+        description="A person has stayed visible for more than a moment",
+        source="visual",
+        kind="vision_trigger",
+        payload={"signals": ["person_visible_stable"]},
+    )
+
+    _, narrator = process_perception(event, people, world)
+
+    assert narrator == ""
+    assert world.pending == []
+    assert world.events == []
 
 
 def test_process_perception_applies_vision_state_update_directly():

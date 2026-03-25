@@ -457,6 +457,7 @@ class DeepgramSTT:
         self._ws_open = threading.Event()
         self._last_error = ""
         self._last_is_final_at: float | None = None
+        self._endpointing_s = 0.3
 
     def start(self):
         from deepgram import DeepgramClient
@@ -471,7 +472,7 @@ class DeepgramSTT:
             interim_results="true",
             utterance_end_ms="1500",
             vad_events="true",
-            endpointing="300",
+            endpointing=str(int(self._endpointing_s * 1000)),
         )
         self._socket = self._ctx_manager.__enter__()
 

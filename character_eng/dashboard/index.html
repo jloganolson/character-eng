@@ -196,6 +196,11 @@
     font-size: 0.82rem;
     margin-top: 0.2rem;
   }
+  .app-modal-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.45em;
+  }
   .app-modal-close {
     border: 1px solid var(--border);
     background: var(--panel-hover);
@@ -1589,8 +1594,7 @@
     color: var(--text-dim);
   }
   .detail-tabs {
-    display: flex;
-    gap: 0.4em;
+    display: none;
   }
   .detail-tab {
     background: var(--bg-alt);
@@ -1609,7 +1613,7 @@
     box-shadow: 0 0 0 1px var(--narrator);
   }
   .detail-pane {
-    display: none;
+    display: grid;
     min-height: 0;
   }
   .detail-pane.active {
@@ -1617,6 +1621,18 @@
   }
   .detail-pane.compact-empty {
     align-content: start;
+  }
+  .detail-stack {
+    display: grid;
+    gap: 0.65em;
+    min-height: 0;
+    align-content: start;
+  }
+  .detail-pane-title {
+    font-size: 0.76em;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
   }
   .detail-prompts {
     display: grid;
@@ -1974,7 +1990,22 @@
   }
   .inspector-frame {
     display: grid;
-    gap: 0.5em;
+    gap: 0.65em;
+    min-width: 0;
+  }
+  .inspector-frame-media {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65em;
+    align-items: flex-start;
+  }
+  .inspector-frame-main {
+    flex: 1 1 280px;
+    min-width: 0;
+  }
+  #detail-target-crop-wrap {
+    flex: 0 1 220px;
+    min-width: min(220px, 100%);
   }
   .inspector-frame-subtitle {
     font-size: 0.72em;
@@ -1984,11 +2015,15 @@
   }
   .inspector-frame img {
     width: 100%;
-    min-height: 180px;
+    min-height: 0;
+    max-height: min(34vh, 320px);
     object-fit: contain;
     border-radius: 10px;
     border: 1px solid var(--border);
     background: #000;
+  }
+  #detail-target-crop-image {
+    max-height: min(20vh, 180px);
   }
   .inspector-frame-meta {
     font-size: 0.78em;
@@ -2163,8 +2198,12 @@
         <div id="prompt-modal-title" class="app-modal-title">Prompt Detail</div>
         <div id="prompt-modal-subtitle" class="app-modal-sub">Full prompt context for the selected event.</div>
       </div>
-      <button id="prompt-modal-close" class="app-modal-close" type="button">Close</button>
+      <div class="app-modal-actions">
+        <button id="prompt-modal-copy" class="app-modal-close" type="button">Copy JSON</button>
+        <button id="prompt-modal-close" class="app-modal-close" type="button">Close</button>
+      </div>
     </div>
+    <div id="prompt-modal-copy-status" class="app-modal-sub" style="display:none;margin-bottom:0.55em;"></div>
     <div id="prompt-modal-body" style="display:grid;gap:0.75em;"></div>
   </div>
 </div>
@@ -2327,14 +2366,18 @@
               <div class="detail-section" id="inspector-frame-panel" data-panel-region="inspector" data-panel-id="inspected_frame" data-panel-scope="event" style="display:none;">
                 <label id="inspector-frame-label">Inspected Frame</label>
                 <div class="inspector-frame">
-                  <img id="detail-frame-image" alt="Inspected frame" style="display:none;">
-                  <div id="detail-frame-empty" class="detail-inline-empty">Select an archived vision event to inspect its nearest captured frame.</div>
-                  <div id="detail-frame-meta" class="inspector-frame-meta"></div>
-                  <div id="detail-target-crop-wrap" style="display:none;">
-                    <div class="inspector-frame-subtitle">Target Crop</div>
-                    <img id="detail-target-crop-image" alt="Target crop" style="display:none;">
-                    <div id="detail-target-crop-meta" class="inspector-frame-meta"></div>
+                  <div class="inspector-frame-media">
+                    <div class="inspector-frame-main">
+                      <img id="detail-frame-image" alt="Inspected frame" style="display:none;">
+                      <div id="detail-frame-empty" class="detail-inline-empty">Select an archived vision event to inspect its nearest captured frame.</div>
+                    </div>
+                    <div id="detail-target-crop-wrap" style="display:none;">
+                      <div class="inspector-frame-subtitle">Target Crop</div>
+                      <img id="detail-target-crop-image" alt="Target crop" style="display:none;">
+                      <div id="detail-target-crop-meta" class="inspector-frame-meta"></div>
+                    </div>
                   </div>
+                  <div id="detail-frame-meta" class="inspector-frame-meta"></div>
                   <div class="inspector-frame-actions">
                     <a id="detail-frame-open" href="#" target="_blank" style="display:none;">Open Full Size</a>
                   </div>
@@ -2343,7 +2386,7 @@
             </div>
           </div>
 
-          <div class="detail-section" id="inspector-annotations-panel" data-panel-region="inspector" data-panel-id="annotations" data-panel-scope="event" style="position:relative;z-index:2;">
+          <div class="detail-section" id="inspector-annotations-panel" data-panel-region="inspector" data-panel-id="annotations" data-panel-scope="event" style="display:none;position:relative;z-index:2;">
             <label id="inspector-annotations-label">Annotations</label>
             <div class="detail-actions">
               <button class="detail-action" id="annotation-toggle" type="button" disabled>Annotate Event</button>
@@ -2391,16 +2434,20 @@
           </div>
 
           <div class="detail-section fill" id="inspector-detail-tabs-panel" data-panel-region="inspector" data-panel-id="detail_tabs" data-panel-scope="event">
-            <label id="inspector-detail-tabs-label">Inspector Pane</label>
+            <label id="inspector-detail-tabs-label">Details</label>
             <div class="detail-tabs" id="inspector-detail-tabs">
               <button class="detail-tab" id="tab-prompts" type="button" data-detail-tab="prompts" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">Inspector</button>
               <button class="detail-tab active" id="tab-payload" type="button" data-detail-tab="payload" data-panel-region="inspector" data-panel-id="payload" data-panel-scope="event">Payload JSON</button>
             </div>
-            <div class="detail-pane" id="detail-prompts-pane" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">
-              <div class="detail-prompts" id="detail-prompts"></div>
-            </div>
-            <div class="detail-pane active" id="detail-payload-pane" data-panel-region="inspector" data-panel-id="payload" data-panel-scope="event">
-              <pre id="detail-payload">{}</pre>
+            <div class="detail-stack">
+              <div class="detail-pane-title">Structured View</div>
+              <div class="detail-pane" id="detail-prompts-pane" data-panel-region="inspector" data-panel-id="prompts" data-panel-scope="event">
+                <div class="detail-prompts" id="detail-prompts"></div>
+              </div>
+              <div class="detail-pane-title">Payload JSON</div>
+              <div class="detail-pane active" id="detail-payload-pane" data-panel-region="inspector" data-panel-id="payload" data-panel-scope="event">
+                <pre id="detail-payload">{}</pre>
+              </div>
             </div>
           </div>
         </aside>
@@ -2766,7 +2813,7 @@
       id: "detail_tabs",
       sectionId: "inspector-detail-tabs-panel",
       labelId: "inspector-detail-tabs-label",
-      title: "Inspector Pane",
+      title: "Inspector",
       scope: "event",
       tabs: [
         {id: "prompts", tabId: "tab-prompts", paneId: "detail-prompts-pane", title: "Inspector", scope: "event"},
@@ -2932,6 +2979,8 @@
   const promptModal = document.getElementById("prompt-modal");
   const promptModalTitle = document.getElementById("prompt-modal-title");
   const promptModalSubtitle = document.getElementById("prompt-modal-subtitle");
+  const promptModalCopyButton = document.getElementById("prompt-modal-copy");
+  const promptModalCopyStatus = document.getElementById("prompt-modal-copy-status");
   const promptModalBody = document.getElementById("prompt-modal-body");
   const promptModalCloseButton = document.getElementById("prompt-modal-close");
   const annotationToggleButton = document.getElementById("annotation-toggle");
@@ -3011,6 +3060,8 @@
   let pendingStopReviewPause = false;
   let promptPreviewBlocks = [];
   let promptModalOpen = false;
+  let promptModalState = {block: null, event: null};
+  let lastCopiedText = "";
   let inspectorFrameRequestId = 0;
   let snippetWindowStartS = null;
   let snippetWindowEndS = null;
@@ -4947,6 +4998,7 @@
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
+        lastCopiedText = text;
         return true;
       }
     } catch (_) {}
@@ -4962,6 +5014,7 @@
       ok = document.execCommand("copy");
     } catch (_) {}
     document.body.removeChild(area);
+    if (ok) lastCopiedText = text;
     return ok;
   }
 
@@ -5752,7 +5805,7 @@
       button.classList.toggle("active", button.dataset.detailTab === resolvedTab);
     });
     DETAIL_TABS.forEach((item) => {
-      document.getElementById(item.paneId).classList.toggle("active", item.key === resolvedTab);
+      document.getElementById(item.paneId).classList.add("active");
     });
   }
 
@@ -5914,6 +5967,47 @@
     return stripVisionCycleMetadata(event?.data || {});
   }
 
+  function promptModalCopyPayload(block, event = null) {
+    const sessionId = String(archiveBrowseRef || currentSessionId || historyState.current_session?.session_id || "").trim();
+    const eventUid = eventUidText(event) || null;
+    return {
+      session_id: sessionId || null,
+      character: currentCharacterName() || null,
+      reply_id: event?.type === "assistant_reply" ? eventUid : null,
+      event: event ? {
+        type: event.type || null,
+        uid: eventUid,
+        key: String(event.key || "").trim() || null,
+        seq: Number(event.seq || 0) || 0,
+        turn_id: event.turnId ?? null,
+        lane: event.lane || null,
+        timestamp_s: Number(relativeTime(event.timestamp).toFixed(3)),
+        label: event.label || "",
+      } : null,
+      prompt_block: {
+        title: block?.title || "Prompt",
+        label: block?.label || "",
+        provider: block?.provider || "",
+        model: block?.model || "",
+        trace_source: block?.trace_source || "",
+        started_at: block?.started_at || null,
+        finished_at: block?.finished_at || null,
+        inputs: Array.isArray(block?.inputs) ? block.inputs.slice() : [],
+        messages: Array.isArray(block?.messages) ? block.messages.map((message) => ({
+          role: message?.role || "",
+          content: message?.content || "",
+        })) : [],
+        rendered_prompt: block?.rendered_prompt || "",
+        output: block?.output || "",
+      },
+    };
+  }
+
+  function setPromptModalCopyStatus(text = "") {
+    promptModalCopyStatus.textContent = text;
+    promptModalCopyStatus.style.display = text ? "" : "none";
+  }
+
   function promptBlockDetailHtml(block) {
     const parts = [];
     if (block.inputs && block.inputs.length) {
@@ -5945,16 +6039,19 @@
     </section>`;
   }
 
-  function setPromptModalOpen(open, block = null) {
+  function setPromptModalOpen(open, block = null, event = null) {
     promptModalOpen = !!open;
     promptModal.classList.toggle("open", promptModalOpen);
     promptModal.setAttribute("aria-hidden", promptModalOpen ? "false" : "true");
+    setPromptModalCopyStatus("");
     if (!promptModalOpen || !block) {
+      promptModalState = {block: null, event: null};
       promptModalTitle.textContent = "Prompt Detail";
       promptModalSubtitle.textContent = "Full prompt context for the selected event.";
       promptModalBody.innerHTML = "";
       return;
     }
+    promptModalState = {block, event: event || null};
     promptModalTitle.textContent = block.title || "Prompt Detail";
     promptModalSubtitle.textContent = promptMetaText(block) || "Full prompt context for the selected event.";
     promptModalBody.innerHTML = promptBlockDetailHtml(block);
@@ -5962,8 +6059,6 @@
 
   function renderPromptBlocks(blocks, event = null) {
     const root = document.getElementById("detail-prompts");
-    const promptTab = document.getElementById("tab-prompts");
-    const promptPane = document.getElementById("detail-prompts-pane");
     const structureSections = event ? structuredSectionsForEvent(event) : [];
     const structureHtml = structureSections.length
       ? `<section class="prompt-preview-structure">${structureSections.join("")}</section>`
@@ -5971,15 +6066,10 @@
     root.innerHTML = "";
     promptPreviewBlocks = Array.isArray(blocks) ? blocks.slice() : [];
     if ((!blocks || !blocks.length) && !structureHtml) {
-      promptTab.style.display = "none";
-      promptPane.style.display = "none";
       root.innerHTML = '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>';
       root.parentElement?.classList.add("compact-empty");
-      if (activeDetailTab === "prompts") setDetailTab("payload");
       return false;
     }
-    promptTab.style.display = "";
-    promptPane.style.display = "";
     root.parentElement?.classList.remove("compact-empty");
     const promptHtml = (!blocks || !blocks.length)
       ? '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>'
@@ -6113,6 +6203,33 @@
           </div>`).join("")}
       </div>
     </section>`;
+  }
+
+  function resolvedVoiceTiming(primaryData = {}, fallbackData = {}) {
+    const startedTs = Number(primaryData.speech_started_ts ?? fallbackData.speech_started_ts ?? 0);
+    const endedTs = Number(primaryData.speech_ended_ts ?? fallbackData.speech_ended_ts ?? 0);
+    const finalTs = Number(primaryData.transcript_final_ts ?? fallbackData.transcript_final_ts ?? 0);
+    const totalInputMsRaw = primaryData.stt_ms ?? fallbackData.stt_ms;
+    const endpointingMsRaw = primaryData.endpointing_ms ?? fallbackData.endpointing_ms;
+    const speechMs = startedTs > 0 && endedTs > 0 && endedTs >= startedTs
+      ? Math.round((endedTs - startedTs) * 1000)
+      : null;
+    const sttLatencyMs = endpointingMsRaw != null
+      ? Number(endpointingMsRaw)
+      : (endedTs > 0 && finalTs > 0 && finalTs >= endedTs
+        ? Math.round((finalTs - endedTs) * 1000)
+        : null);
+    const totalInputMs = totalInputMsRaw != null
+      ? Number(totalInputMsRaw)
+      : (startedTs > 0 && finalTs > 0 && finalTs >= startedTs
+        ? Math.round((finalTs - startedTs) * 1000)
+        : null);
+    return {
+      speechMs,
+      sttLatencyMs,
+      totalInputMs,
+      hasExplicitEndpointing: endpointingMsRaw != null,
+    };
   }
 
   function structuredSectionsForEvent(event) {
@@ -6378,23 +6495,25 @@
     } else if (event.type === "user_transcript_final") {
       const turnStart = eventForTurnType(event, "turn_start");
       const replyEvent = eventForTurnType(event, "assistant_reply");
-      const sttMs = event.data?.stt_ms ?? turnStart?.data?.stt_ms ?? replyEvent?.data?.stt_ms;
-      const endpointingMs = event.data?.endpointing_ms ?? turnStart?.data?.endpointing_ms ?? replyEvent?.data?.endpointing_ms;
+      const timing = resolvedVoiceTiming(event.data || {}, turnStart?.data || replyEvent?.data || {});
       const transcriptText = event.data?.text || event.data?.stt_text || turnStart?.data?.stt_text || replyEvent?.data?.stt_text || event.label || "";
       sections.push(structureSection("Input", [
         transcriptText ? {kind: "input", key: "transcript", value: transcriptText} : null,
       ].filter(Boolean)));
       sections.push(structureSection("Timing", [
-        sttMs != null ? {kind: "meta", key: "stt", value: `${sttMs}ms`} : null,
-        endpointingMs != null && endpointingMs > 0 ? {kind: "meta", key: "endpointing", value: `${endpointingMs}ms`} : null,
+        timing.speechMs != null ? {kind: "meta", key: "speech", value: `${timing.speechMs}ms`} : null,
+        timing.sttLatencyMs != null ? {kind: "meta", key: "stt", value: `${timing.sttLatencyMs}ms`} : null,
+        timing.sttLatencyMs == null && timing.totalInputMs != null ? {kind: "meta", key: "input total", value: `${timing.totalInputMs}ms`} : null,
       ].filter(Boolean)));
     } else if (event.type === "assistant_reply") {
+      const timing = resolvedVoiceTiming(event.data || {});
       const inputItems = [];
       if (event.data?.stt_text) inputItems.push({kind: "input", key: "heard", value: event.data.stt_text});
       if (event.data?.input_source) inputItems.push({kind: "meta", key: "source", value: event.data.input_source});
       const timingItems = [
-        event.data?.stt_ms != null ? {kind: "meta", key: "stt", value: `${event.data.stt_ms}ms`} : null,
-        event.data?.endpointing_ms != null && event.data.endpointing_ms > 0 ? {kind: "meta", key: "endpointing", value: `${event.data.endpointing_ms}ms`} : null,
+        timing.speechMs != null ? {kind: "meta", key: "speech", value: `${timing.speechMs}ms`} : null,
+        timing.sttLatencyMs != null ? {kind: "meta", key: "stt", value: `${timing.sttLatencyMs}ms`} : null,
+        timing.sttLatencyMs == null && timing.totalInputMs != null ? {kind: "meta", key: "input total", value: `${timing.totalInputMs}ms`} : null,
         event.data?.ttft_ms != null ? {kind: "meta", key: "ttft", value: `${event.data.ttft_ms}ms`} : null,
         event.data?.llm_ms != null ? {kind: "meta", key: "llm", value: `${event.data.llm_ms}ms`} : null,
         event.data?.first_audio_ms != null ? {kind: "meta", key: "first audio", value: `${event.data.first_audio_ms}ms`} : null,
@@ -8202,9 +8321,11 @@
         return bits.join(" · ");
       }
       case "assistant_reply": {
+        const timing = resolvedVoiceTiming(data || {});
         const bits = [];
-        if (data.stt_ms != null) bits.push(`STT ${data.stt_ms}ms`);
-        if (data.endpointing_ms != null && data.endpointing_ms > 0) bits.push(`endpointing ${data.endpointing_ms}ms`);
+        if (timing.speechMs != null) bits.push(`speech ${timing.speechMs}ms`);
+        if (timing.sttLatencyMs != null) bits.push(`STT ${timing.sttLatencyMs}ms`);
+        else if (timing.totalInputMs != null) bits.push(`input ${timing.totalInputMs}ms`);
         if (data.ttft_ms != null) bits.push(`TTFT ${data.ttft_ms}ms`);
         if (data.llm_ms != null) bits.push(`LLM ${data.llm_ms}ms`);
         if (data.first_audio_ms != null) bits.push(`first audio ${data.first_audio_ms}ms`);
@@ -8220,14 +8341,17 @@
           data.truncated_text ? `spoken ${data.truncated_text}` : "",
           data.interruption_text ? `cut off by ${data.interruption_text}` : "",
         ].filter(Boolean).join(" · ");
-      case "user_transcript_final":
+      case "user_transcript_final": {
+        const transcriptTiming = resolvedVoiceTiming(data || {});
         return [
           data.text ? "final transcript" : "",
-          data.stt_ms != null ? `STT ${data.stt_ms}ms` : "",
-          data.endpointing_ms != null && data.endpointing_ms > 0 ? `endpointing ${data.endpointing_ms}ms` : "",
+          transcriptTiming.speechMs != null ? `speech ${transcriptTiming.speechMs}ms` : "",
+          transcriptTiming.sttLatencyMs != null ? `STT ${transcriptTiming.sttLatencyMs}ms` : "",
+          transcriptTiming.sttLatencyMs == null && transcriptTiming.totalInputMs != null ? `input ${transcriptTiming.totalInputMs}ms` : "",
           data.echo_disposition === "ignored" ? "ignored as assistant echo" : "",
           data.echo_similarity != null ? `match ${(Number(data.echo_similarity) * 100).toFixed(0)}%` : "",
         ].filter(Boolean).join(" · ");
+      }
       case "turn_start":
         return [
           isVisualStageAdvanceEvent({type: "turn_start", data})
@@ -9735,6 +9859,7 @@
     const d = event.data || {};
     const inputEvent = eventForTurnType(event, "turn_start") || eventForTurnType(event, "user_transcript_final");
     const id = inputEvent?.data || {};
+    const inputTiming = resolvedVoiceTiming(d, id);
 
     // Resolve absolute timestamps (prefer event data, fall back to input event)
     const transcriptTs = Number(d.transcript_final_ts || id.transcript_final_ts || 0);
@@ -9819,7 +9944,9 @@
     const totalMsFinal = d.total_ms ?? spokenEnd;
 
     const chipEntries = [];
-    if (d.stt_ms != null) chipEntries.push({label: "STT", ms: d.stt_ms, color: "rgba(77,163,255,0.7)"});
+    if (inputTiming.speechMs != null) chipEntries.push({label: "speech", ms: inputTiming.speechMs, color: "rgba(77,163,255,0.45)"});
+    if (inputTiming.sttLatencyMs != null) chipEntries.push({label: "STT", ms: inputTiming.sttLatencyMs, color: "rgba(77,163,255,0.7)"});
+    else if (inputTiming.totalInputMs != null) chipEntries.push({label: "input", ms: inputTiming.totalInputMs, color: "rgba(77,163,255,0.7)"});
     if (ttftMs != null) chipEntries.push({label: "TTFT", ms: ttftMs, color: "rgba(249,190,109,0.7)"});
     if (llmMs != null) chipEntries.push({label: "LLM", ms: llmMs, color: "rgba(249,190,109,0.7)"});
     if (firstAudioMs != null && firstAudioMs > 0) chipEntries.push({label: "first audio", ms: firstAudioMs, color: "rgba(136,209,134,0.7)"});
@@ -10174,7 +10301,7 @@
     renderTurnContext(event);
     renderSelectedEventAnnotations();
     renderInspectorFrame(event);
-    setDetailTab("payload");
+    setDetailTab(activeDetailTab);
     syncTimelineSelectionDom(event);
     if (archiveBrowseRef && options.syncTimeline !== false) {
       setArchiveTimelineCursorTime(relativeTime(event.timestamp));
@@ -10216,7 +10343,18 @@
     setPromptModalOpen(true, {
       ...block,
       title: block.title || "Character Reply Chat",
-    });
+    }, event);
+  }
+
+  async function copyPromptModalJson() {
+    const block = promptModalState?.block || null;
+    if (!block) {
+      setPromptModalCopyStatus("No prompt payload is open.");
+      return;
+    }
+    const payload = promptModalCopyPayload(block, promptModalState?.event || null);
+    const copied = await copyText(JSON.stringify(payload, null, 2));
+    setPromptModalCopyStatus(copied ? "Copied prompt JSON." : "Prompt JSON copy failed.");
   }
 
   function cardWidth(event) {
@@ -10444,7 +10582,10 @@
   function renderReplyMarkers(event) {
     if (compactMode || event.type !== "assistant_reply") return "";
     const markers = [];
-    if (event.data.stt_ms != null) markers.push(`STT ${event.data.stt_ms}ms`);
+    const timing = resolvedVoiceTiming(event.data || {});
+    if (timing.speechMs != null) markers.push(`speech ${timing.speechMs}ms`);
+    if (timing.sttLatencyMs != null) markers.push(`STT ${timing.sttLatencyMs}ms`);
+    else if (timing.totalInputMs != null) markers.push(`input ${timing.totalInputMs}ms`);
     if (event.data.ttft_ms != null) markers.push(`TTFT ${event.data.ttft_ms}ms`);
     if (event.data.llm_ms != null) markers.push(`LLM ${event.data.llm_ms}ms`);
     if (event.data.tts_request_ms != null) markers.push(`TTS req ${event.data.tts_request_ms}ms`);
@@ -12224,8 +12365,9 @@
     const index = Number(button.getAttribute("data-prompt-open"));
     const block = promptPreviewBlocks[index];
     if (!block) return;
-    setPromptModalOpen(true, block);
+    setPromptModalOpen(true, block, selectedEvent());
   });
+  promptModalCopyButton.addEventListener("click", copyPromptModalJson);
   promptModalCloseButton.addEventListener("click", () => setPromptModalOpen(false));
   promptModal.addEventListener("click", (event) => {
     if (event.target === promptModal) setPromptModalOpen(false);
@@ -12504,6 +12646,7 @@
   timeWindowValue.textContent = formatWindow(timelineWindowSeconds);
   restoreLayoutWidths();
   setDetailTab("prompts");
+  document.getElementById("inspector-annotations-panel").style.display = "none";
   updateRuntimeButtons();
   renderBootStatus();
   renderArchiveBrowseState();
@@ -13252,6 +13395,9 @@
   window.__dashboardTest = {
     eventInventory() {
       return cloneSnapshotPayload(DASHBOARD_EVENT_INVENTORY);
+    },
+    lastCopiedText() {
+      return lastCopiedText;
     },
     scrollTimelineToStart() {
       scrollTimelineToStart();

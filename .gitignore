@@ -18,6 +18,7 @@ config.toml
 deploy/runpod.toml
 deploy/runpod-lite.toml
 deploy/gcp.env
+deploy/gcp.env.bak.*
 deploy/.runpod-state.json
 deploy/.runpod-lite-state.json
 

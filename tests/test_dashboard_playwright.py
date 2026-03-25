@@ -1017,8 +1017,10 @@ def test_runtime_panel_interactions_in_browser(
         "input_text": "Do you have water?",
         "input_source": "voice",
         "speech_started_ts": turn_base,
+        "speech_ended_ts": turn_base + 0.35,
         "transcript_final_ts": turn_base + 0.42,
         "stt_ms": 420,
+        "endpointing_ms": 70,
         "stt_text": "Do you have water?",
     })
     collector.push("prompt_trace", {
@@ -1040,8 +1042,10 @@ def test_runtime_panel_interactions_in_browser(
         "full_text": "Free water. Want one?",
         "input_source": "voice",
         "speech_started_ts": turn_base,
+        "speech_ended_ts": turn_base + 0.35,
         "transcript_final_ts": turn_base + 0.42,
         "stt_ms": 420,
+        "endpointing_ms": 70,
         "stt_text": "Do you have water?",
         "llm_start_ts": turn_base + 0.42,
         "response_ttft_ts": turn_base + 0.61,
@@ -1112,18 +1116,20 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#report-ref-status")).to_contain_text("sess-playwright")
     expect(page.locator("#detail-type")).to_have_text("assistant_reply")
     expect(page.locator("#detail-label")).to_contain_text("Free water. Want one?")
-    expect(page.locator("#detail-detail")).to_contain_text("STT 420ms")
+    expect(page.locator("#detail-detail")).to_contain_text("speech 350ms")
+    expect(page.locator("#detail-detail")).to_contain_text("STT 70ms")
     expect(page.locator("#detail-detail")).to_contain_text("TTFT 190ms")
     expect(page.locator("#detail-loop")).to_have_class(re.compile(r"\bactive\b"))
-    expect(page.locator("#detail-loop-chips")).to_contain_text("STT 420ms")
+    expect(page.locator("#detail-loop-chips")).to_contain_text("speech 350ms")
+    expect(page.locator("#detail-loop-chips")).to_contain_text("STT 70ms")
     expect(page.locator("#detail-loop-chips")).to_contain_text("TTFT 190ms")
     expect(page.locator("#detail-loop-chips")).to_contain_text("first audio")
     expect(page.locator("#detail-loop-chips")).not_to_contain_text("endpointing 0ms")
     page.locator(".stream-card[data-event-type='user_transcript_final']").first.click()
     expect(page.locator("#detail-type")).to_have_text("user_transcript_final")
-    expect(page.locator("#detail-detail")).to_contain_text("STT 420ms")
+    expect(page.locator("#detail-detail")).to_contain_text("speech 350ms")
+    expect(page.locator("#detail-detail")).to_contain_text("STT 70ms")
     reply_card.click()
-    page.locator("#tab-prompts").evaluate("(node) => node.click()")
     expect(page.locator("#detail-prompts")).to_contain_text("Chat prompt")
     expect(page.locator("#detail-prompts")).to_contain_text("Free water. Want one?")
     expect(page.locator(".prompt-preview-card")).to_have_count(1)
@@ -1135,21 +1141,7 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator(".prompt-message.role-user")).to_have_count(1)
     expect(page.locator(".prompt-message.role-assistant")).to_have_count(1)
     page.locator("#prompt-modal-close").click()
-    page.locator("#annotation-toggle").click()
-    expect(page.locator("#annotation-form")).to_be_visible()
-    page.locator("#annotation-tags").fill("latency, interruption")
-    page.locator("#annotation-subsystem").fill("timing")
-    page.locator("#annotation-note").fill("Assistant waited too long before answering.")
-    page.locator("#annotation-desired").fill("Start speaking sooner after the transcript finalizes.")
-    page.locator("#annotation-save").click()
-    expect(page.locator("#annotation-status")).to_contain_text("Saved annotation:")
-    expect(page.locator("#annotation-form")).not_to_be_visible()
-    expect(page.locator("#annotation-list")).to_contain_text("Assistant waited too long before answering.")
-    expect(reply_card.locator(".reply-marker", has_text="note")).to_have_count(1)
-    page.locator("#snippet-toggle").click()
-    expect(page.locator("#snippet-form")).to_be_visible()
-    page.locator("#snippet-save").click()
-    expect(page.locator("#annotation-status")).to_contain_text("Captured snippet:")
+    expect(page.locator("#inspector-annotations-panel")).to_be_hidden()
     page.locator("#archive-load-button").click()
     expect(page.locator("#archive-picker")).to_have_class(re.compile(r"\bopen\b"))
     page.locator(".archive-row").filter(has=page.locator(".archive-kind", has_text="session")).locator(".archive-load-action").first.click()
@@ -2205,7 +2197,7 @@ def test_legacy_archive_keeps_vision_and_vision_raw_lanes_visible_offline(
     expect(page.locator("[data-stream-lane='vision_raw']")).to_contain_text("No raw vision loop events captured yet")
 
 
-def test_vision_state_event_defaults_snippet_mode_in_browser(
+def test_vision_state_event_shows_stacked_prompt_groups_in_browser(
     browser_page: Page,
     dashboard_server,
     vision_service: VisionServiceController,
@@ -2301,13 +2293,12 @@ def test_vision_state_event_defaults_snippet_mode_in_browser(
     dot = page.locator(".stream-dot[data-event-type='vision_state_update']").first
     expect(dot).to_be_visible()
     dot.click()
-    page.locator("#snippet-toggle").click()
-    expect(page.locator("#snippet-form")).to_be_visible()
-    expect(page.locator("#snippet-mode")).to_have_value("vision_replay_window")
-    expect(page.locator("#snippet-tags")).to_have_value("vision-snippet")
-    expect(page.locator("#snippet-window-status")).to_contain_text("Window:")
-    page.locator("#snippet-save").click()
-    expect(page.locator("#annotation-status")).to_contain_text("Captured snippet:")
+    expect(page.locator("#inspector-annotations-panel")).to_be_hidden()
+    expect(page.locator("#detail-prompts")).to_contain_text("Summary")
+    expect(page.locator("#detail-prompts")).to_contain_text("Inputs")
+    expect(page.locator("#detail-prompts")).to_contain_text("Effects")
+    expect(page.locator("#detail-prompts")).to_contain_text("A wall clock is visible above the table.")
+    expect(page.locator("#detail-prompts")).to_contain_text("The visitor is wearing a black backpack.")
 
 
 def test_vision_state_update_inspector_groups_derived_perception_and_hides_cycle_metadata(
@@ -2352,7 +2343,6 @@ def test_vision_state_update_inspector_groups_derived_perception_and_hides_cycle
     dot = page.locator(".stream-dot[data-event-type='vision_state_update']").first
     expect(dot).to_be_visible()
     dot.evaluate("(node) => node.click()")
-    page.locator("#tab-prompts").evaluate("(node) => node.click()")
     expect(page.locator("#detail-prompts")).to_contain_text("Derived Perception Updates")
     expect(page.locator("#detail-prompts")).to_contain_text("A wall clock is visible.")
     expect(page.locator("#detail-payload")).not_to_contain_text("vision_cycle_id")
@@ -3113,7 +3103,6 @@ def test_archive_turn_rail_and_context_show_turn_metadata(
     page.locator("#prompt-modal-close").click()
     rails = page.evaluate("window.__dashboardTest.turnRailsState()")
     assert sum(1 for rail in rails if rail["selected"]) == 1
-    page.locator("#tab-prompts").evaluate("(node) => node.click()")
     expect(page.locator("#detail-prompts")).to_contain_text("Chat prompt")
     expect(page.locator("#detail-prompts")).to_contain_text("Free water. Want one?")
     page.locator(".stream-card[data-event-type='user_transcript_final']").first.click()
@@ -3124,7 +3113,7 @@ def test_archive_turn_rail_and_context_show_turn_metadata(
     expect(page.locator("#detail-payload")).to_contain_text("\"full_text\": \"Free water. Want one?\"")
 
 
-def test_json_default_inspector_keeps_annotations_above_payload(
+def test_json_default_inspector_stacks_prompt_and_payload_sections(
     browser_page: Page,
     dashboard_server,
 ):
@@ -3186,22 +3175,20 @@ def test_json_default_inspector_keeps_annotations_above_payload(
         }"""
     )
     assert selected is True
-    expect(page.locator("#tab-payload")).to_have_class(re.compile(r"\bactive\b"))
     metrics = page.evaluate(
         """() => {
-            const ann = document.getElementById('inspector-annotations-panel');
-            const tabs = document.getElementById('inspector-detail-tabs-panel');
-            const annRect = ann.getBoundingClientRect();
-            const tabsRect = tabs.getBoundingClientRect();
+            const annotations = document.getElementById('inspector-annotations-panel');
+            const promptPane = document.getElementById('detail-prompts-pane');
+            const payloadPane = document.getElementById('detail-payload-pane');
             return {
-                annHeight: annRect.height,
-                annBottom: annRect.bottom,
-                tabsTop: tabsRect.top,
+                annotationsDisplay: window.getComputedStyle(annotations).display,
+                promptBottom: promptPane.getBoundingClientRect().bottom,
+                payloadTop: payloadPane.getBoundingClientRect().top,
             };
         }"""
     )
-    assert metrics["annHeight"] > 40
-    assert metrics["tabsTop"] >= metrics["annBottom"] - 1
+    assert metrics["annotationsDisplay"] == "none"
+    assert metrics["payloadTop"] >= metrics["promptBottom"] - 1
 
 
 def test_prompt_preview_opens_modal_for_prompt_backed_event(
@@ -3284,14 +3271,21 @@ def test_prompt_preview_opens_modal_for_prompt_backed_event(
     response_card = page.locator(".stream-card[data-event-type='assistant_reply']").first
     expect(response_card).to_be_visible()
     response_card.click()
-    expect(page.locator("#tab-payload")).to_have_class(re.compile(r"\bactive\b"))
-    page.locator("#tab-prompts").evaluate("(node) => node.click()")
     expect(page.locator(".prompt-preview-card")).to_contain_text("Chat prompt")
     expect(page.locator(".prompt-preview-card")).to_contain_text("Free water. Want one?")
     page.locator("[data-prompt-open='0']").click()
     expect(page.locator("#prompt-modal")).to_have_class(re.compile(r"\bopen\b"))
     expect(page.locator("#prompt-modal")).to_contain_text("Rendered Prompt")
     expect(page.locator("#prompt-modal")).to_contain_text("Free water. Want one?")
+    page.locator("#prompt-modal-copy").click()
+    expect(page.locator("#prompt-modal-copy-status")).to_contain_text("Copied prompt JSON.")
+    copied = page.evaluate("JSON.parse(window.__dashboardTest.lastCopiedText())")
+    assert copied["session_id"] == "sess-prompt-preview"
+    assert copied["event"]["type"] == "assistant_reply"
+    assert re.match(r"^#\d+$", copied["reply_id"] or "")
+    assert copied["prompt_block"]["title"] == "Chat prompt"
+    assert copied["prompt_block"]["messages"][0]["content"] == "Keep it short."
+    assert copied["prompt_block"]["output"] == "Free water. Want one?"
 
 
 def test_beat_delivered_reply_infers_planner_prompt_trace(
@@ -3386,7 +3380,6 @@ def test_beat_delivered_reply_infers_planner_prompt_trace(
     response_card = page.locator(".stream-card[data-event-type='assistant_reply']").first
     expect(response_card).to_be_visible()
     response_card.click()
-    page.locator("#tab-prompts").evaluate("(node) => node.click()")
     expect(page.locator(".prompt-preview-card")).to_contain_text("Next beat prompt")
     expect(page.locator(".prompt-preview-card")).to_contain_text("Hey there. What time is it?")
     page.locator("[data-prompt-open='0']").click()
@@ -3734,7 +3727,7 @@ def test_vision_state_update_falls_back_from_no_updates_summary(
     expect(page.locator("#detail-payload")).to_contain_text("The visible room has light-colored walls and a stackable ladder in the back left.")
 
 
-def test_world_state_inspector_shows_raw_event_json_and_hides_prompt_tab(
+def test_world_state_inspector_shows_raw_event_json_and_empty_prompt_state(
     browser_page: Page,
     dashboard_server,
 ):
@@ -3807,7 +3800,7 @@ def test_world_state_inspector_shows_raw_event_json_and_hides_prompt_tab(
     expect(page.locator("#detail-detail")).to_contain_text("Greg is indoors in a room")
     expect(page.locator("#detail-payload")).to_contain_text("\"static_facts\"")
     expect(page.locator("#detail-payload")).to_contain_text("Greg is indoors in a room")
-    expect(page.locator("#tab-prompts")).to_be_hidden()
+    expect(page.locator("#detail-prompts")).to_contain_text("No prompt snapshot captured for this event.")
 
     with page.expect_popup() as popup_info:
         page.locator("#detail-open-json").evaluate("(node) => node.click()")

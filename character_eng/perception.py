@@ -25,17 +25,6 @@ class PerceptionEvent:
     kind: str = "free_text"
     payload: dict = field(default_factory=dict)
 
-def _append_world_event(world, text: str, limit: int = 20) -> None:
-    if world is None:
-        return
-    cleaned = (text or "").strip()
-    if not cleaned:
-        return
-    if not world.events or world.events[-1] != cleaned:
-        world.events.append(cleaned)
-        if len(world.events) > limit:
-            world.events[:] = world.events[-limit:]
-
 
 def _apply_person_presence(event: PerceptionEvent, people, world) -> None:
     if people is None:
@@ -61,7 +50,6 @@ def _apply_person_presence(event: PerceptionEvent, people, world) -> None:
     history_line = f"visual {payload.get('change', 'update')}: {event.description}"
     if not person.history or person.history[-1] != history_line:
         person.history.append(history_line)
-    _append_world_event(world, event.description)
 
 
 def _payload_world_update(event: PerceptionEvent) -> WorldUpdate:
@@ -124,6 +112,9 @@ def process_perception(event: PerceptionEvent, people, world) -> tuple[None, str
     """Apply direct perception updates when possible, else queue for reconcile."""
     if event.kind == "person_presence":
         _apply_person_presence(event, people, world)
+        return (None, "")
+    elif event.kind == "vision_trigger":
+        return (None, "")
     elif event.kind == "visual_claim" and _is_generic_presence_claim(event):
         return (None, "")
     elif event.kind == "vision_state_update":

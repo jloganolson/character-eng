@@ -55,7 +55,7 @@ class ChatSession:
         """
         self._messages.append({"role": "user", "content": message})
         started_at = time.time()
-        prompt_messages = [dict(msg) for msg in self._messages]
+        prompt_messages = self.get_history(for_model=True)
 
         stream = self._open_stream_with_fallback(rollback_user_on_failure=True)
 
@@ -89,7 +89,7 @@ class ChatSession:
     def respond(self):
         """Generate an assistant reply from the current session history."""
         started_at = time.time()
-        prompt_messages = [dict(msg) for msg in self._messages]
+        prompt_messages = self.get_history(for_model=True)
 
         stream = self._open_stream_with_fallback(rollback_user_on_failure=False)
 
@@ -164,7 +164,7 @@ class ChatSession:
         """Try to create a streaming completion; return None on provider failure."""
         kwargs = dict(
             model=config["model"],
-            messages=self._messages,
+            messages=self.get_history(for_model=True),
             stream=True,
         )
         if config["stream_usage"]:
@@ -237,9 +237,44 @@ class ChatSession:
             if value > index:
                 self._tagged_system_indices[key] = value - 1
 
-    def get_history(self) -> list[dict]:
+    def _model_history(self) -> list[dict]:
+        """Return a prompt-safe view of history for model calls."""
+        tagged_indices = {
+            index
+            for index in self._tagged_system_indices.values()
+            if 0 <= index < len(self._messages)
+        }
+        last_assistant_index = -1
+        for i, message in enumerate(self._messages):
+            if message.get("role") == "assistant":
+                last_assistant_index = i
+
+        trailing_ephemeral_system_indices = [
+            i
+            for i, message in enumerate(self._messages)
+            if (
+                message.get("role") == "system"
+                and i != 0
+                and i not in tagged_indices
+                and i > last_assistant_index
+            )
+        ]
+        keep_ephemeral_system_indices = set(trailing_ephemeral_system_indices[-1:])
+
+        filtered: list[dict] = []
+        for i, message in enumerate(self._messages):
+            if message.get("role") != "system":
+                filtered.append(dict(message))
+                continue
+            if i == 0 or i in tagged_indices or i in keep_ephemeral_system_indices:
+                filtered.append(dict(message))
+        return filtered
+
+    def get_history(self, *, for_model: bool = False) -> list[dict]:
         """Return a copy of the message history."""
-        return list(self._messages)
+        if for_model:
+            return self._model_history()
+        return [dict(message) for message in self._messages]
 
     def snapshot_state(self) -> dict:
         """Serialize the mutable session state for rewind/replay checkpoints."""

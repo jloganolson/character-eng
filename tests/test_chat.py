@@ -183,3 +183,47 @@ def test_rollback_last_turn_removes_latest_user_and_assistant(mock_openai_cls):
     assert history[-1] == {"role": "system", "content": "Another note"}
     assert {"role": "user", "content": "half sentence"} not in history
     assert {"role": "assistant", "content": "partial reply"} not in history
+
+
+@patch("character_eng.chat.OpenAI")
+def test_get_history_for_model_keeps_only_latest_trailing_ephemeral_system(mock_openai_cls):
+    session = ChatSession("You are Greg.", TEST_CONFIG)
+    session.add_assistant("First reply")
+    session.inject_system("[Old visual note]")
+    session.add_assistant("Second reply")
+    session.inject_system("[Older trailing note]")
+    session.inject_system("[Latest trailing note]")
+    session.upsert_system("runtime_turn_guardrails", "Stay grounded.")
+    session._messages.append({"role": "user", "content": "What time is it?"})
+
+    history = session.get_history(for_model=True)
+
+    assert {"role": "system", "content": "[Old visual note]"} not in history
+    assert {"role": "system", "content": "[Older trailing note]"} not in history
+    assert {"role": "system", "content": "[Latest trailing note]"} in history
+    assert {"role": "system", "content": "Stay grounded."} in history
+
+
+@patch("character_eng.chat.OpenAI")
+def test_send_uses_filtered_model_history(mock_openai_cls):
+    session = ChatSession("You are Greg.", TEST_CONFIG)
+    session.add_assistant("First reply")
+    session.inject_system("[Old visual note]")
+    session.add_assistant("Second reply")
+    session.inject_system("[Older trailing note]")
+    session.inject_system("[Latest trailing note]")
+
+    chunk = MagicMock()
+    chunk.choices = [MagicMock()]
+    chunk.choices[0].delta.content = "Okay"
+    chunk.usage = None
+
+    mock_client = mock_openai_cls.return_value
+    mock_client.chat.completions.create.return_value = iter([chunk])
+
+    list(session.send("What time is it?"))
+
+    sent_messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
+    assert {"role": "system", "content": "[Old visual note]"} not in sent_messages
+    assert {"role": "system", "content": "[Older trailing note]"} not in sent_messages
+    assert {"role": "system", "content": "[Latest trailing note]"} in sent_messages
