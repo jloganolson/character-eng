@@ -2,7 +2,19 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-DEFAULT_ENV_FILE="${CHARACTER_ENG_GCP_ENV:-$ROOT/deploy/gcp.env}"
+resolve_default_env_file() {
+  if [[ -n "${CHARACTER_ENG_GCP_ENV:-}" ]]; then
+    printf '%s\n' "$CHARACTER_ENG_GCP_ENV"
+    return 0
+  fi
+  if [[ -f "$ROOT/deploy/gcp.env" ]]; then
+    printf '%s\n' "$ROOT/deploy/gcp.env"
+    return 0
+  fi
+  printf '%s\n' "$ROOT/deploy/gcp.shared-remote.env"
+}
+
+DEFAULT_ENV_FILE="$(resolve_default_env_file)"
 
 if [[ $# -ge 2 && -f "${1:-}" ]]; then
   ENV_FILE="$1"

@@ -1,6 +1,7 @@
 # Character Engine
 
-Quick operator guide: [QUICKSTART.md](/home/logan/Projects/character-eng/QUICKSTART.md)
+Quick operator guide: [QUICKSTART.md](/home/logan/Projects/character-eng-worktrees/gcp-envs/QUICKSTART.md)
+Shared remote collaborator setup: [REMOTE_QUICKSTART.md](/home/logan/Projects/character-eng-worktrees/gcp-envs/REMOTE_QUICKSTART.md)
 
 Interactive NPC chat CLI with two-tier LLM routing (Cerebras, Groq, Google Gemini, or local vLLM models). **Chat** uses Kimi K2 for streaming dialogue; **microservices** (eval, director, planning, reconciliation, expression) use 8B for fast structured JSON. Optional **voice mode** (Deepgram STT + ElevenLabs TTS) lets you speak to characters and hear them respond. Characters have personalities, world state that evolves during conversation, and a script system driven by parallel microservices — post-response calls (eval + director) fire concurrently for ~350ms total instead of ~1050ms sequential. A single-beat planner generates one beat at a time synchronously, eliminating background plan threads entirely. During conversation, beats use LLM-guided delivery: the beat's intent guides the LLM to respond naturally to the user while serving the beat's purpose (no verbatim pasting). The `/beat` command (autonomous time-passing) still uses verbatim delivery for TTS pre-rendering. After each character response, lightweight microservices derive gaze/expression, evaluate script progress, and check scenario exit conditions — all running concurrently for immediate effect.
 
@@ -149,6 +150,9 @@ For the GCP-backed WebRTC hybrid path, use:
 
 That keeps the app local while using remote vision + Pocket-TTS over an SSH tunnel and a remote LiveKit server on the GCP VM.
 This is the default hosted-heavy workflow.
+If `deploy/gcp.env` uses `GCP_SECRET_*` refs, the remote launcher also syncs the filtered runtime API keys back from the VM so collaborators do not need their own local `.env` copy for the remote path.
+For fresh collaborator setup on macOS, Linux, or Windows WSL2, use [REMOTE_QUICKSTART.md](/home/logan/Projects/character-eng-worktrees/gcp-envs/REMOTE_QUICKSTART.md).
+The shared non-secret remote config lives in [deploy/gcp.shared-remote.env](/home/logan/Projects/character-eng-worktrees/gcp-envs/deploy/gcp.shared-remote.env), and the remote scripts fall back to it automatically when `deploy/gcp.env` is absent.
 
 To allowlist another engineer for that path by Gmail address:
 

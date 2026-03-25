@@ -4,7 +4,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-ENV_FILE="${CHARACTER_ENG_GCP_ENV:-$ROOT/deploy/gcp.env}"
+resolve_default_env_file() {
+  if [[ -n "${CHARACTER_ENG_GCP_ENV:-}" ]]; then
+    printf '%s\n' "$CHARACTER_ENG_GCP_ENV"
+    return 0
+  fi
+  if [[ -f "$ROOT/deploy/gcp.env" ]]; then
+    printf '%s\n' "$ROOT/deploy/gcp.env"
+    return 0
+  fi
+  printf '%s\n' "$ROOT/deploy/gcp.shared-remote.env"
+}
+
+ENV_FILE="$(resolve_default_env_file)"
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing env file: $ENV_FILE" >&2
   exit 1
@@ -24,6 +36,8 @@ READY_TIMEOUT="${READY_TIMEOUT:-240}"
 TUNNEL_DIR="${TUNNEL_DIR:-$ROOT/.cache/gcp-remote-hot-webrtc}"
 TUNNEL_PIDFILE="$TUNNEL_DIR/tunnel.pid"
 TUNNEL_LOGFILE="$TUNNEL_DIR/tunnel.log"
+REMOTE_RUNTIME_ENV_FILE="${REMOTE_RUNTIME_ENV_FILE:-/etc/character-eng.remote-hot.env}"
+REMOTE_RUNTIME_ENV_CACHE="$TUNNEL_DIR/remote-runtime.env"
 REMOTE_SERVICE_HOST="${REMOTE_SERVICE_HOST:-127.0.0.1}"
 LIVEKIT_HTTP_PORT="${LIVEKIT_HTTP_PORT:-7880}"
 LIVEKIT_ENABLED="${LIVEKIT_ENABLED:-1}"
@@ -61,6 +75,7 @@ cleanup_tunnel() {
     fi
     rm -f "$TUNNEL_PIDFILE"
   fi
+  rm -f "$REMOTE_RUNTIME_ENV_CACHE"
 }
 
 tunnel_alive() {
@@ -147,6 +162,23 @@ start_tunnel() {
   fi
 }
 
+fetch_remote_runtime_env() {
+  if gcloud compute ssh "$GCP_INSTANCE_NAME" \
+    --project "$GCP_PROJECT_ID" \
+    --zone "$GCP_ZONE" \
+    --command "cat '$REMOTE_RUNTIME_ENV_FILE'" \
+    >"$REMOTE_RUNTIME_ENV_CACHE" 2>/dev/null; then
+    chmod 600 "$REMOTE_RUNTIME_ENV_CACHE"
+    # shellcheck disable=SC1090
+    source "$REMOTE_RUNTIME_ENV_CACHE"
+    LIVEKIT_API_KEY="${CHARACTER_ENG_LIVEKIT_API_KEY:-${LIVEKIT_API_KEY:-devkey}}"
+    LIVEKIT_API_SECRET="${CHARACTER_ENG_LIVEKIT_API_SECRET:-${LIVEKIT_API_SECRET:-secret}}"
+    return 0
+  fi
+  rm -f "$REMOTE_RUNTIME_ENV_CACHE"
+  return 1
+}
+
 livekit_url() {
   ./deploy/gcp/vm_ctl.sh "$ENV_FILE" livekit-url
 }
@@ -167,6 +199,17 @@ if [[ "$LIVEKIT_ENABLED" != "1" && "$LIVEKIT_ENABLED" != "true" && "$LIVEKIT_ENA
 fi
 
 ensure_vm_running
+
+if fetch_remote_runtime_env; then
+  log "Synced remote runtime env from GCP VM"
+else
+  log "Remote runtime env not available; falling back to local env/.env"
+fi
+
+if [[ "$LIVEKIT_API_KEY" == "devkey" || "$LIVEKIT_API_SECRET" == "secret" ]]; then
+  echo "LiveKit credentials are missing; set LIVEKIT_API_KEY / LIVEKIT_API_SECRET in GCP or deploy/gcp.env" >&2
+  exit 1
+fi
 
 log "Waiting for remote vision, Pocket-TTS, and LiveKit"
 wait_for_remote_http "remote vision" "http://${REMOTE_SERVICE_HOST}:7860/model_status"

@@ -53,16 +53,29 @@ LIVEKIT_TCP_PORT="${LIVEKIT_TCP_PORT:-7881}"
 LIVEKIT_UDP_START="${LIVEKIT_UDP_START:-50100}"
 LIVEKIT_UDP_END="${LIVEKIT_UDP_END:-50120}"
 LIVEKIT_IMAGE="${LIVEKIT_IMAGE:-livekit/livekit-server:latest}"
-LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-devkey}"
-LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-secret}"
+LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-}"
+LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-}"
 
 validate_livekit_credentials() {
   local enabled="${LIVEKIT_ENABLED,,}"
+  local livekit_key_ref="${GCP_SECRET_LIVEKIT_API_KEY:-}"
+  local livekit_secret_ref="${GCP_SECRET_LIVEKIT_API_SECRET:-}"
   if [[ "$enabled" != "1" && "$enabled" != "true" && "$enabled" != "yes" ]]; then
+    return 0
+  fi
+  if [[ -n "$livekit_key_ref" || -n "$livekit_secret_ref" ]]; then
+    if [[ -z "$livekit_key_ref" || -z "$livekit_secret_ref" ]]; then
+      echo "GCP_SECRET_LIVEKIT_API_KEY and GCP_SECRET_LIVEKIT_API_SECRET must both be set when using Secret Manager refs" >&2
+      exit 1
+    fi
     return 0
   fi
   if [[ "$LIVEKIT_API_KEY" == "devkey" || "$LIVEKIT_API_SECRET" == "secret" ]]; then
     echo "LIVEKIT_API_KEY / LIVEKIT_API_SECRET must be replaced with non-default values in $ENV_FILE" >&2
+    exit 1
+  fi
+  if [[ -z "$LIVEKIT_API_KEY" || -z "$LIVEKIT_API_SECRET" ]]; then
+    echo "LIVEKIT_API_KEY / LIVEKIT_API_SECRET must be set in $ENV_FILE or supplied via GCP_SECRET_LIVEKIT_API_KEY / GCP_SECRET_LIVEKIT_API_SECRET" >&2
     exit 1
   fi
   if (( ${#LIVEKIT_API_SECRET} < 32 )); then
@@ -111,12 +124,49 @@ START_PAUSED=${START_PAUSED}
 CHARACTER_ENG_SHARED_VISION_URL=${CHARACTER_ENG_SHARED_VISION_URL}
 VLLM_GPU_UTIL=${VLLM_GPU_UTIL}
 POCKET_HOST=${POCKET_HOST:-}
-HF_TOKEN=${HF_TOKEN:-}
-CHARACTER_ENG_MANAGER_TOKEN=${CHARACTER_ENG_MANAGER_TOKEN:-}
 CHARACTER_ENG_LIVEKIT_ENABLED=${LIVEKIT_ENABLED}
-CHARACTER_ENG_LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
-CHARACTER_ENG_LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
 EOF
+
+append_env_line() {
+  local key="$1"
+  local value="$2"
+  printf '%s=%s\n' "$key" "$value" >>"$app_env_file"
+}
+
+append_optional_env_var() {
+  local key="$1"
+  if [[ -n "${!key:-}" ]]; then
+    append_env_line "$key" "${!key}"
+  fi
+}
+
+append_optional_secret_ref() {
+  local key="$1"
+  if [[ -n "${!key:-}" ]]; then
+    append_env_line "$key" "${!key}"
+  fi
+}
+
+for key in \
+  AUTO_SHUTDOWN_ENABLED \
+  AUTO_SHUTDOWN_TIME \
+  AUTO_SHUTDOWN_TIMEZONE \
+  HF_TOKEN \
+  CHARACTER_ENG_MANAGER_TOKEN \
+  CEREBRAS_API_KEY \
+  GROQ_API_KEY \
+  GEMINI_API_KEY \
+  DEEPGRAM_API_KEY \
+  ELEVENLABS_API_KEY \
+  LIVEKIT_API_KEY \
+  LIVEKIT_API_SECRET
+do
+  append_optional_env_var "$key"
+done
+
+for key in $(compgen -A variable GCP_SECRET_); do
+  append_optional_secret_ref "$key"
+done
 
 metadata_pairs=(
   "character-eng-container-image=${CONTAINER_IMAGE}"
@@ -148,8 +198,6 @@ if [[ "$LIVEKIT_ENABLED" == "1" || "$LIVEKIT_ENABLED" == "true" || "$LIVEKIT_ENA
     "character-eng-livekit-tcp-port=${LIVEKIT_TCP_PORT}"
     "character-eng-livekit-udp-start=${LIVEKIT_UDP_START}"
     "character-eng-livekit-udp-end=${LIVEKIT_UDP_END}"
-    "character-eng-livekit-api-key=${LIVEKIT_API_KEY}"
-    "character-eng-livekit-api-secret=${LIVEKIT_API_SECRET}"
   )
 fi
 

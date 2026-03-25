@@ -22,6 +22,179 @@ service_account_token() {
   metadata 'instance/service-accounts/default/token' | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'
 }
 
+env_file_value() {
+  local env_file="$1"
+  local key="$2"
+  python3 - "$env_file" "$key" <<'PY'
+import sys
+from pathlib import Path
+
+env_file = Path(sys.argv[1])
+target = sys.argv[2]
+value = ""
+
+if env_file.exists():
+    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in raw_line:
+            continue
+        key, current = raw_line.split("=", 1)
+        if key == target:
+            value = current
+
+print(value)
+PY
+}
+
+append_env_line() {
+  local env_file="$1"
+  local key="$2"
+  local value="$3"
+  printf '%s=%s\n' "$key" "$value" >>"$env_file"
+}
+
+resolve_secret_ref() {
+  local ref="$1"
+  local access_token="${SECRET_MANAGER_ACCESS_TOKEN:-}"
+  local url
+
+  if [[ -z "$access_token" ]]; then
+    access_token="$(service_account_token)"
+    SECRET_MANAGER_ACCESS_TOKEN="$access_token"
+  fi
+
+  if [[ "$ref" == projects/*/secrets/*/versions/* ]]; then
+    url="https://secretmanager.googleapis.com/v1/${ref}:access"
+  else
+    local secret_name="$ref"
+    local version="latest"
+    if [[ "$ref" == *:* ]]; then
+      secret_name="${ref%%:*}"
+      version="${ref##*:}"
+    fi
+    url="https://secretmanager.googleapis.com/v1/projects/${PROJECT_ID}/secrets/${secret_name}/versions/${version}:access"
+  fi
+
+  curl -fsS \
+    -H "Authorization: Bearer ${access_token}" \
+    "$url" \
+    | python3 -c 'import base64,json,sys; print(base64.b64decode(json.load(sys.stdin)["payload"]["data"]).decode("utf-8"))'
+}
+
+build_app_env_file() {
+  local raw_env_file="$1"
+  local output_env_file="$2"
+
+  : >"$output_env_file"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" == *=* ]] || continue
+    local key="${line%%=*}"
+    local value="${line#*=}"
+    if [[ "$key" == GCP_SECRET_* ]]; then
+      local target_key="${key#GCP_SECRET_}"
+      local resolved_value
+      resolved_value="$(resolve_secret_ref "$value")"
+      append_env_line "$output_env_file" "$target_key" "$resolved_value"
+    else
+      append_env_line "$output_env_file" "$key" "$value"
+    fi
+  done <"$raw_env_file"
+  chmod 600 "$output_env_file"
+}
+
+write_remote_hot_env_file() {
+  local source_env_file="$1"
+  local output_env_file="$2"
+  shift 2
+  local env_keys=("$@")
+
+  : >"$output_env_file"
+  for key in "${env_keys[@]}"; do
+    local value
+    value="$(env_file_value "$source_env_file" "$key")"
+    if [[ -n "$value" ]]; then
+      append_env_line "$output_env_file" "$key" "$value"
+    fi
+  done
+  chmod 644 "$output_env_file"
+}
+
+disable_auto_shutdown() {
+  rm -f /usr/local/bin/character-eng-auto-shutdown-check.sh
+  rm -f /etc/systemd/system/character-eng-auto-shutdown-check.service
+  rm -f /etc/systemd/system/character-eng-auto-shutdown-check.timer
+  systemctl disable --now character-eng-auto-shutdown-check.timer >/dev/null 2>&1 || true
+  systemctl daemon-reload
+}
+
+configure_auto_shutdown() {
+  local enabled="$1"
+  local schedule_time="$2"
+  local schedule_timezone="$3"
+  local script_path="/usr/local/bin/character-eng-auto-shutdown-check.sh"
+  local service_path="/etc/systemd/system/character-eng-auto-shutdown-check.service"
+  local timer_path="/etc/systemd/system/character-eng-auto-shutdown-check.timer"
+  local normalized_enabled="${enabled,,}"
+
+  if [[ "$normalized_enabled" != "1" && "$normalized_enabled" != "true" && "$normalized_enabled" != "yes" ]]; then
+    disable_auto_shutdown
+    log "nightly auto-shutdown disabled"
+    return 0
+  fi
+
+  if [[ ! "$schedule_time" =~ ^[0-9]{2}:[0-9]{2}$ ]]; then
+    log "invalid AUTO_SHUTDOWN_TIME '${schedule_time}'; expected HH:MM"
+    exit 1
+  fi
+
+  cat >"$script_path" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+target_time="${schedule_time}"
+target_timezone="${schedule_timezone}"
+current_time="\$(TZ="\$target_timezone" date +%H:%M)"
+
+if [[ "\$current_time" != "\$target_time" ]]; then
+  exit 0
+fi
+
+printf '[character-eng-gcp] nightly auto-shutdown at %s %s\n' "\$target_time" "\$target_timezone" | systemd-cat -t character-eng-auto-shutdown
+/usr/bin/systemctl poweroff
+EOF
+  chmod 755 "$script_path"
+
+  cat >"$service_path" <<EOF
+[Unit]
+Description=Character Eng auto-shutdown check
+
+[Service]
+Type=oneshot
+ExecStart=${script_path}
+EOF
+
+  cat >"$timer_path" <<EOF
+[Unit]
+Description=Character Eng auto-shutdown timer
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=1s
+Persistent=false
+Unit=character-eng-auto-shutdown-check.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  chmod 644 "$service_path" "$timer_path"
+  systemctl daemon-reload
+  systemctl enable --now character-eng-auto-shutdown-check.timer >/dev/null
+  log "nightly auto-shutdown scheduled for ${schedule_time} ${schedule_timezone}"
+}
+
 install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
@@ -162,13 +335,16 @@ LIVEKIT_HTTP_PORT="$(metadata_attr_optional 'character-eng-livekit-http-port')"
 LIVEKIT_TCP_PORT="$(metadata_attr_optional 'character-eng-livekit-tcp-port')"
 LIVEKIT_UDP_START="$(metadata_attr_optional 'character-eng-livekit-udp-start')"
 LIVEKIT_UDP_END="$(metadata_attr_optional 'character-eng-livekit-udp-end')"
-LIVEKIT_API_KEY="$(metadata_attr_optional 'character-eng-livekit-api-key')"
-LIVEKIT_API_SECRET="$(metadata_attr_optional 'character-eng-livekit-api-secret')"
 APP_ENV_FILE="/etc/character-eng.env"
+REMOTE_HOT_ENV_FILE="/etc/character-eng.remote-hot.env"
 REGISTRY_HOST="${CONTAINER_IMAGE%%/*}"
+PROJECT_ID="$(metadata 'project/project-id')"
 
-metadata_attr_optional 'character-eng-env' >"$APP_ENV_FILE"
-chmod 600 "$APP_ENV_FILE"
+raw_env_file="$(mktemp)"
+metadata_attr_optional 'character-eng-env' >"$raw_env_file"
+chmod 600 "$raw_env_file"
+build_app_env_file "$raw_env_file" "$APP_ENV_FILE"
+rm -f "$raw_env_file"
 
 LIVEKIT_ENABLED="${LIVEKIT_ENABLED,,}"
 LIVEKIT_IMAGE="${LIVEKIT_IMAGE:-livekit/livekit-server:latest}"
@@ -176,8 +352,23 @@ LIVEKIT_HTTP_PORT="${LIVEKIT_HTTP_PORT:-7880}"
 LIVEKIT_TCP_PORT="${LIVEKIT_TCP_PORT:-7881}"
 LIVEKIT_UDP_START="${LIVEKIT_UDP_START:-50100}"
 LIVEKIT_UDP_END="${LIVEKIT_UDP_END:-50120}"
-LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-devkey}"
-LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-secret}"
+AUTO_SHUTDOWN_ENABLED="$(env_file_value "$APP_ENV_FILE" 'AUTO_SHUTDOWN_ENABLED')"
+AUTO_SHUTDOWN_TIME="$(env_file_value "$APP_ENV_FILE" 'AUTO_SHUTDOWN_TIME')"
+AUTO_SHUTDOWN_TIMEZONE="$(env_file_value "$APP_ENV_FILE" 'AUTO_SHUTDOWN_TIMEZONE')"
+LIVEKIT_API_KEY="$(env_file_value "$APP_ENV_FILE" 'LIVEKIT_API_KEY')"
+LIVEKIT_API_SECRET="$(env_file_value "$APP_ENV_FILE" 'LIVEKIT_API_SECRET')"
+if [[ -z "$LIVEKIT_API_KEY" ]]; then
+  LIVEKIT_API_KEY="$(metadata_attr_optional 'character-eng-livekit-api-key')"
+  if [[ -n "$LIVEKIT_API_KEY" ]]; then
+    append_env_line "$APP_ENV_FILE" "LIVEKIT_API_KEY" "$LIVEKIT_API_KEY"
+  fi
+fi
+if [[ -z "$LIVEKIT_API_SECRET" ]]; then
+  LIVEKIT_API_SECRET="$(metadata_attr_optional 'character-eng-livekit-api-secret')"
+  if [[ -n "$LIVEKIT_API_SECRET" ]]; then
+    append_env_line "$APP_ENV_FILE" "LIVEKIT_API_SECRET" "$LIVEKIT_API_SECRET"
+  fi
+fi
 
 if [[ -n "$RUNTIME_DISK" && -n "$RUNTIME_MOUNT" ]]; then
   ensure_mount "$RUNTIME_DISK" "$RUNTIME_MOUNT"
@@ -192,6 +383,10 @@ fi
 echo "PUBLIC_HOST=$PUBLIC_HOST" >>"$APP_ENV_FILE"
 
 if [[ "$LIVEKIT_ENABLED" == "1" || "$LIVEKIT_ENABLED" == "true" || "$LIVEKIT_ENABLED" == "yes" ]]; then
+  if [[ -z "$LIVEKIT_API_KEY" || -z "$LIVEKIT_API_SECRET" ]]; then
+    log "LiveKit is enabled but LIVEKIT_API_KEY / LIVEKIT_API_SECRET were not provided in the VM env"
+    exit 1
+  fi
   livekit_public_url="ws://${PUBLIC_HOST}:${LIVEKIT_HTTP_PORT}"
   if [[ -n "$CADDY_LIVEKIT_DOMAIN" ]]; then
     livekit_public_url="wss://${CADDY_LIVEKIT_DOMAIN}"
@@ -204,8 +399,24 @@ CHARACTER_ENG_LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
 EOF
 fi
 
+write_remote_hot_env_file "$APP_ENV_FILE" "$REMOTE_HOT_ENV_FILE" \
+  CEREBRAS_API_KEY \
+  GROQ_API_KEY \
+  GEMINI_API_KEY \
+  DEEPGRAM_API_KEY \
+  ELEVENLABS_API_KEY \
+  HF_TOKEN \
+  LIVEKIT_API_KEY \
+  LIVEKIT_API_SECRET \
+  CHARACTER_ENG_LIVEKIT_API_KEY \
+  CHARACTER_ENG_LIVEKIT_API_SECRET
+
 install_packages
 configure_nvidia_runtime
+configure_auto_shutdown \
+  "${AUTO_SHUTDOWN_ENABLED:-0}" \
+  "${AUTO_SHUTDOWN_TIME:-02:00}" \
+  "${AUTO_SHUTDOWN_TIMEZONE:-America/Los_Angeles}"
 
 if [[ "$LIVEKIT_ENABLED" == "1" || "$LIVEKIT_ENABLED" == "true" || "$LIVEKIT_ENABLED" == "yes" ]]; then
   start_livekit "$PUBLIC_HOST"
