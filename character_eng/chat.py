@@ -57,7 +57,7 @@ class ChatSession:
         started_at = time.time()
         prompt_messages = [dict(msg) for msg in self._messages]
 
-        stream = self._open_stream_with_fallback()
+        stream = self._open_stream_with_fallback(rollback_user_on_failure=True)
 
         full_response = []
         try:
@@ -86,7 +86,41 @@ class ChatSession:
                     except Exception:
                         pass
 
-    def _open_stream_with_fallback(self):
+    def respond(self):
+        """Generate an assistant reply from the current session history."""
+        started_at = time.time()
+        prompt_messages = [dict(msg) for msg in self._messages]
+
+        stream = self._open_stream_with_fallback(rollback_user_on_failure=False)
+
+        full_response = []
+        try:
+            for chunk in stream:
+                if chunk.usage:
+                    self._last_usage = chunk.usage
+                if chunk.choices and chunk.choices[0].delta.content:
+                    text = chunk.choices[0].delta.content
+                    full_response.append(text)
+                    yield text
+        finally:
+            response_text = "".join(full_response)
+            if response_text:
+                self._messages.append({"role": "assistant", "content": response_text})
+                if _chat_trace_hook is not None:
+                    try:
+                        _chat_trace_hook({
+                            "label": "chat",
+                            "provider": self._model_config["name"],
+                            "model": self._model_config["model"],
+                            "messages": prompt_messages,
+                            "started_at": started_at,
+                            "finished_at": time.time(),
+                            "output": response_text,
+                        })
+                    except Exception:
+                        pass
+
+    def _open_stream_with_fallback(self, *, rollback_user_on_failure: bool):
         """Try primary + fallbacks, returning the first working stream.
 
         Catches errors both at .create() time and on the first iteration
@@ -116,7 +150,8 @@ class ChatSession:
             return self._prepend(first, stream)
 
         # All failed
-        self._messages.pop()
+        if rollback_user_on_failure and self._messages and self._messages[-1]["role"] == "user":
+            self._messages.pop()
         raise ConnectionError("All LLM providers failed")
 
     @staticmethod

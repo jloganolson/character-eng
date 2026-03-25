@@ -695,6 +695,30 @@ def test_reconcile_call_sanitizes_person_updates(mock_make_client):
     assert pu.invalid_presence == "teleporting"
 
 
+@patch("character_eng.world._make_client")
+def test_reconcile_call_treats_null_set_name_as_missing(mock_make_client):
+    data = {
+        "remove_facts": [],
+        "add_facts": [],
+        "events": [],
+        "person_updates": [
+            {
+                "person_id": "p1",
+                "add_facts": ["Looking left"],
+                "set_name": None,
+            }
+        ],
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    update = reconcile_call(WorldState(), ["someone shifts"], TEST_CONFIG)
+
+    assert len(update.person_updates) == 1
+    assert update.person_updates[0].set_name is None
+
+
 # --- script_check_call ---
 
 

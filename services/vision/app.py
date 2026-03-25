@@ -817,7 +817,14 @@ def _normalize_question_spec(raw, *, slot_type: str, index: int) -> dict:
 def _current_person_targets() -> list[dict]:
     if pt is not None and pt.enabled:
         try:
-            return list(pt.get_faces())
+            faces = list(pt.get_faces())
+            if faces:
+                return faces
+        except Exception:
+            pass
+    if ft is not None and ft.enabled:
+        try:
+            return list(ft.get_faces())
         except Exception:
             return []
     return []

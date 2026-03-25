@@ -331,6 +331,15 @@ def _clean_string_list(values: list, *, fact_text: bool = False) -> list[str]:
     return result
 
 
+def _clean_optional_text(value) -> str | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    if not cleaned or cleaned.lower() in {"none", "null"}:
+        return None
+    return cleaned
+
+
 def _clean_id_list(values: list, pattern: re.Pattern[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
@@ -452,10 +461,15 @@ def format_pending_narrator(change_text: str) -> str:
     return f"[{change_text}]"
 
 
-def load_beat_guide(intent: str, line: str) -> str:
-    """Read beat_guide.txt and substitute {intent} and {line} placeholders."""
+def load_beat_guide(intent: str, line: str, cue: str = "") -> str:
+    """Read beat_guide.txt and substitute beat-delivery placeholders."""
     template = load_system_prompt("beat_guide")
-    return template.replace("{intent}", intent).replace("{line}", line)
+    return (
+        template
+        .replace("{intent}", intent)
+        .replace("{line}", line)
+        .replace("{cue}", cue.strip())
+    )
 
 
 # --- OpenAI client ---
@@ -586,7 +600,7 @@ def reconcile_call(world: WorldState, pending_changes: list[str], model_config: 
                 remove_facts=_clean_id_list(pu.get("remove_facts", []), _PERSON_FACT_ID_RE),
                 add_facts=_clean_string_list(pu.get("add_facts", []), fact_text=True),
                 fact_scope=str(pu.get("fact_scope", "")).strip() or None,
-                set_name=pu.get("set_name"),
+                set_name=_clean_optional_text(pu.get("set_name")),
                 set_presence=set_presence,
                 invalid_presence=invalid_presence,
             ))

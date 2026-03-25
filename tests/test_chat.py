@@ -84,6 +84,35 @@ def test_send_partial_response_recorded_on_generator_close(mock_openai_cls):
 
 
 @patch("character_eng.chat.OpenAI")
+def test_respond_uses_existing_history_without_appending_fake_user(mock_openai_cls):
+    session = ChatSession("You are Greg.", TEST_CONFIG)
+    session.add_assistant("Earlier reply")
+
+    chunk1 = MagicMock()
+    chunk1.choices = [MagicMock()]
+    chunk1.choices[0].delta.content = "Fresh "
+    chunk1.usage = None
+
+    chunk2 = MagicMock()
+    chunk2.choices = [MagicMock()]
+    chunk2.choices[0].delta.content = "response"
+    chunk2.usage = None
+
+    mock_client = mock_openai_cls.return_value
+    mock_client.chat.completions.create.return_value = iter([chunk1, chunk2])
+
+    chunks = list(session.respond())
+
+    assert chunks == ["Fresh ", "response"]
+    history = session.get_history()
+    assert history == [
+        {"role": "system", "content": "You are Greg."},
+        {"role": "assistant", "content": "Earlier reply"},
+        {"role": "assistant", "content": "Fresh response"},
+    ]
+
+
+@patch("character_eng.chat.OpenAI")
 def test_replace_last_assistant(mock_openai_cls):
     """replace_last_assistant should modify the most recent assistant message."""
     session = ChatSession("You are Greg.", TEST_CONFIG)

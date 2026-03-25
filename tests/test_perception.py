@@ -157,6 +157,35 @@ def test_process_perception_does_not_reapply_already_committed_vision_update():
     assert list(person.facts.values()) == ["Wearing a blue jacket"]
 
 
+def test_process_perception_ignores_null_person_fields_in_vision_update():
+    world = WorldState()
+    people = PeopleState()
+    person = people.add_person(name="Visitor", presence="present")
+    event = PerceptionEvent(
+        description="Visitor is wearing a blue jacket",
+        source="visual",
+        kind="vision_state_update",
+        payload={
+            "person_updates": [
+                {
+                    "person_id": person.person_id,
+                    "add_facts": ["Wearing a blue jacket"],
+                    "set_name": None,
+                    "set_presence": None,
+                    "fact_scope": None,
+                }
+            ],
+        },
+    )
+
+    _, narrator = process_perception(event, people, world)
+
+    assert narrator == "[Visitor is wearing a blue jacket]"
+    assert person.name == "Visitor"
+    assert person.presence == "present"
+    assert "Wearing a blue jacket" in person.facts.values()
+
+
 # --- SimScript loading ---
 
 

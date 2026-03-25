@@ -787,6 +787,20 @@ def test_voice_io_turn_start_cancels_auto_beat_when_not_speaking():
     assert not voice._cancelled.is_set()  # cancel_speech NOT called
 
 
+def test_voice_io_turn_start_ignores_duplicate_vad_after_recent_transcript():
+    voice = VoiceIO()
+    voice._speaker = MagicMock()
+    voice._tts = MagicMock()
+    voice._is_speaking = True
+    voice._last_transcript_final_at = 10.0
+
+    with patch("character_eng.voice.time.time", return_value=10.2):
+        voice._on_turn_start()
+
+    assert voice._last_speech_started_at is None
+    assert not voice._cancelled.is_set()
+
+
 def test_voice_io_consume_input_timing_captures_latest_speech_window():
     voice = VoiceIO(trace_hook=MagicMock())
     with patch("character_eng.voice.time.time", side_effect=[10.0, 10.42]):

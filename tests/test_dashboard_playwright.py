@@ -2200,7 +2200,7 @@ def test_legacy_archive_keeps_vision_and_vision_raw_lanes_visible_offline(
 
     expect(page.get_by_role("button", name="vision", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="vision raw", exact=True)).to_be_visible()
-    expect(page.locator("[data-stream-lane='vision'] .stream-card[data-event-type='vision_pass']")).to_have_count(1)
+    expect(page.locator("[data-stream-lane='vision'] .stream-dot[data-event-type='vision_pass']")).to_have_count(1)
     expect(page.locator("[data-stream-lane='vision_raw']")).to_be_visible()
     expect(page.locator("[data-stream-lane='vision_raw']")).to_contain_text("No raw vision loop events captured yet")
 
@@ -2298,9 +2298,9 @@ def test_vision_state_event_defaults_snippet_mode_in_browser(
         },
     )
 
-    card = page.locator(".stream-card[data-event-type='vision_state_update']").first
-    expect(card).to_be_visible()
-    card.click()
+    dot = page.locator(".stream-dot[data-event-type='vision_state_update']").first
+    expect(dot).to_be_visible()
+    dot.click()
     page.locator("#snippet-toggle").click()
     expect(page.locator("#snippet-form")).to_be_visible()
     expect(page.locator("#snippet-mode")).to_have_value("vision_replay_window")
@@ -2349,9 +2349,9 @@ def test_vision_state_update_inspector_groups_derived_perception_and_hides_cycle
         },
     )
 
-    card = page.locator(".stream-card[data-event-type='vision_state_update']").first
-    expect(card).to_be_visible()
-    card.evaluate("(node) => node.click()")
+    dot = page.locator(".stream-dot[data-event-type='vision_state_update']").first
+    expect(dot).to_be_visible()
+    dot.evaluate("(node) => node.click()")
     page.locator("#tab-prompts").evaluate("(node) => node.click()")
     expect(page.locator("#detail-prompts")).to_contain_text("Derived Perception Updates")
     expect(page.locator("#detail-prompts")).to_contain_text("A wall clock is visible.")
@@ -2516,7 +2516,7 @@ def test_vision_raw_lane_is_explicit_and_shows_placeholder_or_events(
     page.mouse.move(raw_sam3_point["clientX"], raw_sam3_point["clientY"])
     expect(page.locator("#stream-hover-card")).to_have_class(re.compile(r"\bactive\b"))
     expect(page.locator("#stream-hover-card")).to_contain_text("sam3_detection")
-    expect(page.locator("[data-stream-lane='vision']")).to_contain_text("vision llm")
+    expect(page.locator("[data-stream-lane='vision'] .stream-dot[data-event-type='vision_state_update']")).to_have_count(1)
 
 
 def test_live_timeline_caps_dense_raw_vision_events(
@@ -3294,6 +3294,108 @@ def test_prompt_preview_opens_modal_for_prompt_backed_event(
     expect(page.locator("#prompt-modal")).to_contain_text("Free water. Want one?")
 
 
+def test_beat_delivered_reply_infers_planner_prompt_trace(
+    browser_page: Page,
+    dashboard_server,
+    vision_service,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    now = time.time()
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": vision_service.url,
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-prompt-beat",
+            "stage": "watching",
+        },
+    )
+    collector.push(
+        "turn_start",
+        {
+            "input_text": "",
+            "input_type": "beat",
+            "trigger_source": "vision",
+            "turn_kind": "reaction",
+        },
+    )
+    collector.push("prompt_trace", {
+        "label": "next_beat",
+        "title": "Next beat prompt",
+        "provider": "Groq",
+        "model": "llama-test",
+        "messages": [
+            {"role": "system", "content": "Plan exactly one beat."},
+            {"role": "user", "content": "=== RECENT CONVERSATION ===\nUSER: hey there"},
+        ],
+        "output": '{"beats":[{"line":"Hey there. What time is it?","intent":"ask for the time","condition":""}]}',
+        "started_at": now,
+        "finished_at": now,
+    })
+    collector.push(
+        "response_done",
+        {
+            "full_text": "Hey there. What time is it?",
+            "turn_kind": "reaction",
+            "turn_outcome": "beat_delivered",
+            "trigger_source": "vision",
+            "ttft_ms": 0,
+            "llm_ms": 0,
+        },
+    )
+
+    response_card = page.locator(".stream-card[data-event-type='assistant_reply']").first
+    expect(response_card).to_be_visible()
+    response_card.click()
+    page.locator("#tab-prompts").evaluate("(node) => node.click()")
+    expect(page.locator(".prompt-preview-card")).to_contain_text("Next beat prompt")
+    expect(page.locator(".prompt-preview-card")).to_contain_text("Hey there. What time is it?")
+    page.locator("[data-prompt-open='0']").click()
+    expect(page.locator("#prompt-modal")).to_have_class(re.compile(r"\bopen\b"))
+    expect(page.locator("#prompt-modal")).to_contain_text("Plan exactly one beat.")
+    expect(page.locator("#prompt-modal")).to_contain_text("=== RECENT CONVERSATION ===")
+    expect(page.locator("#prompt-modal")).to_contain_text("USER: hey there")
+
+
 def test_play_rearms_follow_and_jumps_to_latest(
     browser_page: Page,
     dashboard_server,
@@ -3623,12 +3725,12 @@ def test_vision_state_update_falls_back_from_no_updates_summary(
         },
     )
 
-    card = page.locator(".stream-card[data-event-type='vision_state_update']").first
-    expect(card).to_be_visible()
-    expect(card).to_contain_text("The visible room has light-colored walls")
-    expect(card).not_to_contain_text("No updates.")
-    card.click()
+    dot = page.locator(".stream-dot[data-event-type='vision_state_update']").first
+    expect(dot).to_be_visible()
+    dot.click()
     expect(page.locator("#inspector-summary-title")).to_have_text(re.compile(r"vision_state_update #\d+"))
+    expect(page.locator("#detail-label")).to_contain_text("The visible room has light-colored walls")
+    expect(page.locator("#detail-label")).not_to_contain_text("No updates.")
     expect(page.locator("#detail-payload")).to_contain_text("The visible room has light-colored walls and a stackable ladder in the back left.")
 
 
@@ -3697,11 +3799,11 @@ def test_world_state_inspector_shows_raw_event_json_and_hides_prompt_tab(
         },
     )
 
-    world_card = page.locator(".stream-card[data-event-type='world_state']").first
-    expect(world_card).to_be_visible()
-    world_card.click()
+    world_dot = page.locator(".stream-dot[data-event-type='world_state']").first
+    expect(world_dot).to_be_visible()
+    world_dot.click()
 
-    expect(page.locator("#detail-label")).to_contain_text("1 facts")
+    expect(page.locator("#detail-label")).to_contain_text("Greg is indoors in a room")
     expect(page.locator("#detail-detail")).to_contain_text("Greg is indoors in a room")
     expect(page.locator("#detail-payload")).to_contain_text("\"static_facts\"")
     expect(page.locator("#detail-payload")).to_contain_text("Greg is indoors in a room")
@@ -3890,9 +3992,12 @@ def test_dashboard_marks_reply_as_interrupted_when_runtime_emits_interruption_ev
     interrupted_reply = page.locator(".stream-card[data-event-type='assistant_reply']").filter(has_text="Let me think").first
     expect(interrupted_reply.locator(".reply-marker", has_text="Interrupted")).to_have_count(1)
     interrupted_event = page.locator(".stream-card[data-event-type='response_interrupted']").first
-    expect(interrupted_event).to_contain_text("Let me think —")
+    expect(interrupted_event).to_contain_text("Assistant cut off after: Let me think —")
+    expect(interrupted_event).to_contain_text("spoken: Let me think —")
+    expect(interrupted_event).to_contain_text("cut off by: i don't think so")
     interrupted_event.evaluate("(node) => node.click()")
     expect(page.locator("#detail-payload")).to_contain_text("\"raw_full_text\": \"Let me think about that for a second.\"")
+    expect(page.locator("#detail-payload")).to_contain_text("\"interruption_text\": \"i don't think so\"")
     expect(page.locator(".stream-card[data-event-type='assistant_reply']")).to_have_count(2)
     expect(page.locator(".stream-card").filter(has_text="Okay, got it.")).to_have_count(1)
 
