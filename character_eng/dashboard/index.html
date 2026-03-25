@@ -8015,7 +8015,9 @@
       case "user_speech_started":
         return "speech detected";
       case "user_transcript_final":
-        return data.text || data.stt_text || "(voice transcript)";
+        return data.echo_disposition === "ignored"
+          ? `echo? ${data.text || data.stt_text || "(voice transcript)"}`
+          : (data.text || data.stt_text || "(voice transcript)");
       case "assistant_reply":
         return data.full_text || data.text || (data.partial ? "(partial reply)" : "(streaming reply)");
       case "response_interrupted":
@@ -8161,6 +8163,8 @@
           data.text ? "final transcript" : "",
           data.stt_ms != null ? `STT ${data.stt_ms}ms` : "",
           data.endpointing_ms != null && data.endpointing_ms > 0 ? `endpointing ${data.endpointing_ms}ms` : "",
+          data.echo_disposition === "ignored" ? "ignored as assistant echo" : "",
+          data.echo_similarity != null ? `match ${(Number(data.echo_similarity) * 100).toFixed(0)}%` : "",
         ].filter(Boolean).join(" · ");
       case "turn_start":
         return [
