@@ -1418,12 +1418,9 @@
   }
   #detail-loop {
     display: none;
-    gap: 0.45em;
+    gap: 0.2em;
     margin-top: 0.15em;
-    padding: 0.6em 0.7em;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--bg-alt);
+    padding: 0.1em 0;
   }
   #detail-loop.active {
     display: grid;
@@ -1434,52 +1431,10 @@
     letter-spacing: 0.04em;
     color: var(--text-dim);
   }
-  .loop-track {
-    position: relative;
-    height: 44px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
-    overflow: hidden;
-  }
-  .loop-band {
-    position: absolute;
-    top: 10px;
-    bottom: 10px;
-    border-radius: 999px;
-    opacity: 0.85;
-  }
-  .loop-band.endpointing { background: rgba(77, 163, 255, 0.35); border: 1px solid rgba(77, 163, 255, 0.6); }
-  .loop-band.ttft { background: rgba(249, 190, 109, 0.15); border: 1px solid rgba(249, 190, 109, 0.3); }
-  .loop-band.llm { background: rgba(249, 190, 109, 0.25); border: 1px solid rgba(249, 190, 109, 0.5); }
-  .loop-band.tts { background: rgba(136, 209, 134, 0.25); border: 1px solid rgba(136, 209, 134, 0.5); }
-  .loop-band.playback { background: rgba(136, 209, 134, 0.12); border: 1px solid rgba(136, 209, 134, 0.3); }
-  .loop-marker {
-    position: absolute;
-    top: 4px;
-    bottom: 4px;
-    width: 2px;
-    background: rgba(255,255,255,0.75);
-  }
-  .loop-marker-label {
-    position: absolute;
-    top: 0;
-    transform: translateX(-50%);
-    font-size: 0.63em;
-    color: var(--text-dim);
-    white-space: nowrap;
-  }
   .loop-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3em;
-  }
-  .loop-chip {
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 0.14em 0.46em;
-    font-size: 0.68em;
-    color: var(--text-dim);
+    font-size: 0.74em;
+    line-height: 1.4;
+    color: var(--text);
   }
   .structure-title {
     font-size: 0.74em;
@@ -2296,7 +2251,6 @@
               </div>
               <div id="detail-loop">
                 <div class="loop-title">Loop Timing</div>
-                <div class="loop-track" id="detail-loop-track"></div>
                 <div class="loop-chips" id="detail-loop-chips"></div>
               </div>
               <div class="detail-section" id="inspector-frame-panel" data-panel-region="inspector" data-panel-id="inspected_frame" data-panel-scope="event" style="display:none;">
@@ -6341,21 +6295,25 @@
       const replyEvent = eventForTurnType(event, "assistant_reply");
       const sttMs = event.data?.stt_ms ?? turnStart?.data?.stt_ms ?? replyEvent?.data?.stt_ms;
       const endpointingMs = event.data?.endpointing_ms ?? turnStart?.data?.endpointing_ms ?? replyEvent?.data?.endpointing_ms;
+      const showEndpointing = endpointingMs != null && endpointingMs > 0 && endpointingMs !== sttMs;
       const transcriptText = event.data?.text || event.data?.stt_text || turnStart?.data?.stt_text || replyEvent?.data?.stt_text || event.label || "";
       sections.push(structureSection("Input", [
         transcriptText ? {kind: "input", key: "transcript", value: transcriptText} : null,
       ].filter(Boolean)));
       sections.push(structureSection("Timing", [
-        sttMs != null ? {kind: "meta", key: "stt", value: `${sttMs}ms`} : null,
-        endpointingMs != null && endpointingMs > 0 ? {kind: "meta", key: "endpointing", value: `${endpointingMs}ms`} : null,
+        sttMs != null ? {kind: "meta", key: "stt latency", value: `${sttMs}ms`} : null,
+        showEndpointing ? {kind: "meta", key: "endpointing", value: `${endpointingMs}ms`} : null,
       ].filter(Boolean)));
     } else if (event.type === "assistant_reply") {
       const inputItems = [];
       if (event.data?.stt_text) inputItems.push({kind: "input", key: "heard", value: event.data.stt_text});
       if (event.data?.input_source) inputItems.push({kind: "meta", key: "source", value: event.data.input_source});
+      const showEndpointing = event.data?.endpointing_ms != null
+        && event.data.endpointing_ms > 0
+        && event.data.endpointing_ms !== event.data?.stt_ms;
       const timingItems = [
-        event.data?.stt_ms != null ? {kind: "meta", key: "stt", value: `${event.data.stt_ms}ms`} : null,
-        event.data?.endpointing_ms != null && event.data.endpointing_ms > 0 ? {kind: "meta", key: "endpointing", value: `${event.data.endpointing_ms}ms`} : null,
+        event.data?.stt_ms != null ? {kind: "meta", key: "stt latency", value: `${event.data.stt_ms}ms`} : null,
+        showEndpointing ? {kind: "meta", key: "endpointing", value: `${event.data.endpointing_ms}ms`} : null,
         event.data?.ttft_ms != null ? {kind: "meta", key: "ttft", value: `${event.data.ttft_ms}ms`} : null,
         event.data?.llm_ms != null ? {kind: "meta", key: "llm", value: `${event.data.llm_ms}ms`} : null,
         event.data?.first_audio_ms != null ? {kind: "meta", key: "first audio", value: `${event.data.first_audio_ms}ms`} : null,
@@ -7083,7 +7041,6 @@
     document.getElementById("detail-prompts").innerHTML = '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-prompts-pane").classList.add("compact-empty");
     document.getElementById("detail-loop").classList.remove("active");
-    document.getElementById("detail-loop-track").innerHTML = "";
     document.getElementById("detail-loop-chips").innerHTML = "";
     detailContinueFromEventButton.disabled = true;
     detailOpenJsonButton.disabled = true;
@@ -7201,7 +7158,6 @@
     document.getElementById("detail-prompts").innerHTML = '<div class="prompt-preview-empty">No prompt snapshot captured for this event.</div>';
     document.getElementById("detail-prompts-pane").classList.add("compact-empty");
     document.getElementById("detail-loop").classList.remove("active");
-    document.getElementById("detail-loop-track").innerHTML = "";
     document.getElementById("detail-loop-chips").innerHTML = "";
     detailContinueFromEventButton.disabled = true;
     detailOpenJsonButton.disabled = true;
@@ -8142,8 +8098,8 @@
       }
       case "assistant_reply": {
         const bits = [];
-        if (data.stt_ms != null) bits.push(`STT ${data.stt_ms}ms`);
-        if (data.endpointing_ms != null && data.endpointing_ms > 0) bits.push(`endpointing ${data.endpointing_ms}ms`);
+        if (data.stt_ms != null) bits.push(`STT latency ${data.stt_ms}ms`);
+        if (data.endpointing_ms != null && data.endpointing_ms > 0 && data.endpointing_ms !== data.stt_ms) bits.push(`endpointing ${data.endpointing_ms}ms`);
         if (data.ttft_ms != null) bits.push(`TTFT ${data.ttft_ms}ms`);
         if (data.llm_ms != null) bits.push(`LLM ${data.llm_ms}ms`);
         if (data.first_audio_ms != null) bits.push(`first audio ${data.first_audio_ms}ms`);
@@ -8161,8 +8117,8 @@
       case "user_transcript_final":
         return [
           data.text ? "final transcript" : "",
-          data.stt_ms != null ? `STT ${data.stt_ms}ms` : "",
-          data.endpointing_ms != null && data.endpointing_ms > 0 ? `endpointing ${data.endpointing_ms}ms` : "",
+          data.stt_ms != null ? `STT latency ${data.stt_ms}ms` : "",
+          data.endpointing_ms != null && data.endpointing_ms > 0 && data.endpointing_ms !== data.stt_ms ? `endpointing ${data.endpointing_ms}ms` : "",
           data.echo_disposition === "ignored" ? "ignored as assistant echo" : "",
           data.echo_similarity != null ? `match ${(Number(data.echo_similarity) * 100).toFixed(0)}%` : "",
         ].filter(Boolean).join(" · ");
@@ -9662,110 +9618,22 @@
 
   function renderLoopTiming(event) {
     const root = document.getElementById("detail-loop");
-    const track = document.getElementById("detail-loop-track");
     const chips = document.getElementById("detail-loop-chips");
     root.classList.remove("active");
-    track.innerHTML = "";
     chips.innerHTML = "";
     if (!event || event.type !== "assistant_reply") return;
 
     const d = event.data || {};
-    const inputEvent = eventForTurnType(event, "turn_start") || eventForTurnType(event, "user_transcript_final");
-    const id = inputEvent?.data || {};
+    const summaryEntries = [];
+    if (d.stt_ms != null) summaryEntries.push(`STT latency ${Math.round(d.stt_ms)}ms`);
+    if (d.ttft_ms != null) summaryEntries.push(`TTFT ${Math.round(d.ttft_ms)}ms`);
+    if (d.llm_ms != null) summaryEntries.push(`LLM ${Math.round(d.llm_ms)}ms`);
+    if (d.first_audio_ms != null && d.first_audio_ms > 0) summaryEntries.push(`first audio ${Math.round(d.first_audio_ms)}ms`);
+    if (d.total_ms != null) summaryEntries.push(`total ${Math.round(d.total_ms)}ms`);
 
-    // Resolve absolute timestamps (prefer event data, fall back to input event)
-    const transcriptTs = Number(d.transcript_final_ts || id.transcript_final_ts || 0);
-    const llmStartTs = Number(d.llm_start_ts || 0);
-    const ttftTs = Number(d.response_ttft_ts || 0);
-    const textDoneTs = Number(d.response_done_ts || 0);
-    const ttsReqTs = Number(d.tts_request_ts || 0);
-    const ttsSynthDoneTs = Number(d.tts_synth_done_ts || 0);
-    const firstAudioTs = Number(d.first_audio_ts || 0);
-    const spokenEndTs = Number(d.spoken_done_ts || 0);
+    if (!summaryEntries.length) return;
 
-    // Anchor the reply loop at the point input is done.
-    // For voice: start once the transcript is finalized.
-    // For text: start at llm_start.
-    const baseTs = transcriptTs > 0 ? transcriptTs : (llmStartTs > 0 ? llmStartTs : 0);
-    if (!(baseTs > 0)) return;
-
-    const ms = (ts) => ts > 0 ? Math.round((ts - baseTs) * 1000) : null;
-
-    // Build segments: [{label, startMs, endMs, band}]
-    const segments = [];
-    const addSeg = (label, band, startMs, endMs) => {
-      if (startMs != null && endMs != null && endMs > startMs) {
-        segments.push({label, band, startMs, endMs});
-      }
-    };
-
-    const endpointEnd = ms(transcriptTs);
-    const llmStart = ms(llmStartTs);
-    const ttft = ms(ttftTs);
-    const textDone = ms(textDoneTs);
-    const ttsReq = ms(ttsReqTs);
-    const firstAudio = ms(firstAudioTs);
-    const spokenEnd = ms(spokenEndTs);
-
-    // TTFT: llm_start → first token
-    addSeg("TTFT", "ttft", llmStart, ttft);
-    // LLM generation: first token → text done
-    addSeg("LLM gen", "llm", ttft, textDone);
-    // TTS: tts_request → first audio (synthesis pipeline)
-    addSeg("TTS", "tts", ttsReq ?? textDone, firstAudio);
-    // Playback: first audio → spoken end
-    addSeg("playback", "playback", firstAudio, spokenEnd);
-
-    if (!segments.length) return;
-
-    const totalMs = Math.max(...segments.map((s) => s.endMs), 1);
-    const pct = (v) => Math.min(98, Math.max(0.5, (v / totalMs) * 100));
-
-    segments.forEach((seg) => {
-      const left = pct(seg.startMs);
-      const width = Math.max(1, pct(seg.endMs) - left);
-      track.insertAdjacentHTML("beforeend",
-        `<div class="loop-band ${esc(seg.band)}" style="left:${left}%;width:${width}%;" title="${esc(seg.label)} ${seg.endMs - seg.startMs}ms"></div>`);
-    });
-
-    // Key milestone markers
-    const milestones = [];
-    const pushMilestone = (label, offsetMs) => {
-      if (offsetMs != null && offsetMs >= 0) milestones.push({label, offsetMs});
-    };
-    if (endpointEnd != null) pushMilestone("transcript", endpointEnd);
-    if (ttft != null) pushMilestone("ttft", ttft);
-    if (textDone != null) pushMilestone("text done", textDone);
-    if (firstAudio != null) pushMilestone("first audio", firstAudio);
-    if (spokenEnd != null) pushMilestone("spoken end", spokenEnd);
-
-    const uniqueMilestones = milestones
-      .filter((m, i, arr) => arr.findIndex((x) => x.label === m.label) === i)
-      .sort((a, b) => a.offsetMs - b.offsetMs);
-
-    uniqueMilestones.forEach((m) => {
-      const left = pct(m.offsetMs);
-      track.insertAdjacentHTML("beforeend",
-        `<div class="loop-marker" style="left:${left}%"><span class="loop-marker-label">${esc(m.label)}</span></div>`);
-    });
-
-    // Chips: actionable summary metrics
-    const ttftMs = d.ttft_ms ?? (ttft != null ? ttft - (llmStart ?? 0) : null);
-    const llmMs = d.llm_ms ?? (textDone != null && llmStart != null ? textDone - llmStart : null);
-    const firstAudioMs = d.first_audio_ms ?? firstAudio;
-    const totalMsFinal = d.total_ms ?? spokenEnd;
-
-    const chipEntries = [];
-    if (d.stt_ms != null) chipEntries.push({label: "STT", ms: d.stt_ms, color: "rgba(77,163,255,0.7)"});
-    if (ttftMs != null) chipEntries.push({label: "TTFT", ms: ttftMs, color: "rgba(249,190,109,0.7)"});
-    if (llmMs != null) chipEntries.push({label: "LLM", ms: llmMs, color: "rgba(249,190,109,0.7)"});
-    if (firstAudioMs != null && firstAudioMs > 0) chipEntries.push({label: "first audio", ms: firstAudioMs, color: "rgba(136,209,134,0.7)"});
-    if (totalMsFinal != null) chipEntries.push({label: "total", ms: totalMsFinal, color: "var(--text-dim)"});
-
-    chipEntries.forEach((c) => {
-      chips.insertAdjacentHTML("beforeend",
-        `<span class="loop-chip" style="border-color:${c.color}">${esc(c.label)} ${esc(String(Math.round(c.ms)))}ms</span>`);
-    });
+    chips.textContent = summaryEntries.join(" - ");
 
     root.classList.add("active");
   }
@@ -10358,7 +10226,7 @@
   function renderReplyMarkers(event) {
     if (compactMode || event.type !== "assistant_reply") return "";
     const markers = [];
-    if (event.data.stt_ms != null) markers.push(`STT ${event.data.stt_ms}ms`);
+    if (event.data.stt_ms != null) markers.push(`STT latency ${event.data.stt_ms}ms`);
     if (event.data.ttft_ms != null) markers.push(`TTFT ${event.data.ttft_ms}ms`);
     if (event.data.llm_ms != null) markers.push(`LLM ${event.data.llm_ms}ms`);
     if (event.data.tts_request_ms != null) markers.push(`TTS req ${event.data.tts_request_ms}ms`);

@@ -1017,8 +1017,10 @@ def test_runtime_panel_interactions_in_browser(
         "input_text": "Do you have water?",
         "input_source": "voice",
         "speech_started_ts": turn_base,
+        "speech_ended_ts": turn_base + 0.35,
         "transcript_final_ts": turn_base + 0.42,
-        "stt_ms": 420,
+        "stt_ms": 70,
+        "endpointing_ms": 70,
         "stt_text": "Do you have water?",
     })
     collector.push("prompt_trace", {
@@ -1040,8 +1042,10 @@ def test_runtime_panel_interactions_in_browser(
         "full_text": "Free water. Want one?",
         "input_source": "voice",
         "speech_started_ts": turn_base,
+        "speech_ended_ts": turn_base + 0.35,
         "transcript_final_ts": turn_base + 0.42,
-        "stt_ms": 420,
+        "stt_ms": 70,
+        "endpointing_ms": 70,
         "stt_text": "Do you have water?",
         "llm_start_ts": turn_base + 0.42,
         "response_ttft_ts": turn_base + 0.61,
@@ -1112,16 +1116,14 @@ def test_runtime_panel_interactions_in_browser(
     expect(page.locator("#report-ref-status")).to_contain_text("sess-playwright")
     expect(page.locator("#detail-type")).to_have_text("assistant_reply")
     expect(page.locator("#detail-label")).to_contain_text("Free water. Want one?")
-    expect(page.locator("#detail-detail")).to_contain_text("STT 420ms")
+    expect(page.locator("#detail-detail")).to_contain_text("STT latency 70ms")
     expect(page.locator("#detail-detail")).to_contain_text("TTFT 190ms")
     expect(page.locator("#detail-loop")).to_have_class(re.compile(r"\bactive\b"))
-    expect(page.locator("#detail-loop-chips")).to_contain_text("STT 420ms")
-    expect(page.locator("#detail-loop-chips")).to_contain_text("TTFT 190ms")
-    expect(page.locator("#detail-loop-chips")).to_contain_text("first audio")
-    expect(page.locator("#detail-loop-chips")).not_to_contain_text("endpointing 0ms")
+    expect(page.locator("#detail-loop-chips")).to_contain_text("STT latency 70ms - TTFT 190ms - LLM 780ms - first audio 890ms - total 1980ms")
+    expect(page.locator("#detail-detail")).not_to_contain_text("endpointing 70ms")
     page.locator(".stream-card[data-event-type='user_transcript_final']").first.click()
     expect(page.locator("#detail-type")).to_have_text("user_transcript_final")
-    expect(page.locator("#detail-detail")).to_contain_text("STT 420ms")
+    expect(page.locator("#detail-detail")).to_contain_text("STT latency 70ms")
     reply_card.click()
     page.locator("#tab-prompts").evaluate("(node) => node.click()")
     expect(page.locator("#detail-prompts")).to_contain_text("Chat prompt")

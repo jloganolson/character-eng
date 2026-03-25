@@ -1547,10 +1547,13 @@ class VoiceIO:
         payload["transcript_final_ts"] = final_at
         if self._last_speech_started_at is not None:
             payload["speech_started_ts"] = self._last_speech_started_at
-            payload["stt_ms"] = round(max(0.0, final_at - self._last_speech_started_at) * 1000)
         if speech_ended_at is not None:
             payload["speech_ended_ts"] = speech_ended_at
-            payload["endpointing_ms"] = round(max(0.0, final_at - speech_ended_at) * 1000)
+            endpointing_ms = round(max(0.0, final_at - speech_ended_at) * 1000)
+            payload["endpointing_ms"] = endpointing_ms
+            payload["stt_ms"] = endpointing_ms
+        elif self._last_speech_started_at is not None:
+            payload["stt_ms"] = round(max(0.0, final_at - self._last_speech_started_at) * 1000)
         self._trace("user_transcript_final", payload)
         self._last_transcript_final_at = final_at
         self._last_speech_ended_at = speech_ended_at
@@ -1614,10 +1617,12 @@ class VoiceIO:
             payload["transcript_final_ts"] = final_at
         if speech_ended_at is not None:
             payload["speech_ended_ts"] = speech_ended_at
-        if started_at is not None and final_at is not None:
-            payload["stt_ms"] = round(max(0.0, final_at - started_at) * 1000)
         if speech_ended_at is not None and final_at is not None:
-            payload["endpointing_ms"] = round(max(0.0, final_at - speech_ended_at) * 1000)
+            endpointing_ms = round(max(0.0, final_at - speech_ended_at) * 1000)
+            payload["endpointing_ms"] = endpointing_ms
+            payload["stt_ms"] = endpointing_ms
+        elif started_at is not None and final_at is not None:
+            payload["stt_ms"] = round(max(0.0, final_at - started_at) * 1000)
         cleaned_transcript = transcript_text.strip()
         cleaned_expected = expected_text.strip()
         if cleaned_transcript:
