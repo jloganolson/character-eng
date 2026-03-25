@@ -523,6 +523,25 @@ def _runtime_phase_is_review() -> bool:
     return _runtime_phase == RuntimePhase.REVIEW
 
 
+def _runtime_phase_should_pause_vision(phase: RuntimePhase | str | None = None) -> bool:
+    current = _runtime_phase if phase is None else _coerce_runtime_phase(phase)
+    return current in (
+        RuntimePhase.READY,
+        RuntimePhase.STARTUP_PAUSED,
+        RuntimePhase.PAUSED,
+        RuntimePhase.REVIEW,
+        RuntimePhase.FINALIZING_SAVE,
+        RuntimePhase.FINALIZING_DISCARD,
+        RuntimePhase.RESTARTING,
+    )
+
+
+def _sync_vision_pause_state(vision_mgr, phase: RuntimePhase | str | None = None) -> None:
+    if vision_mgr is None:
+        return
+    vision_mgr.set_paused(_runtime_phase_should_pause_vision(phase))
+
+
 def _runtime_session_state() -> str:
     return _RUNTIME_PHASE_TO_SESSION_STATE[_runtime_phase]
 
@@ -2108,8 +2127,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             _set_runtime_phase(RuntimePhase.READY)
             if _collector is not None:
                 _collector.reset()
-            if vision_mgr is not None:
-                vision_mgr.set_paused(False)
+            _sync_vision_pause_state(vision_mgr)
             _push_runtime_controls(voice_io=voice_io, vision_mgr=vision_mgr, vision_cfg=vision_cfg)
             _push_history_status()
             console.print("[yellow]Session ready[/yellow] — use /start or the dashboard Start button to create a fresh session")
@@ -2272,6 +2290,10 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 scenario=scenario,
             )
         if vision_mgr is not None:
+            _sync_vision_pause_state(
+                vision_mgr,
+                RuntimePhase.STARTUP_PAUSED if next_session_mode == "paused" else RuntimePhase.LIVE,
+            )
             console.print("[green]Vision active[/green]")
 
         _set_dashboard_vision_runtime(
@@ -2307,8 +2329,7 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
         if _collector is not None:
             _collector.reset()
-        if vision_mgr is not None:
-            vision_mgr.set_paused(_runtime_phase_is_paused())
+        _sync_vision_pause_state(vision_mgr)
         _push("session_start", {
             "character": label, "model": model_key, "session_id": session_id,
             "stage": scenario.active_stage.name if scenario and scenario.active_stage else "",

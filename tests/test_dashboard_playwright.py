@@ -2738,7 +2738,7 @@ def test_live_older_events_are_compacted_without_breaking_selection(
     state = page.evaluate("window.__dashboardTest.timelineState()")
     assert state["compactedLiveEventCount"] > 0
 
-    page.locator("#timeline-start").evaluate("(node) => node.click()")
+    page.evaluate("window.__dashboardTest.scrollTimelineToStart()")
     page.wait_for_function(
         """() => document.querySelectorAll(".stream-dot[data-event-type='perception']").length > 0""",
         timeout=10_000,
@@ -2897,6 +2897,55 @@ def test_archive_boot_live_runtime_actions_match_spoof_state(
     expect(page.locator("#runtime-stop")).to_be_disabled()
     expect(page.locator("#runtime-restart")).to_have_text("Restart Session")
     expect(page.locator("#runtime-restart")).to_be_disabled()
+
+
+def test_loaded_archive_exports_full_window_without_marks(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": "http://127.0.0.1:7875",
+            "vision_service_health": True,
+            "vision_service_managed": True,
+            "vision_service_external": False,
+            "vision_service_state": "managed",
+            "vision_service_autostart": True,
+            "vision_service_mode": "mock",
+            "vision_mock_replay": "walkup.json",
+        },
+    )
+    page = browser_page
+    page.goto(f"{dashboard_url}?archive=sess-archive-playback&boot=live")
+
+    expect(page.locator("#archive-export-status")).to_contain_text("export the full loaded archive")
+    page.locator("#archive-export-button").evaluate("(node) => node.click()")
+    expect(page.locator("#archive-export-status")).to_contain_text("Exported:")
 
 
 def test_archive_raw_event_shows_inspected_frame_in_inspector(
@@ -4154,7 +4203,7 @@ def test_archive_virtualizes_dense_card_lanes_across_long_spans(
     assert state["streamEventCount"] >= 470
     assert state["visibleCardCount"] < 120
 
-    page.locator("#timeline-start").evaluate("(node) => node.click()")
+    page.evaluate("window.__dashboardTest.scrollTimelineToStart()")
     page.wait_for_function(
         """() => {
             const labels = Array.from(document.querySelectorAll(".stream-card[data-event-type='assistant_reply'] .stream-card-label"))
@@ -4165,7 +4214,7 @@ def test_archive_virtualizes_dense_card_lanes_across_long_spans(
         timeout=10_000,
     )
 
-    page.locator("#timeline-end").evaluate("(node) => node.click()")
+    page.evaluate("window.__dashboardTest.scrollTimelineToEnd()")
     page.wait_for_function(
         """() => {
             const labels = Array.from(document.querySelectorAll(".stream-card[data-event-type='assistant_reply'] .stream-card-label"))
@@ -4654,6 +4703,86 @@ def test_save_stop_fallback_opens_modal_without_session_end(
     expect(page.locator("#save-complete-session-id")).to_contain_text("sess-playwright")
     expect(page.locator("#save-complete-heading")).to_contain_text("Session Saved")
     expect(page.locator("#save-complete-title")).not_to_have_value("")
+
+
+def test_paused_session_review_exports_full_window_without_marks(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    collector.push(
+        "session_start",
+        {
+            "character": "greg",
+            "model": "groq-llama-8b",
+            "session_id": "sess-playwright",
+            "stage": "watching",
+        },
+    )
+    collector.push(
+        "runtime_controls",
+        {
+            "controls": {
+                "reconcile": True,
+                "vision": True,
+                "auto_beat": False,
+                "filler": False,
+            },
+            "conversation_paused": False,
+            "session_stopped": False,
+            "startup_pause_pending": False,
+            "session_state": "live",
+            "voice_active": True,
+            "voice_status": {
+                "active": True,
+                "output_only": False,
+                "filler_enabled": False,
+                "tts_backend": "pocket",
+                "mic_ready": True,
+                "speaker_ready": True,
+                "stt": {"state": "ready", "detail": "Deepgram socket open."},
+                "tts": {"state": "ready", "detail": "Pocket-TTS reachable.", "backend": "pocket"},
+            },
+            "vision_active": True,
+            "reconcile_thread_alive": True,
+            "vision_service_url": "http://127.0.0.1:7875",
+            "vision_service_health": True,
+            "vision_service_managed": False,
+            "vision_service_external": True,
+            "vision_service_state": "external",
+            "vision_service_autostart": True,
+            "vision_service_mode": "camera",
+            "vision_mock_replay": "",
+        },
+    )
+    collector.push(
+        "history_status",
+        {
+            "enabled": True,
+            "free_gib": 100.0,
+            "sessions_count": 1,
+            "pinned_count": 0,
+            "moments_count": 0,
+            "current_session": {
+                "session_id": "sess-playwright",
+                "title": "Playwright Session",
+                "session_path": "/tmp/character-eng-dashboard-playwright-history/sessions/sess-playwright",
+                "record_mode": "full",
+                "replay_capture_enabled": True,
+            },
+            "playback": {"active": False},
+        },
+    )
+    collector.push("pause", {"startup": False})
+
+    expect(page.locator("#archive-load-button")).to_have_text("Return To Session")
+    expect(page.locator("#archive-export-status")).to_contain_text("export the full paused session")
+    page.locator("#archive-export-button").evaluate("(node) => node.click()")
+    expect(page.locator("#archive-export-status")).to_contain_text("Exported:")
+    expect(page.locator("#archive-load-button")).to_have_text("Return To Session")
 
 
 def test_discard_session_stays_in_discard_flow(

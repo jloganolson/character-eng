@@ -114,6 +114,24 @@ def test_runtime_snapshot_exposes_review_phase(monkeypatch):
         app._set_runtime_phase(previous_phase)
 
 
+def test_runtime_phase_should_pause_vision_for_preplay_and_review_states():
+    assert app._runtime_phase_should_pause_vision(app.RuntimePhase.READY) is True
+    assert app._runtime_phase_should_pause_vision(app.RuntimePhase.STARTUP_PAUSED) is True
+    assert app._runtime_phase_should_pause_vision(app.RuntimePhase.PAUSED) is True
+    assert app._runtime_phase_should_pause_vision(app.RuntimePhase.REVIEW) is True
+    assert app._runtime_phase_should_pause_vision(app.RuntimePhase.LIVE) is False
+
+
+def test_sync_vision_pause_state_uses_runtime_phase_policy():
+    vision_mgr = MagicMock()
+
+    app._sync_vision_pause_state(vision_mgr, app.RuntimePhase.READY)
+    vision_mgr.set_paused.assert_called_with(True)
+
+    app._sync_vision_pause_state(vision_mgr, app.RuntimePhase.LIVE)
+    vision_mgr.set_paused.assert_called_with(False)
+
+
 def test_runtime_snapshot_includes_voice_status(monkeypatch):
     cfg = AppConfig()
     monkeypatch.setattr(app, "_vision_service_health", lambda vision_cfg=None: False)

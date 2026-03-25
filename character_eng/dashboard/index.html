@@ -2249,8 +2249,6 @@
         </div>
         <div class="toolbar-group">
           <label>Timeline</label>
-          <button id="timeline-start" type="button">Oldest</button>
-          <button id="timeline-end" type="button">Latest</button>
         </div>
         <div id="lane-toggle-grid"></div>
       </div>
@@ -5044,7 +5042,7 @@
 
   function renderArchiveTransport() {
     const active = !!(browseIsActive() && archivePlaybackMediaAvailable());
-    const exportActive = browseIsLiveSessionReview();
+    const exportActive = browseIsActive();
     archiveTransportEl.classList.toggle("visible", active);
     archiveExportControls.classList.toggle("visible", exportActive);
     streamRuler.classList.toggle("scrubbable", active);
@@ -5087,7 +5085,7 @@
         : "";
     }
     if (!exportActive) {
-      archiveExportStatus.textContent = "Pause a live session to review and export a trimmed archive.";
+      archiveExportStatus.textContent = "Load an archive or pause a live session to export the current window.";
       return;
     }
     const bounds = reviewExportWindowBounds();
@@ -5099,7 +5097,9 @@
         ? `Export start: +${Number(reviewWindowStartS).toFixed(2)}s`
         : (reviewWindowEndS != null
           ? `Export end: +${Number(reviewWindowEndS).toFixed(2)}s`
-          : "Mark an in/out range or export the full paused session."));
+          : (browseIsLiveSessionReview()
+            ? "Mark an in/out range or export the full paused session."
+            : "Mark an in/out range or export the full loaded archive.")));
   }
 
   function syncArchiveMediaPlayer() {
@@ -8586,15 +8586,18 @@
     return {start: lo, end: hi, duration: Math.max(0, hi - lo)};
   }
 
-  function defaultReviewExportTitle() {
+  function defaultBrowseExportTitle() {
     const title = browseMeta()?.title || historyState.current_session?.title || browseRef() || "session";
     const bounds = reviewExportWindowBounds();
     if (!bounds) return `${title} export`;
     return `${title} ${bounds.start.toFixed(1)}-${bounds.end.toFixed(1)}s`;
   }
 
-  async function exportPausedSessionArchive() {
-    if (!browseIsLiveSessionReview()) return;
+  async function exportCurrentBrowseArchive() {
+    if (!browseIsActive()) {
+      archiveExportStatus.textContent = "Load an archive or pause a live session before exporting.";
+      return;
+    }
     const sessionRef = browseRef();
     if (!sessionRef) return;
     const bounds = reviewExportWindowBounds();
@@ -8605,16 +8608,19 @@
     try {
       const result = await postJson("/history/snippet", {
         session_id: sessionRef,
-        title: defaultReviewExportTitle(),
-        tags: ["paused-review", bounds ? "trimmed" : "full-session"],
-        capture_mode: "session_review_window",
+        title: defaultBrowseExportTitle(),
+        tags: [
+          browseIsLiveSessionReview() ? "paused-review" : "archive-browse",
+          bounds ? "trimmed" : "full-session",
+        ],
+        capture_mode: browseIsLiveSessionReview() ? "session_review_window" : "archive_window_export",
         event_time_s: Number(currentArchiveTimelineTime() ?? end ?? 0),
         window_start_s: Number(start.toFixed(3)),
         window_end_s: Number(Math.max(start, end).toFixed(3)),
         bundle: {
-          capture_mode: "session_review_window",
-          source_event_type: "pause",
-          source: "live_session_review",
+          capture_mode: browseIsLiveSessionReview() ? "session_review_window" : "archive_window_export",
+          source_event_type: browseIsLiveSessionReview() ? "pause" : "archive_browse",
+          source: browseIsLiveSessionReview() ? "live_session_review" : "archive_browse",
         },
       });
       await refreshHistoryArchives();
@@ -8624,7 +8630,7 @@
       archiveExportStatus.textContent = `Export failed: ${error.message || error}`;
     } finally {
       archiveExportButton.disabled = false;
-      renderArchiveTransport();
+      archiveExportClearButton.disabled = !reviewExportWindowBounds() && reviewWindowStartS == null && reviewWindowEndS == null;
     }
   }
 
@@ -11558,16 +11564,6 @@
     followLive = !!e.target.checked;
     if (followLive) scrollTimelineToEnd();
   });
-  document.getElementById("timeline-start").addEventListener("click", () => {
-    followLive = false;
-    document.getElementById("follow-live").checked = false;
-    scrollTimelineToStart();
-  });
-  document.getElementById("timeline-end").addEventListener("click", () => {
-    followLive = true;
-    document.getElementById("follow-live").checked = true;
-    scrollTimelineToEnd();
-  });
   document.querySelectorAll(".detail-tab").forEach((button) => {
     button.addEventListener("click", () => setDetailTab(button.dataset.detailTab));
   });
@@ -11831,7 +11827,7 @@
     renderArchiveTransport();
   });
   archiveExportButton.addEventListener("click", () => {
-    exportPausedSessionArchive().catch(() => {});
+    exportCurrentBrowseArchive().catch(() => {});
   });
 
   runtimeStartButton.addEventListener("click", requestRuntimeStart);
@@ -12889,6 +12885,12 @@
   window.__dashboardTest = {
     eventInventory() {
       return cloneSnapshotPayload(DASHBOARD_EVENT_INVENTORY);
+    },
+    scrollTimelineToStart() {
+      scrollTimelineToStart();
+    },
+    scrollTimelineToEnd() {
+      scrollTimelineToEnd();
     },
     seekArchiveTime(timeS, options = {}) {
       seekArchiveMedia(Number(timeS || 0), {syncSelection: options.syncSelection !== false});
