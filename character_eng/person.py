@@ -9,6 +9,18 @@ _FACT_ID_PREFIX_RE = re.compile(r"^(?:f\d+|p\d+f\d+)\.\s*")
 _VALID_PRESENCE = {"approaching", "present", "leaving", "gone"}
 
 
+def _normalized_fact_text(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", _FACT_ID_PREFIX_RE.sub("", str(text or "").strip()).lower()))
+
+
+def _fact_text_match(a: str, b: str) -> bool:
+    left = _normalized_fact_text(a)
+    right = _normalized_fact_text(b)
+    if not left or not right:
+        return False
+    return left == right or left in right or right in left
+
+
 @dataclass
 class PersonUpdate:
     person_id: str
@@ -109,7 +121,7 @@ class PeopleState:
                 person.facts.pop(fid, None)
             for text in update.add_facts:
                 cleaned = _FACT_ID_PREFIX_RE.sub("", text.strip())
-                if cleaned:
+                if cleaned and not any(_fact_text_match(cleaned, existing) for existing in person.facts.values()):
                     person.add_fact(cleaned)
             if update.set_name is not None:
                 person.name = update.set_name

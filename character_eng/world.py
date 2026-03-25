@@ -180,7 +180,12 @@ class WorldState:
 
     def add_pending(self, text: str) -> None:
         """Append an unreconciled change description."""
-        self.pending.append(text)
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return
+        if any(_fact_text_match(cleaned, existing) for existing in self.pending[-8:]):
+            return
+        self.pending.append(cleaned)
 
     def clear_pending(self) -> list[str]:
         """Pop and return all pending changes."""
@@ -226,9 +231,11 @@ class WorldState:
             self.dynamic.pop(fid, None)
         for text in _clean_string_list(update.add_facts, fact_text=True):
             cleaned = _clean_fact_text(text)
-            if cleaned:
+            if cleaned and not any(_fact_text_match(cleaned, existing) for existing in self.dynamic.values()):
                 self.add_fact(cleaned)
-        self.events.extend(_clean_string_list(update.events))
+        for event in _clean_string_list(update.events):
+            if not any(_fact_text_match(event, existing) for existing in self.events[-8:]):
+                self.events.append(event)
 
     def show(self) -> Panel:
         lines: list[str] = []
@@ -295,6 +302,18 @@ def load_system_prompt(key: str) -> str:
 def _clean_fact_text(text: str) -> str:
     """Strip accidental LLM-generated ID prefixes from newly added facts."""
     return _FACT_ID_PREFIX_RE.sub("", text.strip())
+
+
+def _normalized_fact_text(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", _clean_fact_text(text).lower()))
+
+
+def _fact_text_match(a: str, b: str) -> bool:
+    left = _normalized_fact_text(a)
+    right = _normalized_fact_text(b)
+    if not left or not right:
+        return False
+    return left == right or left in right or right in left
 
 
 def _clean_string_list(values: list, *, fact_text: bool = False) -> list[str]:

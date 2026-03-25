@@ -150,15 +150,29 @@ class VisualContext:
                 if f.age:
                     desc += f", ~{f.age}{f.gender or ''}"
                 face_descs.append(desc)
-            parts.append(f"Faces: {'; '.join(face_descs)}")
+            parts.append(f"Visible faces: {'; '.join(face_descs)}")
 
         if snap.persons:
-            person_descs = [p.identity for p in snap.persons]
-            parts.append(f"People: {'; '.join(person_descs)}")
+            person_counts: dict[str, int] = {}
+            for person in snap.persons:
+                label = str(person.identity or "unknown person").strip() or "unknown person"
+                person_counts[label] = person_counts.get(label, 0) + 1
+            person_descs = [
+                f"{label} x{count}" if count > 1 else label
+                for label, count in person_counts.items()
+            ]
+            parts.append(f"Visible people: {'; '.join(person_descs)}")
 
         if snap.objects:
-            obj_descs = [o.label for o in snap.objects]
-            parts.append(f"Objects: {'; '.join(obj_descs)}")
+            object_counts: dict[str, int] = {}
+            for obj in snap.objects:
+                label = str(obj.label or "unknown object").strip() or "unknown object"
+                object_counts[label] = object_counts.get(label, 0) + 1
+            obj_descs = [
+                f"{label} x{count}" if count > 1 else label
+                for label, count in object_counts.items()
+            ]
+            parts.append(f"Visible objects: {'; '.join(obj_descs)}")
 
         if snap.vlm_answers:
             for v in snap.vlm_answers:

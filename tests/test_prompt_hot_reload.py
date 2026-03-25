@@ -46,7 +46,9 @@ def test_replace_system_prompt_preserves_turn_history(monkeypatch):
     ]
 
 
-def test_visual_focus_uses_file_backed_constant_questions(monkeypatch, tmp_path):
+def test_visual_focus_uses_core_constants_instead_of_file_backed_questions(tmp_path):
+    from character_eng.vision.focus import CORE_CONSTANT_QUESTIONS, CORE_CONSTANT_SAM_TARGETS
+
     prompts_dir = tmp_path / "prompts"
     prompts_dir.mkdir(parents=True)
     (prompts_dir / "visual_focus.txt").write_text("focus prompt", encoding="utf-8")
@@ -56,7 +58,6 @@ def test_visual_focus_uses_file_backed_constant_questions(monkeypatch, tmp_path)
     )
     (prompts_dir / "vision_constant_sam_targets.txt").write_text("phone\nperson\n", encoding="utf-8")
 
-    monkeypatch.setattr("character_eng.vision.focus.PROMPTS_DIR", prompts_dir)
     result = visual_focus_call(
         beat=None,
         stage_goal="",
@@ -67,11 +68,8 @@ def test_visual_focus_uses_file_backed_constant_questions(monkeypatch, tmp_path)
         scenario=None,
     )
 
-    assert result.constant_questions == [
-        "What is the nearest person wearing?",
-        "What are they holding?",
-    ]
-    assert result.constant_sam_targets == ["phone", "person"]
+    assert result.constant_questions == CORE_CONSTANT_QUESTIONS
+    assert result.constant_sam_targets == CORE_CONSTANT_SAM_TARGETS
 
 
 def test_mutable_prompt_inventory_reports_apply_modes(tmp_path):

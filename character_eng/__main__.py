@@ -94,6 +94,114 @@ _vision_runtime = {
     "mock_replay": None,
     "no_camera": False,
 }
+_dashboard_vision_runtime = {
+    "vision_mgr": None,
+    "world": None,
+    "people": None,
+    "script": None,
+    "scenario": None,
+    "model_config": None,
+    "voice_io": None,
+    "vision_cfg": None,
+}
+
+
+def _set_dashboard_vision_runtime(**updates) -> None:
+    _dashboard_vision_runtime.update(updates)
+
+
+def _dashboard_vision_stage_goal() -> str:
+    scenario = _dashboard_vision_runtime.get("scenario")
+    active_stage = getattr(scenario, "active_stage", None)
+    return str(getattr(active_stage, "goal", "") or "")
+
+
+def _dashboard_vision_state_payload() -> dict:
+    vision_mgr = _dashboard_vision_runtime.get("vision_mgr")
+    if vision_mgr is None:
+        return {
+            "available": False,
+            "error": "vision manager inactive",
+            "vision_service": _vision_status_snapshot(
+                vision_cfg=_dashboard_vision_runtime.get("vision_cfg"),
+                vision_mgr=None,
+            ),
+        }
+    return {
+        "available": True,
+        "focus": vision_mgr.focus_snapshot(),
+        "vision_service": _vision_status_snapshot(
+            vision_cfg=_dashboard_vision_runtime.get("vision_cfg"),
+            vision_mgr=vision_mgr,
+        ),
+    }
+
+
+def _refresh_dashboard_vision_focus() -> dict:
+    vision_mgr = _dashboard_vision_runtime.get("vision_mgr")
+    if vision_mgr is None:
+        raise RuntimeError("vision manager inactive")
+    script = _dashboard_vision_runtime.get("script")
+    scenario = _dashboard_vision_runtime.get("scenario")
+    vision_mgr.update_context(
+        world=_dashboard_vision_runtime.get("world"),
+        people=_dashboard_vision_runtime.get("people"),
+        beat=script.current_beat if script is not None and script.current_beat is not None else None,
+        stage_goal=_dashboard_vision_stage_goal(),
+        scenario=scenario,
+    )
+    vision_mgr.update_focus(
+        script.current_beat if script is not None and script.current_beat is not None else None,
+        _dashboard_vision_stage_goal(),
+        "",
+        _dashboard_vision_runtime.get("world"),
+        _dashboard_vision_runtime.get("people"),
+        _dashboard_vision_runtime.get("model_config") or {},
+        scenario=scenario,
+    )
+    _push_runtime_controls(
+        voice_io=_dashboard_vision_runtime.get("voice_io"),
+        vision_mgr=vision_mgr,
+        vision_cfg=_dashboard_vision_runtime.get("vision_cfg"),
+    )
+    return _dashboard_vision_state_payload()
+
+
+def _dashboard_vision_action(payload: dict) -> dict:
+    vision_mgr = _dashboard_vision_runtime.get("vision_mgr")
+    if vision_mgr is None:
+        raise RuntimeError("vision manager inactive")
+    action = str(payload.get("action") or "").strip().lower()
+    if action == "add_question":
+        question = str(payload.get("question") or "").strip()
+        target = str(payload.get("target") or "scene").strip().lower() or "scene"
+        if target not in {"scene", "nearest_person"}:
+            target = "scene"
+        vision_mgr.add_manual_question(
+            question,
+            target=target,
+            cadence_s=float(payload.get("cadence_s", 3.0) or 3.0),
+            interpret_as=str(payload.get("interpret_as") or "general").strip() or "general",
+        )
+        return _refresh_dashboard_vision_focus()
+    if action == "remove_question":
+        vision_mgr.remove_manual_question(str(payload.get("question") or payload.get("task_id") or ""))
+        return _refresh_dashboard_vision_focus()
+    if action == "clear_questions":
+        vision_mgr.clear_manual_questions()
+        return _refresh_dashboard_vision_focus()
+    if action == "add_sam_target":
+        vision_mgr.add_manual_sam_target(str(payload.get("target") or ""))
+        return _refresh_dashboard_vision_focus()
+    if action == "remove_sam_target":
+        vision_mgr.remove_manual_sam_target(str(payload.get("target") or ""))
+        return _refresh_dashboard_vision_focus()
+    if action == "clear_sam_targets":
+        vision_mgr.clear_manual_sam_targets()
+        return _refresh_dashboard_vision_focus()
+    if action == "refresh":
+        return _refresh_dashboard_vision_focus()
+    raise ValueError(f"unsupported vision action: {action}")
 
 
 def _push(event_type: str, data: dict) -> None:
@@ -557,6 +665,7 @@ def _voice_status_snapshot(voice_io=None) -> dict:
 def _runtime_controls_snapshot(voice_io=None, vision_mgr=None, vision_cfg=None) -> dict:
     vision_status = _vision_status_snapshot(vision_cfg=vision_cfg, vision_mgr=vision_mgr)
     voice_status = _voice_status_snapshot(voice_io=voice_io)
+    vision_focus = vision_mgr.focus_snapshot() if vision_mgr is not None and hasattr(vision_mgr, "focus_snapshot") else {"manual_questions": [], "manual_sam_targets": [], "active_focus": None}
     transport = {
         "mode": os.environ.get("CHARACTER_ENG_TRANSPORT_MODE", "").strip() or "local",
         "audio": read_metrics(os.environ.get("CHARACTER_ENG_TRANSPORT_AUDIO_METRICS_PATH")),
@@ -586,6 +695,7 @@ def _runtime_controls_snapshot(voice_io=None, vision_mgr=None, vision_cfg=None) 
         "vision_service_autostart": vision_status["auto_launch"],
         "vision_service_mode": vision_status["mode"],
         "vision_mock_replay": vision_status["mock_replay"],
+        "vision_focus": vision_focus,
         "transport": transport,
         "archive_only": bool(_archive_only_mode),
         "archive_only_reason": str(_archive_only_reason or ""),
@@ -1029,6 +1139,8 @@ def _consume_vision_updates(session, world, people, vision_mgr, scenario, script
                 if token:
                     signals.add(token)
             _, narrator_msg = process_perception(event, people, world)
+            if not narrator_msg:
+                continue
             console.print(f"[dim]{narrator_msg}[/dim]")
             session.inject_system(narrator_msg)
             _push("perception", {
@@ -1978,6 +2090,16 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
     next_session_mode = "ready" if start_paused else "live"
     pending_history_action = None
+    _set_dashboard_vision_runtime(
+        vision_mgr=vision_mgr,
+        world=None,
+        people=None,
+        script=None,
+        scenario=None,
+        model_config=micro_config,
+        voice_io=voice_io,
+        vision_cfg=vision_cfg,
+    )
 
     # Outer loop: handles /reload by restarting with fresh session
     while True:
@@ -2096,6 +2218,12 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 if handled:
                     if updated_vision_mgr is not None:
                         vision_mgr = updated_vision_mgr
+                        _set_dashboard_vision_runtime(
+                            vision_mgr=vision_mgr,
+                            voice_io=voice_io,
+                            vision_cfg=vision_cfg,
+                            model_config=micro_config,
+                        )
                     continue
                 console.print("[yellow]Ready[/yellow] — use /start to create a fresh session")
             if next_session_mode == "ready":
@@ -2145,12 +2273,23 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
             )
         if vision_mgr is not None:
             console.print("[green]Vision active[/green]")
-            if _history_service is not None and vision_cfg is not None:
-                _history_service.start_vision_capture(
-                    vision_cfg.service_url,
-                    fps=float(getattr(_app_config.history, "vision_capture_fps", DEFAULT_VISION_CAPTURE_FPS)) if _app_config else DEFAULT_VISION_CAPTURE_FPS,
-                    playback_video_fps=float(getattr(_app_config.history, "playback_video_fps", 30.0)) if _app_config else 30.0,
-                )
+
+        _set_dashboard_vision_runtime(
+            vision_mgr=vision_mgr,
+            world=world,
+            people=people,
+            script=script,
+            scenario=scenario,
+            model_config=micro_config,
+            voice_io=voice_io,
+            vision_cfg=vision_cfg,
+        )
+        if _history_service is not None and vision_cfg is not None:
+            _history_service.start_vision_capture(
+                vision_cfg.service_url,
+                fps=float(getattr(_app_config.history, "vision_capture_fps", DEFAULT_VISION_CAPTURE_FPS)) if _app_config else DEFAULT_VISION_CAPTURE_FPS,
+                playback_video_fps=float(getattr(_app_config.history, "playback_video_fps", 30.0)) if _app_config else 30.0,
+            )
         _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
 
         # Generate initial script at boot (synchronous single-beat)
@@ -3151,6 +3290,16 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 if handled:
                     vision_mgr = updated_vision_mgr
                     vision_mode = vision_mgr is not None
+                    _set_dashboard_vision_runtime(
+                        vision_mgr=vision_mgr,
+                        world=world,
+                        people=people,
+                        script=script,
+                        scenario=scenario,
+                        voice_io=voice_io,
+                        vision_cfg=vision_cfg,
+                        model_config=micro_config,
+                    )
                     continue
             if cmd == "/help":
                 show_help(voice_io is not None)
@@ -4874,6 +5023,8 @@ def main():
                 history_status_provider=_history_status_payload,
                 livekit_status_provider=_livekit_status_provider,
                 livekit_token_provider=_livekit_token_provider,
+                vision_state_provider=_dashboard_vision_state_payload,
+                vision_action_handler=_dashboard_vision_action,
                 default_character=dashboard_default_character,
                 prompt_asset_open_target=cfg.dashboard.prompt_asset_open_target,
                 prompt_asset_vscode_cmd=cfg.dashboard.prompt_asset_vscode_cmd,
@@ -4891,6 +5042,8 @@ def main():
                 history_status_provider=_history_status_payload,
                 livekit_status_provider=_livekit_status_provider,
                 livekit_token_provider=_livekit_token_provider,
+                vision_state_provider=_dashboard_vision_state_payload,
+                vision_action_handler=_dashboard_vision_action,
                 default_character=dashboard_default_character,
                 prompt_asset_open_target=cfg.dashboard.prompt_asset_open_target,
                 prompt_asset_vscode_cmd=cfg.dashboard.prompt_asset_vscode_cmd,

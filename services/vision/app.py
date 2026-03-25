@@ -165,7 +165,10 @@ def _load_sam3():
             from sam3.model.sam3_image_processor import Sam3Processor as NativeSam3Processor
 
             _sam3_model = build_sam3_image_model(device=DEVICE, eval_mode=True)
-            if DTYPE is not None:
+            # Native SAM3 has shown repeated float/bfloat16 mismatches in the live
+            # person-tracker loop; keep it on fp32 unless the caller explicitly
+            # selected fp16/32 mode.
+            if DTYPE in {torch.float16, torch.float32}:
                 _sam3_model = _sam3_model.to(dtype=DTYPE)
             _sam3_model.eval()
             _sam3_proc = NativeSam3Processor(_sam3_model, device=DEVICE)
@@ -1413,7 +1416,8 @@ if __name__ == "__main__":
         pt = PersonTracker(
             cam, sam3_getter=lambda: (_sam3_model, _sam3_proc),
             face_getter=lambda: ft.get_faces() if ft is not None else [],
-            device=DEVICE, dtype=DTYPE,
+            device=DEVICE,
+            dtype=None if DTYPE == torch.bfloat16 else DTYPE,
         )
         print("Person tracker: available", flush=True)
     except ImportError as e:

@@ -1446,6 +1446,8 @@ class SessionArchive:
         *,
         title: str,
         event_time_s: float | None,
+        window_start_s: float | None = None,
+        window_end_s: float | None = None,
         bundle: dict | None,
         tags: list[str] | None = None,
         moments_root: Path,
@@ -1453,7 +1455,19 @@ class SessionArchive:
         window_after_s: float = 10.0,
     ) -> Path:
         started_at = float(self._manifest().get("started_at", self._started_at))
-        anchor = started_at + float(event_time_s or 0.0)
+        has_explicit_window = window_start_s is not None and window_end_s is not None
+        if has_explicit_window:
+            clip_start_s = max(0.0, float(window_start_s or 0.0))
+            clip_end_s = max(clip_start_s, float(window_end_s or clip_start_s))
+            capture_start_ts = started_at + clip_start_s
+            capture_end_ts = started_at + clip_end_s
+            anchor = capture_start_ts
+        else:
+            anchor = started_at + float(event_time_s or 0.0)
+            clip_start_s = max(0.0, anchor - started_at - window_before_s)
+            clip_end_s = max(clip_start_s, anchor - started_at + window_after_s)
+            capture_start_ts = started_at + clip_start_s
+            capture_end_ts = started_at + clip_end_s
         moment_dir = moments_root / f"{self.session_id}_{_slug(title, 'moment')}_{int(_now_ts())}"
         moment_dir.mkdir(parents=True, exist_ok=True)
         checkpoint = None
@@ -1462,7 +1476,7 @@ class SessionArchive:
             checkpoint = checkpoints[-1]
             for candidate in checkpoints:
                 candidate_payload = _json_load(candidate)
-                if float(candidate_payload.get("timestamp", 0.0)) <= anchor:
+                if float(candidate_payload.get("timestamp", 0.0)) <= capture_start_ts:
                     checkpoint = candidate
         if checkpoint is not None:
             shutil.copy2(checkpoint, moment_dir / "checkpoint.json")
@@ -1480,9 +1494,21 @@ class SessionArchive:
                 clip_audio_track(
                     source,
                     moment_dir / "media" / "audio" / target_name,
-                    start_s=max(0.0, anchor - started_at - window_before_s),
-                    end_s=max(0.0, anchor - started_at + window_after_s),
+                    start_s=clip_start_s,
+                    end_s=clip_end_s,
                 )
+        conversation_mix_candidates = (
+            self.media_dir / "audio" / "conversation_mix.wav.gz",
+            self.media_dir / "audio" / "conversation_mix.wav",
+        )
+        conversation_mix = next((path for path in conversation_mix_candidates if path.exists()), None)
+        if conversation_mix is not None:
+            clip_audio_track(
+                conversation_mix,
+                moment_dir / "media" / "audio" / "conversation_mix.wav",
+                start_s=clip_start_s,
+                end_s=clip_end_s,
+            )
 
         frame_entries: list[dict] = []
         frames_jsonl = self.video_dir / "frames.jsonl"
@@ -1495,7 +1521,7 @@ class SessionArchive:
             selected = [
                 entry
                 for entry in entries
-                if anchor - window_before_s <= float(entry.get("timestamp", 0.0)) <= anchor + window_after_s
+                if capture_start_ts <= float(entry.get("timestamp", 0.0)) <= capture_end_ts
             ]
             for entry in selected:
                 src = self.video_dir / str(entry.get("path", ""))
@@ -1518,6 +1544,8 @@ class SessionArchive:
             "source_session_path": str(self.path),
             "captured_at": _iso(),
             "event_time_s": event_time_s,
+            "window_start_s": clip_start_s if has_explicit_window else None,
+            "window_end_s": clip_end_s if has_explicit_window else None,
             "window_before_s": window_before_s,
             "window_after_s": window_after_s,
             "bundle": bundle or {},
@@ -1764,6 +1792,8 @@ class HistoryService:
         return session.capture_moment(
             title=str(payload.get("title") or payload.get("label") or "moment"),
             event_time_s=payload.get("event_time_s"),
+            window_start_s=payload.get("window_start_s"),
+            window_end_s=payload.get("window_end_s"),
             bundle=payload.get("bundle"),
             tags=list(payload.get("tags") or []),
             moments_root=self.root / "moments",
@@ -1965,11 +1995,14 @@ class HistoryService:
             media_start_ts = None
             if source_session_path is not None and (source_session_path / "manifest.json").exists():
                 source_manifest = _json_load(source_session_path / "manifest.json")
-                media_start_ts = (
-                    float(source_manifest.get("started_at", 0.0))
-                    + float(manifest.get("event_time_s", 0.0) or 0.0)
-                    - float(manifest.get("window_before_s", 0.0) or 0.0)
-                )
+                if manifest.get("window_start_s") is not None:
+                    media_start_ts = float(source_manifest.get("started_at", 0.0)) + float(manifest.get("window_start_s", 0.0) or 0.0)
+                else:
+                    media_start_ts = (
+                        float(source_manifest.get("started_at", 0.0))
+                        + float(manifest.get("event_time_s", 0.0) or 0.0)
+                        - float(manifest.get("window_before_s", 0.0) or 0.0)
+                    )
             frame_entries = _parse_frames_jsonl(media_dir / "video" / "frames.jsonl")
             for index, entry in enumerate(frame_entries):
                 frame_path = session_path / str(entry.get("path", ""))

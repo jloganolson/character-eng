@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections
+import re
 import threading
 import time
 
@@ -13,6 +14,7 @@ from character_eng.vision.context import RawVisualSnapshot, VisualContext
 from character_eng.vision.interpret import vision_state_update_call
 from character_eng.vision.synthesis import SynthesisResult, vision_synthesis_call
 from character_eng.vision.focus import VisualFocusResult, visual_focus_call
+from character_eng.vision.vlm import VLMTaskSpec
 
 
 class VisionManager:
@@ -58,11 +60,14 @@ class VisionManager:
         self._collector = None
         self._emitter = None
         self._last_focus: VisualFocusResult | None = None
+        self._manual_question_specs: list[dict] = []
+        self._manual_sam_targets: list[str] = []
+        self._focus_lock = threading.Lock()
         self._paused = False
         self._emitted_vlm_answer_ids: set[str] = set()
         self._trigger_streaks: dict[str, int] = {}
         self._active_trigger_signals: set[str] = set()
-        self._system_task_signatures: dict[str, str] = {}
+        self._system_task_signatures: dict[str, dict[str, str]] = {}
         self._latest_snapshot: RawVisualSnapshot | None = None
         self._latest_cycle_event_ids: list[str] = []
         self._latest_snapshot_seq = 0
@@ -122,12 +127,26 @@ class VisionManager:
         self._paused = paused
 
     def update_focus(self, beat, stage_goal: str, thought: str, world, people, model_config: dict, scenario=None) -> None:
-        """Run visual_focus_call and update vision service questions/targets."""
+        """Apply deterministic visual focus and push active questions/targets to the vision service."""
+        with self._focus_lock:
+            manual_questions = list(self._manual_question_specs)
+            manual_sam_targets = list(self._manual_sam_targets)
         try:
-            result = visual_focus_call(beat, stage_goal, thought, world, people, model_config, scenario=scenario)
+            result = visual_focus_call(
+                beat,
+                stage_goal,
+                thought,
+                world,
+                people,
+                model_config,
+                scenario=scenario,
+                manual_questions=manual_questions,
+                manual_sam_targets=manual_sam_targets,
+            )
         except Exception:
             return
-        self._last_focus = result
+        with self._focus_lock:
+            self._last_focus = result
 
         try:
             self._client.set_questions(result.constant_vlm_specs or result.constant_questions, result.ephemeral_vlm_specs or result.ephemeral_questions)
@@ -147,7 +166,102 @@ class VisionManager:
                 "ephemeral_sam_targets": list(result.ephemeral_sam_targets),
                 "constant_vlm_specs": [spec.to_payload() for spec in result.constant_vlm_specs],
                 "ephemeral_vlm_specs": [spec.to_payload() for spec in result.ephemeral_vlm_specs],
+                "scenario_questions": list(result.scenario_questions),
+                "stage_questions": list(result.stage_questions),
+                "manual_questions": list(result.manual_questions),
+                "scenario_sam_targets": list(result.scenario_sam_targets),
+                "stage_sam_targets": list(result.stage_sam_targets),
+                "manual_sam_targets": list(result.manual_sam_targets),
             })
+
+    def focus_snapshot(self) -> dict:
+        with self._focus_lock:
+            focus = self._last_focus
+            manual_questions = list(self._manual_question_specs)
+            manual_sam_targets = list(self._manual_sam_targets)
+        return {
+            "manual_questions": [dict(item) for item in manual_questions],
+            "manual_sam_targets": list(manual_sam_targets),
+            "active_focus": None if focus is None else {
+                "constant_questions": list(focus.constant_questions),
+                "ephemeral_questions": list(focus.ephemeral_questions),
+                "constant_sam_targets": list(focus.constant_sam_targets),
+                "ephemeral_sam_targets": list(focus.ephemeral_sam_targets),
+                "constant_vlm_specs": [spec.to_payload() for spec in focus.constant_vlm_specs],
+                "ephemeral_vlm_specs": [spec.to_payload() for spec in focus.ephemeral_vlm_specs],
+                "scenario_questions": list(focus.scenario_questions),
+                "stage_questions": list(focus.stage_questions),
+                "manual_questions": list(focus.manual_questions),
+                "scenario_sam_targets": list(focus.scenario_sam_targets),
+                "stage_sam_targets": list(focus.stage_sam_targets),
+                "manual_sam_targets": list(focus.manual_sam_targets),
+            },
+        }
+
+    def add_manual_question(self, question: str, *, target: str = "scene", cadence_s: float = 3.0, interpret_as: str = "general") -> dict:
+        spec = VLMTaskSpec.from_payload({
+            "question": str(question or "").strip(),
+            "target": str(target or "scene").strip().lower() or "scene",
+            "cadence_s": float(cadence_s or 3.0),
+            "interpret_as": str(interpret_as or "general").strip() or "general",
+            "system_role": "manual",
+        }, default_id="manual")
+        payload = spec.to_payload()
+        if not payload["question"]:
+            raise ValueError("manual question cannot be empty")
+        with self._focus_lock:
+            for existing in self._manual_question_specs:
+                if str(existing.get("question", "")).strip().lower() == payload["question"].strip().lower():
+                    return dict(existing)
+            self._manual_question_specs.append(payload)
+        return payload
+
+    def remove_manual_question(self, question_or_task_id: str) -> bool:
+        key = str(question_or_task_id or "").strip().lower()
+        if not key:
+            return False
+        with self._focus_lock:
+            remaining = [
+                item
+                for item in self._manual_question_specs
+                if key not in {
+                    str(item.get("task_id", "")).strip().lower(),
+                    str(item.get("question", "")).strip().lower(),
+                }
+            ]
+            changed = len(remaining) != len(self._manual_question_specs)
+            self._manual_question_specs = remaining
+            return changed
+
+    def clear_manual_questions(self) -> None:
+        with self._focus_lock:
+            self._manual_question_specs = []
+
+    def add_manual_sam_target(self, target: str) -> str:
+        cleaned = str(target or "").strip()
+        if not cleaned:
+            raise ValueError("manual SAM target cannot be empty")
+        lowered = cleaned.lower()
+        with self._focus_lock:
+            for existing in self._manual_sam_targets:
+                if existing.lower() == lowered:
+                    return existing
+            self._manual_sam_targets.append(cleaned)
+        return cleaned
+
+    def remove_manual_sam_target(self, target: str) -> bool:
+        key = str(target or "").strip().lower()
+        if not key:
+            return False
+        with self._focus_lock:
+            remaining = [item for item in self._manual_sam_targets if item.strip().lower() != key]
+            changed = len(remaining) != len(self._manual_sam_targets)
+            self._manual_sam_targets = remaining
+            return changed
+
+    def clear_manual_sam_targets(self) -> None:
+        with self._focus_lock:
+            self._manual_sam_targets = []
 
     def get_gaze_targets(self) -> list[str]:
         targets = self._context.get_gaze_targets()
@@ -262,6 +376,8 @@ class VisionManager:
         self._recent_events = {k: v for k, v in self._recent_events.items()
                                if now - v < self._event_cooldown}
         for event_text in result.events:
+            if not self._should_emit_visual_claim(event_text, result.signals):
+                continue
             key = self._normalize_event(event_text)
             if key not in self._recent_events:
                 trace = self._trace_payload(
@@ -295,6 +411,28 @@ class VisionManager:
     def _normalize_event(text: str) -> str:
         """Normalize event text for dedup. Strips articles, lowercases, collapses whitespace."""
         return " ".join(text.lower().strip().split())
+
+    @classmethod
+    def _should_emit_visual_claim(cls, text: str, signals: list[str] | None) -> bool:
+        normalized = cls._normalize_event(text)
+        signal_set = {
+            str(item or "").strip().lower()
+            for item in (signals or [])
+            if str(item or "").strip()
+        }
+        if signal_set and signal_set.issubset({"person_visible", "person_departed"}):
+            return False
+        return normalized not in {
+            "a person appeared in view",
+            "a person has appeared in view",
+            "a person entered the room",
+            "a person has entered the room",
+            "a person is standing nearby",
+            "a person is standing in the room",
+            "a person is now visible",
+            "a person is now visible in the room",
+            "a person is no longer visible",
+        }
 
     def _queue_event(self, event: PerceptionEvent) -> None:
         with self._events_lock:
@@ -589,6 +727,43 @@ class VisionManager:
             sources.append("vlm_answers")
         return sources
 
+    @staticmethod
+    def _answer_tokens(text: str) -> set[str]:
+        stopwords = {
+            "the", "and", "with", "from", "that", "this", "there", "their",
+            "about", "right", "into", "they", "them", "near", "appears",
+            "visible", "currently", "image", "scene", "person", "room",
+        }
+        return {
+            token
+            for token in re.findall(r"[a-z0-9]+", str(text or "").lower())
+            if len(token) > 2 and token not in stopwords
+        }
+
+    @classmethod
+    def _material_answer_change(cls, previous: dict[str, str] | None, *, answer: str, interpret_as: str, target_identity: str, target_bbox) -> bool:
+        if previous is None:
+            return True
+        normalized_answer = " ".join(str(answer or "").strip().lower().split())
+        if not normalized_answer:
+            return False
+        if previous.get("target_identity", "") != str(target_identity or "").strip().lower():
+            return True
+        if previous.get("target_bbox", "") != ",".join(str(v) for v in (target_bbox or ())):
+            return True
+        if previous.get("answer", "") == normalized_answer:
+            return False
+        if interpret_as not in {"world_state", "person_description_static", "person_description_dynamic"}:
+            return True
+        prev_tokens = cls._answer_tokens(previous.get("answer", ""))
+        new_tokens = cls._answer_tokens(normalized_answer)
+        if not prev_tokens or not new_tokens:
+            return True
+        overlap = len(prev_tokens & new_tokens)
+        union = len(prev_tokens | new_tokens)
+        similarity = overlap / union if union else 0.0
+        return similarity < 0.72
+
     def _presence_provenance(self, snapshot: RawVisualSnapshot, change: str) -> dict:
         if snapshot.persons:
             primary = "person_tracker"
@@ -619,15 +794,23 @@ class VisionManager:
                 continue
             active_keys.add(signature_key)
             normalized_answer = " ".join(str(answer.answer or "").strip().lower().split())
-            signature = "|".join((
-                normalized_answer,
-                str(answer.target_identity or "").strip().lower(),
-                ",".join(str(v) for v in (answer.target_bbox or ())),
-            ))
+            signature = {
+                "answer": normalized_answer,
+                "target_identity": str(answer.target_identity or "").strip().lower(),
+                "target_bbox": ",".join(str(v) for v in (answer.target_bbox or ())),
+            }
             if not normalized_answer or normalized_answer.startswith("(error:"):
                 self._system_task_signatures[signature_key] = signature
                 continue
-            if self._system_task_signatures.get(signature_key) == signature:
+            previous_signature = self._system_task_signatures.get(signature_key)
+            if not self._material_answer_change(
+                previous_signature,
+                answer=normalized_answer,
+                interpret_as=interpret_as,
+                target_identity=answer.target_identity,
+                target_bbox=answer.target_bbox,
+            ):
+                self._system_task_signatures[signature_key] = signature
                 continue
             self._system_task_signatures[signature_key] = signature
             changed.append({
@@ -655,6 +838,11 @@ class VisionManager:
             model_config=self._model_config,
         )
         update = result.update
+        update.events = [
+            item
+            for item in update.events
+            if self._should_emit_visual_claim(item, None)
+        ]
         if not (update.remove_facts or update.add_facts or update.events or update.person_updates):
             return
 
@@ -732,8 +920,15 @@ class VisionManager:
 
     @staticmethod
     def _summarize_world_update(update) -> str:
+        filtered_events = [
+            item
+            for item in update.events
+            if VisionManager._should_emit_visual_claim(item, None)
+        ]
+        if filtered_events:
+            return filtered_events[0]
         if update.events:
-            return update.events[0]
+            return ""
         if update.add_facts:
             return update.add_facts[0]
         if update.person_updates:

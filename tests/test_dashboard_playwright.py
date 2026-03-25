@@ -2289,8 +2289,9 @@ def test_vision_state_event_defaults_snippet_mode_in_browser(
     card.click()
     page.locator("#snippet-toggle").click()
     expect(page.locator("#snippet-form")).to_be_visible()
-    expect(page.locator("#snippet-mode")).to_have_value("vision_state_turn")
-    expect(page.locator("#snippet-tags")).to_have_value("vision-state")
+    expect(page.locator("#snippet-mode")).to_have_value("vision_replay_window")
+    expect(page.locator("#snippet-tags")).to_have_value("vision-snippet")
+    expect(page.locator("#snippet-window-status")).to_contain_text("Window:")
     page.locator("#snippet-save").click()
     expect(page.locator("#annotation-status")).to_contain_text("Captured snippet:")
 

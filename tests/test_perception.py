@@ -96,6 +96,41 @@ def test_process_perception_applies_vision_state_update_directly():
     assert "Wearing a blue jacket" in person.facts.values()
 
 
+def test_process_perception_drops_generic_visual_presence_claims():
+    world = WorldState()
+    people = PeopleState()
+    event = PerceptionEvent(
+        description="A person is now visible in the room",
+        source="visual",
+        kind="visual_claim",
+        payload={"signals": ["person_visible"]},
+    )
+
+    _, narrator = process_perception(event, people, world)
+
+    assert narrator == ""
+    assert world.pending == []
+
+
+def test_process_perception_filters_generic_presence_events_from_vision_state_update():
+    world = WorldState()
+    people = PeopleState()
+    event = PerceptionEvent(
+        description="Updated room description",
+        source="visual",
+        kind="vision_state_update",
+        payload={
+            "add_facts": ["A wall clock is visible"],
+            "events": ["A person appeared in view", "The visitor is checking a phone"],
+        },
+    )
+
+    _, narrator = process_perception(event, people, world)
+
+    assert narrator == "[Updated room description]"
+    assert world.events == ["The visitor is checking a phone"]
+
+
 # --- SimScript loading ---
 
 

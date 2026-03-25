@@ -1800,6 +1800,110 @@
     border-radius: 4px;
     margin-bottom: 0.3em;
   }
+  .vision-stage {
+    position: relative;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #000;
+    margin-bottom: 0.45em;
+  }
+  .vision-stage img,
+  .vision-stage video,
+  .vision-stage canvas {
+    display: block;
+    width: 100%;
+  }
+  #vision-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .vision-debug-panel {
+    display: grid;
+    gap: 0.5em;
+    margin-top: 0.45em;
+  }
+  .vision-debug-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel-hover);
+    padding: 0.55em 0.65em;
+    display: grid;
+    gap: 0.42em;
+  }
+  .vision-debug-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75em;
+    align-items: center;
+    font-size: 0.82em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .vision-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35em;
+  }
+  .vision-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28em;
+    padding: 0.24em 0.52em;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border);
+    font-size: 0.78em;
+    line-height: 1.3;
+  }
+  .vision-chip button {
+    border: 0;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 0;
+    font-size: 0.88em;
+  }
+  .vision-chip.scope-system { border-color: color-mix(in srgb, var(--cyan) 55%, var(--border) 45%); }
+  .vision-chip.scope-scenario { border-color: color-mix(in srgb, var(--advance) 55%, var(--border) 45%); }
+  .vision-chip.scope-stage { border-color: color-mix(in srgb, var(--planner) 55%, var(--border) 45%); }
+  .vision-chip.scope-manual { border-color: color-mix(in srgb, var(--warn) 55%, var(--border) 45%); }
+  .vision-inline-form {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) auto auto;
+    gap: 0.35em;
+  }
+  .vision-inline-form input,
+  .vision-inline-form select {
+    min-width: 0;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel-bg);
+    color: var(--text);
+    padding: 0.42em 0.52em;
+  }
+  .vision-inline-form button,
+  .vision-debug-actions button,
+  .snippet-window-actions button {
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel-bg);
+    color: var(--text);
+    padding: 0.42em 0.58em;
+    cursor: pointer;
+  }
+  .vision-debug-actions,
+  .snippet-window-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35em;
+  }
+  .vision-empty {
+    color: var(--text-dim);
+    font-size: 0.82em;
+  }
   #vision-meta {
     font-size: 0.92em;
     line-height: 1.45;
@@ -2186,7 +2290,16 @@
                 <option value="vision_state_turn">Vision State Turn</option>
                 <option value="vision_full_stack">Vision Full Stack</option>
                 <option value="vision_synthesis_inputs">Vision Synthesis Inputs</option>
+                <option value="vision_replay_window">Vision Replay Window</option>
               </select>
+              <div id="snippet-window-tools" style="display:none;margin-bottom:0.45em;">
+                <div class="snippet-window-actions">
+                  <button class="detail-action" id="snippet-mark-in" type="button">Mark In</button>
+                  <button class="detail-action" id="snippet-mark-out" type="button">Mark Out</button>
+                  <button class="detail-action" id="snippet-clear-window" type="button">Clear Window</button>
+                </div>
+                <div id="snippet-window-status" class="detail-inline-empty" style="margin-top:0.45em;padding:0.5em 0.6em;">Mark an in/out range from the archive timeline or selected event.</div>
+              </div>
               <div class="detail-actions">
                 <button class="detail-action" id="snippet-save" type="button">Save Snippet</button>
                 <button class="detail-action" id="snippet-cancel" type="button">Cancel</button>
@@ -2256,10 +2369,13 @@
     <div class="sidebar-panel" id="vision-panel" data-panel-region="sidebar" data-panel-id="vision" data-panel-scope="session">
       <h3>Vision</h3>
       <div class="content">
-        <video id="livekit-preview" autoplay playsinline muted style="display:none;width:100%;border-radius:10px;background:#0d1117;margin-bottom:0.5em;"></video>
+        <div class="vision-stage" id="vision-stage">
+          <video id="livekit-preview" autoplay playsinline muted style="display:none;width:100%;border-radius:10px;background:#0d1117;"></video>
+          <img id="vision-feed" alt="Vision feed">
+          <video id="archive-media-player" preload="metadata" playsinline></video>
+          <canvas id="vision-overlay"></canvas>
+        </div>
         <div id="livekit-preview-status" style="display:none;margin-bottom:0.5em;color:var(--text-dim);font-size:0.82em;"></div>
-        <img id="vision-feed" alt="Vision feed">
-        <video id="archive-media-player" preload="metadata" playsinline></video>
         <audio id="archive-audio-playback" preload="auto" style="width:100%;margin-top:0.45em;display:none;" controls></audio>
         <div id="archive-media-status"></div>
         <div id="vision-meta"></div>
@@ -2455,6 +2571,8 @@
   let visionModels = null;
   let visionMemory = null;
   let visionFeedSrc = "";
+  let runtimeVisionFocusState = {manual_questions: [], manual_sam_targets: [], active_focus: null};
+  let liveVisionOverlayState = {faces: [], persons: [], objects: [], vlmTargets: []};
   let conversationPaused = false;
   let voiceActive = false;
   let voiceStatus = {
@@ -2727,6 +2845,11 @@
   const snippetTitleInput = document.getElementById("snippet-title");
   const snippetTagsInput = document.getElementById("snippet-tags");
   const snippetModeSelect = document.getElementById("snippet-mode");
+  const snippetWindowTools = document.getElementById("snippet-window-tools");
+  const snippetWindowStatus = document.getElementById("snippet-window-status");
+  const snippetMarkInButton = document.getElementById("snippet-mark-in");
+  const snippetMarkOutButton = document.getElementById("snippet-mark-out");
+  const snippetClearWindowButton = document.getElementById("snippet-clear-window");
   const annotationForm = document.getElementById("annotation-form");
   const annotationTagsInput = document.getElementById("annotation-tags");
   const annotationSubsystemInput = document.getElementById("annotation-subsystem");
@@ -2745,6 +2868,9 @@
   const archiveAudioPlayback = document.getElementById("archive-audio-playback");
   const archiveMediaPlayer = document.getElementById("archive-media-player");
   const archiveMediaStatusEl = document.getElementById("archive-media-status");
+  const visionMetaEl = document.getElementById("vision-meta");
+  const visionOverlayCanvas = document.getElementById("vision-overlay");
+  const visionStageEl = document.getElementById("vision-stage");
   const runtimeSummaryGrid = document.getElementById("runtime-summary-grid");
   const bootPanel = document.getElementById("boot-panel");
   const detailFramePanel = document.getElementById("inspector-frame-panel");
@@ -2783,6 +2909,8 @@
   let promptPreviewBlocks = [];
   let promptModalOpen = false;
   let inspectorFrameRequestId = 0;
+  let snippetWindowStartS = null;
+  let snippetWindowEndS = null;
   const bootSearchParams = new URLSearchParams(window.location.search);
   const bootArchiveRef = bootSearchParams.get("archive") || "";
   const rawBootOverrideName = bootSearchParams.get("boot") || "";
@@ -2938,7 +3066,8 @@
   function resetSidebarPanelContent(id) {
     switch (id) {
       case "vision":
-        renderSidebarPanelContent("vision", "", {status: "idle", visible: true});
+        renderVisionMeta();
+        setSidebarPanelVisibility("vision", true, "idle");
         document.getElementById("vision-model-status").innerHTML = "";
         break;
       case "prompt_assets":
@@ -6729,6 +6858,8 @@
     pendingReplayArchiveRef = "";
     pendingReplayEventTime = null;
     playbackVisionFrame = null;
+    runtimeVisionFocusState = {manual_questions: [], manual_sam_targets: [], active_focus: null};
+    liveVisionOverlayState = {faces: [], persons: [], objects: [], vlmTargets: []};
     stopArchiveAudioPlayback();
     archiveMediaPlayer.pause();
     archiveMediaPlayer.classList.remove("visible");
@@ -6768,6 +6899,8 @@
     detailFrameEmpty.style.display = "";
     detailFrameEmpty.textContent = "Select an archived vision event to inspect its nearest captured frame.";
     runtimePhase = "unknown";
+    renderVisionMeta();
+    renderVisionOverlay();
     document.getElementById("boot-summary").textContent = message;
     document.getElementById("boot-overlay-summary").textContent = message;
     setDetailTab(activeDetailTab);
@@ -6810,6 +6943,8 @@
     pendingReplayArchiveRef = "";
     pendingReplayEventTime = null;
     playbackVisionFrame = null;
+    runtimeVisionFocusState = {manual_questions: [], manual_sam_targets: [], active_focus: null};
+    liveVisionOverlayState = {faces: [], persons: [], objects: [], vlmTargets: []};
     stopArchiveAudioPlayback();
     archiveMediaPlayer.pause();
     archiveMediaPlayer.classList.remove("visible");
@@ -6852,6 +6987,8 @@
     visionMemory = null;
     modelPollError = "";
     visionFeedSrc = "";
+    renderVisionMeta();
+    renderVisionOverlay();
     resetSidebarPanels();
     resetSidebarPanelContentAll();
     document.getElementById("runtime-status").innerHTML = "Waiting for runtime state...";
@@ -6911,6 +7048,254 @@
     return "";
   }
 
+  function currentVisionFocus() {
+    return runtimeVisionFocusState.active_focus || latestRuntimePayload?.vision_focus?.active_focus || null;
+  }
+
+  function questionScopeClass(spec, focus) {
+    const role = String(spec?.system_role || "").toLowerCase();
+    if (role === "manual") return "scope-manual";
+    if (role === "scenario") return "scope-scenario";
+    if (role === "stage") return "scope-stage";
+    if (role === "system_core") return "scope-system";
+    if ((focus?.manual_questions || []).includes(spec?.question)) return "scope-manual";
+    return "scope-system";
+  }
+
+  function samScopeClass(target, focus) {
+    const value = String(target || "");
+    if ((focus?.manual_sam_targets || []).includes(value)) return "scope-manual";
+    if ((focus?.stage_sam_targets || []).includes(value)) return "scope-stage";
+    if ((focus?.scenario_sam_targets || []).includes(value)) return "scope-scenario";
+    return "scope-system";
+  }
+
+  async function fetchVisionState() {
+    const response = await fetch("/vision/state");
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error || `vision state ${response.status}`);
+    runtimeVisionFocusState = payload.focus || runtimeVisionFocusState;
+    renderVisionMeta();
+    renderVisionOverlay();
+    return payload;
+  }
+
+  async function mutateVisionConfig(action, payload = {}) {
+    annotationStatus.textContent = "Updating vision focus...";
+    const response = await fetch("/vision/config", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({action, ...payload}),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || `vision config ${response.status}`);
+    runtimeVisionFocusState = data.focus || runtimeVisionFocusState;
+    renderVisionMeta();
+    renderVisionOverlay();
+    annotationStatus.textContent = "Vision focus updated.";
+    return data;
+  }
+
+  function archiveVisionOverlayState() {
+    const target = selectedEvent() || streamEvents[streamEvents.length - 1] || null;
+    if (!target) return {faces: [], persons: [], objects: [], vlmTargets: []};
+    const result = {faces: [], persons: [], objects: [], vlmTargets: []};
+    for (let index = streamEvents.length - 1; index >= 0; index -= 1) {
+      const candidate = streamEvents[index];
+      if (candidate.timestamp > target.timestamp) continue;
+      if (!result.faces.length && candidate.type === "face_tracking" && Array.isArray(candidate.data?.faces)) {
+        result.faces = candidate.data.faces;
+      }
+      if ((!result.persons.length || !result.objects.length) && candidate.type === "sam3_detection") {
+        if (!result.persons.length && Array.isArray(candidate.data?.persons)) result.persons = candidate.data.persons;
+        if (!result.objects.length && Array.isArray(candidate.data?.objects)) result.objects = candidate.data.objects;
+      }
+      if (candidate.type === "vlm_answer" && Array.isArray(candidate.data?.target_bbox) && candidate.data.target_bbox.length === 4) {
+        if (Math.abs(Number(target.timestamp || 0) - Number(candidate.timestamp || 0)) <= 2000) {
+          result.vlmTargets.push(candidate.data);
+        }
+      }
+      if (result.faces.length && result.persons.length && result.objects.length) break;
+    }
+    return result;
+  }
+
+  function currentVisionOverlayState() {
+    if (archiveBrowseRef || historyState.playback?.active) return archiveVisionOverlayState();
+    return liveVisionOverlayState;
+  }
+
+  function activeVisionMediaElement() {
+    if (archiveMediaPlayer.classList.contains("visible") && archiveMediaPlayer.videoWidth > 0) return archiveMediaPlayer;
+    const visionFeed = document.getElementById("vision-feed");
+    if (visionFeed && visionFeed.style.display !== "none" && visionFeed.naturalWidth > 0) return visionFeed;
+    return null;
+  }
+
+  function drawOverlayRect(ctx, bbox, label, color) {
+    if (!Array.isArray(bbox) || bbox.length !== 4) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(bbox[0], bbox[1], bbox[2], bbox[3]);
+    const text = String(label || "").trim();
+    if (!text) return;
+    ctx.font = "12px ui-monospace, SFMono-Regular, monospace";
+    const width = Math.ceil(ctx.measureText(text).width) + 10;
+    const x = bbox[0];
+    const y = Math.max(14, bbox[1] - 6);
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y - 14, width, 16);
+    ctx.fillStyle = "#111";
+    ctx.fillText(text, x + 5, y - 2);
+  }
+
+  function renderVisionOverlay() {
+    const media = activeVisionMediaElement();
+    if (!media) {
+      visionOverlayCanvas.width = 1;
+      visionOverlayCanvas.height = 1;
+      visionOverlayCanvas.style.display = "none";
+      return;
+    }
+    const sourceWidth = media.videoWidth || media.naturalWidth || 0;
+    const sourceHeight = media.videoHeight || media.naturalHeight || 0;
+    const displayWidth = Math.max(1, Math.round(media.clientWidth || sourceWidth || 1));
+    const displayHeight = Math.max(1, Math.round(media.clientHeight || (sourceWidth && sourceHeight ? (displayWidth * sourceHeight) / sourceWidth : 1)));
+    visionOverlayCanvas.width = displayWidth;
+    visionOverlayCanvas.height = displayHeight;
+    visionOverlayCanvas.style.display = "";
+    const ctx = visionOverlayCanvas.getContext("2d");
+    ctx.clearRect(0, 0, displayWidth, displayHeight);
+    if (!(sourceWidth > 0 && sourceHeight > 0)) return;
+    const scaleX = displayWidth / sourceWidth;
+    const scaleY = displayHeight / sourceHeight;
+    ctx.save();
+    ctx.scale(scaleX, scaleY);
+    const overlay = currentVisionOverlayState();
+    (overlay.faces || []).forEach((face) => drawOverlayRect(ctx, face.bbox, face.identity || "face", "#76d6ff"));
+    (overlay.persons || []).forEach((person) => drawOverlayRect(ctx, person.bbox, person.identity || `person ${person.track_id ?? ""}`.trim(), "#72ff93"));
+    (overlay.objects || []).forEach((obj) => drawOverlayRect(ctx, obj.bbox, obj.label || "object", "#ffc857"));
+    (overlay.vlmTargets || []).forEach((item) => {
+      drawOverlayRect(ctx, item.target_bbox, item.label || item.task_id || "vlm", "#ff8cf7");
+    });
+    ctx.restore();
+  }
+
+  function renderVisionMeta() {
+    const focus = currentVisionFocus();
+    const specs = focus?.constant_vlm_specs || [];
+    const samTargets = focus?.constant_sam_targets || [];
+    const specsHtml = specs.length
+      ? specs.map((spec) => `
+          <span class="vision-chip ${questionScopeClass(spec, focus)}">
+            <span>${esc(spec.label || spec.question || spec.task_id || "vision")}</span>
+            <span style="color:var(--text-dim)">${esc(spec.target || "scene")}</span>
+            ${String(spec.system_role || "") === "manual" ? `<button type="button" data-remove-question="${esc(spec.task_id || spec.question || "")}" aria-label="Remove question">x</button>` : ""}
+          </span>
+        `).join("")
+      : '<div class="vision-empty">No active VLM specs.</div>';
+    const samHtml = samTargets.length
+      ? samTargets.map((target) => `
+          <span class="vision-chip ${samScopeClass(target, focus)}">
+            <span>${esc(target)}</span>
+            ${(focus?.manual_sam_targets || []).includes(target) ? `<button type="button" data-remove-sam="${esc(target)}" aria-label="Remove SAM target">x</button>` : ""}
+          </span>
+        `).join("")
+      : '<div class="vision-empty">No active SAM3 targets.</div>';
+    visionMetaEl.innerHTML = `
+      <div class="vision-debug-panel">
+        <div class="vision-debug-card">
+          <div class="vision-debug-head">
+            <span>Active VLM</span>
+            <span>${specs.length} spec${specs.length === 1 ? "" : "s"}</span>
+          </div>
+          <div class="vision-chip-list">${specsHtml}</div>
+          <div class="vision-inline-form">
+            <input id="vision-manual-question" type="text" placeholder="Add manual VLM question">
+            <select id="vision-manual-question-target">
+              <option value="scene">scene</option>
+              <option value="nearest_person">nearest person</option>
+            </select>
+            <button type="button" id="vision-add-question">Add</button>
+          </div>
+        </div>
+        <div class="vision-debug-card">
+          <div class="vision-debug-head">
+            <span>Active SAM3</span>
+            <span>${samTargets.length} target${samTargets.length === 1 ? "" : "s"}</span>
+          </div>
+          <div class="vision-chip-list">${samHtml}</div>
+          <div class="vision-inline-form">
+            <input id="vision-manual-sam-target" type="text" placeholder="Add manual SAM3 target">
+            <button type="button" id="vision-add-sam-target" style="grid-column: span 2;">Add</button>
+          </div>
+          <div class="vision-debug-actions">
+            <button type="button" id="vision-refresh-focus">Refresh Vision Focus</button>
+            <button type="button" id="vision-clear-manual">Clear Manual Overrides</button>
+          </div>
+        </div>
+      </div>
+    `;
+    const addQuestionButton = document.getElementById("vision-add-question");
+    const addSamButton = document.getElementById("vision-add-sam-target");
+    const refreshButton = document.getElementById("vision-refresh-focus");
+    const clearButton = document.getElementById("vision-clear-manual");
+    addQuestionButton?.addEventListener("click", async () => {
+      const input = document.getElementById("vision-manual-question");
+      const target = document.getElementById("vision-manual-question-target");
+      const question = String(input?.value || "").trim();
+      if (!question) return;
+      try {
+        await mutateVisionConfig("add_question", {question, target: target?.value || "scene"});
+      } catch (error) {
+        annotationStatus.textContent = `Vision update failed: ${error.message || error}`;
+      }
+    });
+    addSamButton?.addEventListener("click", async () => {
+      const input = document.getElementById("vision-manual-sam-target");
+      const target = String(input?.value || "").trim();
+      if (!target) return;
+      try {
+        await mutateVisionConfig("add_sam_target", {target});
+      } catch (error) {
+        annotationStatus.textContent = `Vision update failed: ${error.message || error}`;
+      }
+    });
+    refreshButton?.addEventListener("click", async () => {
+      try {
+        await mutateVisionConfig("refresh");
+      } catch (error) {
+        annotationStatus.textContent = `Vision refresh failed: ${error.message || error}`;
+      }
+    });
+    clearButton?.addEventListener("click", async () => {
+      try {
+        await mutateVisionConfig("clear_questions");
+        await mutateVisionConfig("clear_sam_targets");
+      } catch (error) {
+        annotationStatus.textContent = `Vision clear failed: ${error.message || error}`;
+      }
+    });
+    visionMetaEl.querySelectorAll("[data-remove-question]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        try {
+          await mutateVisionConfig("remove_question", {task_id: button.getAttribute("data-remove-question") || ""});
+        } catch (error) {
+          annotationStatus.textContent = `Vision update failed: ${error.message || error}`;
+        }
+      });
+    });
+    visionMetaEl.querySelectorAll("[data-remove-sam]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        try {
+          await mutateVisionConfig("remove_sam_target", {target: button.getAttribute("data-remove-sam") || ""});
+        } catch (error) {
+          annotationStatus.textContent = `Vision update failed: ${error.message || error}`;
+        }
+      });
+    });
+  }
+
   function updateVisionFeedUrl() {
     const visionFeed = document.getElementById("vision-feed");
     if (archiveBrowseRef && archivePlaybackMediaAvailable()) {
@@ -6951,6 +7336,7 @@
       visionFeed.style.display = "none";
       visionFeed.removeAttribute("src");
       visionFeedSrc = "";
+      renderVisionOverlay();
       return;
     }
     if (nextSrc === visionFeedSrc) return;
@@ -6977,6 +7363,8 @@
       linkEl.style.pointerEvents = "auto";
       linkEl.style.opacity = "1";
       updateVisionFeedUrl();
+      renderVisionMeta();
+      renderVisionOverlay();
       renderBootStatus();
       return;
     }
@@ -7009,6 +7397,8 @@
       linkEl.style.opacity = "0.55";
     }
     updateVisionFeedUrl();
+    renderVisionMeta();
+    renderVisionOverlay();
     renderBootStatus();
   }
 
@@ -7841,17 +8231,14 @@
   function defaultSnippetModeForEvent(event) {
     if (!event) return "turn_context";
     if (event.type === "response_interrupted" || (event.type === "assistant_reply" && event.data?.interrupted)) return "barge_in_turn";
-    if (event.type === "vision_state_update") return "vision_state_turn";
-    if (event.type === "vlm_answer" && ["world_state", "person_description_static", "person_description_dynamic"].includes(String(event.data?.interpret_as || ""))) {
-      return "vision_state_turn";
-    }
-    if (event.type === "vision_pass" || event.type === "perception") return "vision_synthesis_inputs";
-    if (["vision_snapshot", "vision_focus", "vision_snapshot_read", "face_tracking", "sam3_detection", "reid_track", "vision_trigger", "vision_state_update", "vlm_answer"].includes(event.type)) return "vision_full_stack";
+    if (event.type === "perception") return "vision_synthesis_inputs";
+    if (isVisionEvent(event)) return "vision_replay_window";
     return "turn_context";
   }
 
   function defaultSnippetTags(mode) {
     if (mode === "barge_in_turn") return "barge-in";
+    if (mode === "vision_replay_window") return "vision-snippet";
     if (mode === "vision_state_turn") return "vision-state";
     if (mode === "vision_full_stack") return "vision";
     if (mode === "vision_synthesis_inputs") return "vision-synthesis";
@@ -7867,6 +8254,14 @@
         buttonLabel: "Capture Interrupt Snippet",
         formTitle: "Interrupt Snippet",
         description: "Captures the interruption timing, transcript, and assistant speech context around this event.",
+      };
+    }
+    if (mode === "vision_replay_window") {
+      return {
+        mode,
+        buttonLabel: "Capture Vision Window",
+        formTitle: "Vision Replay Window",
+        description: "Captures a marked in/out archive window so the saved video frames can be replayed back through vision while you iterate.",
       };
     }
     if (mode === "vision_state_turn") {
@@ -7989,17 +8384,80 @@
     };
   }
 
+  function currentSnippetMarkTime() {
+    if (archiveTimelineCursorTime != null && Number.isFinite(Number(archiveTimelineCursorTime))) {
+      return Number(archiveTimelineCursorTime);
+    }
+    const event = selectedEvent();
+    if (event) return Number(relativeTime(event.timestamp).toFixed(3));
+    return null;
+  }
+
+  function snippetWindowBounds() {
+    if (snippetWindowStartS == null || snippetWindowEndS == null) return null;
+    const start = Math.min(Number(snippetWindowStartS), Number(snippetWindowEndS));
+    const end = Math.max(Number(snippetWindowStartS), Number(snippetWindowEndS));
+    return {start, end, duration: Math.max(0, end - start)};
+  }
+
+  function defaultSnippetReplayWindow(event) {
+    if (!event) return null;
+    const anchor = Number(relativeTime(event.timestamp).toFixed(3));
+    if (!Number.isFinite(anchor)) return null;
+    const duration = Math.max(0, Number(archiveMediaDuration || archiveMediaPlayer.duration || 0));
+    let start = Math.max(0, anchor - 10);
+    let end = anchor + 10;
+    if (duration > 0) {
+      start = Math.min(start, duration);
+      end = Math.min(end, duration);
+    }
+    if (end <= start) {
+      end = duration > 0 ? Math.min(duration, start + 0.25) : start + 0.25;
+    }
+    return {
+      start: Number(start.toFixed(3)),
+      end: Number(end.toFixed(3)),
+    };
+  }
+
+  function ensureSnippetReplayWindow(event, {force = false} = {}) {
+    const mode = snippetModeSelect.value || defaultSnippetModeForEvent(event);
+    if (mode !== "vision_replay_window") return;
+    if (!force && snippetWindowStartS != null && snippetWindowEndS != null) return;
+    const defaults = defaultSnippetReplayWindow(event);
+    if (!defaults) return;
+    snippetWindowStartS = defaults.start;
+    snippetWindowEndS = defaults.end;
+  }
+
+  function renderSnippetWindowStatus() {
+    const bounds = snippetWindowBounds();
+    const selectedMode = snippetModeSelect.value || defaultSnippetModeForEvent(selectedEvent());
+    const visible = selectedMode === "vision_replay_window";
+    snippetWindowTools.style.display = visible ? "" : "none";
+    if (!visible) return;
+    if (!bounds) {
+      snippetWindowStatus.textContent = "Mark an in/out range from the archive timeline or selected event.";
+      return;
+    }
+    snippetWindowStatus.textContent = `Window: +${bounds.start.toFixed(2)}s → +${bounds.end.toFixed(2)}s (${bounds.duration.toFixed(2)}s)`;
+  }
+
   function setSnippetFormOpen(open) {
     snippetFormOpen = !!open;
     snippetForm.style.display = snippetFormOpen ? "" : "none";
     const spec = snippetSpecForEvent(selectedEvent());
     snippetToggleButton.textContent = snippetFormOpen ? "Close Snippet Form" : (spec?.buttonLabel || "Capture Snippet");
+    if (snippetFormOpen) {
+      ensureSnippetReplayWindow(selectedEvent());
+    }
     if (!snippetFormOpen) {
       snippetTitleInput.value = "";
       snippetTagsInput.value = "";
       snippetModeSelect.value = "turn_context";
       snippetKindEl.innerHTML = "";
     }
+    renderSnippetWindowStatus();
   }
 
   function applySnippetUiForEvent(event) {
@@ -8014,6 +8472,7 @@
     }
     snippetModeSelect.value = spec.mode;
     snippetKindEl.innerHTML = `<strong>${esc(spec.formTitle)}</strong><div style="margin-top:0.18em;">${esc(spec.description)}</div>`;
+    renderSnippetWindowStatus();
   }
 
   async function visionInputsForEvent(event) {
@@ -8100,6 +8559,8 @@
     loadedAnnotationSessionId = "";
     annotationFormOpen = false;
     snippetFormOpen = false;
+    snippetWindowStartS = null;
+    snippetWindowEndS = null;
     annotationForm.style.display = "none";
     snippetForm.style.display = "none";
     annotationToggleButton.textContent = "Annotate Event";
@@ -8113,6 +8574,7 @@
     snippetTagsInput.value = "";
     snippetModeSelect.value = "turn_context";
     snippetKindEl.innerHTML = "";
+    renderSnippetWindowStatus();
     annotationList.innerHTML = '<div style="color:var(--text-dim);">Select a debug timeline event to inspect or annotate it.</div>';
   }
 
@@ -8405,11 +8867,15 @@
       bundle.capture_mode = spec.mode;
       if (bundle.capture_mode === "barge_in_turn") {
         bundle.barge_in = bargeInInputsForEvent(event, bundle);
-      } else if (bundle.capture_mode === "vision_state_turn") {
+      } else if (bundle.capture_mode === "vision_state_turn" || bundle.capture_mode === "vision_replay_window") {
         bundle.vision_state = visionStateInputsForEvent(event, bundle);
-        if (!bundle.vision_state || !bundle.vision_state.task_answers || !bundle.vision_state.task_answers.length) {
+        if (bundle.capture_mode === "vision_state_turn" && (!bundle.vision_state || !bundle.vision_state.task_answers || !bundle.vision_state.task_answers.length)) {
           throw new Error("This event does not have enough vision-state context to capture a vision-state snippet.");
         }
+      }
+      const replayWindow = bundle.capture_mode === "vision_replay_window" ? snippetWindowBounds() : null;
+      if (bundle.capture_mode === "vision_replay_window" && !replayWindow) {
+        throw new Error("Mark both snippet in and out before capturing a vision replay window.");
       }
       const snippetTags = snippetTagsInput.value
         .split(",")
@@ -8422,8 +8888,10 @@
         capture_mode: bundle.capture_mode,
         event_time_s: Number(relativeTime(event.timestamp).toFixed(3)),
         bundle,
-        window_before_s: 10,
-        window_after_s: 10,
+        window_before_s: replayWindow ? 0 : 10,
+        window_after_s: replayWindow ? 0 : 10,
+        window_start_s: replayWindow ? replayWindow.start : null,
+        window_end_s: replayWindow ? replayWindow.end : null,
       });
       renderHistoryState({...result.status, enabled: true});
       refreshHistoryArchives();
@@ -9058,6 +9526,8 @@
       seekArchiveMedia(relativeTime(event.timestamp), {syncSelection: false});
     }
     updateVisionFeedUrl();
+    renderSnippetWindowStatus();
+    renderVisionOverlay();
   }
 
   function openSelectedEventJson() {
@@ -10397,7 +10867,8 @@
           return `<b>${esc(answer.label || answer.task_id || answer.question || "vision")}</b>: ${esc(answer.answer || "")}`;
         }).join("<br>");
       }
-      renderSidebarPanelContent("vision", html, {status: "ready", visible: true});
+      setSidebarPanelVisibility("vision", true, "ready");
+      renderVisionMeta();
       rawEvent.turnId = currentTurnId || null;
       recordEvent("vision_snapshot", data, rawEvent);
       renderStream();
@@ -10412,6 +10883,14 @@
 
     vision_focus(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
+      runtimeVisionFocusState = {
+        ...runtimeVisionFocusState,
+        active_focus: {
+          ...(runtimeVisionFocusState.active_focus || {}),
+          ...data,
+        },
+      };
+      renderVisionMeta();
       recordEvent("vision_focus", data, rawEvent);
       renderStream();
     },
@@ -10423,11 +10902,19 @@
 
     face_tracking(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
+      liveVisionOverlayState = {...liveVisionOverlayState, faces: data.faces || []};
+      renderVisionOverlay();
       recordEvent("face_tracking", data, rawEvent);
     },
 
     sam3_detection(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
+      liveVisionOverlayState = {
+        ...liveVisionOverlayState,
+        persons: data.persons || [],
+        objects: data.objects || [],
+      };
+      renderVisionOverlay();
       recordEvent("sam3_detection", data, rawEvent);
     },
 
@@ -10448,6 +10935,13 @@
 
     vlm_answer(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
+      if (Array.isArray(data.target_bbox) && data.target_bbox.length === 4) {
+        liveVisionOverlayState = {
+          ...liveVisionOverlayState,
+          vlmTargets: [...(liveVisionOverlayState.vlmTargets || []).filter((item) => item.task_id !== data.task_id), data].slice(-6),
+        };
+        renderVisionOverlay();
+      }
       recordEvent("vlm_answer", data, rawEvent);
     },
 
@@ -10588,6 +11082,7 @@
       voiceStatus = data.voice_status || voiceStatus;
       transportStatus = data.transport || transportStatus;
       latestRuntimePayload = {...data, runtime_phase: currentRuntimePhase()};
+      runtimeVisionFocusState = data.vision_focus || runtimeVisionFocusState;
       visionManagerActive = !!data.vision_active;
       visionService = {
         url: data.vision_service_url || "",
@@ -10606,6 +11101,8 @@
       renderRuntimeControlButtons();
       updateRuntimeButtons();
       updateVisionFeedUrl();
+      renderVisionMeta();
+      renderVisionOverlay();
       renderVisionServiceStatus();
       pollVisionModelStatus();
       recordEvent("runtime_controls", data, rawEvent);
@@ -10932,6 +11429,7 @@
     updateRuntimeButtons();
     updateTimelinePlayhead();
     renderArchiveTransport();
+    renderVisionOverlay();
   });
   archiveMediaPlayer.addEventListener("play", () => {
     if (archiveTimelineCursorPinned) {
@@ -10953,10 +11451,14 @@
       archiveTimelineCursorPinned = false;
     }
     updateTimelinePlayhead();
+    renderVisionOverlay();
     if (archiveMediaSeekLock || archiveMediaScrubbing) return;
     const key = nearestEventKeyForTime(archiveMediaPlayer.currentTime || 0);
     if (key && key !== selectedStreamKey) selectEvent(key, {seekMedia: false, syncTimeline: false});
   });
+  archiveMediaPlayer.addEventListener("seeked", renderVisionOverlay);
+  document.getElementById("vision-feed").addEventListener("load", renderVisionOverlay);
+  window.addEventListener("resize", renderVisionOverlay);
   streamRuler.addEventListener("pointerdown", (event) => {
     if (!archiveBrowseRef || !archivePlaybackMediaAvailable()) return;
     archiveMediaScrubbing = true;
@@ -11058,10 +11560,38 @@
       return;
     }
     snippetModeSelect.value = spec.mode;
+    ensureSnippetReplayWindow(event, {force: true});
     snippetTitleInput.value = event.label || event.type || spec.formTitle || "snippet";
     snippetTagsInput.value = defaultSnippetTags(spec.mode);
     snippetKindEl.innerHTML = `<strong>${esc(spec.formTitle)}</strong><div style="margin-top:0.18em;">${esc(spec.description)}</div>`;
     setSnippetFormOpen(!snippetFormOpen);
+  });
+  snippetModeSelect.addEventListener("change", () => {
+    ensureSnippetReplayWindow(selectedEvent());
+    renderSnippetWindowStatus();
+  });
+  snippetMarkInButton.addEventListener("click", () => {
+    const when = currentSnippetMarkTime();
+    if (when == null) {
+      annotationStatus.textContent = "No archive time is available to mark snippet start.";
+      return;
+    }
+    snippetWindowStartS = Number(when.toFixed(3));
+    renderSnippetWindowStatus();
+  });
+  snippetMarkOutButton.addEventListener("click", () => {
+    const when = currentSnippetMarkTime();
+    if (when == null) {
+      annotationStatus.textContent = "No archive time is available to mark snippet end.";
+      return;
+    }
+    snippetWindowEndS = Number(when.toFixed(3));
+    renderSnippetWindowStatus();
+  });
+  snippetClearWindowButton.addEventListener("click", () => {
+    snippetWindowStartS = null;
+    snippetWindowEndS = null;
+    renderSnippetWindowStatus();
   });
   snippetSaveButton.addEventListener("click", captureSelectedMoment);
   snippetCancelButton.addEventListener("click", () => setSnippetFormOpen(false));
@@ -12145,6 +12675,7 @@
     bridgeMetrics.visionNaturalWidth = visionFeed.naturalWidth || 0;
     bridgeMetrics.visionNaturalHeight = visionFeed.naturalHeight || 0;
     bridgeMetrics.visionFeedSrc = visionFeed.currentSrc || visionFeed.src || "";
+    renderVisionOverlay();
     updateBridgeMetricsSummary();
   };
   visionFeed.onerror = () => {
@@ -12154,6 +12685,8 @@
     visionFeed.style.display = "none";
     updateBridgeMetricsSummary();
   };
+  renderVisionMeta();
+  fetchVisionState().catch(() => {});
 })();
 </script>
 </body>

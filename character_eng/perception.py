@@ -80,12 +80,48 @@ def _payload_world_update(event: PerceptionEvent) -> WorldUpdate:
     )
 
 
+def _normalize_text(text: str) -> str:
+    return " ".join(str(text or "").strip().lower().split())
+
+
+def _is_generic_presence_claim(event: PerceptionEvent) -> bool:
+    payload = event.payload or {}
+    signals = {
+        str(item or "").strip().lower()
+        for item in (payload.get("signals", []) or [])
+        if str(item or "").strip()
+    }
+    if signals and signals.issubset({"person_visible", "person_departed"}):
+        return True
+
+    normalized = _normalize_text(event.description)
+    return normalized in {
+        "a person appeared in view",
+        "a person has appeared in view",
+        "a person entered the room",
+        "a person has entered the room",
+        "a person is standing nearby",
+        "a person is standing in the room",
+        "a person is now visible",
+        "a person is now visible in the room",
+        "a person is no longer visible",
+    }
+
+
+def _filtered_world_update(event: PerceptionEvent) -> WorldUpdate:
+    update = _payload_world_update(event)
+    update.events = [item for item in update.events if not _is_generic_presence_claim(PerceptionEvent(description=item, payload=event.payload, kind="visual_claim"))]
+    return update
+
+
 def process_perception(event: PerceptionEvent, people, world) -> tuple[None, str]:
     """Apply direct perception updates when possible, else queue for reconcile."""
     if event.kind == "person_presence":
         _apply_person_presence(event, people, world)
+    elif event.kind == "visual_claim" and _is_generic_presence_claim(event):
+        return (None, "")
     elif event.kind == "vision_state_update":
-        update = _payload_world_update(event)
+        update = _filtered_world_update(event)
         if world is not None:
             world.apply_update(update)
         if people is not None and update.person_updates:

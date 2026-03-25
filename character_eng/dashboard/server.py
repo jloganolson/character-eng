@@ -110,6 +110,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
     history_status_provider = None
     livekit_status_provider = None
     livekit_token_provider = None
+    vision_state_provider = None
+    vision_action_handler = None
     default_character: str = ""
     prompt_asset_open_target: str = "vscode"
     prompt_asset_vscode_cmd: str = "code"
@@ -137,6 +139,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_history_state()
         elif path == "/livekit/config":
             self._serve_livekit_config()
+        elif path == "/vision/state":
+            self._serve_vision_state()
         elif path == "/history/list":
             self._serve_history_list()
         elif path.startswith("/history/checkpoint"):
@@ -222,6 +226,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._handle_prompt_asset_action()
         elif path == "/livekit/token":
             self._handle_livekit_token()
+        elif path == "/vision/config":
+            self._handle_vision_config()
         elif path == "/api/tts-debug":
             self._handle_tts_debug()
         else:
@@ -499,6 +505,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_vision_state(self):
+        provider = getattr(type(self), "vision_state_provider", None)
+        if not callable(provider):
+            self._respond_json(HTTPStatus.OK, {"ok": False, "error": "vision controls unavailable"})
+            return
+        try:
+            payload = provider()
+            self._respond_json(HTTPStatus.OK, {"ok": True, **payload})
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
+
     def _serve_history_list(self):
         history_api = getattr(self, "history_api", None)
         payload = history_api.list_archives() if history_api is not None else []
@@ -578,6 +595,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(encoded)
+
+    def _handle_vision_config(self):
+        handler = getattr(type(self), "vision_action_handler", None)
+        if not callable(handler):
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "vision controls unavailable"})
+            return
+        try:
+            data = self._read_json_body()
+            payload = handler(data)
+            self._respond_json(HTTPStatus.OK, {"ok": True, **(payload or {})})
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
 
     def _serve_history_checkpoint(self):
         history_api = getattr(self, "history_api", None)
@@ -849,6 +878,8 @@ def start_dashboard(collector: DashboardEventCollector, input_queue: queue.Queue
                     history_status_provider=None,
                     livekit_status_provider=None,
                     livekit_token_provider=None,
+                    vision_state_provider=None,
+                    vision_action_handler=None,
                     default_character: str = "",
                     prompt_asset_open_target: str = "vscode",
                     prompt_asset_vscode_cmd: str = "code") -> tuple[threading.Thread, int]:
@@ -863,6 +894,8 @@ def start_dashboard(collector: DashboardEventCollector, input_queue: queue.Queue
     DashboardHandler.history_status_provider = history_status_provider
     DashboardHandler.livekit_status_provider = livekit_status_provider
     DashboardHandler.livekit_token_provider = livekit_token_provider
+    DashboardHandler.vision_state_provider = vision_state_provider
+    DashboardHandler.vision_action_handler = vision_action_handler
     DashboardHandler.default_character = default_character
     DashboardHandler.prompt_asset_open_target = prompt_asset_open_target
     DashboardHandler.prompt_asset_vscode_cmd = prompt_asset_vscode_cmd

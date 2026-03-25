@@ -344,6 +344,30 @@ def test_vision_manager_people_resolution():
     assert mgr._events[1].trace["provenance"]["label"] == "Presence tracker"
 
 
+def test_vision_manager_suppresses_generic_presence_synthesis_claims(monkeypatch):
+    from character_eng.vision.manager import VisionManager
+
+    mgr = VisionManager()
+    mgr._model_config = {"name": "test"}
+    snapshot = RawVisualSnapshot(
+        persons=[PersonObservation(identity="Person 1", bbox=(0, 0, 100, 200))],
+        cycle_id="vision-cycle-presence",
+    )
+
+    monkeypatch.setattr(mgr._client, "snapshot", lambda: snapshot)
+    monkeypatch.setattr(
+        "character_eng.vision.manager.vision_synthesis_call",
+        lambda **kwargs: type("Synth", (), {"events": ["A person is now visible in the room"], "signals": ["person_visible"]})(),
+    )
+
+    mgr._tick()
+
+    drained = mgr.drain_events()
+    descriptions = [event.description for event in drained]
+    assert "A person appeared in view" in descriptions
+    assert "A person is now visible in the room" not in descriptions
+
+
 def test_vision_manager_presence_uses_face_or_sam_person_backup():
     from character_eng.vision.context import FaceObservation, ObjectDetection
     from character_eng.vision.manager import VisionManager
@@ -412,22 +436,8 @@ def test_vision_manager_update_focus_pushes_dashboard_event(monkeypatch):
     assert event["data"]["ephemeral_sam_targets"] == ["bottle"]
 
 
-def test_visual_focus_call_keeps_person_constants(monkeypatch):
+def test_visual_focus_call_keeps_person_constants():
     from character_eng.vision.focus import CORE_CONSTANT_QUESTIONS, CORE_CONSTANT_SAM_TARGETS, CORE_CONSTANT_VLM_SPECS, visual_focus_call
-
-    class Message:
-        content = json.dumps({
-            "ephemeral_questions": ["Is the person gesturing toward anything?"],
-            "ephemeral_sam_targets": ["phone"],
-        })
-
-    class Choice:
-        message = Message()
-
-    class Response:
-        choices = [Choice()]
-
-    monkeypatch.setattr("character_eng.world._llm_call", lambda *args, **kwargs: Response())
 
     result = visual_focus_call(
         beat=None,
@@ -440,36 +450,14 @@ def test_visual_focus_call_keeps_person_constants(monkeypatch):
 
     assert result.constant_questions == CORE_CONSTANT_QUESTIONS
     assert result.constant_sam_targets == CORE_CONSTANT_SAM_TARGETS
-    assert result.ephemeral_questions == ["Is the person gesturing toward anything?"]
-    assert result.ephemeral_sam_targets == ["phone"]
+    assert result.ephemeral_questions == []
+    assert result.ephemeral_sam_targets == []
     assert [spec.task_id for spec in result.constant_vlm_specs] == [spec.task_id for spec in CORE_CONSTANT_VLM_SPECS]
-    assert result.ephemeral_vlm_specs[0].task_id.startswith("ephemeral_")
+    assert result.ephemeral_vlm_specs == []
 
 
-def test_visual_focus_call_sanitizes_structured_llm_arrays(monkeypatch):
+def test_visual_focus_call_includes_manual_overrides():
     from character_eng.vision.focus import visual_focus_call
-
-    class Message:
-        content = json.dumps({
-            "ephemeral_questions": [
-                {"question": "Is the person holding a phone?"},
-                {"text": "Is anyone at the door?"},
-                {"question": "ignored because capped"},
-            ],
-            "ephemeral_sam_targets": [
-                {"target": "phone"},
-                {"label": "door"},
-                {"target": "ignored because capped"},
-            ],
-        })
-
-    class Choice:
-        message = Message()
-
-    class Response:
-        choices = [Choice()]
-
-    monkeypatch.setattr("character_eng.world._llm_call", lambda *args, **kwargs: Response())
 
     result = visual_focus_call(
         beat=None,
@@ -478,30 +466,24 @@ def test_visual_focus_call_sanitizes_structured_llm_arrays(monkeypatch):
         world=None,
         people=None,
         model_config={},
+        manual_questions=[
+            {"question": "Is the person holding a phone?", "target": "nearest_person", "system_role": "manual"},
+            {"text": "ignored because missing question"},
+            {"question": "Is anyone at the door?"},
+        ],
+        manual_sam_targets=["phone", "door", "phone"],
     )
 
-    assert result.ephemeral_questions == ["Is the person holding a phone?", "Is anyone at the door?"]
-    assert result.ephemeral_sam_targets == ["phone", "door"]
-    assert [spec.question for spec in result.ephemeral_vlm_specs] == result.ephemeral_questions
+    assert result.ephemeral_questions == []
+    assert result.ephemeral_sam_targets == []
+    assert result.manual_questions == ["Is the person holding a phone?", "Is anyone at the door?"]
+    assert result.manual_sam_targets == ["phone", "door"]
+    assert [spec.question for spec in result.constant_vlm_specs[-2:]] == result.manual_questions
 
 
-def test_visual_focus_call_includes_scenario_authored_constants(monkeypatch):
+def test_visual_focus_call_includes_scenario_authored_constants():
     from types import SimpleNamespace
     from character_eng.vision.focus import CORE_CONSTANT_QUESTIONS, CORE_CONSTANT_SAM_TARGETS, visual_focus_call
-
-    class Message:
-        content = json.dumps({
-            "ephemeral_questions": [],
-            "ephemeral_sam_targets": [],
-        })
-
-    class Choice:
-        message = Message()
-
-    class Response:
-        choices = [Choice()]
-
-    monkeypatch.setattr("character_eng.world._llm_call", lambda *args, **kwargs: Response())
 
     scenario = SimpleNamespace(
         active_visual_requirements=lambda: SimpleNamespace(
@@ -526,29 +508,21 @@ def test_visual_focus_call_includes_scenario_authored_constants(monkeypatch):
     assert result.constant_sam_targets == CORE_CONSTANT_SAM_TARGETS + ["phone", "clock", "screen"]
 
 
-def test_visual_focus_call_merges_stage_specific_constants(monkeypatch):
+def test_visual_focus_call_merges_stage_specific_constants():
     from types import SimpleNamespace
     from character_eng.vision.focus import visual_focus_call
 
-    class Message:
-        content = json.dumps({
-            "ephemeral_questions": [],
-            "ephemeral_sam_targets": [],
-        })
-
-    class Choice:
-        message = Message()
-
-    class Response:
-        choices = [Choice()]
-
-    monkeypatch.setattr("character_eng.world._llm_call", lambda *args, **kwargs: Response())
-
     scenario = SimpleNamespace(
-        active_visual_requirements=lambda: SimpleNamespace(
-            constant_questions=["Is there a visible clock?", "If the person is showing Greg a phone, what time does it show?"],
-            constant_sam_targets=["clock", "phone"],
-        )
+        visual_requirements=SimpleNamespace(
+            constant_questions=["Is there a visible clock?"],
+            constant_sam_targets=["clock"],
+        ),
+        active_stage=SimpleNamespace(
+            visual_requirements=SimpleNamespace(
+                constant_questions=["If the person is showing Greg a phone, what time does it show?"],
+                constant_sam_targets=["phone"],
+            )
+        ),
     )
 
     result = visual_focus_call(
