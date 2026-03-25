@@ -4263,6 +4263,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
 
     if voice_io is not None:
         # Voice mode: feed chunks to TTS, check for barge-in
+        voice_io.begin_assistant_turn()
         voice_io._cancelled.clear()
         voice_io._is_speaking = True
         if voice_io._speaker is not None:
@@ -4296,6 +4297,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
             _push("response_chunk", {"text": text})
             if t_tts_request is None:
                 t_tts_request = time.time()
+            voice_io.note_assistant_text(text)
             if voice_io._tts is not None:
                 voice_io._tts.send_text(text)
 
@@ -4412,6 +4414,7 @@ def stream_response(session, label, message, voice_io=None, expr_model_config=No
         if voice_io._tts is not None:
             voice_io._tts.close()
         voice_io._is_speaking = False
+        voice_io.finish_assistant_turn()
         voice_io._tts_done_at = time.time()
         if listening_pool is not None:
             listening_pool.shutdown(wait=False, cancel_futures=True)

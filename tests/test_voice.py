@@ -445,6 +445,46 @@ def test_voice_io_transcript_triggers_barge_in_with_aec():
     assert voice._event_queue.get(timeout=0.1) == "hello"
 
 
+def test_voice_io_transcript_ignores_exact_echo_with_aec():
+    events = []
+    voice = VoiceIO(aec=True, trace_hook=lambda event_type, data: events.append((event_type, data)))
+    voice._aec = MagicMock()
+    voice._speaker = MagicMock()
+    voice._tts = MagicMock()
+    voice._is_speaking = True
+    voice.begin_assistant_turn("Do you have water?")
+
+    voice._on_transcript("do you have water")
+
+    assert not voice._cancelled.is_set()
+    assert voice._event_queue.empty()
+    assert events == [(
+        "user_transcript_final",
+        {
+            "text": "do you have water",
+            "echo_candidate": True,
+            "echo_disposition": "ignored",
+            "echo_similarity": 1.0,
+            "echo_reference": "active",
+            "echo_reference_excerpt": "Do you have water?",
+        },
+    )]
+
+
+def test_voice_io_transcript_ignores_fuzzy_echo_with_aec():
+    voice = VoiceIO(aec=True)
+    voice._aec = MagicMock()
+    voice._speaker = MagicMock()
+    voice._tts = MagicMock()
+    voice._is_speaking = True
+    voice.begin_assistant_turn("Nice scarf, man.")
+
+    voice._on_transcript("nice scarf man")
+
+    assert not voice._cancelled.is_set()
+    assert voice._event_queue.empty()
+
+
 def test_voice_io_transcript_no_barge_in_when_not_speaking():
     """_on_transcript should just queue text when not speaking."""
     voice = VoiceIO(aec=True)
@@ -796,6 +836,20 @@ def test_voice_io_turn_start_cancels_before_first_audio():
     voice._on_turn_start()
 
     voice.cancel_speech.assert_called_once()
+
+
+def test_voice_io_recent_echo_is_ignored_just_after_playback():
+    voice = VoiceIO(aec=True)
+    voice._aec = MagicMock()
+    voice.begin_assistant_turn("Let me think about that.")
+    with patch("character_eng.voice.time.time", return_value=10.0):
+        voice.finish_assistant_turn()
+    voice._is_speaking = False
+
+    with patch("character_eng.voice.time.time", return_value=10.5):
+        voice._on_transcript("let me think about that")
+
+    assert voice._event_queue.empty()
 
 
 # --- check_voice_available ---

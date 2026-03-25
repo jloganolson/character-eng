@@ -137,6 +137,7 @@ def evaluate_barge_in_snippet(snippet: BargeInSnippet, *, aec: bool) -> BargeInE
     voice._is_speaking = True
     voice._cancelled.clear()
     voice._barged_in = False
+    voice.begin_assistant_turn(snippet.assistant_text)
     if aec:
         voice._aec = MagicMock()
     else:

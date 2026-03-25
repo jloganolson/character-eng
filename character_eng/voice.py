@@ -7,9 +7,11 @@ to work unchanged. Local Qwen TTS still needs: uv sync --extra local-tts
 from __future__ import annotations
 
 import base64
+from difflib import SequenceMatcher
 import json
 import os
 import queue
+import re
 import select
 import struct
 import subprocess
@@ -48,6 +50,23 @@ _KEY_MAP = {
 from character_eng.utils import ts as _ts
 
 AUTO_BEAT_DELAY = 4.0  # seconds after TTS playback finishes
+_ECHO_WORD_RE = re.compile(r"[a-z0-9']+")
+_ECHO_MIN_CHARS = 8
+_ECHO_MIN_WORDS = 2
+_ECHO_RATIO_THRESHOLD = 0.92
+_ECHO_CONTAINMENT_THRESHOLD = 0.82
+_ECHO_GRACE_S = 1.25
+
+
+def _normalize_echo_text(text: str) -> str:
+    return " ".join(_ECHO_WORD_RE.findall((text or "").lower()))
+
+
+def _preview_echo_text(text: str, max_chars: int = 80) -> str:
+    cleaned = " ".join((text or "").split()).strip()
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return f"{cleaned[: max_chars - 3].rstrip()}..."
 
 
 def list_audio_devices() -> list[dict]:
@@ -868,6 +887,10 @@ class VoiceIO:
         self._last_speech_ended_at: float | None = None
         self._last_transcript_text: str = ""
         self._deferred_input_prefix: str = ""
+        self._assistant_text_lock = threading.Lock()
+        self._active_assistant_text: str = ""
+        self._last_assistant_text: str = ""
+        self._last_assistant_turn_done_at: float | None = None
 
     def _trace(self, event_type: str, data: dict) -> None:
         if self._trace_hook is None:
@@ -970,6 +993,78 @@ class VoiceIO:
         for item in items:
             self._event_queue.put(item)
         return drained
+
+    def begin_assistant_turn(self, text: str = "") -> None:
+        with self._assistant_text_lock:
+            self._active_assistant_text = text or ""
+
+    def note_assistant_text(self, text: str) -> None:
+        if not text:
+            return
+        with self._assistant_text_lock:
+            self._active_assistant_text += text
+
+    def finish_assistant_turn(self) -> None:
+        with self._assistant_text_lock:
+            completed = self._active_assistant_text.strip()
+            if completed:
+                self._last_assistant_text = completed
+                self._last_assistant_turn_done_at = time.time()
+            self._active_assistant_text = ""
+
+    def _maybe_classify_echo_transcript(self, text: str) -> dict | None:
+        if self._aec is None:
+            return None
+
+        normalized_text = _normalize_echo_text(text)
+        if not normalized_text:
+            return None
+        if (
+            len(normalized_text.replace(" ", "")) < _ECHO_MIN_CHARS
+            and len(normalized_text.split()) < _ECHO_MIN_WORDS
+        ):
+            return None
+
+        now = time.time()
+        candidates: list[tuple[str, str]] = []
+        with self._assistant_text_lock:
+            active = self._active_assistant_text.strip()
+            recent = self._last_assistant_text.strip()
+            recent_done_at = self._last_assistant_turn_done_at
+        if active and self._is_speaking:
+            candidates.append(("active", active))
+        if recent and recent_done_at is not None and (now - recent_done_at) <= _ECHO_GRACE_S:
+            candidates.append(("recent", recent))
+
+        best_match: dict | None = None
+        for source, reference_text in candidates:
+            normalized_reference = _normalize_echo_text(reference_text)
+            if not normalized_reference:
+                continue
+            ratio = SequenceMatcher(None, normalized_text, normalized_reference).ratio()
+            shorter = min(len(normalized_text), len(normalized_reference))
+            longer = max(len(normalized_text), len(normalized_reference))
+            coverage = (shorter / longer) if longer else 0.0
+            exact = normalized_text == normalized_reference
+            contained = (
+                coverage >= _ECHO_CONTAINMENT_THRESHOLD
+                and (
+                    normalized_text in normalized_reference
+                    or normalized_reference in normalized_text
+                )
+            )
+            if not (exact or ratio >= _ECHO_RATIO_THRESHOLD or contained):
+                continue
+            match = {
+                "echo_candidate": True,
+                "echo_disposition": "ignored",
+                "echo_similarity": round(max(ratio, coverage), 3),
+                "echo_reference": source,
+                "echo_reference_excerpt": _preview_echo_text(reference_text),
+            }
+            if best_match is None or match["echo_similarity"] > best_match["echo_similarity"]:
+                best_match = match
+        return best_match
 
     def start(self):
         """Initialize and start all voice components."""
@@ -1294,6 +1389,7 @@ class VoiceIO:
 
         Checks _cancelled event between chunks so barge-in can interrupt.
         """
+        self.begin_assistant_turn()
         self._barged_in = False
         self._cancelled.clear()
         self._is_speaking = True
@@ -1305,6 +1401,7 @@ class VoiceIO:
         for chunk in text_chunks:
             if self._cancelled.is_set():
                 break
+            self.note_assistant_text(chunk)
             if self._tts is not None:
                 self._tts.send_text(chunk)
 
@@ -1341,6 +1438,7 @@ class VoiceIO:
         if self._tts is not None:
             self._tts.close()
         self._is_speaking = False
+        self.finish_assistant_turn()
         done_at = time.time()
         self._trace("assistant_tts_live_done", {
             "elapsed_ms": int((done_at - started_at) * 1000),
@@ -1349,6 +1447,7 @@ class VoiceIO:
 
     def speak_text(self, text: str) -> None:
         """One-shot TTS for pre-rendered beats."""
+        self.begin_assistant_turn(text)
         self._barged_in = False
         self._cancelled.clear()
         self._is_speaking = True
@@ -1392,6 +1491,7 @@ class VoiceIO:
         if self._tts is not None:
             self._tts.close()
         self._is_speaking = False
+        self.finish_assistant_turn()
         done_at = time.time()
         self._trace("assistant_tts_live_done", {
             "elapsed_ms": int((done_at - started_at) * 1000),
@@ -1436,10 +1536,16 @@ class VoiceIO:
         With AEC, barge-in triggers here (on real transcript) instead of on
         SpeechStarted, since AEC residual can cause false VAD triggers.
         """
+        payload = {"text": text}
+        echo_match = self._maybe_classify_echo_transcript(text)
+        if echo_match is not None:
+            payload.update(echo_match)
+        self._trace("user_transcript_final", payload)
+        if echo_match is not None:
+            return
         self._last_transcript_final_at = time.time()
         self._last_speech_ended_at = self._stt._last_is_final_at if self._stt is not None else None
         self._last_transcript_text = text
-        self._trace("user_transcript_final", {"text": text})
         if self._is_speaking and not self.audio_started:
             self._cancel_auto_beat()
             self.cancel_speech()
