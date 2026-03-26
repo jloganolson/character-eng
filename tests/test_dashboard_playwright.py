@@ -4509,6 +4509,96 @@ def test_archive_playhead_reports_media_cap_when_timeline_moves_past_video(
     expect(page.locator("#archive-timeline-gap-note")).to_have_class(re.compile(r"\bvisible\b"))
 
 
+def test_live_timeline_omits_paused_wall_time_after_resume(
+    browser_page: Page,
+    dashboard_server,
+):
+    collector, _, dashboard_url, _ = dashboard_server
+    page = browser_page
+    page.goto(dashboard_url)
+
+    base = time.time()
+    live_controls = {
+        "controls": {
+            "reconcile": True,
+            "vision": True,
+            "auto_beat": True,
+            "filler": True,
+        },
+        "conversation_paused": False,
+        "session_stopped": False,
+        "startup_pause_pending": False,
+        "session_state": "live",
+        "runtime_phase": "live",
+        "voice_active": True,
+        "voice_status": {
+            "active": True,
+            "output_only": False,
+            "filler_enabled": False,
+            "tts_backend": "pocket",
+            "mic_ready": True,
+            "speaker_ready": True,
+            "stt": {"state": "ready", "detail": "Mic hot."},
+            "tts": {"state": "ready", "detail": "Speaker ready.", "backend": "pocket"},
+        },
+        "vision_active": True,
+        "reconcile_thread_alive": True,
+        "vision_service_url": "",
+        "vision_service_health": False,
+        "vision_service_managed": False,
+        "vision_service_external": False,
+        "vision_service_state": "stopped",
+        "vision_service_autostart": False,
+        "vision_service_mode": "camera",
+        "vision_mock_replay": "",
+        "transport": {"mode": "local", "audio": {}, "video": {}, "webrtc": {}},
+        "archive_only": False,
+        "archive_only_reason": "",
+    }
+    _collector_push_at(collector, "session_start", {
+        "character": "greg",
+        "model": "groq-llama-8b",
+        "session_id": "sess-live-pause-gap",
+        "stage": "watching",
+    }, base + 0.0)
+    _collector_push_at(collector, "runtime_controls", live_controls, base + 0.1)
+    _collector_push_at(collector, "pause", {"startup": False, "fresh_session": False}, base + 10.0)
+    _collector_push_at(collector, "resume", {}, base + 70.0)
+    _collector_push_at(collector, "turn_start", {
+        "input_type": "send",
+        "input_text": "hello again",
+        "trigger_source": "user",
+        "turn_kind": "dialogue",
+        "input_source": "voice",
+    }, base + 70.2)
+    _collector_push_at(collector, "response_done", {
+        "full_text": "Back after the pause.",
+        "turn_kind": "dialogue",
+        "turn_outcome": "replied",
+        "input_source": "voice",
+        "ttft_ms": 180,
+    }, base + 71.0)
+
+    page.wait_for_function(
+        """() => {
+            const card = Array.from(document.querySelectorAll(".stream-card[data-event-type='assistant_reply']"))
+                .find((node) => (node.textContent || "").includes("Back after the pause."));
+            return !!card && !!card.querySelector(".stream-card-time");
+        }""",
+        timeout=5000,
+    )
+    card_time = page.evaluate(
+        """(needle) => {
+            const card = Array.from(document.querySelectorAll(".stream-card[data-event-type='assistant_reply']"))
+                .find((node) => (node.textContent || "").includes(needle));
+            return card?.querySelector(".stream-card-time")?.textContent || "";
+        }""",
+        "Back after the pause.",
+    )
+    assert card_time, "expected a rendered assistant reply card"
+    assert abs(float(card_time.replace("+", "").replace("s", "")) - 11.0) < 0.35, card_time
+
+
 def test_archive_scrub_cursor_uses_preview_on_hover_and_active_on_drag(
     browser_page: Page,
     dashboard_server,
