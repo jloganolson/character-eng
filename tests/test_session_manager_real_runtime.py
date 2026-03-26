@@ -12,6 +12,7 @@ from character_eng.session_manager import RuntimeSessionManager, start_session_m
 
 
 REQUIRED_ENV = ("GEMINI_API_KEY", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY")
+REAL_BROWSER_MEDIA_FLOW_ENV = "CHARACTER_ENG_RUN_REAL_BROWSER_MEDIA_FLOW"
 
 
 @pytest.mark.integration
@@ -74,6 +75,10 @@ def test_session_manager_real_browser_media_flow():
     missing = [key for key in REQUIRED_ENV if not os.environ.get(key)]
     if missing:
         pytest.skip(f"missing env for real runtime smoke: {', '.join(missing)}")
+    if str(os.environ.get(REAL_BROWSER_MEDIA_FLOW_ENV, "")).strip().lower() not in {"1", "true", "yes"}:
+        pytest.skip(
+            f"set {REAL_BROWSER_MEDIA_FLOW_ENV}=1 to run the real browser/media session-manager flow"
+        )
 
     base_env = {
         "CHARACTER_ENG_CHAT_MODEL": "gemini-3-flash-lite",

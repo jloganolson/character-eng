@@ -149,6 +149,9 @@ For the GCP-backed WebRTC hybrid path, use:
 
 That keeps the app local while using remote vision + Pocket-TTS over an SSH tunnel and a remote LiveKit server on the GCP VM.
 This is the default hosted-heavy workflow.
+If `deploy/gcp.env` uses `GCP_SECRET_*` refs, the remote launcher also syncs the filtered runtime API keys back from the VM so collaborators do not need their own local `.env` copy for the remote path.
+For fresh collaborator setup on macOS, Linux, or Windows WSL2, use [REMOTE_QUICKSTART.md](REMOTE_QUICKSTART.md).
+The shared non-secret remote config lives in [deploy/gcp.shared-remote.env](deploy/gcp.shared-remote.env), and the remote scripts fall back to it automatically when `deploy/gcp.env` is absent.
 
 To allowlist another engineer for that path by Gmail address:
 

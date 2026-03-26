@@ -4,11 +4,26 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-ENV_FILE="${CHARACTER_ENG_GCP_ENV:-$ROOT/deploy/gcp.env}"
+resolve_default_env_file() {
+  if [[ -n "${CHARACTER_ENG_GCP_ENV:-}" ]]; then
+    printf '%s\n' "$CHARACTER_ENG_GCP_ENV"
+    return 0
+  fi
+  if [[ -f "$ROOT/deploy/gcp.env" ]]; then
+    printf '%s\n' "$ROOT/deploy/gcp.env"
+    return 0
+  fi
+  printf '%s\n' "$ROOT/deploy/gcp.shared-remote.env"
+}
+
+ENV_FILE="$(resolve_default_env_file)"
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing env file: $ENV_FILE" >&2
   exit 1
 fi
+
+VM_CTL_BIN="${VM_CTL_BIN:-./deploy/gcp/vm_ctl.sh}"
+RUN_LOCAL_SCRIPT="${RUN_LOCAL_SCRIPT:-./scripts/run_local.sh}"
 
 # shellcheck disable=SC1090
 source "$ENV_FILE"
@@ -24,11 +39,14 @@ READY_TIMEOUT="${READY_TIMEOUT:-240}"
 TUNNEL_DIR="${TUNNEL_DIR:-$ROOT/.cache/gcp-remote-hot-webrtc}"
 TUNNEL_PIDFILE="$TUNNEL_DIR/tunnel.pid"
 TUNNEL_LOGFILE="$TUNNEL_DIR/tunnel.log"
+REMOTE_RUNTIME_ENV_FILE="${REMOTE_RUNTIME_ENV_FILE:-/etc/character-eng.remote-hot.env}"
+REMOTE_RUNTIME_ENV_CACHE="$TUNNEL_DIR/remote-runtime.env"
 REMOTE_SERVICE_HOST="${REMOTE_SERVICE_HOST:-127.0.0.1}"
 LIVEKIT_HTTP_PORT="${LIVEKIT_HTTP_PORT:-7880}"
 LIVEKIT_ENABLED="${LIVEKIT_ENABLED:-1}"
 LIVEKIT_API_KEY="${LIVEKIT_API_KEY:-devkey}"
 LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET:-secret}"
+WAIT_FOR_MANAGER="${WAIT_FOR_MANAGER:-auto}"
 TRANSPORT_VIDEO_METRICS_PATH="$TUNNEL_DIR/video_metrics.json"
 TRANSPORT_AUDIO_METRICS_PATH="$TUNNEL_DIR/audio_metrics.json"
 
@@ -61,6 +79,7 @@ cleanup_tunnel() {
     fi
     rm -f "$TUNNEL_PIDFILE"
   fi
+  rm -f "$REMOTE_RUNTIME_ENV_CACHE"
 }
 
 tunnel_alive() {
@@ -110,14 +129,20 @@ wait_for_remote_http() {
 
 ensure_vm_running() {
   local status
-  status="$(./deploy/gcp/vm_ctl.sh "$ENV_FILE" status)"
+  status="$("$VM_CTL_BIN" "$ENV_FILE" status)"
   if [[ "$status" != "RUNNING" ]]; then
     log "Starting remote GCP heavy VM"
-    ./deploy/gcp/vm_ctl.sh "$ENV_FILE" start
+    "$VM_CTL_BIN" "$ENV_FILE" start
   fi
-  log "Waiting for remote manager and LiveKit"
-  ./deploy/gcp/vm_ctl.sh "$ENV_FILE" wait >/dev/null
-  ./deploy/gcp/vm_ctl.sh "$ENV_FILE" wait-livekit >/dev/null
+  if [[ "$WAIT_FOR_MANAGER" == "1" || "$WAIT_FOR_MANAGER" == "true" || "$WAIT_FOR_MANAGER" == "yes" ]] || \
+     { [[ "$WAIT_FOR_MANAGER" == "auto" ]] && [[ -n "${CHARACTER_ENG_MANAGER_TOKEN:-}" ]]; }; then
+    log "Waiting for remote manager"
+    "$VM_CTL_BIN" "$ENV_FILE" wait >/dev/null
+  else
+    log "Skipping remote manager health wait"
+  fi
+  log "Waiting for remote LiveKit"
+  "$VM_CTL_BIN" "$ENV_FILE" wait-livekit >/dev/null
 }
 
 start_tunnel() {
@@ -126,17 +151,30 @@ start_tunnel() {
   fi
   cleanup_tunnel
   : >"$TUNNEL_LOGFILE"
+  local tunnel_cmd_raw
+  local -a tunnel_cmd=()
   log "Opening SSH tunnel for remote vision and Pocket-TTS"
+  tunnel_cmd_raw="$(gcloud compute ssh "$GCP_INSTANCE_NAME" \
+    --project "$GCP_PROJECT_ID" \
+    --zone "$GCP_ZONE" \
+    --dry-run -- \
+    -T -N \
+    -L "${LOCAL_TUNNEL_HOST}:${LOCAL_VISION_PORT}:${REMOTE_SERVICE_HOST}:7860" \
+    -L "${LOCAL_TUNNEL_HOST}:${LOCAL_POCKET_PORT}:${REMOTE_SERVICE_HOST}:8003" \
+    -o ExitOnForwardFailure=yes \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=3)"
+  mapfile -d '' -t tunnel_cmd < <(
+    python3 - "$tunnel_cmd_raw" <<'PY'
+import shlex
+import sys
+
+parts = [part for part in shlex.split(sys.argv[1]) if part != "-t"]
+sys.stdout.buffer.write(b"\0".join(part.encode("utf-8") for part in parts) + b"\0")
+PY
+  )
   (
-    exec setsid gcloud compute ssh "$GCP_INSTANCE_NAME" \
-      --project "$GCP_PROJECT_ID" \
-      --zone "$GCP_ZONE" \
-      -- -N \
-      -L "${LOCAL_TUNNEL_HOST}:${LOCAL_VISION_PORT}:${REMOTE_SERVICE_HOST}:7860" \
-      -L "${LOCAL_TUNNEL_HOST}:${LOCAL_POCKET_PORT}:${REMOTE_SERVICE_HOST}:8003" \
-      -o ExitOnForwardFailure=yes \
-      -o ServerAliveInterval=30 \
-      -o ServerAliveCountMax=3
+    exec "${tunnel_cmd[@]}"
   ) </dev/null >"$TUNNEL_LOGFILE" 2>&1 &
   echo "$!" >"$TUNNEL_PIDFILE"
   sleep 2
@@ -147,8 +185,25 @@ start_tunnel() {
   fi
 }
 
+fetch_remote_runtime_env() {
+  if gcloud compute ssh "$GCP_INSTANCE_NAME" \
+    --project "$GCP_PROJECT_ID" \
+    --zone "$GCP_ZONE" \
+    --command "cat '$REMOTE_RUNTIME_ENV_FILE'" \
+    >"$REMOTE_RUNTIME_ENV_CACHE" 2>/dev/null; then
+    chmod 600 "$REMOTE_RUNTIME_ENV_CACHE"
+    # shellcheck disable=SC1090
+    source "$REMOTE_RUNTIME_ENV_CACHE"
+    LIVEKIT_API_KEY="${CHARACTER_ENG_LIVEKIT_API_KEY:-${LIVEKIT_API_KEY:-devkey}}"
+    LIVEKIT_API_SECRET="${CHARACTER_ENG_LIVEKIT_API_SECRET:-${LIVEKIT_API_SECRET:-secret}}"
+    return 0
+  fi
+  rm -f "$REMOTE_RUNTIME_ENV_CACHE"
+  return 1
+}
+
 livekit_url() {
-  ./deploy/gcp/vm_ctl.sh "$ENV_FILE" livekit-url
+  "$VM_CTL_BIN" "$ENV_FILE" livekit-url
 }
 
 livekit_probe_url() {
@@ -167,6 +222,17 @@ if [[ "$LIVEKIT_ENABLED" != "1" && "$LIVEKIT_ENABLED" != "true" && "$LIVEKIT_ENA
 fi
 
 ensure_vm_running
+
+if fetch_remote_runtime_env; then
+  log "Synced remote runtime env from GCP VM"
+else
+  log "Remote runtime env not available; falling back to local env/.env"
+fi
+
+if [[ "$LIVEKIT_API_KEY" == "devkey" || "$LIVEKIT_API_SECRET" == "secret" ]]; then
+  echo "LiveKit credentials are missing; set LIVEKIT_API_KEY / LIVEKIT_API_SECRET in GCP or deploy/gcp.env" >&2
+  exit 1
+fi
 
 log "Waiting for remote vision, Pocket-TTS, and LiveKit"
 wait_for_remote_http "remote vision" "http://${REMOTE_SERVICE_HOST}:7860/model_status"
@@ -195,4 +261,4 @@ env \
   CHARACTER_ENG_LIVEKIT_URL="${REMOTE_LIVEKIT_URL}" \
   CHARACTER_ENG_LIVEKIT_API_KEY="${LIVEKIT_API_KEY}" \
   CHARACTER_ENG_LIVEKIT_API_SECRET="${LIVEKIT_API_SECRET}" \
-  ./scripts/run_local.sh "$@"
+  "$RUN_LOCAL_SCRIPT" "$@"

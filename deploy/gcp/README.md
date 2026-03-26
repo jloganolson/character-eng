@@ -39,6 +39,8 @@ If you omit Caddy and run plain HTTP on the VM IP, CLI checks still work, but br
 
 - `deploy/gcp.env.example`
   - local config template; copy to `deploy/gcp.env`
+- `deploy/gcp.shared-remote.env`
+  - committed shared non-secret config for collaborators using the existing shared GCP remote path
 - `deploy/gcp/create_vm.sh`
   - local helper that creates the runtime disk, firewall rule, optional static IP, and VM
 - `deploy/gcp/startup.sh`
@@ -58,12 +60,21 @@ cp deploy/gcp.env.example deploy/gcp.env
 - `GCP_REGION`
 - `GCP_ZONE`
 - `CONTAINER_IMAGE`
-- `HF_TOKEN`
+- either the direct API keys you need, or the matching `GCP_SECRET_*` refs
+
+`deploy/gcp.env` can source your local `.env`. When you create or update the VM, the deploy helper packages the app runtime keys from that environment into the generated VM env file, so the hosted manager/container does not rely on each allowlisted engineer having those keys locally.
 
 The current example defaults to Google's GPU-ready `ml-images/common-cu128-ubuntu-2204-nvidia-570` image family so the VM starts with drivers already in place.
 
 Keep `CHARACTER_ENG_SHARED_VISION_URL=http://127.0.0.1:7860` for the full-container path so per-session runtimes reuse the shared vision stack instead of trying to boot a second private copy.
 Set `POCKET_HOST=0.0.0.0` on GCP so Pocket-TTS is reachable over the SSH-tunneled hybrid path.
+You can also set `AUTO_SHUTDOWN_ENABLED`, `AUTO_SHUTDOWN_TIME`, and `AUTO_SHUTDOWN_TIMEZONE` to install a VM-local nightly shutdown timer from the startup script.
+
+For shared `remote_hot_webrtc`, prefer storing provider credentials in GCP Secret Manager and setting the corresponding `GCP_SECRET_*` refs in `deploy/gcp.env`.
+On VM boot, the startup script resolves those refs into `/etc/character-eng.env` for the container and writes a filtered `/etc/character-eng.remote-hot.env` that `./scripts/run_hot_remote_webrtc.sh` syncs back before launching the local app.
+That keeps the repo-side remote workflow off local `.env` files for collaborators who have been allowlisted onto the VM.
+If you are onboarding collaborators onto the already-running shared remote environment, commit the non-secret shared settings in `deploy/gcp.shared-remote.env`.
+The collaborator-facing remote scripts fall back to `deploy/gcp.shared-remote.env` automatically when `deploy/gcp.env` is absent, so a local `deploy/gcp.env` is only needed for overrides.
 
 For app-only fixes after the heavy base image is already proven, you can layer a fast hotfix image with `Dockerfile.gcp-hotfix` instead of rebuilding the full CUDA environment from scratch.
 
@@ -122,16 +133,19 @@ Primary hybrid path for the browser-media flow with the app local and the heavy 
 
 - `./scripts/run_hot_remote_webrtc.sh`
   - starts the GCP VM if needed
-  - waits for remote vision, Pocket-TTS, manager, and LiveKit
+  - waits for remote vision, Pocket-TTS, and LiveKit
   - opens an SSH tunnel for remote vision + Pocket-TTS
+  - syncs the filtered runtime env from the VM when available
   - runs the local app in `remote_hot_webrtc` against the remote LiveKit server
 - `./scripts/stop_hot_remote_webrtc.sh`
   - closes the SSH tunnel
   - stops the VM by default (`STOP_VM=0` keeps the VM running)
 
 This is the preferred hosted-heavy workflow. It keeps `full local` untouched while using remote heavy services plus remote LiveKit for hybrid use.
+The shared remote config in this repo enables a nightly VM shutdown at `02:00` in `America/Los_Angeles` as a billing backstop.
 
-Set a real `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` pair in `deploy/gcp.env` before creating or updating the VM. The create script now rejects the old `devkey` / `secret` placeholders, and the secret should be at least 32 characters long.
+Set a real `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` pair in `deploy/gcp.env`, or point `GCP_SECRET_LIVEKIT_API_KEY` / `GCP_SECRET_LIVEKIT_API_SECRET` at Secret Manager values, before creating or updating the VM.
+The create script still rejects the old `devkey` / `secret` placeholders, and the LiveKit secret should be at least 32 characters long.
 
 ## Registry choice
 

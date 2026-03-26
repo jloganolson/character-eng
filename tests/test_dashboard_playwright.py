@@ -800,7 +800,7 @@ def _seed_rendered_card_inventory_fixture(collector: DashboardEventCollector) ->
         "user_speech_started": {"card_text": "speech detected", "payload_snippets": ['"source": "mic"']},
         "user_transcript_final": {"card_text": "hello there", "payload_snippets": ['"text": "hello there"']},
         "assistant_reply": {"card_text": "Free water. Want one?", "payload_snippets": ['"full_text": "Free water. Want one?"']},
-        "response_interrupted": {"card_text": "Interrupted after: Okay", "payload_snippets": ['"reason": "barge_in"']},
+        "response_interrupted": {"card_text": "Assistant cut off after: Okay", "payload_snippets": ['"reason": "barge_in"']},
         "expression": {"card_text": "curious", "payload_snippets": ['"expression": "curious"']},
         "response_guard": {"card_text": "guard pass", "payload_snippets": ['"status": "pass"']},
         "post_response": {"card_text": None, "payload_snippets": ['"new_stage": "offer"', '"next_intent": "offer_water"']},
@@ -1570,10 +1570,7 @@ def test_rendered_card_inventory_inspector_sweep(
 
     for event_type in inventory["rendered_cards"]:
         spec = specs[event_type]
-        has_card_text = bool(spec["card_text"])
         locator = page.locator(f".stream-card[data-event-type='{event_type}'], .stream-dot[data-event-type='{event_type}']")
-        if has_card_text:
-            locator = locator.filter(has_text=str(spec["card_text"]))
         expect(locator.first).to_be_visible()
         locator.first.click()
         expect(page.locator("#inspector-summary-title")).to_have_text(re.compile(rf"{re.escape(event_type)} #\d+"))

@@ -13,7 +13,7 @@ def test_livekit_status_payload_hides_secret_value():
         enabled=True,
         url="ws://127.0.0.1:7880",
         api_key="devkey",
-        api_secret="secret",
+        api_secret="secret-secret-secret-secret-1234",
         room_prefix="ce",
     )
     payload = livekit_status_payload(cfg)
@@ -35,7 +35,7 @@ def test_issue_participant_token_encodes_join_claims():
         enabled=True,
         url="ws://127.0.0.1:7880",
         api_key="devkey",
-        api_secret="secret",
+        api_secret="secret-secret-secret-secret-1234",
         room_prefix="ce",
     )
     payload = issue_participant_token(
@@ -45,7 +45,13 @@ def test_issue_participant_token_encodes_join_claims():
         participant_name="Logan",
         metadata={"mode": "remote-hot-webrtc"},
     )
-    claims = jwt.decode(payload.token, "secret", algorithms=["HS256"], audience=None, options={"verify_aud": False})
+    claims = jwt.decode(
+        payload.token,
+        "secret-secret-secret-secret-1234",
+        algorithms=["HS256"],
+        audience=None,
+        options={"verify_aud": False},
+    )
     assert payload.server_url == "ws://127.0.0.1:7880"
     assert claims["sub"] == "logan-dev"
     assert claims["iss"] == "devkey"

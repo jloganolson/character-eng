@@ -7,8 +7,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 
-PORT = int(os.environ["CHARACTER_ENG_BRIDGE_PORT"])
 TOKEN = os.environ.get("CHARACTER_ENG_BRIDGE_TOKEN", "").strip()
+
+
+def _bridge_port() -> int:
+    value = os.environ.get("CHARACTER_ENG_BRIDGE_PORT", "").strip()
+    if not value:
+        raise KeyError("CHARACTER_ENG_BRIDGE_PORT")
+    return int(value)
 
 
 class _StubHandler(BaseHTTPRequestHandler):
@@ -66,7 +72,7 @@ class _StubHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), _StubHandler)
+    server = ThreadingHTTPServer(("0.0.0.0", _bridge_port()), _StubHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

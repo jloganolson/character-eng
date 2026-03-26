@@ -117,12 +117,16 @@ gcloud config set project character-eng
 ./scripts/run_hot_remote_webrtc.sh
 ```
 
+Fresh-machine setup for macOS, Linux, and Windows WSL2 lives in [REMOTE_QUICKSTART.md](REMOTE_QUICKSTART.md).
+That guide uses the committed shared remote config at [deploy/gcp.shared-remote.env](deploy/gcp.shared-remote.env), and the remote scripts fall back to it automatically when `deploy/gcp.env` is absent.
+
 ## Notes
 
 - `hybrid GCP` is the supported remote path.
 - The VM bills while running. If you are done, stop it.
+- The shared remote config also schedules a nightly VM shutdown at `02:00` Pacific as a backstop.
 
 ## Where To Look Next
 
-- Full repo docs: [README.md](/home/logan/Projects/character-eng/README.md)
-- GCP-specific details: [deploy/gcp/README.md](/home/logan/Projects/character-eng/deploy/gcp/README.md)
+- Full repo docs: [README.md](README.md)
+- GCP-specific details: [deploy/gcp/README.md](deploy/gcp/README.md)

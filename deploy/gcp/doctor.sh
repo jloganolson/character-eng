@@ -2,7 +2,19 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-DEFAULT_ENV_FILE="${CHARACTER_ENG_GCP_ENV:-$ROOT/deploy/gcp.env}"
+resolve_default_env_file() {
+  if [[ -n "${CHARACTER_ENG_GCP_ENV:-}" ]]; then
+    printf '%s\n' "$CHARACTER_ENG_GCP_ENV"
+    return 0
+  fi
+  if [[ -f "$ROOT/deploy/gcp.env" ]]; then
+    printf '%s\n' "$ROOT/deploy/gcp.env"
+    return 0
+  fi
+  printf '%s\n' "$ROOT/deploy/gcp.shared-remote.env"
+}
+
+DEFAULT_ENV_FILE="$(resolve_default_env_file)"
 
 if [[ $# -ge 2 && -f "${1:-}" ]]; then
   ENV_FILE="$1"
@@ -93,6 +105,17 @@ if [[ "$STATUS" == "RUNNING" ]]; then
     exit 1
   fi
   rm -f /tmp/character_eng_doctor_ssh.$$ /tmp/character_eng_doctor_ssh_err.$$
+  if gcloud compute ssh "$GCP_INSTANCE_NAME" \
+    --project "$GCP_PROJECT_ID" \
+    --zone "$GCP_ZONE" \
+    --command 'test -r /etc/character-eng.remote-hot.env && echo remote-hot-env-ok' >/tmp/character_eng_doctor_remote_env.$$ 2>/tmp/character_eng_doctor_remote_env_err.$$; then
+    printf 'remote hot env: '
+    cat /tmp/character_eng_doctor_remote_env.$$
+  else
+    echo "remote hot env: missing or unreadable" >&2
+    cat /tmp/character_eng_doctor_remote_env_err.$$ >&2
+  fi
+  rm -f /tmp/character_eng_doctor_remote_env.$$ /tmp/character_eng_doctor_remote_env_err.$$
 else
   echo "ssh: skipped (vm not running)"
 fi
