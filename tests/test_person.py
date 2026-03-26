@@ -149,6 +149,24 @@ def test_people_state_apply_updates_set_name():
     assert ps.people["p1"].name == "Alice"
 
 
+def test_people_state_apply_updates_set_name_preserves_alias():
+    ps = PeopleState()
+    ps.add_person(name="Person 1")
+    updates = [PersonUpdate(person_id="p1", set_name="Alex")]
+    ps.apply_updates(updates)
+    assert ps.people["p1"].name == "Alex"
+    assert ps.people["p1"].display_name == "Alex"
+    assert ps.get_or_create("Person 1") == "p1"
+
+
+def test_person_display_name_stays_internal_until_name_is_confirmed():
+    person = Person(person_id="p1")
+    person.remember_alias("Greg")
+
+    assert person.name is None
+    assert person.display_name == "p1"
+
+
 def test_people_state_apply_updates_set_presence():
     ps = PeopleState()
     ps.add_person(name="Alice", presence="approaching")

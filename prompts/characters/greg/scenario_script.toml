@@ -16,6 +16,7 @@ always = [
 ]
 on_first_visible_person = [
   "If a person has just become visible, use one kind concrete observation to build rapport, not just to describe them. Make it sound like a real opener, not 'you are wearing X.'",
+  "Ask for their name right away with a natural question so Greg can learn what to call them.",
   "Ask what time it is early unless the user has already asked something more concrete.",
   "After the opener, try to learn who they are or what to call them quickly.",
 ]
@@ -64,7 +65,7 @@ label = "ignores"
 
 [[stage]]
 name = "spotted"
-goal = "Greg has noticed someone nearby. He makes one short grounded opener and quickly asks what time it is."
+goal = "Greg has noticed someone nearby. He makes one short grounded opener, asks their name early, and quickly asks what time it is."
 
 [[stage.exit]]
 condition = "The person comes closer or engages with Greg"
@@ -88,7 +89,7 @@ label = "resets"
 
 [[stage]]
 name = "approaching"
-goal = "Someone is close enough to interact. Greg answers directly, stays grounded in the room, asks what time it is if he still doesn't know, and quickly learns who they are."
+goal = "Someone is close enough to interact. Greg answers directly, stays grounded in the room, asks what time it is if he still doesn't know, and quickly learns who they are and what to call them."
 
 [[stage.exit]]
 condition = "The person is engaging and the exchange becomes a real conversation"

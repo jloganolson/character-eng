@@ -14,10 +14,12 @@ from character_eng.history import (
     PlaybackRunner,
     VisionVideoRecorder,
     _video_is_valid,
+    deserialize_people,
     load_checkpoint,
     resolve_checkpoint_for_event_time,
     resolve_session_path,
     restore_runtime_state,
+    serialize_people,
 )
 from character_eng.person import PeopleState
 from character_eng.world import Goals, Script, WorldState
@@ -187,6 +189,23 @@ def test_history_service_records_session_checkpoint_and_restore(tmp_path):
     assert restored["people"].people["p1"].facts["p1f1"] == "holding phone"
     assert restored["goals"].long_term == "be helpful"
     assert restored["log_entries"][0]["response"] == "hello"
+
+
+def test_people_serialization_preserves_aliases(tmp_path):
+    people = PeopleState()
+    person = people.add_person(name="Person 1", presence="present")
+    person.add_fact("wearing glasses")
+    person.name = "Alex"
+    person.remember_alias("Alex")
+
+    payload = serialize_people(people)
+    restored = deserialize_people(payload)
+
+    assert restored is not None
+    assert restored.people["p1"].name == "Alex"
+    assert restored.people["p1"].display_name == "Alex"
+    assert restored.people["p1"].aliases == ["Person 1", "Alex"]
+    assert restored.get_or_create("Person 1") == "p1"
 
 
 def test_history_service_can_rename_archive(tmp_path):

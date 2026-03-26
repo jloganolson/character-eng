@@ -43,8 +43,8 @@ def _apply_person_presence(event: PerceptionEvent, people, world) -> None:
     if person is None:
         person = people.add_person(name=identity or None, presence=presence)
 
-    if identity and not person.name:
-        person.name = identity
+    if identity:
+        person.remember_alias(identity)
     person.presence = presence
 
     history_line = f"visual {payload.get('change', 'update')}: {event.description}"

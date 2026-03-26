@@ -24,6 +24,7 @@ If a "Current people" section is present, you may also return person_updates to 
 - Valid presence values: "approaching", "present", "leaving", "gone"
 - set_name: use when you learn a person's name from context (omit or null to leave unchanged)
 - set_presence: use when someone arrives, leaves, or departs (omit or null to leave unchanged)
+- If a person does not have a confirmed human name yet, keep the wording neutral and do not invent a name or use "Greg" as the subject unless the pending change explicitly says the person is Greg.
 - If no people changes are needed, omit person_updates or return an empty array
 
 You MUST return a JSON object with these keys: "remove_facts", "add_facts", "events".

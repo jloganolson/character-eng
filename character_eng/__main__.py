@@ -1043,6 +1043,8 @@ def _people_state_payload(people) -> dict:
             {
                 "id": p.person_id,
                 "name": p.name,
+                "display_name": p.display_name,
+                "aliases": list(getattr(p, "aliases", [])),
                 "presence": p.presence,
                 "facts": [{"id": k, "text": v, "scope": p.fact_scope(k)} for k, v in p.facts.items()],
             }

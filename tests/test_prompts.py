@@ -216,3 +216,8 @@ def test_load_prompt_prefers_situation_setup_premise(tmp_path, monkeypatch):
     result = load_prompt("test_char")
     assert "Setup-driven premise" in result
     assert "Legacy scenario text" not in result
+
+
+def test_vision_state_update_prompt_discourages_unconfirmed_names():
+    text = (prompts_mod.PROMPTS_DIR / "vision_state_update.txt").read_text()
+    assert "do not use \"Greg\" to describe the observed person" in text
