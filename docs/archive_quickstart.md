@@ -3,6 +3,7 @@
 Use this when a live run goes bad and you want to iterate from the exported archive instead of trying to reproduce the issue live.
 
 For the deeper workflow, see [archive_debug_playbook.md](./archive_debug_playbook.md).
+If you are invoking Codex or another repo-aware agent, the matching skill name is `archive-debug`.
 
 ## Minimal input
 

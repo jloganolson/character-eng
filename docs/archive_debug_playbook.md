@@ -1,6 +1,7 @@
 # Archive Debug Playbook
 
 If you just want the short operator checklist, start with [archive_quickstart.md](./archive_quickstart.md).
+If you are invoking Codex or another repo-aware agent, the matching skill name is `archive-debug`.
 
 Use this when a live session goes wrong, you export an archive, and you want fast offline iteration instead of guessing against live state.
 
