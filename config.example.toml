@@ -1,6 +1,6 @@
-# User settings for character_eng.
-# Copy this file to config.toml and edit.
-# config.toml is gitignored — your settings stay local.
+# Reference settings for alternate local configs.
+# The repo ships with a shared config.toml.
+# To use a personal config file instead, set CHARACTER_ENG_CONFIG_PATH.
 
 [voice]
 # Audio devices — use index (integer) or name substring (string).
