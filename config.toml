@@ -1,0 +1,11 @@
+# Shared project config.
+# For a personal override file, copy config.example.toml and point
+# CHARACTER_ENG_CONFIG_PATH at it.
+
+[voice]
+# input_device = "reSpeaker"   # hardware-specific: keep local unless the team standardizes on one device
+# output_device = "reSpeaker"  # hardware-specific: route TTS through the same device for AEC reference
+enabled = true
+aec = true
+tts_backend = "pocket"
+tts_server_url = "http://localhost:8003"

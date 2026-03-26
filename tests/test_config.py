@@ -106,3 +106,23 @@ def test_load_config_env_overrides(tmp_path, monkeypatch):
     assert loaded.models.chat_model == "gemini-3-flash-lite"
     assert loaded.models.micro_model == "groq-llama-8b"
     assert loaded.models.big_model == "groq-llama"
+
+
+def test_load_config_env_overrides_without_file(tmp_path, monkeypatch):
+    path = tmp_path / "missing-config.toml"
+    monkeypatch.setenv("CHARACTER_ENG_CONFIG_PATH", str(path))
+    monkeypatch.setenv("CHARACTER_ENG_TTS_BACKEND", "pocket")
+    monkeypatch.setenv("CHARACTER_ENG_TTS_SERVER_URL", "http://127.0.0.1:9800")
+    monkeypatch.setenv("CHARACTER_ENG_VISION_URL", "http://127.0.0.1:9001")
+    monkeypatch.setenv("CHARACTER_ENG_LIVEKIT_API_KEY", "envkey")
+    monkeypatch.setenv("CHARACTER_ENG_LIVEKIT_API_SECRET", "envsecret")
+    monkeypatch.setenv("CHARACTER_ENG_CHAT_MODEL", "gemini-3-flash-lite")
+
+    loaded = load_config()
+
+    assert loaded.voice.tts_backend == "pocket"
+    assert loaded.voice.tts_server_url == "http://127.0.0.1:9800"
+    assert loaded.vision.service_url == "http://127.0.0.1:9001"
+    assert loaded.livekit.api_key == "envkey"
+    assert loaded.livekit.api_secret == "envsecret"
+    assert loaded.models.chat_model == "gemini-3-flash-lite"

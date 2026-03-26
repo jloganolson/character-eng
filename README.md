@@ -42,10 +42,13 @@ If multiple keys are set, you'll choose a model at startup. If only one is set, 
 
 ### Configuration (optional)
 
-Copy `config.example.toml` to `config.toml` for persistent settings (gitignored):
+The repo ships with a shared `config.toml` for team defaults.
+
+If you want a personal config file, copy `config.example.toml` to something else and point `CHARACTER_ENG_CONFIG_PATH` at it:
 
 ```bash
-cp config.example.toml config.toml
+cp config.example.toml config.local.toml
+CHARACTER_ENG_CONFIG_PATH=$PWD/config.local.toml uv run -m character_eng
 ```
 
 ```toml
@@ -74,7 +77,7 @@ micro_model = "groq-llama-8b"
 big_model = "groq-llama"
 ```
 
-The app works without `config.toml` — all settings have defaults. The `--voice` flag still works as an override.
+The app still works without `config.toml` — all settings have defaults. The `--voice` flag still works as an override.
 
 ## Run
 
