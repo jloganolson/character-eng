@@ -167,11 +167,11 @@ def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
 def load_config() -> AppConfig:
     """Read config.toml and return AppConfig. Returns defaults if file missing."""
     config_path = _config_path()
-    if not config_path.exists():
-        return AppConfig()
-
-    with open(config_path, "rb") as f:
-        data = tomllib.load(f)
+    if config_path.exists():
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+    else:
+        data = {}
 
     voice_data = data.get("voice", {})
     voice = VoiceConfig(
