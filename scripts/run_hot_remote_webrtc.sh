@@ -193,7 +193,9 @@ fetch_remote_runtime_env() {
     >"$REMOTE_RUNTIME_ENV_CACHE" 2>/dev/null; then
     chmod 600 "$REMOTE_RUNTIME_ENV_CACHE"
     # shellcheck disable=SC1090
+    set -a
     source "$REMOTE_RUNTIME_ENV_CACHE"
+    set +a
     LIVEKIT_API_KEY="${CHARACTER_ENG_LIVEKIT_API_KEY:-${LIVEKIT_API_KEY:-devkey}}"
     LIVEKIT_API_SECRET="${CHARACTER_ENG_LIVEKIT_API_SECRET:-${LIVEKIT_API_SECRET:-secret}}"
     return 0
