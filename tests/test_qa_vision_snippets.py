@@ -15,9 +15,12 @@ FIXTURE_ROOT = Path(__file__).resolve().parent / "vision_snippets" / "fixtures"
 def test_iter_vision_state_snippets_loads_fixture_and_tags():
     snippets = list(iter_vision_state_snippets(FIXTURE_ROOT, required_tags={"vision-state", "fixture"}))
 
-    assert len(snippets) == 1
-    snippet = snippets[0]
-    assert snippet.title == "visitor backpack state update"
+    assert len(snippets) >= 2
+    titles = {snippet.title for snippet in snippets}
+    assert "visitor backpack state update" in titles
+    assert "greg archive name hallucination" in titles
+
+    snippet = next(item for item in snippets if item.title == "visitor backpack state update")
     assert snippet.capture_mode == "vision_state_turn"
     assert snippet.source_event_type == "vision_state_update"
     assert len(snippet.task_answers) == 2
@@ -25,7 +28,7 @@ def test_iter_vision_state_snippets_loads_fixture_and_tags():
 
 
 def test_evaluate_vision_state_snippet_matches_expected_update(monkeypatch):
-    snippet = next(iter_vision_state_snippets(FIXTURE_ROOT))
+    snippet = next(item for item in iter_vision_state_snippets(FIXTURE_ROOT) if item.title == "visitor backpack state update")
 
     monkeypatch.setattr(
         "character_eng.qa_vision_snippets.vision_state_update_call",
@@ -49,7 +52,7 @@ def test_evaluate_vision_state_snippet_matches_expected_update(monkeypatch):
 
 
 def test_evaluate_vision_state_snippet_flags_extra_changes_and_writes_report(monkeypatch, tmp_path):
-    snippet = next(iter_vision_state_snippets(FIXTURE_ROOT))
+    snippet = next(item for item in iter_vision_state_snippets(FIXTURE_ROOT) if item.title == "visitor backpack state update")
 
     monkeypatch.setattr(
         "character_eng.qa_vision_snippets.vision_state_update_call",
@@ -84,3 +87,31 @@ def test_evaluate_vision_state_snippet_flags_extra_changes_and_writes_report(mon
     assert "Vision State Snippet Report" in body
     assert "REVIEW" in body
     assert "unexpected person updates" in body
+
+
+def test_evaluate_vision_state_snippet_flags_unexpected_name(monkeypatch):
+    snippet = next(item for item in iter_vision_state_snippets(FIXTURE_ROOT) if item.title == "greg archive name hallucination")
+
+    monkeypatch.setattr(
+        "character_eng.qa_vision_snippets.vision_state_update_call",
+        lambda **kwargs: VisionStateUpdateResult(
+            update=WorldUpdate(
+                add_facts=list(snippet.expected_update["add_facts"]),
+                person_updates=[
+                    PersonUpdate(
+                        person_id="p1",
+                        add_facts=list(snippet.expected_update["person_updates"][0]["add_facts"]),
+                        set_name="Greg",
+                    )
+                ],
+            ),
+            summary="Unexpected name",
+            thought="The interpreter hallucinated a name.",
+        ),
+    )
+
+    result = evaluate_vision_state_snippet(snippet, model_config={})
+
+    assert result.ok is False
+    assert result.person_diffs[0].unexpected_name is True
+    assert result.person_diffs[0].actual_name == "Greg"

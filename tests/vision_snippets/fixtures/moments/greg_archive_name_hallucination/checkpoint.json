@@ -1,0 +1,28 @@
+{
+  "people": {
+    "next_id": 2,
+    "people": [
+      {
+        "aliases": [
+          "Person 1"
+        ],
+        "fact_scopes": {},
+        "facts": {},
+        "history": [],
+        "name": null,
+        "next_fact_id": 1,
+        "person_id": "p1",
+        "presence": "present"
+      }
+    ]
+  },
+  "world": {
+    "dynamic": {},
+    "events": [],
+    "next_id": 1,
+    "pending": [],
+    "static": [
+      "Greg is indoors in a room"
+    ]
+  }
+}

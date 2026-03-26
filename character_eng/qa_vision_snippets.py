@@ -63,6 +63,8 @@ class PersonUpdateDiff:
     actual_presence: str = ""
     expected_name: str = ""
     actual_name: str = ""
+    unexpected_presence: bool = False
+    unexpected_name: bool = False
 
     @property
     def ok(self) -> bool:
@@ -73,6 +75,8 @@ class PersonUpdateDiff:
             and not self.extra_facts
             and (not self.expected_presence or self.expected_presence == self.actual_presence)
             and (not self.expected_name or self.expected_name == self.actual_name)
+            and not self.unexpected_presence
+            and not self.unexpected_name
         )
 
 
@@ -191,6 +195,8 @@ def evaluate_vision_state_snippet(snippet: VisionStateSnippet, *, model_config: 
             actual_presence=actual.set_presence or "",
             expected_name=expected.set_name or "",
             actual_name=actual.set_name or "",
+            unexpected_presence=not (expected.set_presence or "") and bool(actual.set_presence or ""),
+            unexpected_name=not (expected.set_name or "") and bool(actual.set_name or ""),
         ))
     unexpected_person_updates = sorted(person_id for person_id in actual_person_by_id if person_id not in expected_person_ids)
 
@@ -228,6 +234,10 @@ def _render_result_card(result: VisionStateEvalResult) -> str:
             person_lines.append(f"<div class='miss'>missing person facts: {html.escape(', '.join(diff.missing_facts))}</div>")
         if diff.extra_facts:
             person_lines.append(f"<div class='extra'>extra person facts: {html.escape(', '.join(diff.extra_facts))}</div>")
+        if diff.unexpected_presence:
+            person_lines.append(f"<div class='extra'>unexpected presence: {html.escape(diff.actual_presence)}</div>")
+        if diff.unexpected_name:
+            person_lines.append(f"<div class='extra'>unexpected name: {html.escape(diff.actual_name)}</div>")
     return f"""
     <article class="card">
       <div class="card-head">

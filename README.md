@@ -2,6 +2,10 @@
 
 Quick operator guide: [QUICKSTART.md](/home/logan/Projects/character-eng/QUICKSTART.md)
 
+Archive debug docs: [archive_quickstart.md](/home/logan/Projects/character-eng/docs/archive_quickstart.md), [archive_debug_playbook.md](/home/logan/Projects/character-eng/docs/archive_debug_playbook.md), [archive_debug_postmortem.md](/home/logan/Projects/character-eng/docs/archive_debug_postmortem.md)
+
+Repo-tracked Codex skills live under [.codex/skills](/home/logan/Projects/character-eng/.codex/skills). Install them into your local Codex home with `./scripts/install_repo_skills.sh` or migrate an existing local copy with `./scripts/install_repo_skills.sh --force`.
+
 Interactive NPC chat CLI with two-tier LLM routing (Cerebras, Groq, Google Gemini, or local vLLM models). **Chat** uses Kimi K2 for streaming dialogue; **microservices** (eval, director, planning, reconciliation, expression) use 8B for fast structured JSON. Optional **voice mode** (Deepgram STT + ElevenLabs TTS) lets you speak to characters and hear them respond. Characters have personalities, world state that evolves during conversation, and a script system driven by parallel microservices — post-response calls (eval + director) fire concurrently for ~350ms total instead of ~1050ms sequential. A single-beat planner generates one beat at a time synchronously, eliminating background plan threads entirely. During conversation, beats use LLM-guided delivery: the beat's intent guides the LLM to respond naturally to the user while serving the beat's purpose (no verbatim pasting). The `/beat` command (autonomous time-passing) still uses verbatim delivery for TTS pre-rendering. After each character response, lightweight microservices derive gaze/expression, evaluate script progress, and check scenario exit conditions — all running concurrently for immediate effect.
 
 **Scenario director**: Characters can have a branching scenario script (TOML) defining stages with goals and exit conditions. A director microservice (8B, synchronous) evaluates exit conditions after each response with immediate effect — no background delay.
@@ -88,6 +92,7 @@ The app still works without `config.toml` — all settings have defaults. The `-
 ./scripts/run_heavy.sh                  # keep vLLM/vision/Pocket-TTS hot in the background
 ./scripts/vision_smoke.sh               # one-shot heavy stack readiness check with model-status output
 ./scripts/run_hot_offline.sh            # archive-only dashboard loop; auto-installs canonical archive fixture; use ?fixture=... or ?archive=...
+./scripts/archive_debug.sh <archive> "issue"  # quick offline archive triage: timeline, name/state transitions, next-pass hints
 ./scripts/run_hot.sh                    # restart only the fast app/UI layer
 ./scripts/stop_local.sh                 # stop the app plus heavy local services
 uv run -m character_eng                  # text mode (dashboard auto-opens at :7862)

@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from character_eng.creative import load_prompt_asset
+from character_eng.name_memory import has_explicit_name_evidence
+from character_eng.state_fidelity import sanitize_state_fact_list
 from character_eng.world import (
     PersonUpdate,
     WorldUpdate,
@@ -100,6 +102,42 @@ def _normalize_person_fact_updates(update: WorldUpdate, task_answers: list[dict]
     return update
 
 
+def _sanitize_vision_fact_updates(update: WorldUpdate) -> WorldUpdate:
+    update.add_facts = sanitize_state_fact_list(update.add_facts)
+
+    sanitized_person_updates: list[PersonUpdate] = []
+    for person_update in update.person_updates:
+        person_update.add_facts = sanitize_state_fact_list(person_update.add_facts)
+        if person_update.remove_facts or person_update.add_facts or person_update.set_name is not None or person_update.set_presence is not None:
+            sanitized_person_updates.append(person_update)
+    update.person_updates = sanitized_person_updates
+    return update
+
+
+def _strip_unsupported_vision_names(update: WorldUpdate, task_answers: list[dict], people) -> WorldUpdate:
+    answer_texts = [str(item.get("answer", "")).strip() for item in task_answers]
+    people_by_id = {} if people is None else dict(getattr(people, "people", {}) or {})
+    for person_update in update.person_updates:
+        if person_update.set_name is None:
+            continue
+        candidate = str(person_update.set_name).strip()
+        if not candidate:
+            person_update.set_name = None
+            continue
+        existing = people_by_id.get(person_update.person_id)
+        existing_name = str(getattr(existing, "name", "") or "").strip()
+        if existing_name and existing_name.lower() == candidate.lower():
+            continue
+        if not has_explicit_name_evidence(candidate, answer_texts):
+            person_update.set_name = None
+    update.person_updates = [
+        item
+        for item in update.person_updates
+        if item.remove_facts or item.add_facts or item.set_name is not None or item.set_presence is not None
+    ]
+    return update
+
+
 def vision_state_update_call(
     world,
     people,
@@ -185,6 +223,8 @@ def vision_state_update_call(
         person_updates=person_updates,
     )
     update = _normalize_person_fact_updates(update, task_answers)
+    update = _sanitize_vision_fact_updates(update)
+    update = _strip_unsupported_vision_names(update, task_answers, people)
     return VisionStateUpdateResult(
         update=update,
         thought=str(data.get("thought", "")).strip(),
