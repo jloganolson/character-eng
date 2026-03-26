@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from character_eng.archive_analysis import find_archive_state_issues
 from character_eng.name_memory import extract_self_identified_name
 
 HISTORY_ROOT = ROOT / "history"
@@ -131,6 +132,18 @@ def print_recommendation(issue: str) -> None:
     print("  - Identify the earliest incorrect event and turn that into an offline fixture.")
 
 
+def print_state_fidelity_flags(events: list[dict]) -> None:
+    issues = find_archive_state_issues(events)
+    print("State fidelity flags:")
+    if not issues:
+        print("  (none)")
+        return
+    for issue in issues[:12]:
+        print(f"  {issue.seq}: {issue.event_type} {issue.reason} -> {issue.detail}")
+    if len(issues) > 12:
+        print(f"  ... and {len(issues) - 12} more")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Quick archive-first triage for exported sessions.")
     parser.add_argument("archive", help="Archive id, session id, or absolute path")
@@ -152,6 +165,8 @@ def main() -> int:
     print_dialogue_timeline(events)
     print()
     print_name_timeline(events)
+    print()
+    print_state_fidelity_flags(events)
     print()
     print_recommendation(args.issue or "")
     return 0

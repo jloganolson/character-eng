@@ -36,6 +36,13 @@ For the March 26, 2026 naming archive, the answer was:
 
 That means prompt-only iteration would have been too blunt. The failure was split across two subsystems.
 
+The same archive can also surface quality issues beyond the headline bug, for example:
+
+- speculative state facts such as `appears to`, `possibly`, or `might`
+- summary labels that jump from `Person 1` / `Person 2` to a human name without evidence
+
+That is useful because it lets you mine one exported archive for multiple offline regressions instead of treating it as a one-bug artifact.
+
 ## Default workflow
 
 ### 1. Run the archive triage command
@@ -50,6 +57,7 @@ This gives you:
 - event-type counts
 - dialogue timeline
 - name/state timeline
+- state fidelity flags for suspicious world/person updates
 - recommended next pass
 
 ### 2. Identify the failing source of truth

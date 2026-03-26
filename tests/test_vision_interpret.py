@@ -216,6 +216,75 @@ def test_vision_state_update_call_strips_unsupported_set_name(monkeypatch):
     assert result.update.person_updates[0].set_name is None
 
 
+def test_vision_state_update_call_sanitizes_speculative_fact_clauses(monkeypatch):
+    class Message:
+        content = json.dumps({
+            "thought": "",
+            "summary": "Updated room description and person appearance.",
+            "remove_facts": [],
+            "add_facts": [
+                "A window allows natural light, and there's a door on the right, suggesting an entry or exit to this space.",
+            ],
+            "events": [],
+            "person_updates": [
+                {
+                    "person_id": "p1",
+                    "add_facts": [
+                        "An accessory could be a string around their neck, possibly for holding keys or earbuds.",
+                        "The person in the image, estimated to be around 35 years old, is drinking from a white ceramic mug, held close to their mouth, while oriented slightly towards the left side of the frame, their gaze directed downwards.",
+                        "The person appears to be standing upright with their body slightly angled, indicating they might be talking or reacting to something off-camera not visible in the image.",
+                    ],
+                    "fact_scope": "static",
+                }
+            ],
+        })
+
+    class Choice:
+        message = Message()
+
+    class Response:
+        choices = [Choice()]
+
+    monkeypatch.setattr("character_eng.world._llm_call", lambda *args, **kwargs: Response())
+
+    people = PeopleState()
+    people.add_person(presence="present")
+    result = vision_state_update_call(
+        world=WorldState(),
+        people=people,
+        task_answers=[
+            {
+                "task_id": "world_state",
+                "label": "World State",
+                "question": "Describe the room.",
+                "answer": "A window allows natural light, and there's a door on the right, suggesting an entry or exit to this space.",
+                "interpret_as": "world_state",
+                "target": "scene",
+                "target_person_id": "p1",
+            },
+            {
+                "task_id": "person_description_dynamic",
+                "label": "Person Description Dynamic",
+                "question": "Describe the person.",
+                "answer": "The person is drinking from a mug and standing slightly angled.",
+                "interpret_as": "person_description_dynamic",
+                "target": "nearest_person",
+                "target_person_id": "p1",
+                "target_identity": "Person 2",
+            },
+        ],
+        model_config={},
+    )
+
+    assert result.update.add_facts == [
+        "A window allows natural light, and there's a door on the right"
+    ]
+    assert result.update.person_updates[0].add_facts == [
+        "The person in the image is drinking from a white ceramic mug, held close to their mouth, while oriented slightly towards the left side of the frame, their gaze directed downwards.",
+        "The person is standing upright with their body slightly angled"
+    ]
+
+
 def test_vision_state_update_call_ignores_null_optional_person_fields(monkeypatch):
     class Message:
         content = json.dumps({

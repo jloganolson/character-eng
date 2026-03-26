@@ -696,6 +696,40 @@ def test_reconcile_call_sanitizes_person_updates(mock_make_client):
 
 
 @patch("character_eng.world._make_client")
+def test_reconcile_call_sanitizes_speculative_facts(mock_make_client):
+    data = {
+        "remove_facts": [],
+        "add_facts": [
+            "A window allows natural light, and there's a door on the right, suggesting an entry or exit to this space.",
+            "The room appears to be a storage or utility area.",
+        ],
+        "events": [],
+        "person_updates": [
+            {
+                "person_id": "p1",
+                "add_facts": [
+                    "The nearest visible person appears to have short brown hair with grey sideburns, wearing glasses.",
+                    "An accessory could be a string around their neck, possibly for holding keys or earbuds.",
+                ],
+            }
+        ],
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    update = reconcile_call(WorldState(), ["someone is visible near the doorway"], TEST_CONFIG)
+
+    assert update.add_facts == [
+        "A window allows natural light, and there's a door on the right"
+    ]
+    assert len(update.person_updates) == 1
+    assert update.person_updates[0].add_facts == [
+        "The nearest visible person has short brown hair with grey sideburns, wearing glasses."
+    ]
+
+
+@patch("character_eng.world._make_client")
 def test_reconcile_call_treats_null_set_name_as_missing(mock_make_client):
     data = {
         "remove_facts": [],

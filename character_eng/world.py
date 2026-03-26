@@ -16,6 +16,7 @@ from rich.text import Text
 from character_eng.creative import character_asset_path, load_character_setup, load_prompt_asset
 from character_eng.name_memory import has_explicit_name_evidence
 from character_eng.models import MODELS, get_fallback_chain
+from character_eng.state_fidelity import sanitize_state_fact_list
 from character_eng.utils import ts as _ts
 
 _console = Console()
@@ -622,11 +623,18 @@ def reconcile_call(world: WorldState, pending_changes: list[str], model_config: 
             if not has_explicit_name_evidence(candidate, pending_changes):
                 update.set_name = None
 
+    add_facts = sanitize_state_fact_list(_clean_string_list(data.get("add_facts", []), fact_text=True))
+    sanitized_person_updates: list[PersonUpdate] = []
+    for update in person_updates:
+        update.add_facts = sanitize_state_fact_list(update.add_facts)
+        if update.remove_facts or update.add_facts or update.set_name is not None or update.set_presence is not None:
+            sanitized_person_updates.append(update)
+
     return WorldUpdate(
         remove_facts=_clean_id_list(data.get("remove_facts", []), _WORLD_FACT_ID_RE),
-        add_facts=_clean_string_list(data.get("add_facts", []), fact_text=True),
+        add_facts=add_facts,
         events=_clean_string_list(data.get("events", [])),
-        person_updates=person_updates,
+        person_updates=sanitized_person_updates,
     )
 
 

@@ -5,15 +5,14 @@
       "expected_update": {
         "add_facts": [
           "The room features white walls and ceiling, with storage units containing white boxes and some with blue and half-blacks, one showing a yellow bottom.",
-          "A window allows natural light, and there's a door on the right, suggesting an entry or exit to this space."
+          "A window allows natural light, and there's a door on the right"
         ],
         "events": [],
         "person_updates": [
           {
             "add_facts": [
-              "The nearest visible person appears to have short brown hair with grey sideburns, wearing glasses and a white shirt with indistinguishable details.",
-              "An accessory could be a string around their neck, possibly for holding keys or earbuds.",
-              "The person in the image, estimated to be around 35 years old, is drinking from a white ceramic mug, held close to their mouth, while oriented slightly towards the left side of the frame, their gaze directed downwards."
+              "The nearest visible person has short brown hair with grey sideburns, wearing glasses and a white shirt with indistinguishable details.",
+              "The person in the image is drinking from a white ceramic mug, held close to their mouth, while oriented slightly towards the left side of the frame, their gaze directed downwards."
             ],
             "person_id": "p1"
           }
