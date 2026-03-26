@@ -625,7 +625,7 @@ def test_reconcile_call_parses_person_updates(mock_make_client):
     mock_make_client.return_value = mock_client
 
     ws = WorldState()
-    update = reconcile_call(ws, ["someone arrives"], TEST_CONFIG)
+    update = reconcile_call(ws, ["someone arrives and says my name is Alice"], TEST_CONFIG)
 
     assert len(update.person_updates) == 1
     pu = update.person_updates[0]
@@ -714,6 +714,30 @@ def test_reconcile_call_treats_null_set_name_as_missing(mock_make_client):
     mock_make_client.return_value = mock_client
 
     update = reconcile_call(WorldState(), ["someone shifts"], TEST_CONFIG)
+
+    assert len(update.person_updates) == 1
+    assert update.person_updates[0].set_name is None
+
+
+@patch("character_eng.world._make_client")
+def test_reconcile_call_strips_unsupported_set_name(mock_make_client):
+    data = {
+        "remove_facts": [],
+        "add_facts": [],
+        "events": [],
+        "person_updates": [
+            {
+                "person_id": "p1",
+                "add_facts": ["Holding a mug"],
+                "set_name": "Greg",
+            }
+        ],
+    }
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    update = reconcile_call(WorldState(), ["someone is holding a mug"], TEST_CONFIG)
 
     assert len(update.person_updates) == 1
     assert update.person_updates[0].set_name is None

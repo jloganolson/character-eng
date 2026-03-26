@@ -25,6 +25,7 @@ from character_eng.history import (
     catalog_report_annotation,
     restore_runtime_state,
 )
+from character_eng.name_memory import apply_transcript_name_to_people
 from character_eng.models import BIG_MODEL, CHAT_MODEL, MICRO_MODEL, MODELS
 from character_eng.livekit_auth import build_room_name, issue_participant_token, livekit_status_payload
 from character_eng.livekit_transport import LiveKitSession
@@ -3499,6 +3500,14 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
 
             # --- Turn flow ---
             input_timing = _consume_live_input_metadata(voice_io, user_input)
+            _maybe_promote_transcript_name(
+                session,
+                world,
+                people,
+                user_input,
+                scenario=scenario,
+                vision_mgr=vision_mgr,
+            )
             _push_turn_start(
                 "send",
                 user_input,
@@ -4297,6 +4306,20 @@ def _consume_live_input_metadata(voice_io, user_input: str) -> dict:
     if timing:
         return timing
     return {"input_source": "text"}
+
+
+def _maybe_promote_transcript_name(session, world, people, user_input: str, *, scenario=None, vision_mgr=None) -> None:
+    person_id, captured_name = apply_transcript_name_to_people(people, user_input)
+    if not person_id or not captured_name:
+        return
+    _push("transcript_name_capture", {
+        "person_id": person_id,
+        "name": captured_name,
+        "transcript": user_input,
+        "source": "user_transcript",
+    })
+    _push_world_people_state(world, people, dedupe=True)
+    _sync_runtime_prompt_context(session, world, people=people, scenario=scenario, vision_mgr=vision_mgr)
 
 
 def stream_response(session, label, message, voice_io=None, expr_model_config=None, input_timing: dict | None = None, keep_beat_guidance: bool = False, world=None, people=None, scenario=None, vision_mgr=None) -> str:

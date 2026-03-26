@@ -166,6 +166,56 @@ def test_vision_state_update_call_treats_null_set_name_as_missing(monkeypatch):
     assert result.update.person_updates[0].set_name is None
 
 
+def test_vision_state_update_call_strips_unsupported_set_name(monkeypatch):
+    class Message:
+        content = json.dumps({
+            "thought": "",
+            "summary": "Updated person description.",
+            "remove_facts": [],
+            "add_facts": [],
+            "events": [],
+            "person_updates": [
+                {
+                    "person_id": "p1",
+                    "add_facts": ["The person is wearing glasses."],
+                    "fact_scope": "static",
+                    "set_name": "Greg",
+                }
+            ],
+        })
+
+    class Choice:
+        message = Message()
+
+    class Response:
+        choices = [Choice()]
+
+    monkeypatch.setattr("character_eng.world._llm_call", lambda *args, **kwargs: Response())
+
+    people = PeopleState()
+    people.add_person(presence="present")
+    result = vision_state_update_call(
+        world=WorldState(),
+        people=people,
+        task_answers=[
+            {
+                "task_id": "person_description_static",
+                "label": "Person Description Static",
+                "question": "Describe the nearest person.",
+                "answer": "The person is wearing glasses.",
+                "interpret_as": "person_description_static",
+                "target": "nearest_person",
+                "target_person_id": "p1",
+                "target_identity": "Person 2",
+            }
+        ],
+        model_config={},
+    )
+
+    assert len(result.update.person_updates) == 1
+    assert result.update.person_updates[0].set_name is None
+
+
 def test_vision_state_update_call_ignores_null_optional_person_fields(monkeypatch):
     class Message:
         content = json.dumps({

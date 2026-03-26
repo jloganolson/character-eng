@@ -1,0 +1,69 @@
+{
+  "bundle": {
+    "capture_mode": "vision_state_turn",
+    "vision_state": {
+      "expected_update": {
+        "add_facts": [
+          "The room features white walls and ceiling, with storage units containing white boxes and some with blue and half-blacks, one showing a yellow bottom.",
+          "A window allows natural light, and there's a door on the right, suggesting an entry or exit to this space."
+        ],
+        "events": [],
+        "person_updates": [
+          {
+            "add_facts": [
+              "The nearest visible person appears to have short brown hair with grey sideburns, wearing glasses and a white shirt with indistinguishable details.",
+              "An accessory could be a string around their neck, possibly for holding keys or earbuds.",
+              "The person in the image, estimated to be around 35 years old, is drinking from a white ceramic mug, held close to their mouth, while oriented slightly towards the left side of the frame, their gaze directed downwards."
+            ],
+            "person_id": "p1"
+          }
+        ],
+        "remove_facts": []
+      },
+      "source_event_key": "evt-greg-archive-name-hallucination",
+      "source_event_type": "vision_state_update",
+      "summary": "Archive regression: initial visual person description must not rename the visitor to Greg.",
+      "task_answers": [
+        {
+          "answer": "The room features white walls and ceiling, with storage units containing white boxes and some with blue and half-blacks, one showing a yellow bottom. A window allows natural light, and there's a door on the right, suggesting an entry or exit to this space. The scene appears still, with no immediate state changes noted.",
+          "interpret_as": "world_state",
+          "label": "World State",
+          "question": "Describe the visible room, objects, and any state changes that matter right now. (1-2 sentences max)",
+          "target": "scene",
+          "target_person_id": "p1",
+          "task_id": "world_state"
+        },
+        {
+          "answer": "The nearest visible person appears to have short brown hair with grey sideburns, wearing glasses and a white shirt with indistinguishable details. An accessory could be a string around their neck, possibly for holding keys or earbuds.",
+          "interpret_as": "person_description_static",
+          "label": "Person Description Static",
+          "question": "Describe the nearest visible person's appearance, clothing, and accessories. (1-2 sentences max)",
+          "target": "nearest_person",
+          "target_identity": "Person 2",
+          "target_person_id": "p1",
+          "task_id": "person_description_static"
+        },
+        {
+          "answer": "The person in the image, estimated to be around 35 years old, is drinking from a white ceramic mug, held close to their mouth, while oriented slightly towards the left side of the frame, their gaze directed downwards.",
+          "interpret_as": "person_description_dynamic",
+          "label": "Person Description Dynamic",
+          "question": "Describe what the nearest visible person is doing right now with their body, posture, and orientation. Avoid inferring held objects unless they are visually obvious. (1-2 sentences max)",
+          "target": "nearest_person",
+          "target_identity": "Person 2",
+          "target_person_id": "p1",
+          "task_id": "person_description_dynamic"
+        }
+      ]
+    }
+  },
+  "capture_mode": "vision_state_turn",
+  "session_id": "fixture-greg-archive-name-hallucination",
+  "tags": [
+    "vision-state",
+    "fixture",
+    "archive-regression"
+  ],
+  "title": "greg archive name hallucination",
+  "type": "snippet",
+  "version": 1
+}

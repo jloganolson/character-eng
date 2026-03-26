@@ -14,6 +14,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from character_eng.creative import character_asset_path, load_character_setup, load_prompt_asset
+from character_eng.name_memory import has_explicit_name_evidence
 from character_eng.models import MODELS, get_fallback_chain
 from character_eng.utils import ts as _ts
 
@@ -604,6 +605,22 @@ def reconcile_call(world: WorldState, pending_changes: list[str], model_config: 
                 set_presence=set_presence,
                 invalid_presence=invalid_presence,
             ))
+
+    if person_updates:
+        people_by_id = {} if people is None else dict(getattr(people, "people", {}) or {})
+        for update in person_updates:
+            if update.set_name is None:
+                continue
+            candidate = str(update.set_name).strip()
+            if not candidate:
+                update.set_name = None
+                continue
+            existing = people_by_id.get(update.person_id)
+            existing_name = str(getattr(existing, "name", "") or "").strip()
+            if existing_name and existing_name.lower() == candidate.lower():
+                continue
+            if not has_explicit_name_evidence(candidate, pending_changes):
+                update.set_name = None
 
     return WorldUpdate(
         remove_facts=_clean_id_list(data.get("remove_facts", []), _WORLD_FACT_ID_RE),
