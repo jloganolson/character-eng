@@ -335,6 +335,8 @@ def test_load_scenario_script_greg():
     assert script.start == "watching"
     assert "watching" in script.stages
     assert "spotted" in script.stages
+    assert any("name right away" in item for item in script.guardrails.on_first_visible_person)
+    assert "asks their name early" in script.stages["spotted"].goal
     assert len(script.stages["watching"].exits) >= 1
     # Verify labels are parsed
     first_exit = script.stages["watching"].exits[0]

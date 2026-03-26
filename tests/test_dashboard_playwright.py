@@ -611,6 +611,32 @@ def dashboard_server(tmp_path):
         thread.join(timeout=2)
 
 
+def test_people_sidebar_shows_display_name_and_fact_scopes(browser_page: Page, dashboard_server):
+    collector, _, dashboard_url, _ = dashboard_server
+
+    browser_page.goto(dashboard_url)
+    collector.push("people_state", {
+        "people": [
+            {
+                "id": "p1",
+                "name": "Person 1",
+                "display_name": "Alex",
+                "aliases": ["Person 1", "Alex"],
+                "presence": "present",
+                "facts": [
+                    {"id": "p1f1", "text": "Wearing glasses", "scope": "static"},
+                    {"id": "p1f2", "text": "Holding a cup", "scope": "ephemeral"},
+                ],
+            }
+        ],
+    })
+
+    expect(browser_page.locator("#people-content")).to_contain_text("Alex")
+    expect(browser_page.locator("#people-content")).to_contain_text("Wearing glasses")
+    expect(browser_page.locator("#people-content")).to_contain_text("[static]")
+    expect(browser_page.locator("#people-content")).to_contain_text("[ephemeral]")
+
+
 def _seed_rendered_card_inventory_fixture(collector: DashboardEventCollector) -> dict[str, dict[str, object]]:
     base = time.time()
     step_s = 0.25

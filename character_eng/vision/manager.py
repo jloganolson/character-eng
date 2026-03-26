@@ -240,6 +240,8 @@ class VisionManager:
                     {
                         "id": p.person_id,
                         "name": p.name,
+                        "display_name": p.display_name,
+                        "aliases": list(p.aliases),
                         "presence": p.presence,
                         "facts": [{"id": k, "text": v, "scope": p.fact_scope(k)} for k, v in p.facts.items()],
                     }
@@ -604,7 +606,8 @@ class VisionManager:
                     if reusable_person_id is not None:
                         person_id = reusable_person_id
                     else:
-                        person_id = self._people.get_or_create(vid)
+                        existing = self._people.find_by_name(vid)
+                        person_id = existing.person_id if existing is not None else self._people.add_person(presence="present").person_id
                     self._visual_to_person[vid] = person_id
                     people_changed = True
                 person = self._people.people.get(person_id)
@@ -612,10 +615,7 @@ class VisionManager:
                     if person.presence != "present":
                         people_changed = True
                     person.presence = "present"
-                    if not person.name or person.name != vid:
-                        if person.name != vid:
-                            people_changed = True
-                        person.name = vid
+                    people_changed = person.remember_alias(vid) or people_changed
 
         if self._people is not None and not visible_now:
             for person in self._people.present_people():
@@ -1066,6 +1066,10 @@ class VisionManager:
             person_id = self._visual_to_person.get(identity)
             if person_id:
                 return person_id
+            if self._people is not None:
+                person = self._people.find_by_name(identity)
+                if person is not None:
+                    return person.person_id
         if self._people is not None:
             present = self._people.present_people()
             if len(present) == 1:

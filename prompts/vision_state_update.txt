@@ -15,6 +15,7 @@ Your job:
 - for `person_description_dynamic`, prefer `events`, and only add person facts when the state is likely to persist; when you do add short-lived person facts, set `fact_scope` to `ephemeral`
 - for `world_state`, update scene/world facts and events
 - only reference a `person_id` that is explicitly provided in the input
+- if the observed person does not have a confirmed human name, use neutral phrasing like "the person" or "the visitor"; do not invent a name and do not use "Greg" to describe the observed person unless the input explicitly says the person is named Greg
 - when replacing stale facts, remove the old fact IDs rather than duplicating them
 
 Return JSON:
@@ -42,5 +43,6 @@ Rules:
 - `person_updates.remove_facts` must contain only existing person fact IDs like `p1f2`
 - `person_updates.fact_scope` must be either `static` or `ephemeral` when `add_facts` is non-empty
 - `add_facts` and `person_updates.add_facts` must be plain fact text only, never fact IDs
+- `p1`/`p2`-style IDs are internal references only; do not surface them in the fact text
 - omit empty strings and omit person updates with no actual changes
 - do not turn uncertain held-object claims into person facts; prefer omission or an `event` unless the object interaction is visually obvious

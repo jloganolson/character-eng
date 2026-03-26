@@ -37,11 +37,27 @@ class PersonUpdate:
 class Person:
     person_id: str
     name: str | None = None
+    aliases: list[str] = field(default_factory=list)
     presence: str = "approaching"
     facts: dict[str, str] = field(default_factory=dict)
     fact_scopes: dict[str, str] = field(default_factory=dict)
     history: list[str] = field(default_factory=list)
     _next_fact_id: int = field(default=1, repr=False)
+
+    def remember_alias(self, alias: str) -> bool:
+        cleaned = str(alias or "").strip()
+        if not cleaned:
+            return False
+        if not any(existing.lower() == cleaned.lower() for existing in self.aliases):
+            self.aliases.append(cleaned)
+            return True
+        return False
+
+    @property
+    def display_name(self) -> str:
+        if self.name and self.name.strip():
+            return self.name
+        return self.person_id
 
     def add_fact(self, text: str, *, scope: str = "static") -> str:
         """Assign next sequential fact ID scoped to this person, add fact, return the ID."""
@@ -56,7 +72,7 @@ class Person:
 
     def render(self) -> str:
         parts: list[str] = []
-        display = self.name or self.person_id
+        display = self.display_name
         parts.append(f"{display} ({self.presence})")
         for fid, text in self.facts.items():
             scope = self.fact_scope(fid)
@@ -66,7 +82,7 @@ class Person:
 
     def render_for_reconcile(self) -> str:
         lines: list[str] = []
-        display = self.name or self.person_id
+        display = self.display_name
         lines.append(f"{self.person_id} [{display}] ({self.presence}):")
         for fid, text in self.facts.items():
             scope = self.fact_scope(fid)
@@ -84,6 +100,7 @@ class PeopleState:
         pid = f"p{self._next_id}"
         self._next_id += 1
         person = Person(person_id=pid, name=name, presence=presence)
+        person.remember_alias(name or "")
         self.people[pid] = person
         return person
 
@@ -95,8 +112,13 @@ class PeopleState:
         return self.add_person(name=name, presence="present").person_id
 
     def find_by_name(self, name: str) -> Person | None:
+        cleaned = str(name or "").strip().lower()
+        if not cleaned:
+            return None
         for person in self.people.values():
-            if person.name and person.name.lower() == name.lower():
+            if person.name and person.name.lower() == cleaned:
+                return person
+            if any(alias.lower() == cleaned for alias in person.aliases):
                 return person
         return None
 
@@ -160,6 +182,7 @@ class PeopleState:
                     continue
                 person.add_fact(cleaned, scope=scope)
             if update.set_name is not None:
+                person.remember_alias(update.set_name)
                 person.name = update.set_name
             if update.set_presence in _VALID_PRESENCE:
                 person.presence = update.set_presence
@@ -172,7 +195,7 @@ class PeopleState:
             body = "[dim]No people tracked.[/dim]"
         else:
             for person in self.people.values():
-                display = person.name or person.person_id
+                display = person.display_name
                 lines.append(f"[bold]{display}[/bold] [dim]({person.person_id})[/dim] — {person.presence}")
                 for fid, text in person.facts.items():
                     scope = person.fact_scope(fid)

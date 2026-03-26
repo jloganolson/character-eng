@@ -221,6 +221,7 @@ def serialize_people(people: PeopleState | None) -> dict:
             {
                 "person_id": person.person_id,
                 "name": person.name,
+                "aliases": list(getattr(person, "aliases", [])),
                 "presence": person.presence,
                 "facts": dict(person.facts),
                 "fact_scopes": dict(getattr(person, "fact_scopes", {})),
@@ -241,6 +242,7 @@ def deserialize_people(payload: dict | None) -> PeopleState | None:
         person = Person(
             person_id=str(entry.get("person_id", "")),
             name=entry.get("name"),
+            aliases=list(entry.get("aliases", []) or []),
             presence=str(entry.get("presence", "approaching")),
             facts=dict(entry.get("facts", {})),
             fact_scopes=dict(entry.get("fact_scopes", {})),

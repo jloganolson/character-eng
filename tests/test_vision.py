@@ -332,6 +332,8 @@ def test_vision_manager_people_resolution():
     assert mgr._events[0].trace["provenance"]["label"] == "Presence tracker"
     assert mgr._events[0].trace["provenance"]["primary"] == "person_tracker"
     assert mgr._people.get_or_create("Person 1") == "p1"
+    assert mgr._people.people["p1"].name is None
+    assert mgr._people.people["p1"].display_name == "p1"
 
     # Same person again — no new event
     mgr._resolve_people(snap)
@@ -351,6 +353,25 @@ def test_vision_manager_people_resolution():
     assert mgr._events[1].description == "A person is no longer visible"
     assert mgr._events[1].payload["signals"] == ["person_departed"]
     assert mgr._events[1].trace["provenance"]["label"] == "Presence tracker"
+
+
+def test_vision_manager_people_resolution_preserves_learned_name():
+    from character_eng.person import PersonUpdate, PeopleState
+    from character_eng.vision.manager import VisionManager
+
+    mgr = VisionManager()
+    mgr._people = PeopleState()
+    mgr._people.add_person(name="Person 1", presence="present")
+    mgr._people.apply_updates([PersonUpdate(person_id="p1", set_name="Alex")])
+
+    snap = RawVisualSnapshot(
+        persons=[PersonObservation(identity="Person 1", bbox=(0, 0, 100, 200))],
+    )
+    mgr._resolve_people(snap)
+
+    assert mgr._people.people["p1"].name == "Alex"
+    assert mgr._people.people["p1"].display_name == "Alex"
+    assert mgr._people.get_or_create("Person 1") == "p1"
 
 
 def test_vision_manager_suppresses_generic_presence_synthesis_claims(monkeypatch):

@@ -8270,7 +8270,7 @@
       case "people_state":
         return (data.people || [])
           .flatMap((person) => [
-            person?.name || person?.id || "",
+            person?.display_name || person?.name || person?.id || "",
             ...((person?.facts || []).map((fact) => fact?.text || fact)),
           ])
           .find((item) => String(item || "").trim()) || `${(data.people || []).length} tracked people`;
@@ -8451,7 +8451,7 @@
       }
       case "people_state": {
         const names = (data.people || [])
-          .map((person) => person?.name || person?.id || "")
+          .map((person) => person?.display_name || person?.name || person?.id || "")
           .filter(Boolean);
         return names.join(" · ");
       }
@@ -10217,10 +10217,12 @@
     renderSidebarPanelContent("people", data.people.map((person) => {
       const facts = (person.facts || []).map((fact) => {
         const scope = String(fact.scope || "").trim().toLowerCase();
-        const scopeTag = scope === "ephemeral" ? ' <span style="color:var(--text-dim)">[ephemeral]</span>' : "";
+        const scopeTag = scope === "ephemeral"
+          ? ' <span style="color:var(--text-dim)">[ephemeral]</span>'
+          : ' <span style="color:var(--text-dim)">[static]</span>';
         return `<div class="fact" style="padding-left:1em"><span class="fact-id">${esc(fact.id || "")}</span> ${esc(fact.text || fact)}${scopeTag}</div>`;
       }).join("");
-      return `<div class="person-entry"><span class="person-name">${esc(person.name || person.id)}</span> <span style="color:var(--text-dim)">${esc(person.id)}</span>${facts}</div>`;
+      return `<div class="person-entry"><span class="person-name">${esc(person.display_name || person.name || person.id)}</span> <span style="color:var(--text-dim)">${esc(person.id)}</span>${facts}</div>`;
     }).join(""), {status: "ready", visible: true});
   }
 
@@ -10744,7 +10746,7 @@
     if (event.type === "people_state") {
       const chips = (event.data.people || [])
         .slice(0, 3)
-        .map((person) => person?.name || person?.id || "")
+        .map((person) => person?.display_name || person?.name || person?.id || "")
         .filter(Boolean);
       return `
         <div class="stream-card-label">${esc(event.label)}</div>
