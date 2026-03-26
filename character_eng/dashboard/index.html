@@ -2675,6 +2675,8 @@
   let turnCount = 0;
   let lastSeq = 0;
   let currentTurnId = 0;
+  let timelinePauseStartedAt = null;
+  let timelinePauseElapsedSeconds = 0;
   let pendingInputTurnId = null;
   let activeTurnSummaryKey = null;
   let activeReplyKey = null;
@@ -2750,6 +2752,32 @@
   function normalizeRuntimePhase(phase) {
     const key = String(phase || "").trim().toLowerCase();
     return KNOWN_RUNTIME_PHASES.has(key) ? key : "unknown";
+  }
+
+  function resetTimelinePauseTracking() {
+    timelinePauseStartedAt = null;
+    timelinePauseElapsedSeconds = 0;
+  }
+
+  function beginTimelinePause(timestamp) {
+    if (timelinePauseStartedAt != null) return;
+    timelinePauseStartedAt = Number.isFinite(Number(timestamp)) ? Number(timestamp) : (Date.now() / 1000);
+  }
+
+  function endTimelinePause(timestamp) {
+    if (timelinePauseStartedAt == null) return;
+    const resumedAt = Number.isFinite(Number(timestamp)) ? Number(timestamp) : (Date.now() / 1000);
+    timelinePauseElapsedSeconds += Math.max(0, resumedAt - timelinePauseStartedAt);
+    timelinePauseStartedAt = null;
+  }
+
+  function timelinePauseOffsetAt(timestamp) {
+    let offset = timelinePauseElapsedSeconds;
+    const currentTime = Number.isFinite(Number(timestamp)) ? Number(timestamp) : 0;
+    if (timelinePauseStartedAt != null && currentTime >= timelinePauseStartedAt) {
+      offset += Math.max(0, currentTime - timelinePauseStartedAt);
+    }
+    return offset;
   }
 
   function deriveRuntimePhaseFromPayload(data) {
@@ -3520,7 +3548,7 @@
 
   setInterval(() => {
     if (document.hidden || !sessionStart) return;
-    const s = Math.floor((Date.now() / 1000) - sessionStart);
+    const s = Math.floor(currentSessionElapsedSeconds());
     const m = Math.floor(s / 60);
     const sec = s % 60;
     document.getElementById("h-uptime").textContent = m > 0 ? `${m}m${sec}s` : `${sec}s`;
@@ -3986,6 +4014,8 @@
       annotations: cloneSnapshotPayload(Array.from(annotationsByEventKey.entries())),
       hiddenLanes: Array.from(hiddenLanes),
       sessionStart,
+      timelinePauseStartedAt,
+      timelinePauseElapsedSeconds,
       currentSessionId,
       turnCount,
       currentTurnId,
@@ -4034,6 +4064,8 @@
     });
     (liveTimelineSnapshot.hiddenLanes || []).forEach((lane) => hiddenLanes.add(lane));
     sessionStart = liveTimelineSnapshot.sessionStart ?? null;
+    timelinePauseStartedAt = liveTimelineSnapshot.timelinePauseStartedAt ?? null;
+    timelinePauseElapsedSeconds = liveTimelineSnapshot.timelinePauseElapsedSeconds ?? 0;
     currentSessionId = liveTimelineSnapshot.currentSessionId || "";
     turnCount = liveTimelineSnapshot.turnCount || 0;
     currentTurnId = liveTimelineSnapshot.currentTurnId || 0;
@@ -7199,6 +7231,7 @@
     promptTraceEvents.length = 0;
     hiddenLanes.clear();
     sessionStart = null;
+    resetTimelinePauseTracking();
     sessionSeen = false;
     turnCount = 0;
     currentTurnId = 0;
@@ -7282,6 +7315,7 @@
     promptTraceEvents.length = 0;
     hiddenLanes.clear();
     sessionStart = null;
+    resetTimelinePauseTracking();
     sessionSeen = false;
     runtimeStateSeen = false;
     statePollFailures = 0;
@@ -7869,7 +7903,12 @@
   function relativeTime(timestamp) {
     const origin = timelineOrigin();
     if (!origin) return 0;
-    return Math.max(0, Number(timestamp || origin) - origin);
+    const current = Number.isFinite(Number(timestamp)) ? Number(timestamp) : origin;
+    return Math.max(0, current - origin - timelinePauseOffsetAt(current));
+  }
+
+  function currentSessionElapsedSeconds() {
+    return relativeTime(Date.now() / 1000);
   }
 
   function activeArchiveSessionId() {
@@ -11335,6 +11374,7 @@
       currentSessionId = data.session_id || currentSessionId;
       refreshAnnotations(currentSessionId);
       sessionStart = Number(rawEvent.timestamp || Date.now() / 1000);
+      resetTimelinePauseTracking();
       sessionSeen = true;
       document.getElementById("h-character").textContent = data.character || "--";
       document.getElementById("h-model").textContent = data.model || "--";
@@ -11836,6 +11876,7 @@
         return;
       }
       applyRuntimePhase((data && data.startup) || startupPausePending ? "startup_paused" : "paused");
+      beginTimelinePause(rawEvent.timestamp);
       if (pendingPauseState === "pausing") {
         pendingPauseState = null;
         pendingPauseSince = 0;
@@ -11862,6 +11903,7 @@
         return;
       }
       if (browseIsLiveSessionReview()) exitArchiveBrowseMode();
+      endTimelinePause(rawEvent.timestamp);
       applyRuntimePhase("live");
       pendingPauseState = null;
       pendingPauseSince = 0;
