@@ -4,6 +4,7 @@ Use this when a live run goes bad and you want to iterate from the exported arch
 
 For the deeper workflow, see [archive_debug_playbook.md](./archive_debug_playbook.md).
 If you are invoking Codex or another repo-aware agent, the matching skill name is `archive-debug`.
+The repo-tracked source for that skill lives at [SKILL.md](/home/logan/Projects/character-eng/.codex/skills/archive-debug/SKILL.md). Install repo skills locally with `./scripts/install_repo_skills.sh`, or migrate an older local copy with `./scripts/install_repo_skills.sh --force`.
 
 ## Minimal input
 

@@ -149,7 +149,7 @@ Why that mattered here:
 
 Relevant file:
 
-- [archive-debug skill](/home/logan/.codex/skills/archive-debug/SKILL.md)
+- [archive-debug skill](/home/logan/Projects/character-eng/.codex/skills/archive-debug/SKILL.md)
 
 ## How the tool and skill fit together
 
