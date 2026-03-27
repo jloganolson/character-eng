@@ -14,6 +14,7 @@ from character_eng.dashboard.events import DashboardEventCollector
 from character_eng.dashboard.server import DashboardHandler, start_dashboard
 from character_eng.history import HistoryService
 from character_eng.person import PeopleState
+from character_eng.robot_sim import RobotSimController
 from character_eng.world import Goals, Script, WorldState
 
 
@@ -122,6 +123,7 @@ class TestDashboardServer:
     def server(self, tmp_path):
         c = DashboardEventCollector()
         iq = queue.Queue()
+        robot = RobotSimController()
         report_dir = tmp_path / "reports"
         report_dir.mkdir(parents=True, exist_ok=True)
         history_root = tmp_path / "history"
@@ -146,6 +148,24 @@ class TestDashboardServer:
             port=0,
             report_dir=report_dir,
             history_api=history,
+            robot_state_provider=robot.snapshot,
+            robot_action_handler=lambda payload: {
+                "refresh": robot.snapshot,
+                "wave": lambda: robot.trigger_wave(source="test"),
+                "offer_fistbump": lambda: robot.offer_fistbump(source="test"),
+                "contact_fistbump": lambda: robot.register_fistbump_contact(
+                    session_id=str(payload.get("session_id") or ""),
+                    source="test",
+                ),
+                "timeout_fistbump": lambda: robot.timeout_fistbump(
+                    session_id=str(payload.get("session_id") or ""),
+                    source="test",
+                ),
+                "cancel_fistbump": lambda: robot.cancel_fistbump(
+                    session_id=str(payload.get("session_id") or ""),
+                    source="test",
+                ),
+            }[str(payload.get("action") or "refresh").strip().lower()](),
             default_character="greg",
         )
         # Wait for server to be ready
@@ -179,6 +199,7 @@ class TestDashboardServer:
         assert 'data-panel-region="sidebar"' in body
         assert 'data-panel-id="vision"' in body
         assert 'data-panel-id="plan"' in body
+        assert 'id="robot-sim-shell"' in body
 
     def test_state_returns_json(self, server):
         c, _, port, _, _ = server
@@ -276,6 +297,35 @@ class TestDashboardServer:
         resp = urllib.request.urlopen(req)
         assert resp.status == 200
         assert iq.get(timeout=1) == "hello world"
+
+    def test_robot_sim_state_endpoint_and_actions(self, server):
+        _, _, port, _, _ = server
+        state = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/robot-sim/state").read())
+        assert state["ok"] is True
+        assert state["face"]["expression"] == "neutral"
+        assert state["fistbump"]["state"] == "idle"
+
+        def _robot_action(action: str, session_id: str = "") -> dict:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/robot-sim/action",
+                data=json.dumps({"action": action, "session_id": session_id}).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            return json.loads(urllib.request.urlopen(req).read())
+
+        wave = _robot_action("wave")
+        assert wave["ok"] is True
+        assert wave["wave"]["active"] is True
+
+        fist = _robot_action("offer_fistbump")
+        assert fist["fistbump"]["state"] == "offered"
+        assert fist["fistbump"]["can_bump"] is True
+        session_id = fist["fistbump"]["session_id"]
+        assert session_id
+
+        contact = _robot_action("contact_fistbump", session_id=session_id)
+        assert contact["fistbump"]["state"] == "contacted"
 
     def test_report_snapshot_saves_json(self, server):
         _, _, port, report_dir, _ = server

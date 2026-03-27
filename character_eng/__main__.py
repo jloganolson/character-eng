@@ -34,6 +34,7 @@ from character_eng.perception import PerceptionEvent, load_sim_script, process_p
 from character_eng.person import PeopleState
 from character_eng.prompts import list_characters, load_prompt, prompt_source_signature
 from character_eng.qa_personas import _action_badge, _esc, annotation_assets
+from character_eng.robot_sim import RobotSimController
 from character_eng.scenario import DirectorResult, director_call, load_scenario_script, match_visual_exit
 from character_eng.transport_metrics import read_metrics
 from character_eng.world import (
@@ -42,6 +43,8 @@ from character_eng.world import (
     ExpressionResult,
     Goals,
     PlanResult,
+    RobotActionTrigger,
+    RobotActionResult,
     ResponseGuardResult,
     Script,
     ScriptCheckResult,
@@ -58,6 +61,7 @@ from character_eng.world import (
     load_world_state,
     plan_call,
     reconcile_call,
+    robot_action_call,
     response_guard_call,
     set_llm_trace_hook,
     script_check_call,
@@ -105,6 +109,7 @@ _dashboard_vision_runtime = {
     "voice_io": None,
     "vision_cfg": None,
 }
+_robot_sim = RobotSimController()
 
 
 class AudioInputRequiredError(RuntimeError):
@@ -207,6 +212,155 @@ def _dashboard_vision_action(payload: dict) -> dict:
     if action == "refresh":
         return _refresh_dashboard_vision_focus()
     raise ValueError(f"unsupported vision action: {action}")
+
+
+def _dashboard_robot_sim_state_payload() -> dict:
+    return _robot_sim.snapshot()
+
+
+def _push_robot_sim_state(*, source: str = "") -> dict:
+    payload = _robot_sim.snapshot()
+    if source:
+        payload["source"] = source
+    _push("robot_state", payload)
+    return payload
+
+
+def _sync_robot_sim_expression(*, gaze: str, gaze_type: str, expression: str, source: str) -> dict:
+    payload = _robot_sim.set_face(
+        gaze=gaze,
+        gaze_type=gaze_type,
+        expression=expression,
+        source=source,
+    )
+    payload["source"] = source
+    _push("robot_state", payload)
+    return payload
+
+
+def _dashboard_robot_sim_action(payload: dict) -> dict:
+    action = str(payload.get("action") or "").strip().lower()
+    source = str(payload.get("source") or "dashboard").strip() or "dashboard"
+    session_id = str(payload.get("session_id") or "").strip()
+
+    if action == "refresh":
+        return _push_robot_sim_state(source=source)
+    if action == "wave":
+        result = _robot_sim.trigger_wave(source=source)
+    elif action == "offer_fistbump":
+        result = _robot_sim.offer_fistbump(source=source)
+    elif action == "contact_fistbump":
+        result = _robot_sim.register_fistbump_contact(session_id=session_id, source=source)
+    elif action == "timeout_fistbump":
+        result = _robot_sim.timeout_fistbump(session_id=session_id, source=source)
+    elif action == "cancel_fistbump":
+        result = _robot_sim.cancel_fistbump(session_id=session_id, source=source)
+    else:
+        raise ValueError(f"unsupported robot sim action: {action}")
+
+    result["source"] = source
+    result["action"] = action
+    _push("robot_state", result)
+    return result
+
+
+def _latest_user_message(history: list[dict]) -> str:
+    for msg in reversed(history):
+        if str(msg.get("role", "")).strip().lower() == "user":
+            return str(msg.get("content", "")).strip()
+    return ""
+
+
+def _render_people_text(people) -> str:
+    if people is None or not hasattr(people, "render"):
+        return ""
+    try:
+        return people.render() or ""
+    except Exception:
+        return ""
+
+
+def _build_robot_action_trigger(
+    *,
+    source: str,
+    kind: str,
+    history: list[dict],
+    people=None,
+    latest_user_message: str = "",
+    assistant_reply: str = "",
+    summary: str = "",
+    details: list[str] | None = None,
+) -> RobotActionTrigger:
+    return RobotActionTrigger(
+        source=source,
+        kind=kind,
+        summary=summary,
+        details=[str(item or "").strip() for item in (details or []) if str(item or "").strip()],
+        latest_user_message=latest_user_message or _latest_user_message(history),
+        assistant_reply=assistant_reply,
+        people_text=_render_people_text(people),
+        history=list(history),
+    )
+
+
+def _robot_action_trigger_payload(trigger: RobotActionTrigger, result: RobotActionResult | None = None) -> dict:
+    payload = {
+        "source": trigger.source,
+        "kind": trigger.kind,
+        "summary": trigger.summary,
+        "details": list(trigger.details),
+        "latest_user_message": trigger.latest_user_message,
+        "assistant_reply": trigger.assistant_reply,
+    }
+    if result is not None:
+        payload["decision"] = result.action
+        payload["reason"] = result.reason
+    return payload
+
+
+def _apply_robot_action_result(result: RobotActionResult | None, *, log=None, source: str = "llm_post_response") -> dict | None:
+    if result is None or result.action == "none":
+        return None
+
+    current_state = _robot_sim.snapshot()
+    if result.action == "offer_fistbump" and bool((current_state.get("fistbump") or {}).get("active")):
+        return None
+
+    if result.action == "wave":
+        payload = _robot_sim.trigger_wave(source=source)
+    elif result.action == "offer_fistbump":
+        payload = _robot_sim.offer_fistbump(source=source)
+    else:
+        return None
+
+    payload["source"] = source
+    payload["action"] = result.action
+    payload["reason"] = result.reason
+    _push("robot_state", payload)
+    if log is not None:
+        log.append({
+            "type": "robot_action",
+            "action": result.action,
+            "reason": result.reason,
+        })
+    return payload
+
+
+def _finalize_robot_action_trigger(
+    *,
+    trigger: RobotActionTrigger,
+    result: RobotActionResult,
+    log=None,
+    apply_source: str = "llm_context",
+) -> dict | None:
+    event_payload = _robot_action_trigger_payload(trigger, result)
+    _push("robot_action_trigger", event_payload)
+    if log is not None:
+        log.append({"type": "robot_action_trigger", **event_payload})
+    payload = _apply_robot_action_result(result, log=log, source=apply_source)
+    if payload is not None:
+        console.print(f"  {_ts()} robot: {payload.get('action', '')}")
+    return payload
 
 
 def _push(event_type: str, data: dict) -> None:
@@ -1167,7 +1321,7 @@ def _advance_scenario_from_visual(session, scenario, script, world, people, goal
     }
 
 
-def _consume_vision_updates(session, world, people, vision_mgr, scenario, script, goals, model_config) -> bool:
+def _consume_vision_updates(session, world, people, vision_mgr, scenario, script, goals, model_config, log=None) -> bool:
     if vision_mgr is None:
         return False
     stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
@@ -1194,6 +1348,37 @@ def _consume_vision_updates(session, world, people, vision_mgr, scenario, script
                 "source_trace": getattr(event, "trace", {}) or {},
             })
         _push_world_people_state(world, people, dedupe=True)
+        history = _history_for_model(session)
+        latest_user_message = _latest_user_message(history)
+        trigger_lines = ["Vision/perception update"]
+        if signals:
+            trigger_lines.append(f"signals: {', '.join(sorted(signals))}")
+        for event in vision_events[-3:]:
+            kind = str(getattr(event, "kind", "") or "").strip() or "event"
+            desc = str(getattr(event, "description", "") or "").strip()
+            if desc:
+                trigger_lines.append(f"{kind}: {desc}")
+        robot_trigger = _build_robot_action_trigger(
+            source="vision",
+            kind="perception_batch",
+            history=history,
+            people=people,
+            latest_user_message=latest_user_message,
+            summary="Vision/perception updates arrived.",
+            details=trigger_lines,
+        )
+        if robot_trigger.has_payload():
+            robot_action_result = robot_action_call(
+                model_config=model_config,
+                trigger=robot_trigger,
+                robot_state=_robot_sim.snapshot(),
+            )
+            _finalize_robot_action_trigger(
+                trigger=robot_trigger,
+                result=robot_action_result,
+                log=log,
+                apply_source="llm_vision",
+            )
         _start_reconcile(world, model_config, people=people)
         exit_index = match_visual_exit(scenario, vision_events)
         if exit_index >= 0:
@@ -1266,7 +1451,7 @@ def _wait_for_active_turn_input(session_id, voice_io, session, world, people, vi
                     trigger_reason="auto_beat",
                 )
             return user_input
-        if _consume_vision_updates(session, world, people, vision_mgr, scenario, script, goals, model_config):
+        if _consume_vision_updates(session, world, people, vision_mgr, scenario, script, goals, model_config, log=log):
             if voice_io is not None:
                 voice_io._cancel_auto_beat()
             return "/beat"
@@ -1337,26 +1522,51 @@ def run_eval_sync(session, world, script, model_config, log, people=None, stage_
 
 # --- Parallel post-response microservices ---
 
-def run_post_response(session, world, script, model_config, log, scenario, people, goals, stage_goal="", expression_line=None, vision_mgr=None):
+def run_post_response(
+    session,
+    world,
+    script,
+    model_config,
+    log,
+    scenario,
+    people,
+    goals,
+    stage_goal="",
+    expression_line=None,
+    vision_mgr=None,
+    enable_robot_actions: bool = False,
+):
     """Run post-response microservices in parallel.
 
-    Returns (needs_plan, plan_request, expr_result, guard_result).
-    When expression_line is provided, also runs expression_call and response_guard_call.
+    Returns (needs_plan, plan_request, expr_result, guard_result, robot_action_result).
+    When expression_line is provided, runs expression_call and response_guard_call.
+    Runs robot_action_call only when enable_robot_actions is True.
     ~350ms total instead of ~1050ms sequential.
     """
     beat = script.current_beat if script else None
+    history = _history_for_model(session)
+    latest_user_message = _latest_user_message(history)
+    robot_trigger = _build_robot_action_trigger(
+        source="dialogue",
+        kind="assistant_reply",
+        history=history,
+        people=people,
+        latest_user_message=latest_user_message,
+        assistant_reply=expression_line or "",
+        summary="Assistant produced a spoken reply.",
+    ) if expression_line and enable_robot_actions else None
     gaze_targets = vision_mgr.get_gaze_targets() if vision_mgr else None
     if not gaze_targets and scenario is not None and scenario.gaze_targets:
         gaze_targets = scenario.gaze_targets
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         # Fire all LLM calls concurrently
-        fut_check = pool.submit(script_check_call, beat=beat, history=_history_for_model(session),
+        fut_check = pool.submit(script_check_call, beat=beat, history=history,
                                 model_config=model_config, world=world) if beat and _runtime_controls.get("beats", True) else None
         fut_thought = pool.submit(
             thought_call,
             system_prompt=session.system_prompt,
-            history=_history_for_model(session),
+            history=history,
             model_config=model_config,
             world=world,
             goals=goals,
@@ -1366,14 +1576,20 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
             scenario=scenario,
             world=world,
             people=people,
-            history=_history_for_model(session),
+            history=history,
             model_config=model_config,
         ) if scenario and _runtime_controls.get("director", True) else None
         fut_expr = pool.submit(expression_call, expression_line, model_config, gaze_targets) if expression_line and _runtime_controls.get("expression", True) else None
+        fut_robot_action = pool.submit(
+            robot_action_call,
+            model_config=model_config,
+            trigger=robot_trigger,
+            robot_state=_robot_sim.snapshot(),
+        ) if robot_trigger is not None else None
         fut_guard = pool.submit(
             response_guard_call,
             system_prompt=session.system_prompt,
-            history=_history_for_model(session),
+            history=history,
             reply=expression_line,
             model_config=model_config,
         ) if expression_line else None
@@ -1383,6 +1599,7 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
         tresult = ThoughtResult()
         dir_result = None
         expr_result = None
+        robot_action_result = RobotActionResult()
         guard_result = ResponseGuardResult()
 
         if fut_check:
@@ -1409,6 +1626,12 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
             except Exception as e:
                 console.print(f"[dim]  expression error: {e}[/dim]")
 
+        if fut_robot_action:
+            try:
+                robot_action_result = fut_robot_action.result()
+            except Exception as e:
+                console.print(f"[dim]  robot action error: {e}[/dim]")
+
         if fut_guard:
             try:
                 guard_result = fut_guard.result()
@@ -1427,6 +1650,20 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
             "expression": expr_result.expression,
             "prompt_blocks": _prompt_trace_blocks_for_labels(("expression",)),
         })
+        _sync_robot_sim_expression(
+            gaze=expr_result.gaze or "scene",
+            gaze_type=expr_result.gaze_type,
+            expression=expr_result.expression or "neutral",
+            source="expression",
+        )
+
+    if robot_trigger is not None:
+        _finalize_robot_action_trigger(
+            trigger=robot_trigger,
+            result=robot_action_result,
+            log=log,
+            apply_source="llm_dialogue",
+        )
 
     if expression_line:
         if guard_result.status == "fail":
@@ -1527,7 +1764,7 @@ def run_post_response(session, world, script, model_config, log, scenario, peopl
             "prompt_blocks": [],
         })
 
-    return needs_plan, plan_request, expr_result, guard_result
+    return needs_plan, plan_request, expr_result, guard_result, robot_action_result
 
 
 # --- Sync director (8B microservice) ---
@@ -3541,9 +3778,9 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                     entry["expression"] = expr.expression
                 log.append(entry)
                 _bump_version()
-                needs_plan, plan_request, _, _ = run_post_response(
+                needs_plan, plan_request, _, _, _ = run_post_response(
                     session, world, script, micro_config, log, scenario, people, goals, stage_goal,
-                    expression_line=response, vision_mgr=vision_mgr,
+                    expression_line=response, vision_mgr=vision_mgr, enable_robot_actions=True,
                 )
                 # Always replan after first user input
                 if _runtime_controls.get("beats", True):
@@ -3613,9 +3850,9 @@ def chat_loop(character: str, model_config: dict, voice_mode: bool = False, voic
                 entry["expression"] = expr.expression
             log.append(entry)
             _bump_version()
-            needs_plan, plan_request, _, _ = run_post_response(
+            needs_plan, plan_request, _, _, _ = run_post_response(
                 session, world, script, micro_config, log, scenario, people, goals, stage_goal,
-                expression_line=response, vision_mgr=vision_mgr,
+                expression_line=response, vision_mgr=vision_mgr, enable_robot_actions=True,
             )
             if needs_plan and _runtime_controls.get("beats", True):
                 result = next_beat_call(
@@ -3797,6 +4034,12 @@ def run_expression(session, model_config, line=None):
             "expression": result.expression,
             "prompt_blocks": _prompt_trace_blocks_for_labels(("expression",)),
         })
+        _sync_robot_sim_expression(
+            gaze=result.gaze or "scene",
+            gaze_type=result.gaze_type,
+            expression=result.expression or "neutral",
+            source="expression",
+        )
 
     return result
 
@@ -3811,6 +4054,12 @@ def apply_listening_expression(session, expression: str = "focused"):
         "source": "continue_listening",
         "prompt_blocks": [],
     })
+    _sync_robot_sim_expression(
+        gaze=result.gaze,
+        gaze_type=result.gaze_type,
+        expression=result.expression,
+        source="continue_listening",
+    )
     return result
 
 
@@ -4055,7 +4304,7 @@ def handle_beat(session, world, goals, script, label, model_config, big_model_co
 
     # 5. Parallel: expression + eval + director
     _bump_version()
-    needs_plan, plan_request, expr, _ = run_post_response(
+    needs_plan, plan_request, expr, _, _ = run_post_response(
         session, world, script, model_config, log, scenario, people, goals, stage_goal,
         expression_line=response, vision_mgr=vision_mgr,
     )
@@ -4121,7 +4370,7 @@ def handle_world_change(session, world, goals, script, change_text, label, model
 
     # Parallel eval + director
     _bump_version()
-    needs_plan, plan_request, _, _ = run_post_response(
+    needs_plan, plan_request, _, _, _ = run_post_response(
         session, world, script, model_config, log, scenario, people, goals, stage_goal,
         expression_line=response, vision_mgr=vision_mgr,
     )
@@ -4175,7 +4424,7 @@ def handle_perception(session, world, goals, script, people, scenario, see_text,
     stage_goal = scenario.active_stage.goal if scenario and scenario.active_stage else ""
     _start_reconcile(world, model_config, people=people)
     _bump_version()
-    needs_plan, plan_request, _, _ = run_post_response(
+    needs_plan, plan_request, _, _, _ = run_post_response(
         session, world, script, model_config, log, scenario, people, goals, stage_goal,
         expression_line=response, vision_mgr=vision_mgr,
     )
@@ -4243,7 +4492,7 @@ def run_sim(sim_name, character, session, world, goals, script, people, scenario
                 entry["expression"] = expr.expression
             log.append(entry)
             _bump_version()
-            needs_plan, plan_request, _, _ = run_post_response(
+            needs_plan, plan_request, _, _, _ = run_post_response(
                 session, world, script, model_config, log, scenario, people, goals, stage_goal,
                 expression_line=response, vision_mgr=vision_mgr,
             )
@@ -5179,6 +5428,8 @@ def main():
                 livekit_token_provider=_livekit_token_provider,
                 vision_state_provider=_dashboard_vision_state_payload,
                 vision_action_handler=_dashboard_vision_action,
+                robot_state_provider=_dashboard_robot_sim_state_payload,
+                robot_action_handler=_dashboard_robot_sim_action,
                 default_character=dashboard_default_character,
                 prompt_asset_open_target=cfg.dashboard.prompt_asset_open_target,
                 prompt_asset_vscode_cmd=cfg.dashboard.prompt_asset_vscode_cmd,
@@ -5198,6 +5449,8 @@ def main():
                 livekit_token_provider=_livekit_token_provider,
                 vision_state_provider=_dashboard_vision_state_payload,
                 vision_action_handler=_dashboard_vision_action,
+                robot_state_provider=_dashboard_robot_sim_state_payload,
+                robot_action_handler=_dashboard_robot_sim_action,
                 default_character=dashboard_default_character,
                 prompt_asset_open_target=cfg.dashboard.prompt_asset_open_target,
                 prompt_asset_vscode_cmd=cfg.dashboard.prompt_asset_vscode_cmd,
@@ -5205,6 +5458,7 @@ def main():
             dash_url = f"http://127.0.0.1:{dash_port}/"
             console.print(f"[bold green]Dashboard:[/bold green] {dash_url}")
             open_in_browser(dash_url)
+        _push_robot_sim_state(source="boot")
 
     console.print(Panel("[bold]NPC Character Chat[/bold]", border_style="green"))
     model_config = get_chat_model_config()

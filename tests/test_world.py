@@ -9,6 +9,7 @@ from character_eng.world import (
     Beat,
     Goals,
     PersonUpdate,
+    RobotActionTrigger,
     ResponseGuardResult,
     Script,
     WorldState,
@@ -24,6 +25,7 @@ from character_eng.world import (
     load_world_state,
     plan_call,
     reconcile_call,
+    robot_action_call,
     response_guard_call,
     split_eval_call,
     script_check_call,
@@ -1484,3 +1486,103 @@ def test_expression_call_reads_expression_system_txt(mock_make_client, tmp_path,
     call_args = mock_client.chat.completions.create.call_args
     messages = call_args[1]["messages"]
     assert "Expression controller v1." in messages[0]["content"]
+
+
+@patch("character_eng.world._make_client")
+def test_robot_action_call_basic(mock_make_client):
+    data = {"action": "wave", "reason": "Friendly greeting beat."}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = robot_action_call(
+        model_config=TEST_CONFIG,
+        trigger=RobotActionTrigger(
+            source="dialogue",
+            kind="assistant_reply",
+            summary="Assistant produced a spoken reply.",
+            latest_user_message="Hi Greg",
+            assistant_reply="Hey there, I'm Greg.",
+            history=[
+                {"role": "user", "content": "Hi Greg"},
+                {"role": "assistant", "content": "Hey there, I'm Greg."},
+            ],
+        ),
+        robot_state={"fistbump": {"active": False}},
+    )
+
+    assert result.action == "wave"
+    assert "Friendly greeting" in result.reason
+
+
+@patch("character_eng.world._make_client")
+def test_robot_action_call_invalid_action_defaults_to_none(mock_make_client):
+    data = {"action": "dance"}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = robot_action_call(
+        model_config=TEST_CONFIG,
+        trigger=RobotActionTrigger(
+            source="dialogue",
+            kind="assistant_reply",
+            summary="Assistant produced a spoken reply.",
+            latest_user_message="Nice to meet you",
+            assistant_reply="Nice to meet you too.",
+        ),
+    )
+
+    assert result.action == "none"
+
+
+@patch("character_eng.world._make_client")
+def test_robot_action_call_supports_trigger_context_without_reply(mock_make_client):
+    data = {"action": "wave", "reason": "A person just became visible nearby."}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    result = robot_action_call(
+        model_config=TEST_CONFIG,
+        trigger=RobotActionTrigger(
+            source="vision",
+            kind="perception_batch",
+            summary="Vision/perception updates arrived.",
+            details=["person_presence: a person just became visible nearby"],
+            people_text="p1: Logan (approaching)",
+        ),
+    )
+
+    assert result.action == "wave"
+    call_args = mock_client.chat.completions.create.call_args
+    messages = call_args[1]["messages"]
+    assert "=== TRIGGER ===" in messages[1]["content"]
+    assert "source: vision" in messages[1]["content"]
+    assert "CURRENT PEOPLE STATE" in messages[1]["content"]
+
+
+@patch("character_eng.world._make_client")
+def test_robot_action_call_reads_robot_action_system_txt(mock_make_client, tmp_path, monkeypatch):
+    monkeypatch.setattr(world_mod, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "robot_action_system.txt").write_text("Robot action controller v1.")
+
+    data = {"action": "none", "reason": "No action."}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = _mock_openai_response(data)
+    mock_make_client.return_value = mock_client
+
+    robot_action_call(
+        model_config=TEST_CONFIG,
+        trigger=RobotActionTrigger(
+            source="dialogue",
+            kind="assistant_reply",
+            summary="Assistant produced a spoken reply.",
+            latest_user_message="hello",
+            assistant_reply="Hi there.",
+        ),
+    )
+
+    call_args = mock_client.chat.completions.create.call_args
+    messages = call_args[1]["messages"]
+    assert "Robot action controller v1." in messages[0]["content"]

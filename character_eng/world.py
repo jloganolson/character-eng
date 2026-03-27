@@ -154,6 +154,32 @@ class ExpressionResult:
 
 
 @dataclass
+class RobotActionResult:
+    action: str = "none"
+    reason: str = ""
+
+
+@dataclass
+class RobotActionTrigger:
+    source: str = ""
+    kind: str = ""
+    summary: str = ""
+    details: list[str] = field(default_factory=list)
+    latest_user_message: str = ""
+    assistant_reply: str = ""
+    people_text: str = ""
+    history: list[dict] = field(default_factory=list)
+    recent_n: int = 6
+
+    def has_payload(self) -> bool:
+        return bool(
+            str(self.summary or "").strip()
+            or str(self.assistant_reply or "").strip()
+            or any(str(item or "").strip() for item in self.details)
+        )
+
+
+@dataclass
 class ContinueListeningResult:
     should_wait: bool = False
     expression: str = "focused"
@@ -1211,6 +1237,7 @@ def next_beat_call(
 
 
 DEFAULT_GAZE_TARGETS = ["person", "nearby object", "scene"]
+DEFAULT_ROBOT_ACTIONS = {"none", "wave", "offer_fistbump"}
 
 
 def expression_call(
@@ -1243,6 +1270,90 @@ def expression_call(
         gaze=data.get("gaze", ""),
         gaze_type=gaze_type,
         expression=data.get("expression", "neutral"),
+    )
+
+
+def robot_action_call(
+    *,
+    model_config: dict,
+    trigger: RobotActionTrigger | None = None,
+    latest_user_message: str = "",
+    assistant_reply: str = "",
+    history: list[dict] | None = None,
+    robot_state: dict | None = None,
+    trigger_context: str = "",
+    people_text: str = "",
+    recent_n: int = 6,
+) -> RobotActionResult:
+    """Decide whether the robot should trigger a body action from the latest social context."""
+    if trigger is None:
+        trigger = RobotActionTrigger(
+            latest_user_message=latest_user_message,
+            assistant_reply=assistant_reply,
+            summary=str(trigger_context or "").strip(),
+            people_text=people_text,
+            history=list(history or []),
+            recent_n=recent_n,
+        )
+
+    if not trigger.has_payload():
+        return RobotActionResult()
+
+    context_parts: list[str] = []
+    context_parts.append("=== AVAILABLE ACTIONS ===")
+    context_parts.append("none, wave, offer_fistbump")
+
+    if robot_state:
+        context_parts.append("\n=== CURRENT ROBOT STATE ===")
+        context_parts.append(json.dumps(robot_state, ensure_ascii=True, indent=2))
+
+    if trigger.people_text.strip():
+        context_parts.append("\n=== CURRENT PEOPLE STATE ===")
+        context_parts.append(trigger.people_text.strip())
+
+    history_items = trigger.history or []
+    recent = history_items[-trigger.recent_n:] if history_items and len(history_items) > trigger.recent_n else history_items
+    if recent:
+        context_parts.append("\n=== RECENT CONVERSATION ===")
+        for msg in recent:
+            role = str(msg.get("role", "message")).upper()
+            content = str(msg.get("content", ""))
+            context_parts.append(f"{role}: {content}")
+
+    context_parts.append("\n=== TRIGGER ===")
+    context_parts.append(f"source: {str(trigger.source or 'unknown').strip() or 'unknown'}")
+    context_parts.append(f"kind: {str(trigger.kind or 'context').strip() or 'context'}")
+    context_parts.append(f"summary: {str(trigger.summary or '').strip() or '(none)'}")
+    if trigger.details:
+        context_parts.append("details:")
+        for item in trigger.details:
+            cleaned = str(item or "").strip()
+            if cleaned:
+                context_parts.append(f"- {cleaned}")
+
+    context_parts.append("\n=== LATEST USER MESSAGE ===")
+    context_parts.append(str(trigger.latest_user_message or "").strip() or "(none)")
+    context_parts.append("\n=== LATEST ASSISTANT REPLY ===")
+    context_parts.append(str(trigger.assistant_reply or "").strip() or "(none)")
+
+    response = _llm_call(
+        model_config,
+        label="robot_action",
+        messages=[
+            {"role": "system", "content": load_system_prompt("robot_action_system")},
+            {"role": "user", "content": "\n".join(context_parts)},
+        ],
+        temperature=0.0,
+        response_format={"type": "json_object"},
+    )
+
+    data = json.loads(response.choices[0].message.content)
+    action = str(data.get("action", "none") or "none").strip().lower()
+    if action not in DEFAULT_ROBOT_ACTIONS:
+        action = "none"
+    return RobotActionResult(
+        action=action,
+        reason=str(data.get("reason", "")).strip(),
     )
 
 

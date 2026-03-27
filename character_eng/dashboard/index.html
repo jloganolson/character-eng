@@ -621,6 +621,9 @@
     user-select: none;
     touch-action: none;
   }
+  #sidebar-resizer {
+    z-index: 4;
+  }
   .pane-resizer::before {
     content: "";
     position: absolute;
@@ -2059,6 +2062,394 @@
   button:active {
     transform: translateY(1px);
   }
+  #robot-sim-shell {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 90;
+    width: min(360px, calc(100vw - 2rem));
+    max-height: calc(100vh - 2rem);
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--panel) 82%, var(--cyan) 18%), color-mix(in srgb, var(--bg-alt) 72%, black 28%));
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
+    overflow: hidden;
+    backdrop-filter: blur(14px);
+  }
+  #robot-sim-shell[data-mode="minimized"] {
+    width: min(240px, calc(100vw - 2rem));
+    max-height: none;
+  }
+  #robot-sim-shell[data-mode="column"] {
+    position: static;
+    right: auto;
+    bottom: auto;
+    z-index: auto;
+    width: auto;
+    max-height: none;
+    margin: 0 0 0.6em 0;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  #robot-sim-shell[data-mode="fullscreen"] {
+    inset: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    width: auto;
+    max-height: none;
+    border-radius: 24px;
+  }
+  .robot-sim-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.85rem 0.95rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    background: color-mix(in srgb, var(--panel-hover) 82%, black 18%);
+  }
+  .robot-sim-title {
+    display: grid;
+    gap: 0.16rem;
+  }
+  .robot-sim-title strong {
+    font-size: 0.86rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .robot-sim-title span {
+    color: var(--text-dim);
+    font-size: 0.76rem;
+  }
+  .robot-sim-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .robot-sim-actions button {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--panel) 84%, transparent);
+    color: var(--text);
+    padding: 0.28rem 0.62rem;
+    cursor: pointer;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .robot-sim-actions button.active {
+    border-color: color-mix(in srgb, var(--cyan) 52%, var(--border) 48%);
+    background: color-mix(in srgb, var(--cyan) 18%, var(--panel-hover) 82%);
+    color: var(--text);
+  }
+  .robot-sim-body {
+    display: grid;
+    gap: 0.85rem;
+    padding: 0.95rem;
+    overflow: auto;
+  }
+  #robot-sim-shell[data-mode="minimized"] .robot-sim-body {
+    display: none;
+  }
+  .robot-sim-summary {
+    padding: 0.7rem 0.8rem;
+    border-radius: 14px;
+    border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+    background: color-mix(in srgb, var(--panel-hover) 82%, transparent);
+    color: var(--text-dim);
+    line-height: 1.45;
+  }
+  .robot-sim-summary strong {
+    color: var(--text);
+  }
+  .robot-sim-stage {
+    display: grid;
+    gap: 0.8rem;
+  }
+  .robot-sim-wireframe {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(180px, 0.8fr);
+    gap: 0.8rem;
+  }
+  .robot-sim-avatar {
+    position: relative;
+    min-height: 240px;
+    border-radius: 18px;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    background:
+      radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--cyan) 12%, transparent), transparent 42%),
+      linear-gradient(180deg, color-mix(in srgb, var(--panel) 88%, black 12%), color-mix(in srgb, var(--bg-alt) 82%, black 18%));
+    overflow: hidden;
+  }
+  .robot-sim-grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(color-mix(in srgb, var(--border) 28%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in srgb, var(--border) 24%, transparent) 1px, transparent 1px);
+    background-size: 28px 28px;
+    opacity: 0.18;
+    pointer-events: none;
+  }
+  .robot-sim-headframe {
+    position: absolute;
+    left: 50%;
+    top: 16%;
+    width: 160px;
+    height: 138px;
+    margin-left: -80px;
+    border: 2px solid color-mix(in srgb, var(--text) 70%, var(--cyan) 30%);
+    border-radius: 26px;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--panel-hover) 85%, transparent);
+  }
+  .robot-sim-eye {
+    position: absolute;
+    top: 38px;
+    width: 26px;
+    height: 26px;
+    border: 2px solid color-mix(in srgb, var(--text) 74%, var(--cyan) 26%);
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--panel-hover) 80%, black 20%);
+  }
+  .robot-sim-eye.left { left: 34px; }
+  .robot-sim-eye.right { right: 34px; }
+  .robot-sim-eye::after {
+    content: "";
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--cyan);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--cyan) 65%, transparent);
+  }
+  .robot-sim-mouth {
+    position: absolute;
+    left: 50%;
+    bottom: 28px;
+    width: 66px;
+    height: 12px;
+    margin-left: -33px;
+    border-radius: 999px;
+    border: 2px solid color-mix(in srgb, var(--text) 68%, var(--border) 32%);
+    background: color-mix(in srgb, var(--panel-hover) 80%, black 20%);
+  }
+  .robot-sim-neck,
+  .robot-sim-torso,
+  .robot-sim-arm {
+    position: absolute;
+    border: 2px solid color-mix(in srgb, var(--text) 64%, var(--border) 36%);
+    border-radius: 999px;
+  }
+  .robot-sim-neck {
+    left: 50%;
+    top: 154px;
+    width: 18px;
+    height: 20px;
+    margin-left: -9px;
+  }
+  .robot-sim-torso {
+    left: 50%;
+    top: 176px;
+    width: 112px;
+    height: 80px;
+    margin-left: -56px;
+    border-radius: 26px;
+  }
+  .robot-sim-arm.left {
+    left: calc(50% - 92px);
+    top: 184px;
+    width: 48px;
+    height: 14px;
+  }
+  .robot-sim-arm.right {
+    left: calc(50% + 44px);
+    top: 184px;
+    width: 48px;
+    height: 14px;
+  }
+  .robot-sim-arm.right.offered {
+    width: 80px;
+  }
+  .robot-sim-arm.right.contact {
+    border-color: color-mix(in srgb, var(--advance) 60%, var(--border) 40%);
+    box-shadow: 0 0 14px color-mix(in srgb, var(--advance) 32%, transparent);
+  }
+  .robot-sim-arm.right.timeout,
+  .robot-sim-arm.right.cancelled {
+    border-color: color-mix(in srgb, var(--warn) 46%, var(--border) 54%);
+  }
+  .robot-sim-gaze-line {
+    position: absolute;
+    left: 50%;
+    top: 68px;
+    width: 96px;
+    height: 2px;
+    transform-origin: left center;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--cyan) 75%, transparent), transparent);
+    opacity: 0.78;
+  }
+  .robot-sim-avatar-meta {
+    position: absolute;
+    left: 0.8rem;
+    right: 0.8rem;
+    bottom: 0.75rem;
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+  }
+  .robot-sim-chip {
+    padding: 0.26rem 0.48rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+    background: color-mix(in srgb, var(--panel-hover) 80%, black 20%);
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
+  .robot-sim-chip strong {
+    color: var(--text);
+  }
+  .robot-sim-statuscard {
+    display: grid;
+    gap: 0.55rem;
+    padding: 0.8rem;
+    border-radius: 16px;
+    border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+    background: color-mix(in srgb, var(--panel-hover) 76%, black 24%);
+  }
+  .robot-sim-statusline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    color: var(--text-dim);
+    font-size: 0.76rem;
+  }
+  .robot-sim-statusline strong {
+    color: var(--text);
+    font-size: 0.8rem;
+  }
+  .robot-sim-controls {
+    display: grid;
+    gap: 0.65rem;
+  }
+  .robot-sim-control-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+  .robot-sim-controls button {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--panel-hover) 82%, black 18%);
+    color: var(--text);
+    padding: 0.68rem 0.78rem;
+    cursor: pointer;
+    text-align: left;
+  }
+  .robot-sim-controls button.primary {
+    background: color-mix(in srgb, var(--cyan) 18%, var(--panel-hover) 82%);
+    border-color: color-mix(in srgb, var(--cyan) 46%, var(--border) 54%);
+  }
+  .robot-sim-controls button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+    filter: none;
+  }
+  .robot-sim-status-banner {
+    padding: 0.7rem 0.8rem;
+    border-radius: 14px;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    background: color-mix(in srgb, var(--panel-hover) 84%, transparent);
+    color: var(--text);
+    line-height: 1.45;
+  }
+  .robot-sim-status-banner[data-tone="success"] {
+    border-color: color-mix(in srgb, var(--advance) 48%, var(--border) 52%);
+    background: color-mix(in srgb, var(--advance) 12%, var(--panel-hover) 88%);
+  }
+  .robot-sim-status-banner[data-tone="warn"] {
+    border-color: color-mix(in srgb, var(--warn) 42%, var(--border) 58%);
+    background: color-mix(in srgb, var(--warn) 12%, var(--panel-hover) 88%);
+  }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-body {
+    grid-template-rows: auto 1fr auto;
+  }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-wireframe {
+    grid-template-columns: minmax(320px, 1.25fr) minmax(260px, 0.75fr);
+  }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-avatar {
+    min-height: 420px;
+  }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-headframe {
+    top: 14%;
+    width: 230px;
+    height: 190px;
+    margin-left: -115px;
+  }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-eye {
+    top: 54px;
+    width: 38px;
+    height: 38px;
+  }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-eye.left { left: 46px; }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-eye.right { right: 46px; }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-eye::after {
+    top: 9px;
+    left: 9px;
+    width: 12px;
+    height: 12px;
+  }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-mouth {
+    bottom: 38px;
+    width: 92px;
+    height: 14px;
+    margin-left: -46px;
+  }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-neck {
+    top: 212px;
+    height: 26px;
+  }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-torso {
+    top: 242px;
+    width: 164px;
+    height: 116px;
+    margin-left: -82px;
+  }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-arm.left {
+    left: calc(50% - 134px);
+    top: 254px;
+    width: 66px;
+    height: 16px;
+  }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-arm.right {
+    left: calc(50% + 68px);
+    top: 254px;
+    width: 66px;
+    height: 16px;
+  }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-arm.right.offered {
+    width: 118px;
+  }
+  #robot-sim-shell[data-mode="fullscreen"] .robot-sim-gaze-line {
+    top: 92px;
+    width: 148px;
+  }
+  @media (max-width: 920px) {
+    #robot-sim-shell[data-mode="column"] {
+      margin: 0 0.6em 0.6em 0.6em;
+    }
+    #robot-sim-shell[data-mode="fullscreen"] {
+      inset: 0.4rem;
+    }
+    .robot-sim-wireframe {
+      grid-template-columns: 1fr;
+    }
+  }
   @media (max-width: 1400px) {
     #stream-main {
       grid-template-columns: minmax(0, 1fr) 10px minmax(220px, var(--inspector-width));
@@ -2278,6 +2669,69 @@
     <button id="ux-spoof-copy-url" type="button">Copy Test URL</button>
   </div>
 </div>
+
+<div id="robot-sim-dock-anchor" aria-hidden="true"></div>
+<section id="robot-sim-shell" data-mode="column" aria-label="Robot sim test panel">
+  <div class="robot-sim-head">
+    <div class="robot-sim-title">
+      <strong>Robot Sim</strong>
+      <span id="robot-sim-subtitle">Wireframe testing surface for gaze, expression, wave, and fist bump.</span>
+    </div>
+    <div class="robot-sim-actions">
+      <button id="robot-sim-mode-min" type="button" title="Minimize robot sim">Min</button>
+      <button id="robot-sim-mode-column" type="button" title="Column robot sim">Col</button>
+      <button id="robot-sim-mode-full" type="button" title="Fullscreen robot sim">Max</button>
+    </div>
+  </div>
+  <div class="robot-sim-body">
+    <div class="robot-sim-summary"><strong id="robot-sim-headline">Idle</strong><br><span id="robot-sim-summary">Waiting for robot sim state...</span></div>
+    <div class="robot-sim-stage">
+      <div class="robot-sim-wireframe">
+        <div class="robot-sim-avatar">
+          <div class="robot-sim-grid"></div>
+          <div class="robot-sim-headframe">
+            <div class="robot-sim-eye left" id="robot-sim-eye-left"></div>
+            <div class="robot-sim-eye right" id="robot-sim-eye-right"></div>
+            <div class="robot-sim-mouth" id="robot-sim-mouth"></div>
+          </div>
+          <div class="robot-sim-neck"></div>
+          <div class="robot-sim-torso"></div>
+          <div class="robot-sim-arm left"></div>
+          <div class="robot-sim-arm right" id="robot-sim-right-arm"></div>
+          <div class="robot-sim-gaze-line" id="robot-sim-gaze-line"></div>
+          <div class="robot-sim-avatar-meta">
+            <div class="robot-sim-chip"><strong>Gaze</strong> <span id="robot-sim-gaze-chip">scene</span></div>
+            <div class="robot-sim-chip"><strong>Face</strong> <span id="robot-sim-expression-chip">neutral</span></div>
+            <div class="robot-sim-chip"><strong>Wave</strong> <span id="robot-sim-wave-chip">idle</span></div>
+          </div>
+        </div>
+        <div class="robot-sim-statuscard">
+          <div class="robot-sim-statusline"><span>Expression</span><strong id="robot-sim-expression-value">neutral</strong></div>
+          <div class="robot-sim-statusline"><span>Gaze target</span><strong id="robot-sim-gaze-value">scene</strong></div>
+          <div class="robot-sim-statusline"><span>Gaze type</span><strong id="robot-sim-gaze-type">hold</strong></div>
+          <div class="robot-sim-statusline"><span>Wave timer</span><strong id="robot-sim-wave-seconds">0.0s</strong></div>
+          <div class="robot-sim-statusline"><span>Fist bump</span><strong id="robot-sim-fistbump-state">idle</strong></div>
+          <div class="robot-sim-statusline"><span>Session</span><strong id="robot-sim-session">none</strong></div>
+        </div>
+      </div>
+      <div class="robot-sim-status-banner" id="robot-sim-banner" data-tone="neutral">No active fist bump session.</div>
+    </div>
+    <div class="robot-sim-controls">
+      <div class="robot-sim-control-row">
+        <button id="robot-sim-wave" type="button">Trigger wave</button>
+        <button id="robot-sim-offer-bump" type="button">Offer fist bump</button>
+      </div>
+      <div class="robot-sim-control-row">
+        <button id="robot-sim-bump-now" class="primary" type="button" disabled>Bump now</button>
+        <button id="robot-sim-timeout-bump" type="button" disabled>Timeout</button>
+      </div>
+      <div class="robot-sim-control-row">
+        <button id="robot-sim-cancel-bump" type="button" disabled>Cancel bump</button>
+        <button id="robot-sim-refresh" type="button">Refresh state</button>
+      </div>
+    </div>
+  </div>
+</section>
 
 <div id="main">
   <div id="timeline">
@@ -2960,6 +3414,33 @@
   const uxSpoofBannerText = document.getElementById("ux-spoof-banner-text");
   const uxSpoofBannerDetail = document.getElementById("ux-spoof-banner-detail");
   const uxSpoofCopyUrlButton = document.getElementById("ux-spoof-copy-url");
+  const robotSimDockAnchor = document.getElementById("robot-sim-dock-anchor");
+  const sidebar = document.getElementById("sidebar");
+  const robotSimShell = document.getElementById("robot-sim-shell");
+  const robotSimSubtitle = document.getElementById("robot-sim-subtitle");
+  const robotSimHeadline = document.getElementById("robot-sim-headline");
+  const robotSimSummary = document.getElementById("robot-sim-summary");
+  const robotSimBanner = document.getElementById("robot-sim-banner");
+  const robotSimExpressionChip = document.getElementById("robot-sim-expression-chip");
+  const robotSimGazeChip = document.getElementById("robot-sim-gaze-chip");
+  const robotSimWaveChip = document.getElementById("robot-sim-wave-chip");
+  const robotSimExpressionValue = document.getElementById("robot-sim-expression-value");
+  const robotSimGazeValue = document.getElementById("robot-sim-gaze-value");
+  const robotSimGazeType = document.getElementById("robot-sim-gaze-type");
+  const robotSimWaveSeconds = document.getElementById("robot-sim-wave-seconds");
+  const robotSimFistbumpState = document.getElementById("robot-sim-fistbump-state");
+  const robotSimSession = document.getElementById("robot-sim-session");
+  const robotSimRightArm = document.getElementById("robot-sim-right-arm");
+  const robotSimGazeLine = document.getElementById("robot-sim-gaze-line");
+  const robotSimModeMinButton = document.getElementById("robot-sim-mode-min");
+  const robotSimModeColumnButton = document.getElementById("robot-sim-mode-column");
+  const robotSimModeFullButton = document.getElementById("robot-sim-mode-full");
+  const robotSimWaveButton = document.getElementById("robot-sim-wave");
+  const robotSimOfferBumpButton = document.getElementById("robot-sim-offer-bump");
+  const robotSimBumpNowButton = document.getElementById("robot-sim-bump-now");
+  const robotSimTimeoutButton = document.getElementById("robot-sim-timeout-bump");
+  const robotSimCancelButton = document.getElementById("robot-sim-cancel-bump");
+  const robotSimRefreshButton = document.getElementById("robot-sim-refresh");
   const offlineLab = document.getElementById("offline-lab");
   const offlineFrameSelect = document.getElementById("offline-frame-select");
   const offlineArchiveSelect = document.getElementById("offline-archive-select");
@@ -3063,6 +3544,7 @@
   const INSPECTOR_WIDTH_STORAGE_KEY = "dashboard.inspector_width";
   const SIDEBAR_WIDTH_STORAGE_KEY = "dashboard.sidebar_width";
   const SIDEBAR_COLLAPSE_STORAGE_KEY = "dashboard.sidebar_collapsed";
+  const ROBOT_SIM_MODE_STORAGE_KEY = "dashboard.robot_sim_mode";
   let pendingPauseState = null;
   let archiveOnlyRuntime = false;
   let archiveOnlyReason = "";
@@ -3083,6 +3565,10 @@
   let discardCompletionResolving = false;
   let discardCompletionProbeTimer = 0;
   let saveCompleteAutoHideTimer = 0;
+  let robotSimState = null;
+  let robotSimMode = "column";
+  let robotSimActionPending = "";
+  let robotSimRefreshInFlight = false;
   let saveCompleteAutoHideDeadline = 0;
   let pendingFinalizeAction = "";
   let pendingStopReviewPause = false;
@@ -3583,6 +4069,158 @@
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || `request failed (${response.status})`);
     return data;
+  }
+
+  function restoreRobotSimMode() {
+    try {
+      const stored = localStorage.getItem(ROBOT_SIM_MODE_STORAGE_KEY) || "column";
+      if (["minimized", "column", "fullscreen"].includes(stored)) {
+        robotSimMode = stored;
+      }
+    } catch (_) {}
+  }
+
+  function setRobotSimMode(mode, persist = true) {
+    const next = ["minimized", "column", "fullscreen"].includes(mode) ? mode : "column";
+    robotSimMode = next;
+    updateRobotSimMount();
+    if (robotSimShell) robotSimShell.dataset.mode = next;
+    [
+      [robotSimModeMinButton, "minimized"],
+      [robotSimModeColumnButton, "column"],
+      [robotSimModeFullButton, "fullscreen"],
+    ].forEach(([button, value]) => {
+      if (!button) return;
+      button.classList.toggle("active", next === value);
+    });
+    if (persist) {
+      try {
+        localStorage.setItem(ROBOT_SIM_MODE_STORAGE_KEY, next);
+      } catch (_) {}
+    }
+  }
+
+  function updateRobotSimMount() {
+    if (!robotSimShell) return;
+    if (robotSimMode === "column" && sidebar) {
+      if (robotSimShell.parentElement !== sidebar) {
+        sidebar.insertBefore(robotSimShell, sidebar.firstChild);
+      }
+      return;
+    }
+    if (robotSimDockAnchor && robotSimDockAnchor.parentNode) {
+      if (robotSimShell.previousElementSibling !== robotSimDockAnchor || robotSimShell.parentElement !== robotSimDockAnchor.parentElement) {
+        robotSimDockAnchor.parentNode.insertBefore(robotSimShell, robotSimDockAnchor.nextSibling);
+      }
+    }
+  }
+
+  function gazeLineTransform(target, gazeType) {
+    const normalized = String(target || "scene").toLowerCase();
+    let angle = 0;
+    if (normalized.includes("person")) angle = 0;
+    else if (normalized.includes("scene")) angle = -12;
+    else if (normalized.includes("object")) angle = 20;
+    else if (normalized.includes("left")) angle = -25;
+    else if (normalized.includes("right")) angle = 25;
+    else if (normalized.includes("up")) angle = -40;
+    else if (normalized.includes("down")) angle = 45;
+    const scale = gazeType === "glance" ? 0.82 : 1;
+    return `rotate(${angle}deg) scaleX(${scale})`;
+  }
+
+  function robotSimBannerTone(state) {
+    const fist = state?.fistbump || {};
+    if (fist.state === "contacted") return "success";
+    if (fist.state === "timed_out" || fist.state === "cancelled") return "warn";
+    return "neutral";
+  }
+
+  function renderRobotSimState() {
+    const state = robotSimState || {face: {}, wave: {}, fistbump: {}, headline: "Idle"};
+    const face = state.face || {};
+    const wave = state.wave || {};
+    const fist = state.fistbump || {};
+    const gaze = face.gaze || "scene";
+    const gazeType = face.gaze_type || "hold";
+    const expression = face.expression || "neutral";
+    const summary = fist.active
+      ? `Fist bump session ${fist.session_id || ""} is waiting for contact.`
+      : (wave.active
+        ? `Wave animation active for ${Number(wave.seconds_left || 0).toFixed(1)}s.`
+        : `Latest face state came from ${face.source || state.source || "runtime"}.`);
+    if (robotSimHeadline) robotSimHeadline.textContent = state.headline || "Idle";
+    if (robotSimSummary) robotSimSummary.textContent = summary;
+    if (robotSimSubtitle) robotSimSubtitle.textContent = robotSimMode === "fullscreen"
+      ? "Fullscreen rehearsal view. This is the closest approximation to the eventual user-facing robot sim."
+      : "Wireframe testing surface for gaze, expression, wave, and fist bump.";
+    if (robotSimExpressionChip) robotSimExpressionChip.textContent = expression;
+    if (robotSimGazeChip) robotSimGazeChip.textContent = gaze;
+    if (robotSimWaveChip) robotSimWaveChip.textContent = wave.active ? `active ${Number(wave.seconds_left || 0).toFixed(1)}s` : "idle";
+    if (robotSimExpressionValue) robotSimExpressionValue.textContent = expression;
+    if (robotSimGazeValue) robotSimGazeValue.textContent = gaze;
+    if (robotSimGazeType) robotSimGazeType.textContent = gazeType;
+    if (robotSimWaveSeconds) robotSimWaveSeconds.textContent = `${Number(wave.seconds_left || 0).toFixed(1)}s`;
+    if (robotSimFistbumpState) robotSimFistbumpState.textContent = fist.state || "idle";
+    if (robotSimSession) robotSimSession.textContent = fist.session_id || "none";
+    if (robotSimGazeLine) robotSimGazeLine.style.transform = gazeLineTransform(gaze, gazeType);
+    if (robotSimRightArm) {
+      robotSimRightArm.className = "robot-sim-arm right";
+      if (fist.state === "offered") robotSimRightArm.classList.add("offered");
+      if (fist.state === "contacted") robotSimRightArm.classList.add("contact");
+      if (fist.state === "timed_out") robotSimRightArm.classList.add("timeout");
+      if (fist.state === "cancelled") robotSimRightArm.classList.add("cancelled");
+    }
+    if (robotSimBanner) {
+      robotSimBanner.dataset.tone = robotSimBannerTone(state);
+      robotSimBanner.textContent = fist.note || (fist.active
+        ? `Waiting ${Number(fist.seconds_left || 0).toFixed(1)}s for bump contact.`
+        : "No active fist bump session.");
+    }
+    const canBump = !!fist.can_bump;
+    if (robotSimWaveButton) robotSimWaveButton.disabled = robotSimActionPending.length > 0;
+    if (robotSimOfferBumpButton) robotSimOfferBumpButton.disabled = robotSimActionPending.length > 0 || canBump;
+    if (robotSimBumpNowButton) robotSimBumpNowButton.disabled = robotSimActionPending.length > 0 || !canBump;
+    if (robotSimTimeoutButton) robotSimTimeoutButton.disabled = robotSimActionPending.length > 0 || !canBump;
+    if (robotSimCancelButton) robotSimCancelButton.disabled = robotSimActionPending.length > 0 || !fist.session_id;
+    if (robotSimRefreshButton) robotSimRefreshButton.disabled = robotSimActionPending.length > 0;
+  }
+
+  function applyRobotSimState(payload) {
+    if (!payload || payload.ok === false) return;
+    robotSimState = payload;
+    renderRobotSimState();
+  }
+
+  async function refreshRobotSimState() {
+    if (fixtureMode || document.hidden || robotSimRefreshInFlight) return;
+    robotSimRefreshInFlight = true;
+    try {
+      const response = await fetch("/robot-sim/state");
+      const data = await response.json();
+      if (response.ok && data.ok) applyRobotSimState(data);
+    } catch (_) {
+      // Keep the last rendered state.
+    } finally {
+      robotSimRefreshInFlight = false;
+    }
+  }
+
+  async function sendRobotSimAction(action, extra = {}) {
+    robotSimActionPending = action;
+    renderRobotSimState();
+    try {
+      const payload = await postJson("/robot-sim/action", {
+        action,
+        source: "dashboard",
+        session_id: robotSimState?.fistbump?.session_id || "",
+        ...extra,
+      });
+      applyRobotSimState(payload);
+    } finally {
+      robotSimActionPending = "";
+      renderRobotSimState();
+    }
   }
 
   async function sendInputSequence(commands, delayMs = 80) {
@@ -10014,25 +10652,45 @@
   function setupPaneResizer(resizer, onMove) {
     if (!resizer) return;
     let activePointerId = null;
-    resizer.addEventListener("pointerdown", (event) => {
-      activePointerId = event.pointerId;
-      resizer.setPointerCapture(event.pointerId);
+    let activeMouseResize = false;
+    function startResize(event) {
+      if (activeMouseResize) return;
+      activePointerId = event.pointerId != null ? event.pointerId : null;
+      activeMouseResize = true;
+      if (event.pointerId != null) {
+        resizer.setPointerCapture(event.pointerId);
+      }
       document.body.classList.add("is-resizing-pane");
-    });
-    resizer.addEventListener("pointermove", (event) => {
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("pointerup", finishResize);
+      window.addEventListener("pointercancel", finishResize);
+      window.addEventListener("mouseup", finishResize);
+    }
+    function handlePointerMove(event) {
       if (event.pointerId !== activePointerId) return;
       onMove(event);
-    });
+    }
+    function handleMouseMove(event) {
+      if (!activeMouseResize) return;
+      onMove(event);
+    }
+    resizer.addEventListener("pointerdown", startResize);
+    resizer.addEventListener("mousedown", startResize);
     function finishResize(event) {
-      if (event.pointerId !== activePointerId) return;
+      if (event.pointerId != null && event.pointerId !== activePointerId) return;
       activePointerId = null;
+      activeMouseResize = false;
       document.body.classList.remove("is-resizing-pane");
-      if (resizer.hasPointerCapture(event.pointerId)) {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("pointerup", finishResize);
+      window.removeEventListener("pointercancel", finishResize);
+      window.removeEventListener("mouseup", finishResize);
+      if (event.pointerId != null && resizer.hasPointerCapture(event.pointerId)) {
         resizer.releasePointerCapture(event.pointerId);
       }
     }
-    resizer.addEventListener("pointerup", finishResize);
-    resizer.addEventListener("pointercancel", finishResize);
   }
 
   function addStreamEvent(type, data, rawEvent) {
@@ -11501,7 +12159,7 @@
       summary.data.interrupted = false;
       summary.data.interrupted_reason = "";
       refreshTurnSummary(summary);
-      renderStream();
+      renderStream({immediate: true});
     },
 
     response_interrupted(data, rawEvent) {
@@ -11542,6 +12200,10 @@
     expression(data, rawEvent) {
       rawEvent.turnId = currentTurnId || null;
       recordEvent("expression", data, rawEvent);
+    },
+
+    robot_state(data, rawEvent) {
+      applyRobotSimState(data);
     },
 
     response_guard(data, rawEvent) {
@@ -11895,6 +12557,7 @@
       syncSaveCompleteModalWithRuntimePhase().catch(() => {});
       flushPendingFinalizeAction().catch(() => {});
       if (!data?.startup && !sessionStopped) maybeEnterCurrentSessionReview().catch(() => {});
+      renderStream({immediate: true});
     },
 
     resume(data, rawEvent) {
@@ -11910,6 +12573,7 @@
       recordEvent("resume", data, rawEvent);
       updateRuntimeButtons();
       renderBootStatus();
+      renderStream({immediate: true});
     },
 
     runtime_controls(data, rawEvent) {
@@ -12088,6 +12752,7 @@
         statePollFailures = 0;
         sseConnected = true;
         events.forEach(handleEvent);
+        if (events.length) renderStream({immediate: true});
         renderBootStatus();
       })
       .catch(() => {
@@ -12681,6 +13346,19 @@
     setSidebarWidth(width);
   });
 
+  robotSimModeMinButton?.addEventListener("click", () => setRobotSimMode("minimized"));
+  robotSimModeColumnButton?.addEventListener("click", () => setRobotSimMode("column"));
+  robotSimModeFullButton?.addEventListener("click", () => setRobotSimMode("fullscreen"));
+  robotSimWaveButton?.addEventListener("click", () => sendRobotSimAction("wave"));
+  robotSimOfferBumpButton?.addEventListener("click", () => sendRobotSimAction("offer_fistbump"));
+  robotSimBumpNowButton?.addEventListener("click", () => sendRobotSimAction("contact_fistbump"));
+  robotSimTimeoutButton?.addEventListener("click", () => sendRobotSimAction("timeout_fistbump"));
+  robotSimCancelButton?.addEventListener("click", () => sendRobotSimAction("cancel_fistbump"));
+  robotSimRefreshButton?.addEventListener("click", () => refreshRobotSimState());
+
+  restoreRobotSimMode();
+  setRobotSimMode(robotSimMode, false);
+  renderRobotSimState();
   restoreSidebarPanelCollapseState();
   applyPanelRegistryMetadata();
   resetSidebarPanels();
@@ -12697,6 +13375,8 @@
   if (bootFixtureName) applyBootFixture(bootFixtureName);
   renderOfflineLab();
   refreshState();
+  scheduleStateRefreshBurst(3, 100);
+  refreshRobotSimState();
   refreshHistoryState();
   refreshHistoryArchives().finally(() => {
     maybeLoadBootArchive();
@@ -12723,11 +13403,13 @@
     renderBootStatus();
     refreshHistoryArchives();
     refreshState();
+    refreshRobotSimState();
     scheduleStateRefreshBurst(2, 100);
     pollVisionModelStatus();
     maybeInitLiveKitPanel();
   });
   setInterval(refreshState, 1000);
+  setInterval(refreshRobotSimState, 1000);
   setInterval(refreshHistoryArchives, 4000);
   setInterval(pollVisionModelStatus, 4000);
   setInterval(checkPendingRuntimeActionHealth, 1000);
