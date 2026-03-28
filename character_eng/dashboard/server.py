@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import ipaddress
+import mimetypes
 import queue
 import shutil
 import socket
 import subprocess
 import threading
+import xml.etree.ElementTree as ET
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover
@@ -22,8 +24,15 @@ from urllib.parse import parse_qs, urlparse
 from character_eng.creative import resolve_character_scenario_path
 from character_eng.dashboard.events import DashboardEventCollector
 from character_eng.prompts import CHARACTERS_DIR, mutable_prompt_inventory
+from character_eng.robot_preview import compile_robot_preview
+from character_eng.robot_preview_motion import MODEL_XML_PATH as ROBOT_PREVIEW_MODEL_XML_PATH
+from character_eng.robot_preview_motion import trajectory_for_preview
 
 HTML_PATH = Path(__file__).parent / "index.html"
+ROBOT_PREVIEW_PATH = Path(__file__).parent / "robot_preview.html"
+ROBOT_PREVIEW_STATIC_DIR = Path(__file__).parent / "static"
+ROBOT_PREVIEW_ASSETS_DIR = Path(__file__).parent / "assets"
+NODE_MODULES_DIR = Path(__file__).resolve().parent.parent.parent / "node_modules"
 SYSTEM_MAP_PATH = Path(__file__).parent / "system_map.html"
 STT_DEBUG_PATH = Path(__file__).parent / "stt_debug.html"
 TTS_DEBUG_PATH = Path(__file__).parent / "tts_debug.html"
@@ -102,6 +111,62 @@ def _scenario_stage_blocks(character: str) -> dict:
     return {"character": character, "path": str(path), "stages": stages}
 
 
+def _resolve_under(root: Path, rel_path: str) -> Path:
+    path = (root / rel_path).resolve()
+    path.relative_to(root.resolve())
+    return path
+
+
+def _collect_mjcf_files(entry_xml: Path) -> tuple[str, tuple[tuple[str, str], ...]]:
+    root_dir = entry_xml.parent
+    files: dict[str, Path] = {}
+    seen_xmls: set[Path] = set()
+
+    def add_file(file_path: Path) -> None:
+        rel = file_path.relative_to(root_dir).as_posix()
+        files[rel] = file_path
+
+    def visit(xml_file: Path) -> None:
+        if xml_file in seen_xmls:
+            return
+        seen_xmls.add(xml_file)
+        add_file(xml_file)
+
+        tree = ET.parse(xml_file)
+        root = tree.getroot()
+        compiler = root.find("compiler")
+        meshdir = compiler.get("meshdir") if compiler is not None else None
+        texturedir = compiler.get("texturedir") if compiler is not None else None
+
+        for include in root.findall("include"):
+            include_file = include.get("file")
+            if not include_file:
+                continue
+            include_path = (xml_file.parent / include_file).resolve()
+            include_path.relative_to(root_dir.resolve())
+            visit(include_path)
+
+        asset = root.find("asset")
+        if asset is None:
+            return
+
+        for child in asset:
+            asset_file = child.get("file")
+            if not asset_file:
+                continue
+            base_dir = xml_file.parent
+            if child.tag == "mesh" and meshdir:
+                base_dir = xml_file.parent / meshdir
+            elif child.tag == "texture" and texturedir:
+                base_dir = xml_file.parent / texturedir
+            asset_path = (base_dir / asset_file).resolve()
+            asset_path.relative_to(root_dir.resolve())
+            add_file(asset_path)
+
+    visit(entry_xml)
+    return entry_xml.relative_to(root_dir).as_posix(), tuple(sorted((rel, str(path)) for rel, path in files.items()))
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     collector: DashboardEventCollector
     input_queue: queue.Queue
@@ -114,6 +179,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
     vision_action_handler = None
     robot_state_provider = None
     robot_action_handler = None
+    robot_preview_state_provider = None
+    robot_preview_action_handler = None
     default_character: str = ""
     prompt_asset_open_target: str = "vscode"
     prompt_asset_vscode_cmd: str = "code"
@@ -123,6 +190,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         path = parsed.path
         if path == "/" or path == "/index.html":
             self._serve_html()
+        elif path in {"/robot-preview", "/robot-preview/", "/robot-preview.html"}:
+            self._serve_robot_preview_html()
+        elif path.startswith("/static/"):
+            self._serve_preview_file(ROBOT_PREVIEW_STATIC_DIR, path.removeprefix("/static/"))
+        elif path.startswith("/node_modules/"):
+            self._serve_preview_file(NODE_MODULES_DIR, path.removeprefix("/node_modules/"))
+        elif path.startswith("/robot-preview/assets/"):
+            self._serve_preview_file(ROBOT_PREVIEW_ASSETS_DIR, path.removeprefix("/robot-preview/assets/"))
         elif path == "/system-map.html":
             self._serve_system_map()
         elif path == "/stt-debug.html":
@@ -145,6 +220,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._serve_vision_state()
         elif path == "/robot-sim/state":
             self._serve_robot_state()
+        elif path == "/robot-preview/state":
+            self._serve_robot_preview_state()
+        elif path == "/robot-preview/trajectory":
+            self._serve_robot_preview_trajectory()
+        elif path == "/robot-preview/mujoco/model":
+            self._serve_robot_preview_mujoco_model()
+        elif path == "/robot-preview/mujoco/file":
+            self._serve_robot_preview_mujoco_file()
         elif path == "/history/list":
             self._serve_history_list()
         elif path.startswith("/history/checkpoint"):
@@ -234,6 +317,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._handle_vision_config()
         elif path == "/robot-sim/action":
             self._handle_robot_action()
+        elif path == "/robot-preview/action":
+            self._handle_robot_preview_action()
         elif path == "/api/tts-debug":
             self._handle_tts_debug()
         else:
@@ -260,6 +345,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _serve_robot_preview_html(self):
+        try:
+            content = ROBOT_PREVIEW_PATH.read_bytes()
+        except FileNotFoundError:
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "robot_preview.html not found")
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(content)))
+        self._write_preview_isolation_headers()
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _serve_preview_file(self, root: Path, rel_path: str):
+        try:
+            file_path = _resolve_under(root, rel_path)
+            content = file_path.read_bytes()
+        except FileNotFoundError:
+            self.send_error(HTTPStatus.NOT_FOUND, f"{rel_path} not found")
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", mimetypes.guess_type(str(file_path))[0] or "application/octet-stream")
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store")
+        self._write_preview_isolation_headers()
         self.end_headers()
         self.wfile.write(content)
 
@@ -533,6 +646,65 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
 
+    def _resolve_robot_preview_payload(self) -> dict:
+        provider = getattr(type(self), "robot_preview_state_provider", None)
+        if callable(provider):
+            return provider()
+
+        provider = getattr(type(self), "robot_state_provider", None)
+        if not callable(provider):
+            raise RuntimeError("robot preview unavailable")
+        return compile_robot_preview(provider())
+
+    def _serve_robot_preview_state(self):
+        try:
+            payload = self._resolve_robot_preview_payload()
+            self._respond_json(HTTPStatus.OK, {"ok": True, **payload}, extra_headers=self._preview_isolation_headers())
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)}, extra_headers=self._preview_isolation_headers())
+
+    def _serve_robot_preview_trajectory(self):
+        try:
+            payload = trajectory_for_preview(self._resolve_robot_preview_payload())
+            self._respond_json(HTTPStatus.OK, payload, extra_headers=self._preview_isolation_headers())
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)}, extra_headers=self._preview_isolation_headers())
+
+    def _serve_robot_preview_mujoco_model(self):
+        try:
+            entry_path, files = _collect_mjcf_files(ROBOT_PREVIEW_MODEL_XML_PATH)
+            self._respond_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "robot": "booster_k1",
+                    "entry_path": entry_path,
+                    "files": [{"path": rel} for rel, _ in files],
+                },
+                extra_headers=self._preview_isolation_headers(),
+            )
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)}, extra_headers=self._preview_isolation_headers())
+
+    def _serve_robot_preview_mujoco_file(self):
+        query = parse_qs(urlparse(self.path).query)
+        rel_path = str((query.get("path") or [""])[0] or "")
+        try:
+            _, files = _collect_mjcf_files(ROBOT_PREVIEW_MODEL_XML_PATH)
+            file_map = dict(files)
+            actual_path = file_map.get(rel_path)
+            if not actual_path:
+                raise FileNotFoundError(rel_path)
+            self._serve_preview_file(ROBOT_PREVIEW_MODEL_XML_PATH.parent, rel_path)
+        except FileNotFoundError:
+            self._respond_json(
+                HTTPStatus.NOT_FOUND,
+                {"ok": False, "error": f"Unknown model file: {rel_path}"},
+                extra_headers=self._preview_isolation_headers(),
+            )
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)}, extra_headers=self._preview_isolation_headers())
+
     def _serve_history_list(self):
         history_api = getattr(self, "history_api", None)
         payload = history_api.list_archives() if history_api is not None else []
@@ -636,6 +808,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._respond_json(HTTPStatus.OK, {"ok": True, **(payload or {})})
         except Exception as e:
             self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)})
+
+    def _handle_robot_preview_action(self):
+        handler = getattr(type(self), "robot_preview_action_handler", None)
+        if callable(handler):
+            try:
+                data = self._read_json_body()
+                payload = handler(data)
+                self._respond_json(HTTPStatus.OK, {"ok": True, **(payload or {})}, extra_headers=self._preview_isolation_headers())
+            except Exception as e:
+                self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)}, extra_headers=self._preview_isolation_headers())
+            return
+
+        handler = getattr(type(self), "robot_action_handler", None)
+        if not callable(handler):
+            self._respond_json(
+                HTTPStatus.BAD_REQUEST,
+                {"ok": False, "error": "robot preview unavailable"},
+                extra_headers=self._preview_isolation_headers(),
+            )
+            return
+        try:
+            data = self._read_json_body()
+            payload = compile_robot_preview(handler(data))
+            self._respond_json(HTTPStatus.OK, {"ok": True, **payload}, extra_headers=self._preview_isolation_headers())
+        except Exception as e:
+            self._respond_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(e)}, extra_headers=self._preview_isolation_headers())
 
     def _serve_history_checkpoint(self):
         history_api = getattr(self, "history_api", None)
@@ -779,11 +977,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(length)
         return json.loads(body or b"{}")
 
-    def _respond_json(self, status: HTTPStatus, payload: dict) -> None:
+    def _preview_isolation_headers(self) -> dict[str, str]:
+        return {
+            "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Embedder-Policy": "require-corp",
+            "Cross-Origin-Resource-Policy": "same-origin",
+        }
+
+    def _write_preview_isolation_headers(self) -> None:
+        for key, value in self._preview_isolation_headers().items():
+            self.send_header(key, value)
+
+    def _respond_json(self, status: HTTPStatus, payload: dict, *, extra_headers: dict[str, str] | None = None) -> None:
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -911,6 +1122,8 @@ def start_dashboard(collector: DashboardEventCollector, input_queue: queue.Queue
                     vision_action_handler=None,
                     robot_state_provider=None,
                     robot_action_handler=None,
+                    robot_preview_state_provider=None,
+                    robot_preview_action_handler=None,
                     default_character: str = "",
                     prompt_asset_open_target: str = "vscode",
                     prompt_asset_vscode_cmd: str = "code") -> tuple[threading.Thread, int]:
@@ -929,6 +1142,8 @@ def start_dashboard(collector: DashboardEventCollector, input_queue: queue.Queue
     DashboardHandler.vision_action_handler = vision_action_handler
     DashboardHandler.robot_state_provider = robot_state_provider
     DashboardHandler.robot_action_handler = robot_action_handler
+    DashboardHandler.robot_preview_state_provider = robot_preview_state_provider
+    DashboardHandler.robot_preview_action_handler = robot_preview_action_handler
     DashboardHandler.default_character = default_character
     DashboardHandler.prompt_asset_open_target = prompt_asset_open_target
     DashboardHandler.prompt_asset_vscode_cmd = prompt_asset_vscode_cmd

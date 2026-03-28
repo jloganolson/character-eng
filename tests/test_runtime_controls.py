@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import character_eng.__main__ as app
 from character_eng.config import AppConfig
 from character_eng.person import PeopleState
+from character_eng.rust_eyes_bridge import RustEyesBridgeError
 
 
 def test_normalize_runtime_control_name_handles_aliases():
@@ -172,6 +173,91 @@ def test_runtime_snapshot_includes_transport_metrics(tmp_path, monkeypatch):
     assert state["transport"]["mode"] == "remote_hot_webrtc"
     assert state["transport"]["video"]["video_frames_sent"] == 54
     assert state["transport"]["audio"]["audio_frames_out"] == 9
+
+
+def test_sync_robot_sim_expression_drives_rust_eyes_bridge(monkeypatch):
+    previous_bridge = app._rust_eyes_bridge
+    previous_status = dict(app._rust_eyes_bridge_status)
+    pushed = []
+
+    class FakeBridge:
+        def push_face(self, update):
+            pushed.append(update)
+            return {"ok": True, "expression_key": "curious"}
+
+    monkeypatch.setattr(app, "_rust_eyes_bridge", FakeBridge())
+
+    try:
+        state = app._sync_robot_sim_expression(
+            gaze="person",
+            gaze_type="hold",
+            expression="curious",
+            source="test",
+        )
+    finally:
+        app._rust_eyes_bridge = previous_bridge
+        app._rust_eyes_bridge_status = previous_status
+
+    assert state["face"]["expression"] == "curious"
+    assert state["rust_eyes"]["enabled"] is True
+    assert state["rust_eyes"]["state"] == "ok"
+    assert state["rust_eyes"]["expression_key"] == "curious"
+    assert len(pushed) == 1
+    assert pushed[0].gaze == "person"
+    assert pushed[0].expression == "curious"
+
+
+def test_sync_robot_sim_expression_reports_rust_eyes_bridge_error(monkeypatch):
+    previous_bridge = app._rust_eyes_bridge
+    previous_status = dict(app._rust_eyes_bridge_status)
+    notices = []
+
+    class FakeBridge:
+        def push_face(self, update):
+            raise RustEyesBridgeError("no rust-eyes expression mapping for 'happy'; update /tmp/map.toml")
+
+    monkeypatch.setattr(app, "_rust_eyes_bridge", FakeBridge())
+    monkeypatch.setattr(app, "_push", lambda event_type, data: notices.append((event_type, data)))
+    monkeypatch.setattr(app.console, "print", lambda *args, **kwargs: None)
+
+    try:
+        app._sync_robot_sim_expression(
+            gaze="scene",
+            gaze_type="hold",
+            expression="happy",
+            source="test",
+        )
+    finally:
+        app._rust_eyes_bridge = previous_bridge
+        app._rust_eyes_bridge_status = previous_status
+
+    assert notices
+    event_type, payload = next(
+        (event_type, data) for event_type, data in notices if event_type == "robot_preview_bridge"
+    )
+    assert event_type == "robot_preview_bridge"
+    assert payload["status"] == "error"
+    assert payload["target"] == "rust_eyes"
+    assert "update /tmp/map.toml" in payload["message"]
+
+
+def test_dashboard_robot_sim_state_payload_includes_optional_rust_eyes_status(monkeypatch):
+    previous_status = dict(app._rust_eyes_bridge_status)
+    monkeypatch.setattr(app, "_rust_eyes_bridge_status", {
+        "enabled": True,
+        "state": "configured",
+        "message": "http://127.0.0.1:5555",
+        "expression_key": "",
+        "updated_at": 123.0,
+    })
+
+    try:
+        payload = app._dashboard_robot_sim_state_payload()
+    finally:
+        app._rust_eyes_bridge_status = previous_status
+
+    assert payload["rust_eyes"]["enabled"] is True
+    assert payload["rust_eyes"]["state"] == "configured"
 
 
 def test_vision_service_autostart_command_updates_config(monkeypatch):

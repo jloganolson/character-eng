@@ -218,6 +218,8 @@ class BridgeServer:
         vision_action_handler=None,
         robot_state_provider=None,
         robot_action_handler=None,
+        robot_preview_state_provider=None,
+        robot_preview_action_handler=None,
         default_character: str = "",
         prompt_asset_open_target: str = "vscode",
         prompt_asset_vscode_cmd: str = "code",
@@ -241,6 +243,8 @@ class BridgeServer:
         _BridgeHandler.vision_action_handler = vision_action_handler
         _BridgeHandler.robot_state_provider = robot_state_provider
         _BridgeHandler.robot_action_handler = robot_action_handler
+        _BridgeHandler.robot_preview_state_provider = robot_preview_state_provider
+        _BridgeHandler.robot_preview_action_handler = robot_preview_action_handler
         _BridgeHandler.default_character = default_character
         _BridgeHandler.prompt_asset_open_target = prompt_asset_open_target
         _BridgeHandler.prompt_asset_vscode_cmd = prompt_asset_vscode_cmd

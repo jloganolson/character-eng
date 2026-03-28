@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Robot Preview Lab</title>
+  <style>
+    :root {
+      --bg: #0b1016;
+      --panel: #101822;
+      --panel-2: #162231;
+      --line: #273647;
+      --text: #edf4ff;
+      --muted: #93a7bf;
+      --accent: #7de2d1;
+      --accent-2: #ffd166;
+      --ok: #79d28a;
+      --warn: #ffb454;
+      --err: #ff7d7d;
+      --mono: "JetBrains Mono", "IBM Plex Mono", "SFMono-Regular", monospace;
+      --sans: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: var(--sans);
+      background:
+        radial-gradient(circle at top left, rgba(125,226,209,0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(255,209,102,0.10), transparent 24%),
+        linear-gradient(180deg, #081018 0%, var(--bg) 100%);
+    }
+    .shell {
+      max-width: 1560px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      gap: 18px;
+    }
+    .hero, .panel {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.0)), var(--panel);
+      border-radius: 20px;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
+    }
+    .hero {
+      padding: 22px 24px;
+      display: grid;
+      grid-template-columns: 1.3fr 0.9fr;
+      gap: 18px;
+    }
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: 2.1rem;
+      letter-spacing: 0.03em;
+    }
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+      max-width: 62ch;
+    }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel-2);
+      padding: 14px;
+      min-height: 88px;
+    }
+    .metric .label {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.74rem;
+    }
+    .metric .value {
+      margin-top: 8px;
+      font-size: 1.15rem;
+      font-weight: 700;
+    }
+    .metric .detail {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.4;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(760px, 1.4fr) minmax(360px, 0.8fr);
+      gap: 18px;
+      align-items: start;
+    }
+    .panel {
+      padding: 18px;
+    }
+    .panel h2 {
+      margin: 0 0 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.82rem;
+      color: var(--accent);
+    }
+    .stage {
+      display: grid;
+      gap: 14px;
+    }
+    .viewport {
+      min-height: 520px;
+      border-radius: 22px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(180deg, rgba(125,226,209,0.04), rgba(255,255,255,0.01)),
+        radial-gradient(circle at 50% 28%, rgba(125,226,209,0.12), transparent 26%),
+        linear-gradient(180deg, #09111a 0%, #0c1520 100%);
+      position: relative;
+      overflow: hidden;
+    }
+    #viewer-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .viewer-status {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: 16px;
+      z-index: 2;
+      border-radius: 12px;
+      border: 1px solid rgba(125, 226, 209, 0.24);
+      background: rgba(8, 16, 24, 0.82);
+      color: var(--muted);
+      padding: 10px 12px;
+      font-size: 0.88rem;
+      backdrop-filter: blur(8px);
+    }
+    .viewport::after {
+      content: "";
+      position: absolute;
+      inset: 28px;
+      border-radius: 18px;
+      border: 1px dashed rgba(125, 226, 209, 0.28);
+      pointer-events: none;
+    }
+    .viewport-copy {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 28px;
+      text-align: center;
+    }
+    .viewport-copy strong {
+      display: block;
+      font-size: 1.2rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .viewport-copy p {
+      margin: 0;
+      max-width: 44ch;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .overlay-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .overlay-card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel-2);
+      padding: 12px 14px;
+    }
+    .overlay-card .label {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.72rem;
+    }
+    .overlay-card .value {
+      margin-top: 8px;
+      font-weight: 700;
+      font-size: 1rem;
+    }
+    .overlay-card .detail {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.86rem;
+      line-height: 1.4;
+    }
+    .status-ok { color: var(--ok); }
+    .status-warn { color: var(--warn); }
+    .status-err { color: var(--err); }
+    .control-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    button {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel-2);
+      color: var(--text);
+      font: inherit;
+      font-weight: 700;
+      padding: 12px 14px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    button:disabled {
+      cursor: default;
+      opacity: 0.55;
+    }
+    .callout {
+      margin-top: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255, 209, 102, 0.08);
+      padding: 14px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .kv {
+      display: grid;
+      gap: 10px;
+      margin-top: 6px;
+    }
+    .kv-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      border-bottom: 1px solid rgba(147, 167, 191, 0.14);
+      padding-bottom: 10px;
+    }
+    .kv-row:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+    .kv-row span {
+      color: var(--muted);
+    }
+    .kv-row strong {
+      text-align: right;
+    }
+    pre {
+      margin: 0;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: #0a1119;
+      color: #d6e7ff;
+      font: 12px/1.5 var(--mono);
+      overflow: auto;
+      max-height: 360px;
+    }
+    .toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .toolbar strong {
+      color: var(--text);
+    }
+    @media (max-width: 1180px) {
+      .hero, .layout {
+        grid-template-columns: 1fr;
+      }
+      .overlay-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 720px) {
+      .shell {
+        padding: 14px;
+      }
+      .hero-grid, .overlay-grid, .control-grid {
+        grid-template-columns: 1fr;
+      }
+      .viewport {
+        min-height: 380px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <h1>Robot Preview Lab</h1>
+        <p>
+          Standalone motion preview and authoring surface for Booster K1. This page consumes symbolic
+          robot state from <code>character-eng</code>, shows the compiled body/face program, and is
+          staged for a browser MuJoCo renderer plus future hardware dispatch.
+        </p>
+      </div>
+      <div class="hero-grid">
+        <div class="metric">
+          <div class="label">Headline</div>
+          <div class="value" id="hero-headline">Idle</div>
+          <div class="detail" id="hero-summary">Waiting for robot preview state.</div>
+        </div>
+        <div class="metric">
+          <div class="label">Body Mode</div>
+          <div class="value" id="hero-body-mode">idle_keepalive</div>
+          <div class="detail" id="hero-body-summary">No active clip.</div>
+        </div>
+        <div class="metric">
+          <div class="label">Eyes Bridge</div>
+          <div class="value" id="hero-eyes">disabled</div>
+          <div class="detail" id="hero-eyes-detail">rust-eyes bridge is optional.</div>
+        </div>
+        <div class="metric">
+          <div class="label">Dispatch</div>
+          <div class="value" id="hero-dispatch">preview_only</div>
+          <div class="detail" id="hero-dispatch-detail">Hardware dispatch is not wired yet.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="layout">
+      <div class="stage">
+        <div class="panel">
+          <div class="toolbar">
+            <span>Viewer shell: <strong id="viewer-engine">browser_mujoco_pending</strong></span>
+            <span>Last update: <strong id="last-updated">never</strong></span>
+          </div>
+          <div class="viewport" id="mujoco-viewport">
+            <canvas id="viewer-canvas"></canvas>
+            <div class="viewport-copy">
+              <div>
+                <strong id="viewport-title">MuJoCo Viewer Mount</strong>
+                <p id="viewport-copy">
+                  This is the landing zone for the web MuJoCo renderer. The backend preview contract is already live,
+                  so the next slice can bind clip playback and keepalive trajectories here without changing the page boundary.
+                </p>
+              </div>
+            </div>
+            <div class="viewer-status" id="viewer-status">Loading viewer...</div>
+          </div>
+        </div>
+        <div class="overlay-grid">
+          <div class="overlay-card">
+            <div class="label">Active Clip</div>
+            <div class="value" id="clip-key">idle.keepalive</div>
+            <div class="detail" id="clip-detail">Looped keepalive program.</div>
+          </div>
+          <div class="overlay-card">
+            <div class="label">Keepalive</div>
+            <div class="value" id="keepalive-state">active</div>
+            <div class="detail" id="keepalive-detail">idle_attentive_v1</div>
+          </div>
+          <div class="overlay-card">
+            <div class="label">Face Program</div>
+            <div class="value" id="face-program">neutral · scene</div>
+            <div class="detail" id="face-detail">hold</div>
+          </div>
+          <div class="overlay-card">
+            <div class="label">Interaction</div>
+            <div class="value" id="interaction-state">idle</div>
+            <div class="detail" id="interaction-detail">No active interaction.</div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="panel">
+        <h2>Preview Controls</h2>
+        <div class="control-grid">
+          <button data-action="refresh">Refresh</button>
+          <button data-action="wave">Wave</button>
+          <button data-action="offer_fistbump">Offer fist bump</button>
+          <button data-action="contact_fistbump">Contact fist bump</button>
+          <button data-action="timeout_fistbump">Timeout fist bump</button>
+          <button data-action="cancel_fistbump">Cancel fist bump</button>
+        </div>
+
+        <div class="callout" id="action-status">
+          Commands posted here still go through backend authority. This page is a richer client over that control plane.
+        </div>
+
+        <h2 style="margin-top:18px;">Dispatch Status</h2>
+        <div class="kv">
+          <div class="kv-row"><span>Authority</span><strong id="dispatch-authority">character_eng</strong></div>
+          <div class="kv-row"><span>Mode</span><strong id="dispatch-mode">preview_only</strong></div>
+          <div class="kv-row"><span>Preview transport</span><strong id="dispatch-preview">browser_mujoco_pending</strong></div>
+          <div class="kv-row"><span>Hardware transport</span><strong id="dispatch-hardware">booster_sdk_pending</strong></div>
+          <div class="kv-row"><span>Hardware ready</span><strong id="dispatch-ready">false</strong></div>
+        </div>
+
+        <h2 style="margin-top:18px;">Raw Preview State</h2>
+        <pre id="raw-state">{}</pre>
+      </aside>
+    </section>
+  </main>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/node_modules/three/build/three.module.js",
+      "three/": "/node_modules/three/",
+      "@mujoco/mujoco": "/node_modules/@mujoco/mujoco/mujoco.js"
+    }
+  }
+  </script>
+  <script type="module" src="/static/robot_preview_app.js"></script>
+</body>
+</html>

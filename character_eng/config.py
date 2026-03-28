@@ -52,6 +52,16 @@ class DashboardConfig:
 
 
 @dataclass
+class RustEyesConfig:
+    enabled: bool = False
+    base_url: str = "http://127.0.0.1:5555"
+    owner: str = "character-eng"
+    ttl: float = 1.0
+    expression_map_path: str = ""
+    timeout_s: float = 0.5
+
+
+@dataclass
 class BridgeConfig:
     enabled: bool = False
     port: int = 7862  # shares dashboard port (HTTP + WS on single port)
@@ -87,6 +97,7 @@ class AppConfig:
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
+    rust_eyes: RustEyesConfig = field(default_factory=RustEyesConfig)
     bridge: BridgeConfig = field(default_factory=BridgeConfig)
     history: HistoryConfig = field(default_factory=HistoryConfig)
     livekit: LiveKitConfig = field(default_factory=LiveKitConfig)
@@ -127,6 +138,14 @@ def save_config(config: AppConfig, path: Path = CONFIG_PATH) -> None:
         f"port = {int(config.dashboard.port)}",
         f"prompt_asset_open_target = {_toml_string(config.dashboard.prompt_asset_open_target)}",
         f"prompt_asset_vscode_cmd = {_toml_string(config.dashboard.prompt_asset_vscode_cmd)}",
+        "",
+        "[rust_eyes]",
+        f"enabled = {'true' if config.rust_eyes.enabled else 'false'}",
+        f"base_url = {_toml_string(config.rust_eyes.base_url)}",
+        f"owner = {_toml_string(config.rust_eyes.owner)}",
+        f"ttl = {config.rust_eyes.ttl}",
+        f"expression_map_path = {_toml_string(config.rust_eyes.expression_map_path)}",
+        f"timeout_s = {config.rust_eyes.timeout_s}",
         "",
         "[bridge]",
         f"enabled = {'true' if config.bridge.enabled else 'false'}",
@@ -208,6 +227,16 @@ def load_config() -> AppConfig:
         prompt_asset_vscode_cmd=dashboard_data.get("prompt_asset_vscode_cmd", "code"),
     )
 
+    rust_eyes_data = data.get("rust_eyes", {})
+    rust_eyes = RustEyesConfig(
+        enabled=rust_eyes_data.get("enabled", False),
+        base_url=str(rust_eyes_data.get("base_url", "http://127.0.0.1:5555")),
+        owner=str(rust_eyes_data.get("owner", "character-eng")),
+        ttl=float(rust_eyes_data.get("ttl", 1.0)),
+        expression_map_path=str(rust_eyes_data.get("expression_map_path", "")),
+        timeout_s=float(rust_eyes_data.get("timeout_s", 0.5)),
+    )
+
     bridge_data = data.get("bridge", {})
     bridge = BridgeConfig(
         enabled=bridge_data.get("enabled", False),
@@ -243,6 +272,7 @@ def load_config() -> AppConfig:
         voice=voice,
         vision=vision,
         dashboard=dashboard,
+        rust_eyes=rust_eyes,
         bridge=bridge,
         history=history,
         livekit=livekit,
@@ -267,6 +297,18 @@ def load_config() -> AppConfig:
         config.dashboard.enabled = value.strip().lower() in {"1", "true", "yes", "on"}
     if (value := os.environ.get("CHARACTER_ENG_DASHBOARD_PORT")):
         config.dashboard.port = int(value)
+    if (value := os.environ.get("CHARACTER_ENG_RUST_EYES_ENABLED")) is not None:
+        config.rust_eyes.enabled = value.strip().lower() in {"1", "true", "yes", "on"}
+    if (value := os.environ.get("CHARACTER_ENG_RUST_EYES_URL")):
+        config.rust_eyes.base_url = value.strip()
+    if (value := os.environ.get("CHARACTER_ENG_RUST_EYES_OWNER")):
+        config.rust_eyes.owner = value.strip()
+    if (value := os.environ.get("CHARACTER_ENG_RUST_EYES_TTL")):
+        config.rust_eyes.ttl = float(value)
+    if (value := os.environ.get("CHARACTER_ENG_RUST_EYES_EXPRESSION_MAP_PATH")):
+        config.rust_eyes.expression_map_path = value.strip()
+    if (value := os.environ.get("CHARACTER_ENG_RUST_EYES_TIMEOUT_S")):
+        config.rust_eyes.timeout_s = float(value)
     if (value := os.environ.get("CHARACTER_ENG_BRIDGE_ENABLED")) is not None:
         config.bridge.enabled = value.strip().lower() in {"1", "true", "yes", "on"}
     if (value := os.environ.get("CHARACTER_ENG_BRIDGE_PORT")):

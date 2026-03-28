@@ -190,6 +190,17 @@ class TestDashboardServer:
         assert "Character Dashboard" in body
         assert resp.status == 200
 
+    def test_robot_preview_page_returns_html(self, server):
+        _, _, port, _, _ = server
+        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/robot-preview/")
+        body = resp.read().decode()
+        assert "Robot Preview Lab" in body
+        assert 'id="viewer-canvas"' in body
+        assert 'src="/static/robot_preview_app.js"' in body
+        assert resp.headers["Cross-Origin-Opener-Policy"] == "same-origin"
+        assert resp.headers["Cross-Origin-Embedder-Policy"] == "require-corp"
+        assert resp.status == 200
+
     def test_root_exposes_panel_registry_markup(self, server):
         _, _, port, _, _ = server
         body = urllib.request.urlopen(f"http://127.0.0.1:{port}/").read().decode()
@@ -326,6 +337,42 @@ class TestDashboardServer:
 
         contact = _robot_action("contact_fistbump", session_id=session_id)
         assert contact["fistbump"]["state"] == "contacted"
+
+    def test_robot_preview_state_endpoint_and_actions(self, server):
+        _, _, port, _, _ = server
+        state = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/robot-preview/state").read())
+        assert state["ok"] is True
+        assert state["body"]["mode"] == "idle_keepalive"
+        assert state["dispatch"]["authority"] == "character_eng"
+
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/robot-preview/action",
+            data=json.dumps({"action": "wave"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        wave = json.loads(urllib.request.urlopen(req).read())
+        assert wave["ok"] is True
+        assert wave["body"]["mode"] == "wave"
+        assert wave["body"]["active_clip"]["key"] == "gesture.wave"
+
+    def test_robot_preview_trajectory_and_model_routes(self, server):
+        _, _, port, _, _ = server
+        trajectory = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/robot-preview/trajectory").read())
+        assert trajectory["ok"] is True
+        assert trajectory["robot"] == "booster_k1"
+        assert trajectory["joint_names"]
+        assert trajectory["frames"]
+
+        model = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/robot-preview/mujoco/model").read())
+        assert model["ok"] is True
+        assert model["entry_path"] == "K1_serial.xml"
+        assert any(item["path"] == "meshes/Trunk.STL" for item in model["files"])
+
+        xml_bytes = urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/robot-preview/mujoco/file?path=K1_serial.xml"
+        ).read()
+        assert b'<mujoco model="K1">' in xml_bytes
 
     def test_report_snapshot_saves_json(self, server):
         _, _, port, report_dir, _ = server

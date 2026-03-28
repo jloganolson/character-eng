@@ -76,6 +76,27 @@
 # HTTP port for the dashboard server.
 # port = 7862
 
+[rust_eyes]
+# Optional bridge from character-eng face state into rust-eyes runtime control.
+# Keep disabled unless the rust-eyes web app is running.
+# enabled = false
+
+# rust-eyes web app base URL.
+# base_url = "http://127.0.0.1:5555"
+
+# Runtime owner name used for lease/update calls.
+# owner = "character-eng"
+
+# Lease TTL in seconds. character-eng refreshes this on every face update.
+# ttl = 1.0
+
+# Checked-in mapping file from character-eng expressions -> rust-eyes expressionKey.
+# Update this file as you author new named expressions in rust-eyes.
+# expression_map_path = "character_eng/rust_eyes_expression_map.toml"
+
+# HTTP timeout for rust-eyes runtime requests.
+# timeout_s = 0.5
+
 [models]
 # Dialogue model for live character replies.
 # chat_model = "groq-llama-8b"

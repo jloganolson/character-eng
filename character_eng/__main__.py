@@ -35,6 +35,7 @@ from character_eng.person import PeopleState
 from character_eng.prompts import list_characters, load_prompt, prompt_source_signature
 from character_eng.qa_personas import _action_badge, _esc, annotation_assets
 from character_eng.robot_sim import RobotSimController
+from character_eng.rust_eyes_bridge import RustEyesBridgeError, RustEyesFaceUpdate, RustEyesRuntimeClient
 from character_eng.scenario import DirectorResult, director_call, load_scenario_script, match_visual_exit
 from character_eng.transport_metrics import read_metrics
 from character_eng.world import (
@@ -110,6 +111,14 @@ _dashboard_vision_runtime = {
     "vision_cfg": None,
 }
 _robot_sim = RobotSimController()
+_rust_eyes_bridge: RustEyesRuntimeClient | None = None
+_rust_eyes_bridge_status = {
+    "enabled": False,
+    "state": "disabled",
+    "message": "",
+    "expression_key": "",
+    "updated_at": 0.0,
+}
 
 
 class AudioInputRequiredError(RuntimeError):
@@ -215,15 +224,75 @@ def _dashboard_vision_action(payload: dict) -> dict:
 
 
 def _dashboard_robot_sim_state_payload() -> dict:
-    return _robot_sim.snapshot()
+    return _decorate_robot_sim_payload(_robot_sim.snapshot())
+
+
+def _rust_eyes_status_payload() -> dict:
+    payload = dict(_rust_eyes_bridge_status)
+    payload["enabled"] = bool(payload.get("enabled"))
+    return payload
+
+
+def _decorate_robot_sim_payload(payload: dict) -> dict:
+    result = dict(payload or {})
+    result["rust_eyes"] = _rust_eyes_status_payload()
+    return result
 
 
 def _push_robot_sim_state(*, source: str = "") -> dict:
     payload = _robot_sim.snapshot()
     if source:
         payload["source"] = source
+    _sync_rust_eyes_bridge(
+        gaze=str((payload.get("face") or {}).get("gaze") or "scene"),
+        gaze_type=str((payload.get("face") or {}).get("gaze_type") or "hold"),
+        expression=str((payload.get("face") or {}).get("expression") or "neutral"),
+        source=source or str(payload.get("source") or "runtime"),
+    )
+    payload = _decorate_robot_sim_payload(payload)
     _push("robot_state", payload)
     return payload
+
+
+def _sync_rust_eyes_bridge(*, gaze: str, gaze_type: str, expression: str, source: str) -> None:
+    global _rust_eyes_bridge_status
+    if _rust_eyes_bridge is None:
+        return
+    try:
+        response = _rust_eyes_bridge.push_face(
+            RustEyesFaceUpdate(
+                gaze=gaze,
+                gaze_type=gaze_type,
+                expression=expression,
+                source=source,
+            )
+        )
+        _rust_eyes_bridge_status = {
+            "enabled": True,
+            "state": "ok",
+            "message": str(response.get("expression_key") or "runtime updated"),
+            "expression_key": str(response.get("expression_key") or ""),
+            "updated_at": time.time(),
+        }
+    except RustEyesBridgeError as exc:
+        message = str(exc)
+        _rust_eyes_bridge_status = {
+            "enabled": True,
+            "state": "error",
+            "message": message,
+            "expression_key": "",
+            "updated_at": time.time(),
+        }
+        console.print(f"[yellow]rust-eyes bridge error:[/yellow] {message}")
+        _push("robot_preview_bridge", {
+            "status": "error",
+            "target": "rust_eyes",
+            "message": message,
+            "gaze": gaze,
+            "gaze_type": gaze_type,
+            "expression": expression,
+            "source": source,
+        })
 
 
 def _sync_robot_sim_expression(*, gaze: str, gaze_type: str, expression: str, source: str) -> dict:
@@ -234,6 +303,13 @@ def _sync_robot_sim_expression(*, gaze: str, gaze_type: str, expression: str, so
         source=source,
     )
     payload["source"] = source
+    _sync_rust_eyes_bridge(
+        gaze=str(payload["face"].get("gaze") or "scene"),
+        gaze_type=str(payload["face"].get("gaze_type") or "hold"),
+        expression=str(payload["face"].get("expression") or "neutral"),
+        source=source,
+    )
+    payload = _decorate_robot_sim_payload(payload)
     _push("robot_state", payload)
     return payload
 
@@ -260,6 +336,7 @@ def _dashboard_robot_sim_action(payload: dict) -> dict:
 
     result["source"] = source
     result["action"] = action
+    result = _decorate_robot_sim_payload(result)
     _push("robot_state", result)
     return result
 
@@ -336,6 +413,7 @@ def _apply_robot_action_result(result: RobotActionResult | None, *, log=None, so
     payload["source"] = source
     payload["action"] = result.action
     payload["reason"] = result.reason
+    payload = _decorate_robot_sim_payload(payload)
     _push("robot_state", payload)
     if log is not None:
         log.append({
@@ -5310,9 +5388,25 @@ def main():
     if args.smoke:
         sys.exit(run_smoke())
 
-    global _app_config, _history_service, _archive_only_mode, _archive_only_reason
+    global _app_config, _history_service, _archive_only_mode, _archive_only_reason, _rust_eyes_bridge
     cfg = load_config()
     _app_config = cfg
+    _rust_eyes_bridge_status = {
+        "enabled": bool(cfg.rust_eyes.enabled),
+        "state": "disabled" if not cfg.rust_eyes.enabled else "configured",
+        "message": "" if not cfg.rust_eyes.enabled else str(cfg.rust_eyes.base_url or "").strip(),
+        "expression_key": "",
+        "updated_at": time.time(),
+    }
+    _rust_eyes_bridge = None
+    if cfg.rust_eyes.enabled:
+        _rust_eyes_bridge = RustEyesRuntimeClient(
+            base_url=cfg.rust_eyes.base_url,
+            owner=cfg.rust_eyes.owner,
+            ttl=cfg.rust_eyes.ttl,
+            expression_map_path=cfg.rust_eyes.expression_map_path,
+            timeout_s=cfg.rust_eyes.timeout_s,
+        )
     _archive_only_mode = bool(args.archive_only)
     _archive_only_reason = (
         "Archive-only mode is active. Load archives to inspect them; live conversation is disabled."

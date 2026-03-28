@@ -1,0 +1,16 @@
+[expressions]
+# Update this file as you author new named expressions in rust-eyes.
+# Left side: character-eng expression label
+# Right side: rust-eyes expressionKey exposed by /api/runtime/expressions
+neutral = "neutral"
+curious = "curious"
+happy = "excited"
+sad = "sad"
+worried = "sad"
+excited = "excited"
+suspicious = "skeptical"
+surprised = "surprised"
+angry = "angry"
+confused = "confused"
+amused = "amused"
+focused = "neutral"

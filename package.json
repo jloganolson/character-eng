@@ -1,0 +1,9 @@
+{
+  "name": "character-eng",
+  "private": true,
+  "description": "Repo-local browser MuJoCo viewer assets for the character-eng robot preview page.",
+  "dependencies": {
+    "@mujoco/mujoco": "^3.6.1",
+    "three": "^0.183.2"
+  }
+}

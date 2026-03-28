@@ -30,3 +30,6 @@ history/
 # Experiment artifacts (generated WAVs and recordings)
 experiments/*/samples/
 experiments/*/results/
+
+# Frontend deps for the local MuJoCo preview app
+node_modules/

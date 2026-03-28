@@ -2712,6 +2712,7 @@
           <div class="robot-sim-statusline"><span>Wave timer</span><strong id="robot-sim-wave-seconds">0.0s</strong></div>
           <div class="robot-sim-statusline"><span>Fist bump</span><strong id="robot-sim-fistbump-state">idle</strong></div>
           <div class="robot-sim-statusline"><span>Session</span><strong id="robot-sim-session">none</strong></div>
+          <div class="robot-sim-statusline" id="robot-sim-rust-eyes-line"><span>Eyes bridge</span><strong id="robot-sim-rust-eyes-status">disabled</strong></div>
         </div>
       </div>
       <div class="robot-sim-status-banner" id="robot-sim-banner" data-tone="neutral">No active fist bump session.</div>
@@ -3430,6 +3431,8 @@
   const robotSimWaveSeconds = document.getElementById("robot-sim-wave-seconds");
   const robotSimFistbumpState = document.getElementById("robot-sim-fistbump-state");
   const robotSimSession = document.getElementById("robot-sim-session");
+  const robotSimRustEyesLine = document.getElementById("robot-sim-rust-eyes-line");
+  const robotSimRustEyesStatus = document.getElementById("robot-sim-rust-eyes-status");
   const robotSimRightArm = document.getElementById("robot-sim-right-arm");
   const robotSimGazeLine = document.getElementById("robot-sim-gaze-line");
   const robotSimModeMinButton = document.getElementById("robot-sim-mode-min");
@@ -4141,6 +4144,7 @@
     const face = state.face || {};
     const wave = state.wave || {};
     const fist = state.fistbump || {};
+    const rustEyes = state.rust_eyes || {};
     const gaze = face.gaze || "scene";
     const gazeType = face.gaze_type || "hold";
     const expression = face.expression || "neutral";
@@ -4163,6 +4167,12 @@
     if (robotSimWaveSeconds) robotSimWaveSeconds.textContent = `${Number(wave.seconds_left || 0).toFixed(1)}s`;
     if (robotSimFistbumpState) robotSimFistbumpState.textContent = fist.state || "idle";
     if (robotSimSession) robotSimSession.textContent = fist.session_id || "none";
+    if (robotSimRustEyesStatus) {
+      const stateLabel = String(rustEyes.state || "disabled").trim() || "disabled";
+      const detailLabel = String(rustEyes.expression_key || rustEyes.message || "").trim();
+      robotSimRustEyesStatus.textContent = detailLabel ? `${stateLabel} · ${detailLabel}` : stateLabel;
+      robotSimRustEyesStatus.title = String(rustEyes.message || detailLabel || stateLabel);
+    }
     if (robotSimGazeLine) robotSimGazeLine.style.transform = gazeLineTransform(gaze, gazeType);
     if (robotSimRightArm) {
       robotSimRightArm.className = "robot-sim-arm right";
